@@ -632,6 +632,10 @@ app.use(cors({
     if (origin === 'https://minestation.online' || origin === 'http://minestation.online') return callback(null, true);
     if (origin === 'https://www.minestation.online' || origin === 'http://www.minestation.online') return callback(null, true);
 
+    // Permite minestation.tech e www.minestation.tech
+    if (origin === 'https://minestation.tech' || origin === 'http://minestation.tech') return callback(null, true);
+    if (origin === 'https://www.minestation.tech' || origin === 'http://www.minestation.tech') return callback(null, true);
+
     console.error('CORS blocked origin:', origin);
     // Em produção, restringir. CORS Error se não bater.
     callback(new Error('Not allowed by CORS'));
