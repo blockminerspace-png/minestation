@@ -645,7 +645,7 @@ app.use(cors({
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 1000, // Aumentado para 1000 para evitar bloqueios em dev
+  max: 10000, // Aumentado para 10000 para evitar bloqueios em produção com muitos usuários
   standardHeaders: true,
   legacyHeaders: false,
   skip: (req) => req.ip === '::1' || req.ip === '127.0.0.1' || req.ip === '::ffff:127.0.0.1',
