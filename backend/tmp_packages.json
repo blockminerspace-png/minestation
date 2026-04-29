@@ -1,0 +1,55 @@
+{
+  "admin_upgrades": [
+    {
+      "name": "Kraken",
+      "price_usdc": 2495
+    },
+    {
+      "name": "Full Baleia",
+      "price_usdc": 495
+    },
+    {
+      "name": "Genesis",
+      "price_usdc": 25
+    }
+  ],
+  "season_passes": [],
+  "rig_rooms": [
+    {
+      "name": "Sala de Mineração",
+      "base_slot_price": 1
+    },
+    {
+      "name": "Sala Fundador",
+      "base_slot_price": 0
+    },
+    {
+      "name": "Sala Gênesis",
+      "base_slot_price": 0
+    },
+    {
+      "name": "Sala Streamer",
+      "base_slot_price": 0
+    },
+    {
+      "name": "Náutilos",
+      "base_slot_price": 0
+    },
+    {
+      "name": "Kraken",
+      "base_slot_price": 0
+    },
+    {
+      "name": " Full Baleia",
+      "base_slot_price": 0
+    },
+    {
+      "name": "Capitão Nemo",
+      "base_slot_price": 0
+    },
+    {
+      "name": "NFTs Arbam",
+      "base_slot_price": 0
+    }
+  ]
+}

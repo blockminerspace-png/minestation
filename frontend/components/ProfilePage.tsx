@@ -1,0 +1,469 @@
+
+import React, { useState, useEffect } from 'react';
+import { User, SeasonPass, SeasonPurchase, AccessLevel, LootBox, GameState } from '../types';
+import { User as UserIcon, Lock, Mail, Save, AlertCircle, CheckCircle2, Wallet, ShieldCheck, Share2, Copy, Newspaper } from 'lucide-react';
+import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState } from '../services/api';
+
+interface ProfilePageProps {
+  user: User;
+  onUpdateProfile: (updatedUser: User) => void;
+  onUpdateGameState?: (next: GameState) => void;
+}
+
+export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile, onUpdateGameState }) => {
+  const [username, setUsername] = useState(user.username);
+  const [polygonWallet, setPolygonWallet] = useState(user.polygonWallet || '');
+  const [seasonPasses, setSeasonPasses] = useState<SeasonPass[]>([]);
+  const [seasonPurchases, setSeasonPurchases] = useState<SeasonPurchase[]>([]);
+  const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([]);
+  const [referrals, setReferrals] = useState<string[]>([]);
+  const [referralCodeInput, setReferralCodeInput] = useState('');
+  const [referralClaimLoading, setReferralClaimLoading] = useState(false);
+
+  // Password Change State
+  const [currentPass, setCurrentPass] = useState('');
+  const [newPass, setNewPass] = useState('');
+  const [confirmPass, setConfirmPass] = useState('');
+
+
+
+  const [message, setMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [newsText, setNewsText] = useState('');
+  const [newsLink, setNewsLink] = useState('');
+  const [newsFee, setNewsFeeState] = useState<number>(0);
+  const [usdcBal, setUsdcBal] = useState<number>(0);
+  const [claimedReferralsCount, setClaimedReferralsCount] = useState<number>(0);
+  const [lootBoxes, setLootBoxesState] = useState<LootBox[]>([]);
+  const [gameSave, setGameSave] = useState<any>(null);
+
+  const handleConnectWallet = async () => {
+    try {
+      const eth = (window as any).ethereum;
+      if (!eth) {
+        setMessage({ type: 'error', text: 'Instale uma carteira compatível (ex: MetaMask).' });
+        return;
+      }
+      const accounts = await eth.request({ method: 'eth_requestAccounts' });
+      const addr = accounts && accounts[0];
+      if (!addr || !/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+        setMessage({ type: 'error', text: 'Falha ao obter endereço da carteira.' });
+        return;
+      }
+      try {
+        const chainId = await eth.request({ method: 'eth_chainId' });
+        if (chainId !== '0x89') {
+          try {
+            await eth.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89' }] });
+          } catch {
+            try {
+              await eth.request({ method: 'wallet_addEthereumChain', params: [{ chainId: '0x89', chainName: 'Polygon Mainnet', nativeCurrency: { name: 'MATIC', symbol: 'MATIC', decimals: 18 }, rpcUrls: ['https://polygon-rpc.com'], blockExplorerUrls: ['https://polygonscan.com'] }] });
+            } catch { }
+          }
+        }
+      } catch { }
+      setPolygonWallet(addr);
+      onUpdateProfile({ ...user, polygonWallet: addr });
+      setMessage({ type: 'success', text: 'Carteira conectada e salva no seu perfil.' });
+
+    } catch {
+      setMessage({ type: 'error', text: 'Autenticação cancelada ou falhou.' });
+    }
+  };
+
+  const handleUpdateBasicInfo = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!username.trim()) {
+      setMessage({ type: 'error', text: "Nome de usuário não pode estar vazio." });
+      return;
+    }
+    onUpdateProfile({ ...user, username });
+    setMessage({ type: 'success', text: "Informações básicas atualizadas." });
+  };
+
+  const handleChangePassword = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (user.password && currentPass !== user.password) {
+      setMessage({ type: 'error', text: "Senha atual incorreta." });
+      return;
+    }
+    if (newPass.length < 4) {
+      setMessage({ type: 'error', text: "A nova senha é muito curta." });
+      return;
+    }
+    if (newPass !== confirmPass) {
+      setMessage({ type: 'error', text: "As novas senhas não coincidem." });
+      return;
+    }
+
+    onUpdateProfile({ ...user, password: newPass });
+    setMessage({ type: 'success', text: "Senha alterada com sucesso." });
+    setCurrentPass('');
+    setNewPass('');
+    setConfirmPass('');
+  };
+
+
+
+  const copyReferralLink = () => {
+    if (!user.referralCode) return;
+    const url = `${window.location.origin}?ref=${user.referralCode}`;
+    navigator.clipboard.writeText(url);
+    alert("Link de indicação copiado!");
+  }
+  const handleClaimReferral = async () => {
+    try {
+      setReferralClaimLoading(true);
+      const res = await claimReferralReward(user.email);
+      if (res && res.ok) {
+        // Refresh game state to see the new box and updated count
+        const gsRes = await getGameState(user.email);
+        if (gsRes.data) {
+          setGameSave(gsRes.data);
+          setClaimedReferralsCount(gsRes.data.claimedReferrals || 0);
+          setUsdcBal(gsRes.data.usdc || 0);
+          onUpdateGameState && onUpdateGameState(gsRes.data);
+          alert('Prêmio de indicação resgatado com sucesso! Verifique seu inventário.');
+        }
+      } else {
+        alert(res?.error || 'Falha ao resgatar prêmio.');
+      }
+    } catch (e) {
+      alert('Erro ao processar resgate.');
+    } finally {
+      setReferralClaimLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const load = async () => {
+      const [passes, purchases, levels, refs, boxes] = await Promise.all([getSeasonPasses(), getSeasonPurchases(user.email), getAccessLevels(), getReferrals(user.email), getLootBoxes()]);
+      setSeasonPasses(passes);
+      setSeasonPurchases(purchases);
+      setAccessLevels(levels);
+      setReferrals((refs || []).filter(r => r !== user.username));
+      setLootBoxesState(boxes);
+      const fee = await getNewsFee();
+      setNewsFeeState(fee);
+      const gsRes = await getGameState(user.email);
+      const gs = gsRes.data;
+      setUsdcBal(gs?.usdc || 0);
+      if (gs) {
+        setClaimedReferralsCount(gs.claimedReferrals || 0);
+        setGameSave(gs);
+      }
+    };
+    load();
+  }, [user.email]);
+
+  const currentLevelName = (() => {
+    const lvl = accessLevels.find(l => l.id === user.accessLevelId);
+    return lvl ? lvl.name : (user.accessLevelId || 'Desconhecido');
+  })();
+
+  return (
+    <div className="flex flex-col p-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
+
+      <div className="flex items-center gap-3 mb-6 border-b border-slate-200 dark:border-slate-800 pb-4">
+        <div className="bg-slate-200 dark:bg-slate-800 p-2 rounded-lg text-cyan-600 dark:text-cyan-400">
+          <UserIcon size={24} />
+        </div>
+        <div>
+          <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Perfil do Operador</h2>
+          <p className="text-sm text-slate-500">Gerencie sua identidade, segurança e indicações.</p>
+        </div>
+      </div>
+
+      {message && (
+        <div className={`mb-6 p-4 rounded-lg flex items-center gap-2 text-sm font-bold ${message.type === 'success' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'}`}>
+          {message.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
+          {message.text}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 pb-8">
+
+        {/* IDENTIDADE */}
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+              <UserIcon size={18} className="text-cyan-500" /> Identidade
+            </h3>
+            <form onSubmit={handleUpdateBasicInfo} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs uppercase font-bold text-slate-500">Email (ID de Registro)</label>
+                <div className="relative">
+                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input
+                    type="text"
+                    value={user.email}
+                    disabled
+                    className="w-full bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg py-2 pl-10 pr-4 text-slate-500 dark:text-slate-400 cursor-not-allowed"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs uppercase font-bold text-slate-500">Nome de Usuário</label>
+                <div className="relative">
+                  <UserIcon className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                  <input
+                    type="text"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-slate-900 dark:text-white focus:border-cyan-500 outline-none transition-colors"
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs uppercase font-bold text-slate-500">Nível</label>
+                <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg py-2 px-3 text-slate-700 dark:text-slate-300">
+                  <ShieldCheck size={16} className="text-green-600 dark:text-green-400" />
+                  <span className="text-sm font-bold">{currentLevelName}</span>
+                </div>
+              </div>
+              <button type="submit" className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
+                <Save size={16} /> SALVAR ALTERAÇÕES
+              </button>
+            </form>
+          </div>
+
+          {/* REFERRAL SYSTEM */}
+          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+              <Share2 size={18} className="text-blue-500" /> Sistema de Indicação
+            </h3>
+
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs uppercase font-bold text-slate-500">Seu Link de Convite</label>
+                <div className="flex gap-2 mt-1">
+                  <div className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-slate-600 dark:text-slate-400 text-sm font-mono truncate flex-1">
+                    {user.referralCode ? `${window.location.origin}?ref=${user.referralCode}` : 'Código não gerado'}
+                  </div>
+                  <button
+                    onClick={copyReferralLink}
+                    className="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg"
+                    title="Copiar Link"
+                  >
+                    <Copy size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div className="bg-white dark:bg-slate-950 rounded-lg p-3 border border-slate-200 dark:border-slate-800">
+                <div className="flex justify-between items-center mb-2">
+                  <span className="text-xs font-bold text-slate-500 uppercase">Indicados</span>
+                  <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{referrals.length}</span>
+                </div>
+
+                {referrals.length > 0 ? (
+                  <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1">
+                    {[...referrals].reverse().map((refName, displayIdx) => {
+                      const originalIdx = referrals.length - 1 - displayIdx;
+                      const claimed = originalIdx < (gameSave?.claimedReferrals || 0);
+                      const claimable = !claimed && originalIdx === (gameSave?.claimedReferrals || 0);
+                      return (
+                        <div key={originalIdx} className="text-xs text-slate-600 dark:text-slate-400 flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-1.5 h-1.5 rounded-full ${claimed ? 'bg-green-500' : 'bg-slate-400'}`}></div>
+                            <span>{refName}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {claimed ? (
+                              <span className="text-[10px] bg-green-700/20 text-green-500 px-2 py-0.5 rounded border border-green-700/40">Resgatado</span>
+                            ) : (
+                              <button
+                                onClick={handleClaimReferral}
+                                disabled={!claimable}
+                                className={`text-[10px] px-2 py-1 rounded font-bold ${claimable ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed opacity-50'}`}
+                              >
+                                {claimable ? 'Resgatar' : 'Pendente'}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="text-xs text-slate-400 italic">Nenhum indicado ainda. Convide amigos para ganhar recompensas!</div>
+                )}
+              </div>
+
+              {!user.referredBy && (
+                <div className="bg-white dark:bg-slate-950 rounded-lg p-3 border border-slate-200 dark:border-slate-800 mt-3">
+                  <div className="text-xs font-bold text-slate-500 uppercase mb-2">Quem te indicou?</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={referralCodeInput}
+                      onChange={(e) => setReferralCodeInput(e.target.value)}
+                      placeholder="Código de indicação"
+                      className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm"
+                    />
+                    <button
+                      onClick={async () => {
+                        if (!referralCodeInput.trim() || referralClaimLoading) return;
+                        setReferralClaimLoading(true);
+                        const res = await claimReferralCode(user.email, referralCodeInput.trim());
+                        setReferralClaimLoading(false);
+                        if (res && res.ok) {
+                          onUpdateProfile({ ...user, referredBy: referralCodeInput.trim() });
+                          alert('Código vinculado com sucesso. Recompensas de indicação ativadas.');
+                        } else {
+                          alert(res?.error || 'Falha ao vincular código');
+                        }
+                      }}
+                      className="bg-green-600 hover:bg-green-500 text-white px-4 rounded-lg text-sm font-bold"
+                    >
+                      {referralClaimLoading ? 'Processando...' : 'VINCULAR CÓDIGO'}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {(() => {
+            const userLvlIds = user.accessLevelIds || (user.accessLevelId ? [user.accessLevelId] : []);
+            const canPost = accessLevels.some(l => userLvlIds.includes(l.id) && l.isActive && l.newsPostingEnabled);
+            if (!canPost) return null;
+            return (
+              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+                <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+                  <Newspaper size={18} className="text-purple-500" /> Publicar notícia
+                </h3>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">Taxa: ${newsFee} USDC • Saldo: ${usdcBal.toFixed(2)} USDC</div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs uppercase font-bold text-slate-500">Texto</label>
+                    <input type="text" value={newsText} onChange={e => setNewsText(e.target.value)} className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs uppercase font-bold text-slate-500">Link (Opcional)</label>
+                    <input type="text" value={newsLink} onChange={e => setNewsLink(e.target.value)} className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm" />
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={async () => {
+                      if (!newsText.trim()) return;
+                      if (!window.confirm(`Confirmar envio? Taxa de $${newsFee} USDC será debitada.`)) return;
+                      const res = await submitPlayerNews(user.email, newsText.trim(), newsLink.trim() || undefined);
+                      if (res && res.ok) {
+                        setNewsText('');
+                        setNewsLink('');
+                        setUsdcBal(typeof res.newUsdc === 'number' ? res.newUsdc : usdcBal);
+                        alert('Sua notícia foi enviada para aprovação.');
+                      } else if (res && res.missing !== undefined) {
+                        alert(`Saldo insuficiente. Faltam $${res.missing.toFixed(2)} USDC.`);
+                      } else if (res && res.error) {
+                        alert(res.error);
+                      }
+                    }} className="bg-purple-600 hover:bg-purple-500 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors">ENVIAR</button>
+                    <button onClick={() => { setNewsText(''); setNewsLink(''); }} className="bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors">CANCELAR</button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* RIGHT COLUMN */}
+        <div className="space-y-6">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Emblemas de Temporada</h3>
+            {seasonPurchases.length === 0 ? (
+              <div className="text-sm text-slate-500 dark:text-slate-400">Nenhum emblema adquirido.</div>
+            ) : (
+              <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                {seasonPurchases.map((p, idx) => {
+                  const pass = seasonPasses.find(sp => sp.id === p.passId);
+                  return (
+                    <div key={idx} className="flex flex-col items-center gap-2">
+                      {pass?.emblemUrl ? (
+                        <img src={pass.emblemUrl} alt={pass.name} className="w-16 h-16 object-cover rounded border border-slate-200 dark:border-slate-700" />
+                      ) : (
+                        <div className="w-16 h-16 rounded bg-slate-200 dark:bg-slate-800 flex items-center justify-center text-slate-600 dark:text-slate-400">🏅</div>
+                      )}
+                      <div className="text-[10px] text-slate-600 dark:text-slate-400 text-center truncate w-16">{pass?.name || p.passId}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* SEGURANÇA */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
+              <Lock size={18} className="text-red-500" /> Alterar Senha
+            </h3>
+            <form onSubmit={handleChangePassword} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-xs uppercase font-bold text-slate-500">Senha Atual</label>
+                <input
+                  type="password"
+                  value={currentPass}
+                  onChange={(e) => setCurrentPass(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-red-500 outline-none transition-colors"
+                />
+              </div>
+              <div className="border-t border-slate-200 dark:border-slate-800 my-2"></div>
+              <div className="space-y-1">
+                <label className="text-xs uppercase font-bold text-slate-500">Nova Senha</label>
+                <input
+                  type="password"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-cyan-500 outline-none transition-colors"
+                />
+              </div>
+              <div className="space-y-1">
+                <label className="text-xs uppercase font-bold text-slate-500">Confirmar Nova Senha</label>
+                <input
+                  type="password"
+                  value={confirmPass}
+                  onChange={(e) => setConfirmPass(e.target.value)}
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-cyan-500 outline-none transition-colors"
+                />
+              </div>
+              <button type="submit" className="bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
+                <Save size={16} /> ATUALIZAR SENHA
+              </button>
+            </form>
+          </div>
+
+          {/* CARTEIRA WEB3 */}
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-4 opacity-5 text-purple-500 pointer-events-none">
+              <Wallet size={100} />
+            </div>
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 relative z-10">
+              <Wallet size={18} className="text-purple-500" /> Carteira de Saque (Polygon)
+            </h3>
+            <div className="flex items-center gap-2 mb-4 relative z-10">
+              <button onClick={handleConnectWallet} disabled={!!polygonWallet} className="bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-900/50 border border-purple-300 dark:border-purple-800 text-purple-700 dark:text-purple-400 text-xs font-bold px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                Conectar carteira do navegador
+              </button>
+              {polygonWallet && (
+                <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 truncate">
+                  {polygonWallet}
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-500 mb-4 relative z-10">
+              Endereço pré-cadastrado para futuros saques de tokens e ativos NFT.
+            </p>
+
+            <div className="space-y-2 relative z-10">
+              <label className="text-xs uppercase font-bold text-slate-500">Endereço Público (0x...)</label>
+              <div className="w-full bg-slate-100 dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-700 dark:text-slate-300 font-mono text-sm">
+                {polygonWallet || 'Nenhuma carteira conectada'}
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+  );
+};

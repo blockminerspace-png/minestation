@@ -1,0 +1,10 @@
+
+export async function getReferrals(email: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${base}/referrals/${encodeURIComponent(email)}`);
+    if (!res.ok) return [];
+    return await res.json();
+  } catch {
+    return [];
+  }
+}

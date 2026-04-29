@@ -1,0 +1,974 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Painel Admin - Mine Station</title>
+    <style>
+        /* Overlay de Conexão */
+        #connection-overlay {
+            display: flex;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 9999;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            backdrop-filter: blur(5px);
+        }
+        .overlay-content {
+            background: #252526;
+            padding: 2rem;
+            border-radius: 8px;
+            border: 1px solid #f44336;
+            text-align: center;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            max-width: 400px;
+        }
+        .overlay-icon {
+            font-size: 3rem;
+            color: #f44336;
+            margin-bottom: 1rem;
+        }
+        .overlay-title {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: #fff;
+        }
+        .overlay-text {
+            color: #aaa;
+            margin-bottom: 1.5rem;
+            line-height: 1.5;
+        }
+        .retry-spinner {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-radius: 50%;
+            border-top-color: #fff;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #1e1e1e;
+            color: #fff;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+        }
+        /* Ensure Header is clickable */
+        header {
+            background-color: #2d2d2d;
+            padding: 1rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #333;
+            position: relative;
+            z-index: 100;
+        }
+        h1 { margin: 0; font-size: 1.2rem; }
+        
+        .controls {
+            display: flex;
+            gap: 20px;
+        }
+
+        .control-group {
+            background: #252526;
+            padding: 10px 20px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background-color: #555;
+            display: inline-block;
+        }
+        .status-dot.running { background-color: #4caf50; box-shadow: 0 0 5px #4caf50; }
+        .status-dot.stopped { background-color: #f44336; }
+
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: opacity 0.2s;
+        }
+        button:hover { opacity: 0.8; }
+        
+        .btn-start { background-color: #2e7d32; color: white; }
+        .btn-stop { background-color: #c62828; color: white; display: none; }
+        .btn-restart { background-color: #f57c00; color: white; display: none; }
+        .btn-logout { background-color: #555; color: white; margin-left: 20px; }
+        .btn-logout:hover { background-color: #777; }
+
+        .stats-bar {
+            background-color: #252526;
+            padding: 10px;
+            border-bottom: 1px solid #333;
+            display: grid;
+            grid-template-columns: 280px 1fr;
+            gap: 15px;
+            font-size: 0.85rem;
+        }
+
+        .stats-column-left {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .stats-column-right {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            height: 100%;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            min-width: 0;
+        }
+        
+        /* Estilos para a lista de workers */
+        .worker-list {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+            gap: 10px;
+            margin-top: 10px;
+            max-height: none;
+            overflow-y: visible;
+            background: transparent;
+            padding: 0;
+        }
+        .worker-item {
+            background-color: #333;
+            border-radius: 4px;
+            padding: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            border: 1px solid #444;
+            align-items: center;
+        }
+        .worker-item:last-child { border-bottom: 1px solid #444; }
+        
+        .w-header {
+            font-size: 0.7rem;
+            color: #888;
+            font-weight: bold;
+            margin-bottom: 2px;
+        }
+        
+        .w-cpu-bar {
+            width: 100%;
+            height: 4px;
+            background: #222;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .w-cpu-fill {
+            height: 100%;
+            background: #4caf50;
+        }
+        
+        .w-stats-row {
+            display: flex;
+            justify-content: space-between;
+            width: 100%;
+            font-size: 0.8rem;
+            margin-top: 2px;
+        }
+        .w-cpu-val { color: #fff; font-weight: bold; }
+        .w-mem-val { color: #aaa; font-size: 0.75rem; }
+
+        .stat-label { color: #888; font-size: 0.75rem; text-transform: uppercase; }
+        .stat-value { font-family: 'Consolas', monospace; font-size: 1rem; color: #4fc1ff; }
+        .stat-sub { font-size: 0.75rem; color: #aaa; }
+
+        .progress-bar {
+            height: 4px;
+            background: #333;
+            border-radius: 2px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #4caf50;
+            width: 0%;
+            transition: width 0.5s ease;
+        }
+        .progress-fill.warn { background: #ff9800; }
+        .progress-fill.danger { background: #f44336; }
+
+        main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+
+        .terminal-window {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #333;
+            min-width: 0; /* Prevents overflow */
+        }
+        .terminal-window:last-child { border-right: none; }
+
+        .terminal-header {
+            background-color: #252526;
+            padding: 5px 10px;
+            font-size: 0.9rem;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+        }
+
+        .terminal-content {
+            flex: 1;
+            background-color: #000;
+            padding: 10px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.9rem;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .log-line { margin: 0; line-height: 1.4; }
+        .log-error { color: #ff5252; }
+
+        /* File Manager Modal */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal-content {
+            background: #252526;
+            width: 80%;
+            height: 80%;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            border: 1px solid #444;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+        }
+        .modal-header {
+            padding: 10px 15px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #333;
+        }
+        .modal-body {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        .file-list {
+            width: 300px;
+            border-right: 1px solid #333;
+            overflow-y: auto;
+            background: #1e1e1e;
+        }
+        .file-viewer {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #1e1e1e;
+        }
+        .file-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border-bottom: 1px solid #2a2a2a;
+            font-size: 0.9rem;
+        }
+        .file-item:hover { background: #2a2d2e; }
+        .file-item.active { background: #37373d; }
+        .file-icon { width: 16px; text-align: center; color: #888; }
+        .folder-icon { color: #dcb67a; }
+        .file-actions {
+            margin-left: auto;
+            display: none;
+        }
+        .file-item:hover .file-actions {
+            display: flex;
+            gap: 5px;
+        }
+        .btn-icon {
+            background: transparent;
+            border: none;
+            color: #aaa;
+            cursor: pointer;
+            padding: 2px 5px;
+            font-size: 0.8rem;
+        }
+        .btn-icon:hover { color: #fff; background: #444; border-radius: 3px; }
+        .btn-icon.delete:hover { color: #ff5252; }
+
+        .breadcrumb {
+            padding: 8px 15px;
+            background: #2d2d2d;
+            border-bottom: 1px solid #333;
+            font-size: 0.85rem;
+            color: #aaa;
+            display: flex;
+            gap: 5px;
+            align-items: center;
+        }
+        .breadcrumb-path { flex: 1; display: flex; gap: 5px; overflow-x: auto; }
+        .breadcrumb span { cursor: pointer; color: #4fc1ff; }
+        .breadcrumb span:hover { text-decoration: underline; }
+        
+        .file-toolbar {
+            display: flex;
+            gap: 10px;
+            padding: 5px;
+            background: #333;
+            border-bottom: 1px solid #444;
+        }
+        .btn-tool {
+            background: #444;
+            border: none;
+            color: #fff;
+            padding: 4px 10px;
+            border-radius: 3px;
+            font-size: 0.8rem;
+            cursor: pointer;
+        }
+        .btn-tool:hover { background: #555; }
+        .btn-save { background: #007acc; }
+        .btn-save:hover { background: #0062a3; }
+        
+        #file-editor {
+            flex: 1;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border: none;
+            padding: 10px;
+            font-family: 'Consolas', monospace;
+            resize: none;
+            outline: none;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .btn-close { background: transparent; color: #fff; font-size: 1.2rem; padding: 0 5px; }
+        .btn-files { background-color: #007acc; color: white; margin-left: 20px; }
+
+    </style>
+</head>
+<body>
+    <div id="file-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Gerenciador de Arquivos</h3>
+                <button id="btn-close-modal" class="btn-close">×</button>
+            </div>
+            <div class="file-toolbar">
+                <button class="btn-tool" onclick="document.getElementById('file-upload').click()">Upload</button>
+                <input type="file" id="file-upload" style="display: none;" onchange="uploadFile(this)">
+                <button class="btn-tool" onclick="createFolder()">Nova Pasta</button>
+                <span style="flex:1"></span>
+                <button class="btn-tool btn-save" onclick="saveFile()">Salvar Alterações</button>
+            </div>
+            <div class="breadcrumb">
+                <div id="file-breadcrumb" class="breadcrumb-path"></div>
+            </div>
+            <div class="modal-body">
+                <div id="file-list" class="file-list"></div>
+                <div class="file-viewer">
+                    <textarea id="file-editor" placeholder="Selecione um arquivo para visualizar..."></textarea>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="connection-overlay">
+        <div class="overlay-content">
+            <div class="overlay-icon">⚠️</div>
+            <div class="overlay-title">Conexão Perdida</div>
+            <div class="overlay-text">
+                O painel administrativo não está conectado ao servidor.<br>
+                Verifique se o servidor foi iniciado no terminal.
+            </div>
+            <div style="color: #666; font-size: 0.9rem; margin-top: 10px;">
+                <button onclick="manualReconnect()" style="background: #444; color: #fff; border: 1px solid #555; padding: 5px 10px; cursor: pointer;">Tentar Reconectar</button>
+                <button onclick="forceHideOverlay()" style="background: #444; color: #fff; border: 1px solid #555; padding: 5px 10px; cursor: pointer; margin-left: 10px;">Forçar Acesso</button>
+            </div>
+        </div>
+    </div>
+
+    <header>
+        <h1>Mine Station - Painel de Controle</h1>
+        <div class="controls">
+            <div class="control-group">
+                <span id="status-backend" class="status-dot stopped"></span>
+                <strong>Backend</strong>
+                <div style="display: flex; align-items: center; gap: 5px; background: #333; padding: 2px 8px; border-radius: 4px; margin: 0 5px;">
+                    <label style="font-size: 0.75rem; color: #888;">Núcleos:</label>
+                    <input type="number" id="input-backend-cores" value="4" min="1" style="width: 40px; background: transparent; border: none; color: #fff; font-weight: bold; font-family: monospace;">
+                </div>
+                <button id="btn-start-backend" class="btn-start">Iniciar</button>
+                <button id="btn-restart-backend" class="btn-restart">Reiniciar</button>
+                <button id="btn-stop-backend" class="btn-stop">Parar</button>
+            </div>
+            <div class="control-group">
+                <span id="status-frontend" class="status-dot stopped"></span>
+                <strong>Frontend</strong>
+                <button id="btn-start-frontend" class="btn-start">Iniciar</button>
+                <button id="btn-restart-frontend" class="btn-restart">Reiniciar</button>
+                <button id="btn-stop-frontend" class="btn-stop">Parar</button>
+            </div>
+            <button id="btn-logout" class="btn-logout">Sair</button>
+            <button id="btn-files" class="btn-files">Arquivos</button>
+        </div>
+    </header>
+
+    <div class="stats-bar">
+        <!-- Coluna da Esquerda -->
+        <div class="stats-column-left">
+            <div class="stat-item">
+                <span class="stat-label">Processador (CPU)</span>
+                <div class="stat-value" id="cpu-model">Carregando...</div>
+                <div class="stat-sub"><span id="cpu-count">-</span> Núcleos</div>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Memória do Sistema</span>
+                <div class="stat-value"><span id="mem-used">-</span> / <span id="mem-total">-</span> GB</div>
+                <div class="progress-bar"><div id="mem-bar" class="progress-fill"></div></div>
+                <div class="stat-sub"><span id="mem-percent">0</span>% em uso</div>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Uso Frontend</span>
+                <div class="stat-value" id="frontend-cpu">0% CPU</div>
+                <div class="stat-sub" id="frontend-mem">0 MB RAM</div>
+            </div>
+        </div>
+
+        <!-- Coluna da Direita -->
+        <div class="stats-column-right stat-item">
+            <span class="stat-label">Uso Backend (Cluster Multi-Core)</span>
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                <div class="stat-value" id="backend-cpu">0% CPU (Total)</div>
+                <div class="stat-sub" id="backend-mem">0 MB RAM</div>
+            </div>
+            
+            <div id="backend-workers" class="worker-list">
+                <div style="text-align: center; color: #666; padding: 10px;">Aguardando dados do cluster...</div>
+            </div>
+        </div>
+    </div>
+
+    <main>
+        <div class="terminal-window">
+            <div class="terminal-header">
+                <span>Logs Backend (Porta 5000)</span>
+                <button id="btn-clear-backend" style="padding: 2px 8px; font-size: 0.8rem; background: #444; cursor: pointer;">Limpar</button>
+            </div>
+            <div id="logs-backend" class="terminal-content"></div>
+        </div>
+        <div class="terminal-window">
+            <div class="terminal-header">
+                <span>Logs Frontend (Porta 5173)</span>
+                <button id="btn-clear-frontend" style="padding: 2px 8px; font-size: 0.8rem; background: #444; cursor: pointer;">Limpar</button>
+            </div>
+            <div id="logs-frontend" class="terminal-content"></div>
+        </div>
+    </main>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        const overlay = document.getElementById('connection-overlay');
+        
+        function forceHideOverlay() {
+            overlay.style.display = 'none';
+        }
+
+        const socket = io({
+            reconnection: false, // Desativa reconexão automática para evitar spam de erros
+            transports: ['websocket'] // Força websocket para evitar erros de polling HTTP
+        });
+        const logsBackend = document.getElementById('logs-backend');
+        const logsFrontend = document.getElementById('logs-frontend');
+
+        // Check if already connected (race condition fix)
+        if (socket.connected) {
+            console.log("Já conectado ao carregar script");
+            overlay.style.display = 'none';
+        }
+
+        // Auto Logout on Wallet Change
+        if (window.ethereum) {
+            window.ethereum.on('accountsChanged', (accounts) => {
+                console.log("Conta alterada, saindo...");
+                logout();
+            });
+        }
+
+        async function logout() {
+            try {
+                await fetch('/api/auth/logout', { method: 'POST' });
+                window.location.href = '/login.html';
+            } catch (e) {
+                console.error("Erro ao sair", e);
+                window.location.href = '/login.html';
+            }
+        }
+
+        // Socket Events
+        socket.on('connect', () => {
+            console.log('Conectado ao servidor admin');
+            overlay.style.display = 'none';
+        });
+
+        socket.on('disconnect', () => {
+            console.log('Desconectado do servidor admin');
+            overlay.style.display = 'flex';
+        });
+
+        socket.on('connect_error', (err) => {
+            console.error("Erro de conexão socket:", err.message);
+            if (err.message === "Authentication error") {
+                window.location.href = '/login.html';
+            } else {
+                overlay.style.display = 'flex';
+            }
+        });
+
+        function manualReconnect() {
+            window.location.reload(); // Melhor recarregar para revalidar auth
+        }
+
+        socket.on('status', (status) => {
+            updateStatus('backend', status.backend);
+            updateStatus('frontend', status.frontend);
+        });
+
+        socket.on('log-backend', (msg) => appendLog(logsBackend, msg));
+        socket.on('log-frontend', (msg) => appendLog(logsFrontend, msg));
+
+        socket.on('stats-update', (stats) => {
+            updateStats(stats);
+        });
+
+        // Functions
+        function startBackend() { 
+            const cores = document.getElementById('input-backend-cores').value;
+            console.log('startBackend clicked', { cores }); 
+            socket.emit('start-backend', { cores: parseInt(cores) }); 
+        }
+        function stopBackend() { console.log('stopBackend clicked'); socket.emit('stop-backend'); }
+        function restartBackend() { 
+            const cores = document.getElementById('input-backend-cores').value;
+            console.log('restartBackend clicked', { cores }); 
+            socket.emit('restart-backend', { cores: parseInt(cores) }); 
+        }
+
+        function startFrontend() { console.log('startFrontend clicked'); socket.emit('start-frontend'); }
+        function stopFrontend() { console.log('stopFrontend clicked'); socket.emit('stop-frontend'); }
+        function restartFrontend() { console.log('restartFrontend clicked'); socket.emit('restart-frontend'); }
+
+        // Event Listeners (Safer than onclick)
+        document.addEventListener('DOMContentLoaded', () => {
+            console.log('Admin Panel Loaded');
+            
+            const bindClick = (id, fn) => {
+                const el = document.getElementById(id);
+                if (el) el.addEventListener('click', fn);
+                else console.warn('Element not found:', id);
+            };
+
+            bindClick('btn-start-backend', startBackend);
+            bindClick('btn-stop-backend', stopBackend);
+            bindClick('btn-restart-backend', restartBackend);
+            
+            bindClick('btn-start-frontend', startFrontend);
+            bindClick('btn-stop-frontend', stopFrontend);
+            bindClick('btn-restart-frontend', restartFrontend);
+            
+            bindClick('btn-logout', logout);
+
+            bindClick('btn-clear-backend', () => clearLogs('backend'));
+            bindClick('btn-clear-frontend', () => clearLogs('frontend'));
+
+            bindClick('btn-files', openFileManager);
+            bindClick('btn-close-modal', closeFileManager);
+        });
+
+        // --- File Manager Logic ---
+        let currentPath = '';
+        let currentFile = null;
+
+        function openFileManager() {
+            document.getElementById('file-modal').style.display = 'flex';
+            loadFiles('');
+        }
+
+        function closeFileManager() {
+            document.getElementById('file-modal').style.display = 'none';
+        }
+
+        function loadFiles(path) {
+            socket.emit('list-files', path, (response) => {
+                if (response.error) {
+                    alert('Erro: ' + response.error);
+                    return;
+                }
+                currentPath = response.currentPath;
+                renderBreadcrumb(currentPath);
+                renderFileList(response.data);
+            });
+        }
+
+        function renderBreadcrumb(pathStr) {
+            const container = document.getElementById('file-breadcrumb');
+            container.innerHTML = '';
+            
+            // Root item
+            const rootSpan = document.createElement('span');
+            rootSpan.textContent = 'root';
+            rootSpan.onclick = () => loadFiles('');
+            container.appendChild(rootSpan);
+
+            if (!pathStr) return;
+
+            const parts = pathStr.split(/[/\\]/);
+            let accumPath = '';
+            
+            parts.forEach((part, index) => {
+                accumPath += (accumPath ? '/' : '') + part;
+                const separator = document.createTextNode(' / ');
+                container.appendChild(separator);
+                
+                const span = document.createElement('span');
+                span.textContent = part;
+                const targetPath = accumPath; // capture for closure
+                span.onclick = () => loadFiles(targetPath);
+                container.appendChild(span);
+            });
+        }
+
+        function renderFileList(files) {
+            const container = document.getElementById('file-list');
+            container.innerHTML = '';
+
+            // Add ".." if not root
+            if (currentPath) {
+                const parentPath = currentPath.split(/[/\\]/).slice(0, -1).join('/');
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                div.innerHTML = `<span class="file-icon folder-icon">📁</span> ..`;
+                div.onclick = () => loadFiles(parentPath);
+                container.appendChild(div);
+            }
+
+            files.forEach(file => {
+                const div = document.createElement('div');
+                div.className = 'file-item';
+                const icon = file.isDirectory ? '📁' : '📄';
+                const iconClass = file.isDirectory ? 'folder-icon' : '';
+                
+                div.innerHTML = `
+                    <span class="file-icon ${iconClass}">${icon}</span>
+                    <span style="flex:1; overflow:hidden; text-overflow:ellipsis;">${file.name}</span>
+                    <div class="file-actions">
+                        <button class="btn-icon delete" title="Excluir">🗑️</button>
+                    </div>
+                `;
+                
+                // Click to Open/View
+                div.onclick = (e) => {
+                    if (e.target.closest('.delete')) return; // Ignore delete click
+                    
+                    if (file.isDirectory) {
+                        const nextPath = currentPath ? `${currentPath}/${file.name}` : file.name;
+                        loadFiles(nextPath);
+                    } else {
+                        // Highlight active
+                        document.querySelectorAll('.file-item').forEach(el => el.classList.remove('active'));
+                        div.classList.add('active');
+                        viewFile(file.name);
+                    }
+                };
+
+                // Delete Action
+                const btnDelete = div.querySelector('.delete');
+                btnDelete.onclick = (e) => {
+                    e.stopPropagation();
+                    deleteFile(file.name);
+                };
+                
+                container.appendChild(div);
+            });
+        }
+
+        function viewFile(filename) {
+            currentFile = filename;
+            const filePath = currentPath ? `${currentPath}/${filename}` : filename;
+            const editor = document.getElementById('file-editor');
+            editor.value = "Carregando...";
+            
+            socket.emit('read-file', filePath, (response) => {
+                if (response.error) {
+                    editor.value = "Erro ao carregar arquivo: " + response.error;
+                } else {
+                    editor.value = response.data;
+                }
+            });
+        }
+
+        function saveFile() {
+            if (!currentFile) {
+                alert("Nenhum arquivo aberto.");
+                return;
+            }
+            
+            const filePath = currentPath ? `${currentPath}/${currentFile}` : currentFile;
+            const content = document.getElementById('file-editor').value;
+            
+            socket.emit('save-file', { path: filePath, content }, (response) => {
+                if (response.error) {
+                    alert("Erro ao salvar: " + response.error);
+                } else {
+                    alert("Arquivo salvo com sucesso!");
+                }
+            });
+        }
+
+        function deleteFile(filename) {
+            if (!confirm(`Tem certeza que deseja excluir "${filename}"? Esta ação não pode ser desfeita.`)) {
+                return;
+            }
+
+            const filePath = currentPath ? `${currentPath}/${filename}` : filename;
+            
+            socket.emit('delete-file', filePath, (response) => {
+                if (response.error) {
+                    alert("Erro ao excluir: " + response.error);
+                } else {
+                    loadFiles(currentPath); // Refresh list
+                    if (currentFile === filename) {
+                        document.getElementById('file-editor').value = "";
+                        currentFile = null;
+                    }
+                }
+            });
+        }
+
+        function createFolder() {
+            const name = prompt("Nome da nova pasta:");
+            if (!name) return;
+
+            socket.emit('create-folder', { path: currentPath, name }, (response) => {
+                if (response.error) {
+                    alert("Erro ao criar pasta: " + response.error);
+                } else {
+                    loadFiles(currentPath);
+                }
+            });
+        }
+
+        function uploadFile(input) {
+            const file = input.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                // For text files/code, this is fine. For binaries, we might need arrayBuffer.
+                // But server expects string/buffer. fs.writeFileSync handles both.
+                // However, FileReader.readAsText might corrupt binaries.
+                // Let's use ArrayBuffer and send as Buffer.
+                
+                const content = e.target.result; // ArrayBuffer
+                
+                socket.emit('upload-file', { 
+                    path: currentPath, 
+                    name: file.name, 
+                    content: content 
+                }, (response) => {
+                    if (response.error) {
+                        alert("Erro ao enviar arquivo: " + response.error);
+                    } else {
+                        alert("Upload concluído!");
+                        loadFiles(currentPath);
+                    }
+                    input.value = ''; // Reset input
+                });
+            };
+            
+            // socket.io supports ArrayBuffer
+            reader.readAsArrayBuffer(file);
+        }
+
+        function updateStatus(type, isRunning) {
+            const dot = document.getElementById(`status-${type}`);
+            const btnStart = document.getElementById(`btn-start-${type}`);
+            const btnStop = document.getElementById(`btn-stop-${type}`);
+            const btnRestart = document.getElementById(`btn-restart-${type}`);
+
+            // Ensure buttons exist before styling
+            if (!dot || !btnStart || !btnStop || !btnRestart) return;
+
+            if (isRunning) {
+                dot.className = 'status-dot running';
+                btnStart.style.display = 'none';
+                btnStop.style.display = 'inline-block';
+                btnRestart.style.display = 'inline-block';
+            } else {
+                dot.className = 'status-dot stopped';
+                btnStart.style.display = 'inline-block';
+                btnStop.style.display = 'none';
+                btnRestart.style.display = 'none';
+            }
+        }
+
+        function appendLog(element, msg) {
+            const div = document.createElement('div');
+            div.className = 'log-line';
+            div.textContent = msg;
+            element.appendChild(div);
+            element.scrollTop = element.scrollHeight;
+        }
+
+        function clearLogs(type) {
+            const el = document.getElementById(`logs-${type}`);
+            el.innerHTML = '';
+        }
+
+        function formatBytes(bytes) {
+            if (bytes === 0) return '0 B';
+            const k = 1024;
+            const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function updateStats(stats) {
+            // System
+            document.getElementById('cpu-model').textContent = stats.system.cpuModel;
+            const cpuCountEl = document.getElementById('cpu-count');
+            const coreInput = document.getElementById('input-backend-cores');
+            
+            // Set max cores on input if not already set or if system changed
+            if (cpuCountEl.textContent !== String(stats.system.cpuCount)) {
+                cpuCountEl.textContent = stats.system.cpuCount;
+                coreInput.max = stats.system.cpuCount;
+                if (!coreInput.dataset.initialized) {
+                    coreInput.value = stats.system.cpuCount;
+                    coreInput.dataset.initialized = "true";
+                }
+            }
+            
+            const totalMemGB = (stats.system.totalMem / (1024 ** 3)).toFixed(2);
+            const usedMemGB = (stats.system.usedMem / (1024 ** 3)).toFixed(2);
+            const memPercent = ((stats.system.usedMem / stats.system.totalMem) * 100).toFixed(1);
+
+            document.getElementById('mem-total').textContent = totalMemGB;
+            document.getElementById('mem-used').textContent = usedMemGB;
+            document.getElementById('mem-percent').textContent = memPercent;
+            
+            const memBar = document.getElementById('mem-bar');
+            memBar.style.width = `${memPercent}%`;
+            memBar.className = 'progress-fill' + (memPercent > 90 ? ' danger' : memPercent > 70 ? ' warn' : '');
+
+            // Backend
+            const backendCpuEl = document.getElementById('backend-cpu');
+            const backendMemEl = document.getElementById('backend-mem');
+            const workersListEl = document.getElementById('backend-workers');
+
+            if (stats.cluster && stats.cluster.workers) {
+                // Use Detailed Cluster Stats
+                let totalCpu = 0;
+                let totalMem = 0;
+
+                // Force 2 rows layout
+                const workerCount = stats.cluster.workers.length;
+                const cols = Math.ceil(workerCount / 2);
+                workersListEl.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+                
+                let html = '';
+                // Sort by PID to keep order stable
+                stats.cluster.workers.sort((a,b) => a.pid - b.pid).forEach((w, index) => {
+                    totalCpu += w.cpu;
+                    totalMem += w.mem;
+                    
+                    const cpuPercent = w.cpu.toFixed(1);
+                    const memStr = formatBytes(w.mem);
+                    
+                    // Dynamic color for CPU load
+                    let barColor = '#4caf50';
+                    if (w.cpu > 50) barColor = '#ff9800';
+                    if (w.cpu > 80) barColor = '#f44336';
+                    
+                    html += `
+                        <div class="worker-item">
+                            <div class="w-header">Núcleo ${index + 1}</div>
+                            <div class="w-cpu-bar">
+                                <div class="w-cpu-fill" style="width: ${Math.min(w.cpu, 100)}%; background-color: ${barColor}"></div>
+                            </div>
+                            <div class="w-stats-row">
+                                <span class="w-cpu-val">${cpuPercent}%</span>
+                                <span class="w-mem-val">${memStr}</span>
+                            </div>
+                        </div>
+                    `;
+                });
+
+                workersListEl.innerHTML = html;
+                backendCpuEl.textContent = `${(totalCpu / stats.cluster.totalCores).toFixed(1)}% Global`;
+                backendMemEl.textContent = formatBytes(totalMem);
+
+            } else if (stats.backend) {
+                // Fallback to single process stats
+                workersListEl.innerHTML = '<div style="text-align: center; color: #666; padding: 5px;">Modo Single Process</div>';
+                backendCpuEl.textContent = `${stats.backend.cpu.toFixed(1)}% CPU`;
+                backendMemEl.textContent = formatBytes(stats.backend.memory);
+            } else {
+                workersListEl.innerHTML = '<div style="text-align: center; color: #666; padding: 5px;">Parado</div>';
+                backendCpuEl.textContent = 'Parado';
+                backendMemEl.textContent = '-';
+            }
+
+            // Frontend
+            if (stats.frontend) {
+                document.getElementById('frontend-cpu').textContent = `${stats.frontend.cpu.toFixed(1)}% CPU`;
+                document.getElementById('frontend-mem').textContent = formatBytes(stats.frontend.memory);
+            } else {
+                document.getElementById('frontend-cpu').textContent = 'Parado';
+                document.getElementById('frontend-mem').textContent = '-';
+            }
+        }
+    </script>
+</body>
+</html>

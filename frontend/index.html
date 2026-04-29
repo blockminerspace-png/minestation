@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+
+<head>
+  <meta name="cryptocoinsad" content="cryptocoinsad-82489" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mine Station</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&display=swap">
+  <style>
+    body {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* Animation for the clicking effect */
+    @keyframes floatUp {
+      0% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      100% {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+    }
+
+    .float-text {
+      position: absolute;
+      pointer-events: none;
+      animation: floatUp 1s ease-out forwards;
+    }
+  </style>
+  <link rel="stylesheet" href="/index.css">
+
+</head>
+
+<body
+  class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 overflow-hidden transition-colors duration-300">
+  <div id="applixir_wan"></div>
+  <div id="root"></div>
+  <script type="module" src="/index.tsx"></script>
+</body>
+
+</html>

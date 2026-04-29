@@ -1,0 +1,2099 @@
+[
+  {
+    "code": "05UIJZA2",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767194214727",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "111C7517",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767223652534",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "1FNZ57A6",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763037061",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "2LXJWKH2",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767652164822",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "2RJH4MFD",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767223651869",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "JXKN1F2U",
+    "loot_box_id": "a03f117a-1127-400c-92a8-da47fb0e39ad",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770430193546",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "76JJI8XZ",
+    "loot_box_id": "5e07393f-378f-4887-a7bb-1af59ca559db",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770554999207",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "4D1W8J0B",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767315318114",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "4G3DS6WS",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767315320338",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "5G29VMJ3",
+    "loot_box_id": "c1b1bb3c-23b6-41e1-9cc9-204541f8183d",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766584882012",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "5VPBWJU7",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767212204562",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "632X4299",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763042134",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "67UJSSW4",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767302657961",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6T1MNBMM",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767315320906",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "7CUF8ADL",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767474776617",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "7EKA32OM",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763035364",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "7IBLIXDH",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763040443",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "81RK27PK",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767188323427",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8DJP6LKF",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767194498973",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8H42YR5M",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767187969559",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "90A9TKVD",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767192000467",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "930MV7LQ",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767571378208",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "98II5K2O",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763041307",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "A0LT90WS",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767232162225",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "A41HW966",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763033620",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "BNWDPZS4",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767188917659",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "BPLLHXHH",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767184359584",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "C6FS4CHU",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763028257",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "CECTW99R",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767223649724",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "CJHWNMWO",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763038778",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "CVCGOOZJ",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763034475",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "CZG2N5DC",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767273246112",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "DCIXBAFX",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767194467533",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "DI1JBPAC",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767191785415",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "DW1LLANQ",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_player_1x",
+    "is_active": 1,
+    "created_at": "1767191791862",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "E0WMQSTC",
+    "loot_box_id": "a23098b0-1978-4d25-aea2-751d211fe27c",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1767171445260",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "DMST3Y18",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766838256023",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "E9EB9BHL",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767315319690",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "EZGR4ZIO",
+    "loot_box_id": "2c3bede1-bd15-49f3-816a-3677ef59f447",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770423806591",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "ERGXSE3R",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767187201441",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "ESLED2K2",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767302657266",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "EYWMH337",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767223648838",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "FA1OVJQR",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767209119811",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NIXL322T",
+    "loot_box_id": "a827a18a-a034-42e4-b09d-e3b5aa91c08f",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770423892737",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "GB5AK5O5",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767474778074",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "GPT83E9P",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763030082",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "9OKJXIUW",
+    "loot_box_id": "a827a18a-a034-42e4-b09d-e3b5aa91c08f",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770423900545",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "H0KRHLWH",
+    "loot_box_id": "9194de9a-9158-41b6-b9f0-1d70f71d35f1",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768593869129",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "H57M8AS0",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767474775138",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "WABUW1T5",
+    "loot_box_id": "a827a18a-a034-42e4-b09d-e3b5aa91c08f",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770423906338",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HX6D9MZL",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763039593",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "I0ZATX36",
+    "loot_box_id": "9194de9a-9158-41b6-b9f0-1d70f71d35f1",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768593864351",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "IVEZOXTA",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767273246988",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "J42KX1XM",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763048665",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "JMQKWLDH",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763027382",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "KAU47MFN",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763043051",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "KF16UCXO",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767187668778",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "KMBQJO3T",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767302655865",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "LTM8N1S0",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767232155376",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "M36XD6DP",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767204878517",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "MFRP1BZQ",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1767191947601",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "N2Q6I0NT",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763036218",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "N3RKCLO8",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763047685",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NF9QLC0G",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763049488",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NK5SG2UG",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763024316",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "OB9596HM",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767273243904",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "OGBSPMGV",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767224463414",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "OJBJWN85",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763037926",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "P2Y3PCIX",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767302654249",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "PDKFB3M9",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767223645837",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "PO1FFWQX",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763031864",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "Q7ZH6VY9",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763045917",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "QILLHWX7",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767186801431",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "QNO7NXVA",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767302656609",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "EX8TH0VN",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766549249333",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "E1U9EKEZ",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766671040295",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "QYGG9U4Q",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763044027",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "RN3IIEDE",
+    "loot_box_id": "9194de9a-9158-41b6-b9f0-1d70f71d35f1",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768593865893",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "CBCZ8G6A",
+    "loot_box_id": "a827a18a-a034-42e4-b09d-e3b5aa91c08f",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770423895350",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "SJECLY9Q",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767474777417",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "SW8ORYLA",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767183830742",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "SXVX4R5S",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767315321525",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "T1JQA7B1",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763044939",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "KDDTZD55",
+    "loot_box_id": "a827a18a-a034-42e4-b09d-e3b5aa91c08f",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770423897596",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "T51XKI25",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763050265",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TFYS7AIN",
+    "loot_box_id": "a827a18a-a034-42e4-b09d-e3b5aa91c08f",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770423904154",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TN6LY8AS",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763046853",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TUNM0GPT",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767199834293",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "UCIDY2OW",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767389970301",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "UFVDMHET",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767571251159",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "UIQ31Q62",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763029133",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "UR34GB0J",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767232161332",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "VIRTGEFH",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767183429389",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "VYDS0IXX",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767194428531",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "W0989E7M",
+    "loot_box_id": "4bbc893e-ffeb-4a01-8c5d-b49740acf5ec",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766806685221",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "W6F0K7QG",
+    "loot_box_id": "9194de9a-9158-41b6-b9f0-1d70f71d35f1",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768593869935",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "W6Z280T9",
+    "loot_box_id": "9194de9a-9158-41b6-b9f0-1d70f71d35f1",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768593847602",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "WBTZU4QC",
+    "loot_box_id": "a23098b0-1978-4d25-aea2-751d211fe27c",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1767170543332",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "WGS5NDPN",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767199811657",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "WX3481S2",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763051368",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "X1GC4GQ6",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767474778777",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "X3VVC1CD",
+    "loot_box_id": "9194de9a-9158-41b6-b9f0-1d70f71d35f1",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768593863584",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "X6KBAVAQ",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763026405",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "XB8VLR5L",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763032742",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "XY5YLUTK",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768763030995",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "YU5IIQG6",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1767212057414",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "GQL9WBUN",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954891499",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HZIVXCWI",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954892501",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NWYAR4G8",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954893386",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "KS9GOUHP",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954894271",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HKNFOHX8",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954895124",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "AFHJDWC1",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954895917",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "JTPA6SL6",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954896782",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "2S9LKM95",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954897559",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "L96DO29O",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954898387",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "Q89VTHIA",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954899204",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "ESF4A714",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954900016",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "C0SCWCCH",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954900858",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "OLFC05BJ",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954901741",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6O2DZT13",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954902533",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "11ZSNLCA",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954903447",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "XL1E7QS9",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766842647286",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "QG9WSFGB",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954904327",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6RTIP1IG",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954905283",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "MEXN7K24",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954906206",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8GGO16OU",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954907069",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "I5GEEH9N",
+    "loot_box_id": "d8125ecd-ffd0-489c-8ff6-46deef346fe8",
+    "type": "roleta_global_1x",
+    "is_active": 1,
+    "created_at": "1768954907893",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "GJ7VX87P",
+    "loot_box_id": "3dc17afa-983d-4f32-9cf5-b89e1bdd17c6",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770424040076",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "C86LSMAT",
+    "loot_box_id": "1335dd4a-47e2-4ec2-af3d-47c15f6534fb",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769732935561",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6LJT149Y",
+    "loot_box_id": "161727fa-278b-4e96-8ba1-5a6e9ff889c4",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769778156580",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "BDAFJH81",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1766549357409",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "B6W1TYJC",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769132243929",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "XFGVHFCN",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766549424000",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "2DRLBTCW",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766722844187",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "2FCQ1A9K",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766763871014",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "3PAXB7YL",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766773416215",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "5G19Q27M",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766774278736",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6GF1852D",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766711503570",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6MTKI4ZW",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766703355228",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8BFYL7PF",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766671719725",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "90N1G9F4",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766727349846",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "9GFF9YJM",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766722984216",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "9MUNB9TI",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766714141642",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "9T63YF8B",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766700599036",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "9YCCNZTX",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766754436609",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "AALM84BG",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766773376905",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "ASF2M87J",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766774329012",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "D1TYO3F1",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766718330053",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "EMARDZU2",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766768298192",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "GYYP556A",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766705080729",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "I5554SO7",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766618878657",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "ICEPOY0Y",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766710730370",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "IXTZDXDN",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766722310435",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "KRATRP1T",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766779893201",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "MBLICDAC",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766772162470",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NWJZ36TC",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766689125827",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NZVZHR9D",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766714381357",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "O5Y9HPQD",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766779965253",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "OZU442TF",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766780040277",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "P6VZVQO0",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766711880568",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "PC37AO50",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766725407629",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "Q82PQZ9F",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766780289667",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "QSHGLLWP",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766711935514",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TPLJZX75",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766774239136",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "UJ8EVNUE",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766780107645",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "VTUCYE36",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766667844472",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "X6CLWD51",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766667572750",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "XU38J8P3",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766667484401",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "Z8NKYV31",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1766773557745",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "JLYDMPH2",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769608639921",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "RXMU2AE4",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769132318461",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "AJNC2O63",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769218567457",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "RP1X_1767191607102",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "roleta_player_1x",
+    "is_active": 1,
+    "created_at": "1767191607112",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "B688431P",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766608749349",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HY67PDT9",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766609249609",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TESTROULETTE_1767191059348",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "roleta_test",
+    "is_active": 1,
+    "created_at": "1767191059356",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "3NWX99L3",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766841128808",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "USKBFVS9",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766841065335",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HPL8P9HT",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766774441336",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "MHADPP8S",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766792658716",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NAT1ONUS",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766779818746",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "OVCP4B4H",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766837245898",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "YXSSZ5CL",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766798875240",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6FO6D21P",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1766536792615",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8F84UO8U",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766545206648",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "YAZJCWBK",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769476776900",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "484YY1NY",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766573364230",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "DSKXZ5FU",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769386905675",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "KGQ2BYGE",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769254612249",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "GN0X2Z8J",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768854018380",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HZMNDJF8",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1768854019135",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6BH1R2FR",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766599515233",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8B403O8L",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766599170737",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "NF645M4W",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766599246615",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "S4G9TG8F",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766599117112",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "ZAD1WLQQ",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766576546590",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "UM88JRXZ",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1766756140854",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "ZPPDMJCE",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1769385052849",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "J69N8NNQ",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1769123331883",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "62E5PU8V",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1769123332264",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "2EG792U4",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1769123332684",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "Q463BZUD",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1769123333126",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "596FFJ5H",
+    "loot_box_id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "type": "global_once",
+    "is_active": 1,
+    "created_at": "1769123333546",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "SIEJLRIY",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770855980145",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "9XJCJ1UO",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770856017427",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "6TPZQW39",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770856035244",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "DOAV4MFS",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770857756004",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "RR63H9G9",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770859058696",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8ETJGTW3",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770859475270",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HE9CVIB2",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770859575962",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "P36LYYT6",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770859584259",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "VES51Q64",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770859611160",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "MU9L54TA",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770860648029",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "F6O7UUH8",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770896846301",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "X61MZP90",
+    "loot_box_id": "1f1956c5-606c-4086-a956-083fcfba0f71",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770898891672",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "2UF3IXCG",
+    "loot_box_id": "d6be87d8-0f38-4e25-86b3-47f138f92862",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770988906721",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "SZZBC5FA",
+    "loot_box_id": "07a21b6f-3532-48b1-8121-4fb85c0a3832",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1770989047728",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "V1M7D4KW",
+    "loot_box_id": "29ee9130-f8e6-4827-881f-35552eb73833",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771037092265",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "D1FRHU37",
+    "loot_box_id": "0af545c2-2204-40f8-bb6c-d8663e3fed68",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771037184297",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "HWDUOZY1",
+    "loot_box_id": "3dc17afa-983d-4f32-9cf5-b89e1bdd17c6",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771037351990",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TEST_ROLETA_1771062420670",
+    "loot_box_id": null,
+    "type": "roleta_player_1x",
+    "is_active": 1,
+    "created_at": "1771062420670",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TEST_ROLETA_1771062467457",
+    "loot_box_id": null,
+    "type": "roleta_player_1x",
+    "is_active": 1,
+    "created_at": "1771062467457",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "TEST_ROLETA_1771062486431",
+    "loot_box_id": null,
+    "type": "roleta_player_1x",
+    "is_active": 1,
+    "created_at": "1771062486431",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "5XGS0G0K",
+    "loot_box_id": "d6be87d8-0f38-4e25-86b3-47f138f92862",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771291573656",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "S22H0SXN",
+    "loot_box_id": "10b4346c-2cce-4c24-8e5e-7d622fde7a46",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771447785810",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "Y7H6OYUO",
+    "loot_box_id": "2b2ccc29-57e9-4716-8856-a5d702f94fa0",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771547124931",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "8YTKWX70",
+    "loot_box_id": "84a001a7-0c29-42f7-bd1e-bea4697ad26d",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771979075606",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "E2DO6GTT",
+    "loot_box_id": "84a001a7-0c29-42f7-bd1e-bea4697ad26d",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771979100353",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "XRUAS7PX",
+    "loot_box_id": "941d831d-53f1-403e-acee-e204f70659e7",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771979259436",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "YHYDOZBJ",
+    "loot_box_id": "941d831d-53f1-403e-acee-e204f70659e7",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771979278830",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "XZE626XT",
+    "loot_box_id": "941d831d-53f1-403e-acee-e204f70659e7",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1771979293277",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "WEJ5MXIP",
+    "loot_box_id": "10b4346c-2cce-4c24-8e5e-7d622fde7a46",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1772669586037",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  },
+  {
+    "code": "MWWQ9R5Q",
+    "loot_box_id": "98121678-52ee-4e4f-b4cf-99796fc6da6a",
+    "type": "per_player",
+    "is_active": 1,
+    "created_at": "1772669655586",
+    "upgrade_id": null,
+    "admin_upgrade_id": null
+  }
+]

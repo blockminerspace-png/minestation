@@ -1,0 +1,110 @@
+[
+  {
+    "id": "room_initial",
+    "name": "Sala de Mineração",
+    "allowed_levels": "[\"founder\",\"creator\",\"normal\",\"tester\",\"partner\",\"full_baleia\",\"kraken\",\"Baleia\",\"nautilos\",\"genesis\",\"capitao_nemo\",\"mod\"]",
+    "is_active": 1,
+    "sort_order": 0,
+    "initial_capacity": 6,
+    "max_capacity": 15,
+    "base_slot_price": 1,
+    "slot_price_increase_percent": 25,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1765935384906",
+    "name": "Sala Fundador",
+    "allowed_levels": "[\"founder\",\"tester\"]",
+    "is_active": 1,
+    "sort_order": 1,
+    "initial_capacity": 18,
+    "max_capacity": 18,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1765936323521",
+    "name": "Sala Gênesis",
+    "allowed_levels": "[\"genesis\"]",
+    "is_active": 1,
+    "sort_order": 2,
+    "initial_capacity": 9,
+    "max_capacity": 9,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1766898636697",
+    "name": "Sala Streamer",
+    "allowed_levels": "[\"tester\",\"creator\"]",
+    "is_active": 1,
+    "sort_order": 3,
+    "initial_capacity": 9,
+    "max_capacity": 9,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1769496395562",
+    "name": "Náutilos",
+    "allowed_levels": "[\"nautilos\"]",
+    "is_active": 1,
+    "sort_order": 4,
+    "initial_capacity": 18,
+    "max_capacity": 18,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1769540315156",
+    "name": "Kraken",
+    "allowed_levels": "[\"kraken\"]",
+    "is_active": 1,
+    "sort_order": 5,
+    "initial_capacity": 75,
+    "max_capacity": 75,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1769540313738",
+    "name": " Full Baleia",
+    "allowed_levels": "[\"full_baleia\"]",
+    "is_active": 1,
+    "sort_order": 6,
+    "initial_capacity": 33,
+    "max_capacity": 33,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1770357231035",
+    "name": "Capitão Nemo",
+    "allowed_levels": "[\"capitao_nemo\"]",
+    "is_active": 1,
+    "sort_order": 7,
+    "initial_capacity": 18,
+    "max_capacity": 18,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  },
+  {
+    "id": "room_1775484506874",
+    "name": "NFTs Arbam",
+    "allowed_levels": "[\"nft_arbam\"]",
+    "is_active": 1,
+    "sort_order": 8,
+    "initial_capacity": 15,
+    "max_capacity": 15,
+    "base_slot_price": 0,
+    "slot_price_increase_percent": 0,
+    "allowed_season_pass_ids": "[]"
+  }
+]

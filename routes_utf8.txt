@@ -1,0 +1,93 @@
+﻿
+app.get('/api/admin/wheel/config', 
+isAdmin, async (req, res) => {
+app.get('/api/admin/wheel/players', 
+isAdmin, async (req, res) => {
+app.get('/api/admin/ranking', 
+isAdmin, async (req, res) => {
+app.get('/api/wallet-labels', 
+isAdmin, async (req, res) => {
+app.get('/api/admin-upgrades', async 
+(req, res) => {
+app.get('/api/upgrades', async (req, 
+res) => {
+app.get('/api/monetization-settings',
+ async (req, res) => {
+app.get('/api/system/time', (req, 
+res) => {
+app.get('/api/applixir-callback', 
+async (req, res) => {
+app.get('/api/web3-settings', async 
+(req, res) => {
+app.get('/api/economy-settings', 
+async (req, res) => {
+app.get('/api/nfts', async (req, 
+res) => {
+app.get('/api/market/listings', 
+async (req, res) => {
+app.get('/api/access-levels', async 
+(req, res) => {
+app.get('/api/rig-rooms', async 
+(req, res) => {
+app.get('/api/my-rig-rooms/:email', 
+async (req, res) => {
+app.get('/api/loot-boxes', async 
+(req, res) => {
+app.get('/api/news', async (req, 
+res) => {
+app.get('/api/news-fee', async (req, 
+res) => {
+app.get('/api/news-expire-days', 
+async (req, res) => {
+app.get('/api/player-news/pending', 
+isAdmin, async (req, res) => {
+app.get('/api/season-passes', async 
+(req, res) => {
+app.get('/api/season-purchases/:email
+', async (req, res) => {
+app.get('/api/users', isAdmin, async 
+(req, res) => {
+app.get('/api/admin/dashboard-stats',
+ isAdmin, async (req, res) => {
+app.get('/api/leaderboard', async 
+(req, res) => {
+app.get('/api/referrals/:email', 
+async (req, res) => {
+app.get('/api/wheel/config', async 
+(req, res) => {
+app.get('/api/admin/wheel/config', 
+isAdmin, async (req, res) => {
+app.get('/api/mining-coins', async 
+(req, res) => {
+app.get('/api/session', async (req, 
+res) => {
+app.get('/api/load-game', async 
+(req, res) => {
+app.get('/api/game-state/:email', 
+async (req, res) => {
+app.get('/api/admin/backups', 
+isAdmin, async (req, res) => {
+app.get('/api/admin/backups/download/
+:filename', isAdmin, (req, res) => {
+app.get('/api/admin/recall-scan', 
+isAdmin, async (req, res) => {
+app.get('/api/stats/top-deposits', 
+async (req, res) => {
+app.get('/api/stats/top-withdrawals',
+ async (req, res) => {
+app.get('/api/economy-settings', 
+isAdmin, async (req, res) => {
+app.get('/api/admin/market/listings',
+ isAdmin, async (req, res) => {
+app.get('/api/admin/promo-codes', 
+isAdmin, async (req, res) => {
+app.get('/api/admin/loot-box-redempti
+ons/:lootBoxId', isAdmin, async 
+(req, res) => {
+app.get('/api/mining/coins', async 
+(req, res) => {
+app.get('*', (req, res) => {
+app.get('/api/exchange-settings', 
+async (req, res) => {
+
+
