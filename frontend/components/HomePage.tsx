@@ -18,7 +18,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                 <div className="max-w-7xl mx-auto px-6 relative z-10 text-center">
                     <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cyan-100 dark:bg-cyan-900/30 border border-cyan-200 dark:border-cyan-500/30 text-cyan-600 dark:text-cyan-400 text-xs font-bold uppercase tracking-widest mb-6">
                         <span className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse"></span>
-                        Protocolo Ativo v1.4
+                        Protocolo Ativo V0.5
                     </div>
 
                     <h1 className="text-5xl md:text-7xl font-black mb-6 tracking-tight text-slate-900 dark:text-white">

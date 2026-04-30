@@ -1849,7 +1849,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-500 bg-clip-text text-transparent">Genesis Miner</h1>
-              <span className="text-[10px] text-slate-500 dark:text-slate-500 tracking-wider">v1.4// Náutilos</span>
+              <span className="text-[10px] text-slate-500 dark:text-slate-500 tracking-wider">V0.5// Náutilos</span>
             </div>
           </div>
 
