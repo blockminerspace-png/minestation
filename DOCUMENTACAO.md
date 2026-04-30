@@ -1,4 +1,4 @@
-# 📓 Documentação MineStation 1.4.1
+# 📓 Documentação Genesis Miner 1.4.1
 
 Este projeto agora conta com uma documentação estruturada no formato de **Obsidian Vault**.
 

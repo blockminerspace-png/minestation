@@ -22,7 +22,9 @@ services:
     environment:
       PORT: "3000"
       NODE_ENV: production
-      DATABASE_URL: ${DATABASE_URL:-postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/minestation}
+      # Sempre o serviço `db` na rede do compose. Não use DATABASE_URL do .env com localhost aqui —
+      # dentro do container localhost não é o Postgres.
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/minestation
     env_file:
       - path: .env
         required: false

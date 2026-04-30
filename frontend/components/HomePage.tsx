@@ -27,7 +27,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
                     </h1>
 
                     <p className="text-lg md:text-xl text-slate-600 dark:text-slate-400 max-w-2xl mx-auto mb-10 leading-relaxed">
-                        Mine Station é um <strong>Simulador de Mineração Web3</strong>. Construa seu império, gerencie energia realista e prepare-se para o lançamento da tokenomics na rede Polygon.
+                        Genesis Miner é um <strong>Simulador de Mineração Web3</strong>. Construa seu império, gerencie energia realista e prepare-se para o lançamento da tokenomics na rede Polygon.
                     </p>
 
                     <div className="flex flex-col sm:flex-row items-center justify-center gap-4">

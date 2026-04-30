@@ -94,15 +94,33 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     const [purchaseBusyId, setPurchaseBusyId] = useState<string | null>(null);
     const [roomIndex, setRoomIndex] = useState(0);
 
+    const rackLayoutSignature = useMemo(
+        () => placedRacks.map((r) => `${r.id}:${r.roomId ?? ''}:${r.slotIndex ?? 0}`).sort().join('|'),
+        [placedRacks]
+    );
+
     useEffect(() => {
+        if (!userEmail) return;
+        let cancelled = false;
         (async () => {
-            if (!userEmail) return;
             setRoomsLoading(true);
-            const rooms = await getMyRigRooms(userEmail);
-            setMyRooms(rooms);
-            setRoomsLoading(false);
+            try {
+                const rooms = await getMyRigRooms(userEmail);
+                if (!cancelled) setMyRooms(rooms);
+            } finally {
+                if (!cancelled) setRoomsLoading(false);
+            }
         })();
-    }, [userEmail]);
+        return () => { cancelled = true; };
+    }, [userEmail, rackLayoutSignature]);
+
+    useEffect(() => {
+        if (myRooms.length === 0) {
+            setRoomIndex(0);
+            return;
+        }
+        setRoomIndex((i) => Math.min(Math.max(0, i), myRooms.length - 1));
+    }, [myRooms]);
 
     const currentRoom = myRooms.length > 0 ? myRooms[Math.min(roomIndex, myRooms.length - 1)] : null;
 

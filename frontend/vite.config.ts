@@ -4,11 +4,11 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
-  const apiPort = env.API_PORT || '8080';
+  const apiPort = env.PORT || env.API_PORT || '3000';
   return {
     server: {
       allowedHosts: true,
-      port: 80,
+      port: 5173,
       host: '0.0.0.0',
       proxy: {
         '/api': {

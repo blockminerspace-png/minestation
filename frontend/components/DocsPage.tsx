@@ -63,7 +63,7 @@ export const DocsPage: React.FC = () => {
 
                     <div className="bg-indigo-100/50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-500/50 rounded-xl p-6 mb-8 backdrop-blur-sm">
                         <p className="text-indigo-900 dark:text-white text-lg leading-relaxed font-medium">
-                            "Mine Station não é apenas um simulador. Este é um jogo <strong>Play-to-Earn</strong> integrado à rede <strong>Polygon</strong>. Todos os ativos que você gerencia possuem valor real e propriedade digital comprovada via Blockchain, permitindo eventuais ganhos financeiros para operadores eficientes."
+                            "Genesis Miner não é apenas um simulador. Este é um jogo <strong>Play-to-Earn</strong> integrado à rede <strong>Polygon</strong>. Todos os ativos que você gerencia possuem valor real e propriedade digital comprovada via Blockchain, permitindo eventuais ganhos financeiros para operadores eficientes."
                         </p>
                     </div>
 

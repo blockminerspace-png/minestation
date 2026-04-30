@@ -26,7 +26,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
     const scrollRef = useRef<HTMLDivElement>(null);
 
     const terminalLines = React.useMemo(() => isReturningUser ? [
-        "> CONNECTING TO MINE STATION GÊNESIS v1.3..",
+        "> CONNECTING TO GENESIS MINER v1.3..",
         "> AUTHENTICATING COMMANDER IDENTITY...",
         "> SYNCING OFFLINE PROGRESS WITH SERVER NODES...",
         "> CALCULATING PASSIVE INCOME GENERATED...",
@@ -36,7 +36,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
         "> PREPARING DAILY SUMMARY REPORT...",
         "> LOADING USER DASHBOARD..."
     ] : [
-        "> CONNECTING TO MINE STATION GÊNESIS v1.3..",
+        "> CONNECTING TO GENESIS MINER v1.3..",
         "> AUTHENTICATING NEW IDENTITY...",
         "> INITIALIZING SECURE PROTOCOLS [AES-256]...",
         "> FETCHING USER METADATA FROM DECENTRALIZED DB...",
@@ -83,7 +83,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                             <div className="w-3 h-3 rounded-full bg-green-500/50"></div>
                         </div>
                         <span className="text-cyan-800 text-[10px] uppercase tracking-widest ml-4 flex items-center gap-2">
-                            <Terminal size={12} /> System Terminal - Mine Station OS
+                            <Terminal size={12} /> System Terminal - Genesis Miner OS
                         </span>
                     </div>
                     <div

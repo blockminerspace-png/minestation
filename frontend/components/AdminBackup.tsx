@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Database as DbIcon, Download, RotateCcw, Trash2, Plus, AlertTriangle, Loader2, CheckCircle2, Skull, X } from 'lucide-react';
-import { resetDatabase } from '../services/api';
+import { Database as DbIcon, Download, RotateCcw, Trash2, Plus, AlertTriangle, Loader2, CheckCircle2 } from 'lucide-react';
 
 interface BackupFile {
     filename: string;
@@ -109,8 +108,6 @@ export const AdminBackup: React.FC = () => {
     const [backupName, setBackupName] = useState('');
     const [message, setMessage] = useState<{ text: string, type: 'success' | 'error' } | null>(null);
     const [showConfirmRestore, setShowConfirmRestore] = useState<string | null>(null);
-    const [showResetModal, setShowResetModal] = useState(false);
-    const [adminPassword, setAdminPassword] = useState('');
 
     const loadBackups = async () => {
         setLoading(true);
@@ -233,27 +230,6 @@ export const AdminBackup: React.FC = () => {
         reader.readAsDataURL(file);
     };
 
-    const handleResetDatabase = async () => {
-        if (!adminPassword) return;
-        setActionLoading('reset');
-        setMessage(null);
-        try {
-            const res = await resetDatabase(adminPassword);
-            if (res.ok) {
-                setMessage({ text: 'BANCO DE DADOS RESETADO COM SUCESSO! (Exceto Administradores)', type: 'success' });
-                setShowResetModal(false);
-                setAdminPassword('');
-                loadBackups();
-            } else {
-                setMessage({ text: `Erro: ${res.error || 'Falha no reset'}`, type: 'error' });
-            }
-        } catch (e) {
-            setMessage({ text: 'Erro de conexão.', type: 'error' });
-        } finally {
-            setActionLoading(null);
-        }
-    };
-
     const formatSize = (bytes: number) => {
         if (bytes === 0) return '0 B';
         const k = 1024;
@@ -272,12 +248,6 @@ export const AdminBackup: React.FC = () => {
                     <p className="text-slate-400 text-sm">Crie, gerencie, baixe e suba pontos de restauração.</p>
                 </div>
                 <div className="flex gap-2">
-                    <button
-                        onClick={() => setShowResetModal(true)}
-                        className="bg-red-950/50 hover:bg-red-600 text-red-500 hover:text-white border border-red-900 px-4 py-2 rounded font-bold text-sm transition-all flex items-center gap-2"
-                    >
-                        <Skull size={18} /> Reset Geral
-                    </button>
                     <label className={`cursor-pointer bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm transition-all flex items-center gap-2 ${actionLoading === 'upload' ? 'opacity-50 pointer-events-none' : ''}`}>
                         {actionLoading === 'upload' ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} className="rotate-180" />}
                         Subir Backup (.db)
@@ -511,58 +481,6 @@ export const AdminBackup: React.FC = () => {
                 </div>
             </div>
 
-            {/* RESET MODAL */}
-            {showResetModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
-                    <div className="bg-slate-900 border border-red-900 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl shadow-red-900/20">
-                        <div className="p-6 border-b border-red-900/30 flex justify-between items-center bg-red-950/20">
-                            <h3 className="text-red-500 font-bold flex items-center gap-2 uppercase tracking-widest">
-                                <Skull size={20} /> Ação Crítica: Reset DB
-                            </h3>
-                            <button onClick={() => setShowResetModal(false)} className="text-slate-500 hover:text-white transition-colors">
-                                <X size={20} />
-                            </button>
-                        </div>
-                        <div className="p-8 space-y-6">
-                            <div className="bg-red-900/10 border border-red-900/30 p-4 rounded-xl flex gap-4">
-                                <AlertTriangle className="text-red-500 shrink-0" size={24} />
-                                <div className="text-xs text-red-400 leading-relaxed uppercase font-bold tracking-tighter">
-                                    O banco de dados será <span className="underline">APAGADO PERMANENTEMENTE</span> (exceto administradores).
-                                    Esta ação é <span className="text-white bg-red-600 px-1">IRREVERSÍVEL</span>.
-                                </div>
-                            </div>
-
-                            <div className="space-y-2">
-                                <label className="block text-[10px] text-slate-500 uppercase font-bold tracking-widest">Senha do Administrador para Confirmar</label>
-                                <input
-                                    type="password"
-                                    value={adminPassword}
-                                    onChange={e => setAdminPassword(e.target.value)}
-                                    placeholder="Digite sua senha..."
-                                    className="w-full bg-slate-950 border border-red-900/30 rounded-xl px-4 py-3 text-white focus:border-red-500 outline-none transition-all font-mono"
-                                    autoFocus
-                                />
-                            </div>
-
-                            <button
-                                onClick={handleResetDatabase}
-                                disabled={!adminPassword || actionLoading === 'reset'}
-                                className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-4 rounded-xl transition-all flex items-center justify-center gap-2 shadow-xl shadow-red-600/20 uppercase tracking-widest"
-                            >
-                                {actionLoading === 'reset' ? (
-                                    <>
-                                        <Loader2 size={20} className="animate-spin" /> EXECUTANDO PURGA...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Trash2 size={20} /> CONFIRMAR APAGAMENTO TOTAL
-                                    </>
-                                )}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
         </div>
     );
 };

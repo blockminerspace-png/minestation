@@ -1,7 +1,7 @@
 {
-  "name": "mine-station-admin",
+  "name": "genesis-miner-admin",
   "version": "1.0.0",
-  "description": "Painel Administrativo para Mine Station",
+  "description": "Painel Administrativo para Genesis Miner",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"

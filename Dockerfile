@@ -1,4 +1,4 @@
-# Mine Station — mesmo fluxo de produção: `npm start` no backend servindo `../frontend/dist`.
+# Genesis Miner — mesmo fluxo de produção: `npm start` no backend servindo `../frontend/dist`.
 # Usa o `frontend/dist` já gerado no repositório (evita rebuild que exige o mesmo ambiente de dev).
 FROM node:20-bookworm-slim
 

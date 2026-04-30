@@ -16,6 +16,8 @@ frontend/.env
 # Database backups (sensitive data)
 backups/
 *.sql
+*.rar
+*.zip
 
 # Docker volumes
 pgdata/
@@ -36,7 +38,8 @@ npm-debug.log*
 tmp_*.js
 backend/tmp_*.js
 
-# Obsidian cache
-Obsidian_Docs/.obsidian/workspace.json
-Obsidian_Docs/.obsidian/workspace-mobile.json
-Mine Station Náutilos 1.4.1 novo.rar
+# Obsidian and Documentation
+Obsidian_Docs/
+scratch/
+DOCUMENTACAO.md
+README.md

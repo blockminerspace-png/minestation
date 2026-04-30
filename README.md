@@ -1,3 +1,1 @@
-# minestation
-# minestation
-# minestation
+# Genesis Miner

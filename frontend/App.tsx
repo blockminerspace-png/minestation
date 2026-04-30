@@ -36,7 +36,7 @@ import {
   logout as apiLogout,
   checkBackendHealth
 } from './services/api';
-import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews } from './types';
+import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId } from './types';
 import { UpgradeShop } from './components/UpgradeShop';
 import { BlackMarket } from './components/BlackMarket';
 import { MarketNews } from './components/MarketNews';
@@ -174,7 +174,8 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
         batteryId: r.batteryId || null,
         multiplierSlots: multiSlots,
         currentCharge: r.currentCharge !== undefined ? r.currentCharge : 0,
-        isOn: r.isOn !== undefined ? r.isOn : false
+        isOn: r.isOn !== undefined ? r.isOn : false,
+        roomId: normalizePlacedRackRoomId(r.roomId)
       }
     });
   }
@@ -1861,7 +1862,7 @@ export default function App() {
               <Cpu size={24} />
             </div>
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-500 bg-clip-text text-transparent">Mine Station</h1>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-500 bg-clip-text text-transparent">Genesis Miner</h1>
               <span className="text-[10px] text-slate-500 dark:text-slate-500 tracking-wider">v1.4// Náutilos</span>
             </div>
           </div>
@@ -2097,7 +2098,7 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto custom-scrollbar relative min-h-0 flex flex-col font-mono">
                   {!isReady && (
                     <div className="flex h-screen w-full items-center justify-center bg-slate-900 text-cyan-500 font-mono">
-                      <div className="text-2xl animate-pulse">MINE STATION GENESIS</div>
+                      <div className="text-2xl animate-pulse">GENESIS MINER</div>
                     </div>
                   )}
 

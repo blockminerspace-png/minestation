@@ -36,7 +36,7 @@ const applyAffinity = async (pid) => {
 };
 
 if (cluster.isPrimary) {
-  console.log(`\n=== MINE STATION MULTI-CORE LAUNCHER ===`);
+  console.log(`\n=== GENESIS MINER MULTI-CORE LAUNCHER ===`);
   console.log(`Master process ${process.pid} is running`);
   console.log(`Sistema: ${totalCores} núcleos | Solicitado: ${numCPUs} núcleos.`);
   

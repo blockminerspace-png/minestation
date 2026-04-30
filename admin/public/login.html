@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Mine Station Admin</title>
+    <title>Login - Genesis Miner Admin</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -60,7 +60,7 @@
 <body>
 
 <div class="login-container">
-    <h1>Mine Station Admin</h1>
+    <h1>Genesis Miner Admin</h1>
     <p style="color: #aaa; margin-bottom: 2rem;">Conecte sua carteira para acessar</p>
     
     <button id="btnLogin" class="btn-login">
@@ -123,9 +123,9 @@
             console.log("Address:", address);
 
             // 2. Sign Message
-            // Message format: "Login to Mine Station Admin\nTimestamp: <timestamp>"
+            // Message format: "Login to Genesis Miner Admin\nTimestamp: <timestamp>"
             const timestamp = Date.now();
-            const message = `Login to Mine Station Admin\nTimestamp: ${timestamp}`;
+            const message = `Login to Genesis Miner Admin\nTimestamp: ${timestamp}`;
             
             btn.innerHTML = 'Assinando...';
             console.log("Signing message...");

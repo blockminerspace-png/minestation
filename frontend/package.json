@@ -1,5 +1,5 @@
 {
-    "name": "mine-station-genesis-frontend",
+    "name": "genesis-miner-frontend",
     "private": true,
     "version": "1.3.0",
     "type": "module",

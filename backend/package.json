@@ -1,5 +1,5 @@
 {
-    "name": "mine-station-genesis-backend",
+    "name": "genesis-miner-backend",
     "version": "1.3.0",
     "type": "module",
     "main": "server.js",
@@ -7,7 +7,9 @@
         "start": "node server.js",
         "start:cluster": "node cluster_launcher.js",
         "dev": "set NODE_OPTIONS=--max-old-space-size=8192 && node --watch server.js",
-        "fix-db": "node fix_schema.js"
+        "fix-db": "node fix_schema.js",
+        "import:dump": "bash import_pg_dump.sh",
+        "import:json": "DATABASE_URL=postgresql://postgres:postgrespassword@127.0.0.1:5432/minestation node --max-old-space-size=8192 import_production.js"
     },
     "dependencies": {
         "@google/genai": "*",
@@ -18,6 +20,6 @@
         "express-rate-limit": "*",
         "helmet": "*",
         "multer": "^2.0.2",
-        "pg": "*"
+        "pg": "^8.20.0"
     }
 }

@@ -1,5 +1,5 @@
 {
-    "name": "mine-station-genesis-root",
+    "name": "genesis-miner-root",
     "version": "1.3.0",
     "private": true,
     "scripts": {

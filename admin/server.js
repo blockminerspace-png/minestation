@@ -112,7 +112,7 @@ app.post('/api/auth/login', loginLimiter, (req, res) => {
     }
 
     try {
-        const message = `Login to Mine Station Admin\nTimestamp: ${timestamp}`;
+        const message = `Login to Genesis Miner Admin\nTimestamp: ${timestamp}`;
         // Suporte para ethers v5 e v6
         const recoveredAddress = ethers.verifyMessage
             ? ethers.verifyMessage(message, signature)

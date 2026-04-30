@@ -63,6 +63,15 @@ export interface Upgrade {
   visibleToAccessLevelIds?: string[];
 }
 
+/** Sala padrão do projeto (AdminRigRooms); rigs antigos vinham com room_id NULL ou "main" no servidor. */
+export const DEFAULT_RIG_ROOM_ID = 'room_initial';
+
+export function normalizePlacedRackRoomId(roomId: string | null | undefined): string {
+  const s = roomId != null ? String(roomId).trim() : '';
+  if (!s || s === 'main') return DEFAULT_RIG_ROOM_ID;
+  return s;
+}
+
 export interface PlacedRack {
   id: string;
   itemId: string; // The upgrade ID (e.g., 'rack_10u')

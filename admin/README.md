@@ -1,6 +1,6 @@
-# Painel Administrativo - Mine Station
+# Painel Administrativo - Genesis Miner
 
-Este painel permite controlar (ligar/desligar) o Backend e o Frontend do projeto Mine Station de forma centralizada.
+Este painel permite controlar (ligar/desligar) o Backend e o Frontend do projeto Genesis Miner de forma centralizada.
 
 ## Como usar
 

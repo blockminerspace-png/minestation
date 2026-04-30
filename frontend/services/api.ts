@@ -881,7 +881,6 @@ export async function getAdminDashboardStats(): Promise<any> {
     return await res.json();
   } catch {
     return null;
-    return null;
   }
 }
 
@@ -892,22 +891,6 @@ export async function toggleRankingExclusion(email: string, excluded: boolean): 
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, excluded })
     });
-    return await res.json();
-  } catch {
-    return { ok: false, error: 'Network error' };
-  }
-}
-
-export async function resetDatabase(password: string): Promise<{ ok: boolean; error?: string }> {
-  try {
-    const res = await apiFetch(`${base}/admin/reset-db`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password })
-    });
-    if (!res.ok) {
-      try { return await res.json(); } catch { return { ok: false, error: 'Reset failed' }; }
-    }
     return await res.json();
   } catch {
     return { ok: false, error: 'Network error' };

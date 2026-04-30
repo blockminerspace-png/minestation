@@ -23,9 +23,6 @@ const __dirname = path.dirname(__filename);
 import db from './db.js';
 import { initDb } from './db.pg.js';
 
-// GLOBAL LOCK for DB Reset
-let isDatabaseResetting = false;
-
 // Helper to find pg_restore
 const getPgRestorePath = () => {
   const knownPaths = [
@@ -796,7 +793,6 @@ let globalActiveMiners = 0;
 const globalActiveMinersByCoin = new Map();
 
 const updateMiningYields = async () => {
-  if (isDatabaseResetting) return;
   const client = await db.connect();
   try {
     // 1. Get Active Racks & Coins
@@ -994,9 +990,6 @@ function calculateIntegratedYield(coinId, startTimeMs, endTimeMs, sortedCoinHist
 }
 
 const computeProgressForUser = async (uid, now, updateTimestamp = true) => {
-  // GLOBAL LOCK CHECK: If DB reset is in progress, abort immediately.
-  if (isDatabaseResetting) return { ok: true };
-
   if (!updateTimestamp) return { ok: true };
   activeProgressCalculations++;
 
@@ -3500,6 +3493,13 @@ app.post('/api/access-levels', isAdmin, async (req, res) => {
   } finally { client.release(); }
 });
 
+// Alinha com a sala inicial do admin (`room_initial`). Saves antigos usavam NULL / '' / 'main'.
+const normalizePlacedRackRoomId = (raw) => {
+  const s = raw != null ? String(raw).trim() : '';
+  if (!s || s === 'main') return 'room_initial';
+  return s;
+};
+
 // --- RIG ROOMS ---
 app.get('/api/rig-rooms', async (req, res) => {
   try {
@@ -3528,9 +3528,34 @@ app.post('/api/rig-rooms', isAdmin, async (req, res) => {
 
     const newIds = rooms.map(r => r.id);
     if (newIds.length > 0) {
-      await client.query('DELETE FROM rig_rooms WHERE id NOT IN (SELECT unnest($1::text[])) AND id NOT IN (SELECT room_id FROM user_rig_rooms)', [newIds]);
+      await client.query(`
+        DELETE FROM rig_rooms
+        WHERE id NOT IN (SELECT unnest($1::text[]))
+          AND id NOT IN (SELECT room_id FROM user_rig_rooms)
+          AND NOT EXISTS (
+            SELECT 1 FROM placed_racks pr
+            WHERE pr.room_id = rig_rooms.id
+               OR (rig_rooms.id = 'room_initial' AND (
+                    pr.room_id IS NULL
+                    OR BTRIM(COALESCE(pr.room_id, '')) = ''
+                    OR pr.room_id = 'main'
+                  ))
+          )
+      `, [newIds]);
     } else {
-      await client.query('DELETE FROM rig_rooms WHERE id NOT IN (SELECT room_id FROM user_rig_rooms)');
+      await client.query(`
+        DELETE FROM rig_rooms
+        WHERE id NOT IN (SELECT room_id FROM user_rig_rooms)
+          AND NOT EXISTS (
+            SELECT 1 FROM placed_racks pr
+            WHERE pr.room_id = rig_rooms.id
+               OR (rig_rooms.id = 'room_initial' AND (
+                    pr.room_id IS NULL
+                    OR BTRIM(COALESCE(pr.room_id, '')) = ''
+                    OR pr.room_id = 'main'
+                  ))
+          )
+      `);
     }
 
     for (const r of rooms) {
@@ -3588,6 +3613,17 @@ app.get('/api/my-rig-rooms/:email', async (req, res) => {
     const passPurchRes = await db.query('SELECT pass_id FROM season_purchases WHERE user_id = $1', [uid]);
     const userPassIds = passPurchRes.rows.map(p => p.pass_id);
 
+    const racksRoomRes = await db.query(
+      `SELECT DISTINCT
+         CASE
+           WHEN room_id IS NULL OR BTRIM(COALESCE(room_id, '')) = '' OR BTRIM(room_id) = 'main' THEN 'room_initial'
+           ELSE BTRIM(room_id)
+         END AS room_id
+       FROM placed_racks WHERE user_id = $1`,
+      [uid]
+    );
+    const roomIdsWithPlacedRacks = new Set(racksRoomRes.rows.map((row) => row.room_id));
+
     const rowsRes = await db.query(`
       SELECT 
         rr.id, rr.name, rr.initial_capacity, rr.max_capacity, rr.base_slot_price, rr.slot_price_increase_percent, 
@@ -3617,7 +3653,8 @@ app.get('/api/my-rig-rooms/:email', async (req, res) => {
       const levelOk = allowedLvl.length === 0 || allowedLvl.some(lvl => userLvlIds.includes(lvl));
       const seasonOk = allowedSeason.length === 0 || allowedSeason.some(passId => userPassIds.includes(passId));
 
-      return r.owned || (levelOk && seasonOk);
+      const hasRacksHere = roomIdsWithPlacedRacks.has(r.id);
+      return r.owned || hasRacksHere || (levelOk && seasonOk);
     });
     res.json(list);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -5137,7 +5174,7 @@ app.get('/api/load-game', async (req, res) => {
         currentCharge: r.current_charge,
         isOn: !!r.is_on,
         selectedCoinId: r.selected_coin_id,
-        roomId: r.room_id || 'main',
+        roomId: normalizePlacedRackRoomId(r.room_id),
         slotIndex: r.slot_index || 0
       });
     }
@@ -5640,7 +5677,7 @@ app.get('/api/game-state/:email', async (req, res) => {
           currentCharge: r.current_charge,
           isOn: !!r.is_on,
           selectedCoinId: r.selected_coin_id,
-          roomId: r.room_id || 'main',
+          roomId: normalizePlacedRackRoomId(r.room_id),
           slotIndex: r.slot_index || 0
         });
       }
@@ -5845,7 +5882,7 @@ app.post('/api/save-game', async (req, res) => {
         const rCharges = changes.placedRacks.map(r => r.currentCharge || 0);
         const rOns = changes.placedRacks.map(r => r.isOn ? 1 : 0);
         const rCoins = changes.placedRacks.map(r => r.selectedCoinId || null);
-        const rRooms = changes.placedRacks.map(r => r.roomId || 'main');
+        const rRooms = changes.placedRacks.map((r) => normalizePlacedRackRoomId(r.roomId));
         const rSlotIdxs = changes.placedRacks.map(r => r.slotIndex || 0);
 
         await client.query(`
@@ -6487,80 +6524,6 @@ app.post('/api/admin/restore', isAdmin, async (req, res) => {
     res.status(500).json({ error: 'Erro no restore: ' + e.message });
   } finally {
     client.release();
-  }
-});
-
-app.post('/api/admin/reset-db', isAdmin, async (req, res) => {
-  const { password } = req.body || {};
-  if (!password) return res.status(400).json({ error: 'Senha obrigatória' });
-
-  // 1. ACQUIRE GLOBAL LOCK & WAIT FOR DRAINING
-  isDatabaseResetting = true;
-  // Wait for in-flight computeProgressForUser calls to likely finish
-  await new Promise(r => setTimeout(r, 2000));
-
-  const client = await db.connect();
-  try {
-    const uRes = await client.query('SELECT password FROM users WHERE id = $1', [req.userId]);
-    const admin = uRes.rows[0];
-
-    if (!admin) return res.status(403).json({ error: 'Administrador não encontrado' });
-
-    // Verificar senha com suporte a bcrypt e texto plano (legado)
-    let isMatch = false;
-    if (admin.password.startsWith('$2a$') || admin.password.startsWith('$2b$')) {
-      isMatch = await bcrypt.compare(password, admin.password);
-    } else {
-      isMatch = (admin.password === password);
-    }
-
-    if (!isMatch) {
-      return res.status(403).json({ error: 'Senha incorreta' });
-    }
-
-    await client.query('BEGIN');
-
-    // 1. Limpeza Total (Tabelas de sistema que devem ser zeradas)
-    // A ordem importa devido a Chaves Estrangeiras (ex: redemptions dependem de codes)
-    const tablesToWipeTotal = [
-      'sessions', 'player_listings', 'promo_code_redemptions', 'promo_codes', 'system_news'
-    ];
-    for (const table of tablesToWipeTotal) {
-      await client.query(`DELETE FROM ${table}`);
-    }
-
-    // 2. Limpeza Filtrada por user_id (Preserva Administradores)
-    const tablesWithUserId = [
-      'referrals', 'season_purchases', 'stock', 'unopened_boxes',
-      'stored_batteries', 'coin_balances', 'coin_withdrawals', 'withdrawal_requests',
-      'admin_upgrade_purchases', 'player_news_submissions', 'user_rig_rooms',
-      'workshop_slots', 'game_states', 'daily_actions', 'player_claimed_boxes', 'user_history_ips'
-    ];
-    for (const table of tablesWithUserId) {
-      await client.query(`DELETE FROM ${table} WHERE user_id NOT IN (SELECT id FROM users WHERE is_admin = 1)`);
-    }
-
-    // 3. Limpeza de Tabelas Child (Sem user_id direto, vinculadas a racks)
-    await client.query(`DELETE FROM rack_slots WHERE rack_id IN (SELECT id FROM placed_racks WHERE user_id NOT IN (SELECT id FROM users WHERE is_admin = 1))`);
-    await client.query(`DELETE FROM rack_multiplier_slots WHERE rack_id IN (SELECT id FROM placed_racks WHERE user_id NOT IN (SELECT id FROM users WHERE is_admin = 1))`);
-
-    // Agora podemos deletar as racks dos jogadores
-    await client.query(`DELETE FROM placed_racks WHERE user_id NOT IN (SELECT id FROM users WHERE is_admin = 1)`);
-
-    // 4. Limpeza de NFTs (Filtrada por owner_address)
-    await client.query(`DELETE FROM nft_items WHERE owner_address NOT IN (SELECT polygon_wallet FROM users WHERE is_admin = 1 AND polygon_wallet IS NOT NULL)`);
-
-    // 5. Deletar usuários (Preserva Administradores)
-    await client.query('DELETE FROM users WHERE is_admin = 0');
-
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (e) {
-    await client.query('ROLLBACK');
-    res.status(500).json({ error: 'Falha no reset: ' + e.message });
-  } finally {
-    client.release();
-    isDatabaseResetting = false; // RELEASE LOCK
   }
 });
 
