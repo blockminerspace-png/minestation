@@ -159,7 +159,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
         console.log('[AdminUsers] Waiting for data...', { userMap: !!userMap, userMapLength: userMap?.length });
         return (
             <div className="flex flex-col items-center justify-center p-12 space-y-4">
-                <Loader2 size={32} className="animate-spin text-cyan-500" />
+                <Loader2 size={32} className="animate-spin text-amber-500" />
                 <div className="text-slate-400 font-bold">Carregando painel administrativo...</div>
                 <div className="text-xs text-slate-500">Aguardando dados de usuários e níveis.</div>
             </div>
@@ -638,7 +638,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 h-fit">
                     <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
                         <h3 className="font-bold text-white flex items-center gap-2">
-                            <Edit size={16} className="text-blue-500" /> Editar Perfil
+                            <Edit size={16} className="text-amber-500" /> Editar Perfil
                         </h3>
                         {selectedUser.isBlocked ? (
                             <button onClick={handleToggleBlock} className="bg-green-600 text-white px-3 py-1 rounded text-xs font-bold">DESBLOQUEAR</button>
@@ -656,7 +656,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                         const isPossessed = (editProfileForm.accessLevelIds || []).includes(l.id);
                                         const isPrimary = editProfileForm.accessLevelId === l.id;
                                         return (
-                                            <div key={l.id} className={`flex items-center gap-2 px-2 py-1 rounded border ${isPossessed ? 'bg-blue-900/20 border-blue-500' : 'bg-slate-800 border-slate-700'}`}>
+                                            <div key={l.id} className={`flex items-center gap-2 px-2 py-1 rounded border ${isPossessed ? 'bg-amber-900/20 border-amber-500' : 'bg-slate-800 border-slate-700'}`}>
                                                 <input
                                                     type="checkbox"
                                                     checked={isPossessed}
@@ -706,7 +706,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                 <input type="text" value={editProfileForm.wallet} onChange={e => setEditProfileForm({ ...editProfileForm, wallet: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono" placeholder="0x..." />
                             </div>
                         </div>
-                        <button onClick={handleUpdateUserProfile} className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2 rounded font-bold text-sm mt-2 flex items-center justify-center gap-2">
+                        <button onClick={handleUpdateUserProfile} className="w-full bg-amber-600 hover:bg-amber-500 text-white py-2 rounded font-bold text-sm mt-2 flex items-center justify-center gap-2">
                             <Save size={14} /> SALVAR PERFIL
                         </button>
                     </div>
@@ -716,11 +716,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 flex flex-col h-[500px]">
                     <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
                         <div className="flex gap-2">
-                            <button onClick={() => setSaveTab('stock')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'stock' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Estoque</button>
-                            <button onClick={() => setSaveTab('racks')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'racks' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Rigs</button>
-                            <button onClick={() => setSaveTab('balances')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'balances' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Saldos</button>
-                            <button onClick={() => setSaveTab('workshop')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'workshop' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Oficina</button>
-                            <button onClick={() => setSaveTab('boxes')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'boxes' ? 'bg-cyan-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Caixas</button>
+                            <button onClick={() => setSaveTab('stock')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'stock' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Estoque</button>
+                            <button onClick={() => setSaveTab('racks')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'racks' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Rigs</button>
+                            <button onClick={() => setSaveTab('balances')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'balances' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Saldos</button>
+                            <button onClick={() => setSaveTab('workshop')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'workshop' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Oficina</button>
+                            <button onClick={() => setSaveTab('boxes')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'boxes' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Caixas</button>
                         </div>
                         <button onClick={handleSaveGameData} className="text-green-400 hover:text-green-300 text-xs font-bold flex items-center gap-1">
                             <Save size={14} /> SALVAR DADOS
@@ -1010,22 +1010,22 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
         <>
             <div className="animate-in fade-in slide-in-from-right-4">
                 <div className="flex gap-2 mb-4 border-b border-slate-700 pb-2">
-                    <button onClick={() => setSubTab('users')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'users' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                    <button onClick={() => setSubTab('users')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'users' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                         Gestão de Usuários
                     </button>
-                    <button onClick={() => setSubTab('access_levels')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'access_levels' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                    <button onClick={() => setSubTab('access_levels')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'access_levels' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                         Níveis de Acesso
                     </button>
-                    <button onClick={() => setSubTab('admin_upgrades')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'admin_upgrades' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                    <button onClick={() => setSubTab('admin_upgrades')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'admin_upgrades' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                         Upgrades
                     </button>
-                    <button onClick={() => setSubTab('referrals')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'referrals' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                    <button onClick={() => setSubTab('referrals')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'referrals' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                         Indicação
                     </button>
-                    <button onClick={() => setSubTab('advanced_referrals')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'advanced_referrals' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white hover:bg-purple-900/10'}`}>
+                    <button onClick={() => setSubTab('advanced_referrals')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'advanced_referrals' ? 'bg-orange-600 text-white' : 'text-slate-400 hover:text-white hover:bg-orange-900/10'}`}>
                         Indicação Avançada
                     </button>
-                    <button onClick={() => setSubTab('ranking')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'ranking' ? 'bg-cyan-600 text-white' : 'text-purple-400 hover:text-purple-300 hover:bg-purple-900/20'} flex items-center gap-1`}>
+                    <button onClick={() => setSubTab('ranking')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'ranking' ? 'bg-amber-600 text-white' : 'text-orange-400 hover:text-orange-300 hover:bg-orange-900/20'} flex items-center gap-1`}>
                         <Trophy size={14} /> Ranking
                     </button>
                 </div>
@@ -1034,15 +1034,15 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                     <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-white font-bold flex items-center gap-2">
-                                <Users size={20} className="text-cyan-500" /> Lista de Usuários
+                                <Users size={20} className="text-amber-500" /> Lista de Usuários
                             </h3>
                             <div className="flex items-center gap-3">
                                 {selectedEmails.size > 0 && (
                                     <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 animate-in slide-in-from-top-2">
-                                        <span className="text-xs font-bold text-cyan-500 mr-2">{selectedEmails.size} selecionados</span>
+                                        <span className="text-xs font-bold text-amber-500 mr-2">{selectedEmails.size} selecionados</span>
                                         <button
                                             onClick={() => setShowMassGiftModal(true)}
-                                            className="bg-blue-600 hover:bg-blue-500 text-white text-[10px] font-bold py-1 px-3 rounded flex items-center gap-1"
+                                            className="bg-amber-600 hover:bg-amber-500 text-white text-[10px] font-bold py-1 px-3 rounded flex items-center gap-1"
                                         >
                                             <Gift size={12} /> PRESENTEAR
                                         </button>
@@ -1069,7 +1069,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                                 setCurrentPage(1);
                                             }}
                                             placeholder="Buscar..."
-                                            className="bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:border-cyan-500 outline-none w-48"
+                                            className="bg-slate-900 border border-slate-700 rounded-lg pl-10 pr-4 py-2 text-sm text-white focus:border-amber-500 outline-none w-48"
                                         />
                                     </div>
 
@@ -1108,7 +1108,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                         {accessLevels.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
                                     </select>
 
-                                    {isLoadingUsers && <Loader2 size={16} className="text-cyan-500 animate-spin" />}
+                                    {isLoadingUsers && <Loader2 size={16} className="text-amber-500 animate-spin" />}
                                 </div>
                             </div>
                         </div>
@@ -1120,7 +1120,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                         <th className="px-4 py-3 w-10">
                                             <button
                                                 onClick={() => handleSelectAll(paginatedUsers.map(u => u.email))}
-                                                className="text-slate-500 hover:text-cyan-500 transition-colors"
+                                                className="text-slate-500 hover:text-amber-500 transition-colors"
                                             >
                                                 {selectedEmails.size === paginatedUsers.length && paginatedUsers.length > 0 ? <CheckSquare size={18} /> : <Square size={18} />}
                                             </button>
@@ -1142,11 +1142,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                 </thead>
                                 <tbody className="divide-y divide-slate-700">
                                     {paginatedUsers.map((u, i) => (
-                                        <tr key={i} className={`hover:bg-slate-700/50 ${selectedEmails.has(u.email) ? 'bg-cyan-900/10' : ''}`}>
+                                        <tr key={i} className={`hover:bg-slate-700/50 ${selectedEmails.has(u.email) ? 'bg-amber-900/10' : ''}`}>
                                             <td className="px-4 py-3">
                                                 <button
                                                     onClick={() => handleToggleSelect(u.email)}
-                                                    className={`${selectedEmails.has(u.email) ? 'text-cyan-500' : 'text-slate-600'} hover:text-cyan-400 transition-colors`}
+                                                    className={`${selectedEmails.has(u.email) ? 'text-amber-500' : 'text-slate-600'} hover:text-amber-400 transition-colors`}
                                                 >
                                                     {selectedEmails.has(u.email) ? <CheckSquare size={18} /> : <Square size={18} />}
                                                 </button>
@@ -1189,7 +1189,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                                                 }
                                                             }
                                                         }}
-                                                        className="bg-purple-700 hover:bg-purple-600 text-white px-3 py-1 rounded text-xs font-bold inline-flex items-center justify-center ml-2"
+                                                        className="bg-orange-700 hover:bg-orange-600 text-white px-3 py-1 rounded text-xs font-bold inline-flex items-center justify-center ml-2"
                                                         title="Acessar Conta"
                                                         aria-label="Acessar Conta"
                                                     >
@@ -1224,7 +1224,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                     Anterior
                                 </button>
                                 <div className="bg-slate-900 border border-slate-700 px-4 py-2 rounded text-xs text-white">
-                                    Página <span className="text-cyan-500 font-bold">{currentPage}</span> de <span className="text-white font-bold">{totalPages}</span>
+                                    Página <span className="text-amber-500 font-bold">{currentPage}</span> de <span className="text-white font-bold">{totalPages}</span>
                                 </div>
                                 <button
                                     onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
@@ -1250,11 +1250,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                             </div>
                             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
                                 {accessLevels.map(level => (
-                                    <div key={level.id} onClick={() => handleEditLevel(level)} className={`p-3 rounded border cursor-pointer hover:border-blue-500 ${level.isDefault ? 'bg-blue-900/20 border-blue-500/50' : 'bg-slate-900 border-slate-700'}`}>
+                                    <div key={level.id} onClick={() => handleEditLevel(level)} className={`p-3 rounded border cursor-pointer hover:border-amber-500 ${level.isDefault ? 'bg-amber-900/20 border-amber-500/50' : 'bg-slate-900 border-slate-700'}`}>
                                         <div className="flex justify-between items-start">
                                             <div className="font-bold text-white flex items-center gap-2">
                                                 {level.name}
-                                                {level.isDefault && <span className="text-[9px] bg-blue-600 px-1 rounded text-white">PADRÃO</span>}
+                                                {level.isDefault && <span className="text-[9px] bg-amber-600 px-1 rounded text-white">PADRÃO</span>}
                                                 {!level.isActive && <span className="text-[9px] bg-red-600 px-1 rounded text-white">INATIVO</span>}
                                             </div>
                                             <div className="text-xs text-green-400 font-mono">
@@ -1306,7 +1306,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                     </div>
                                     <div className="flex gap-4 pt-4">
                                         <button onClick={() => setEditLevelMode(false)} className="bg-slate-700 text-white px-4 py-2 rounded font-bold text-sm">CANCELAR</button>
-                                        <button onClick={handleSaveLevel} className="bg-blue-600 text-white px-4 py-2 rounded font-bold text-sm flex-1">SALVAR</button>
+                                        <button onClick={handleSaveLevel} className="bg-amber-600 text-white px-4 py-2 rounded font-bold text-sm flex-1">SALVAR</button>
                                         {levelForm.id && (
                                             <button onClick={handleDeleteLevel} className="bg-red-600 text-white px-4 py-2 rounded font-bold text-sm">EXCLUIR</button>
                                         )}
@@ -1392,7 +1392,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                                 {accessLevels.map(l => {
                                                     const isChecked = (upgradeForm.visibleToAccessLevelIds || []).includes(l.id);
                                                     return (
-                                                        <label key={l.id} className="flex items-center gap-2 cursor-pointer bg-slate-800 px-2 py-1 rounded border border-slate-700 hover:border-blue-500">
+                                                        <label key={l.id} className="flex items-center gap-2 cursor-pointer bg-slate-800 px-2 py-1 rounded border border-slate-700 hover:border-amber-500">
                                                             <input
                                                                 type="checkbox"
                                                                 checked={isChecked}
@@ -1740,7 +1740,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                         <div className="lg:col-span-2 bg-slate-800 border border-slate-700 rounded-xl p-6">
                             <div className="flex justify-between items-center mb-6">
                                 <h3 className="text-white font-bold flex items-center gap-2">
-                                    <Trophy size={20} className="text-purple-500" /> Modelos de Indicação
+                                    <Trophy size={20} className="text-orange-500" /> Modelos de Indicação
                                 </h3>
                                 <button
                                     onClick={() => {
@@ -1764,11 +1764,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                             <div className="text-xs text-slate-400">{m.description}</div>
                                             <div className="flex gap-4 mt-2">
                                                 <div className="text-[10px] text-slate-500 uppercase font-bold">Indicador (Sender): <span className="text-green-400">${m.sender_reward_usdc}</span> + {m.sender_loot_box_id || 'Nenhuma'}</div>
-                                                <div className="text-[10px] text-slate-500 uppercase font-bold">Indicado (Receiver): <span className="text-blue-400">${m.receiver_reward_usdc}</span> + {m.receiver_loot_box_id || 'Nenhuma'}</div>
+                                                <div className="text-[10px] text-slate-500 uppercase font-bold">Indicado (Receiver): <span className="text-amber-400">${m.receiver_reward_usdc}</span> + {m.receiver_loot_box_id || 'Nenhuma'}</div>
                                             </div>
                                         </div>
                                         <div className="flex gap-2">
-                                            <button onClick={() => { setModelForm(m); setEditModelMode(true); }} className="p-2 bg-slate-800 hover:bg-slate-700 rounded text-blue-400"><Edit size={14} /></button>
+                                            <button onClick={() => { setModelForm(m); setEditModelMode(true); }} className="p-2 bg-slate-800 hover:bg-slate-700 rounded text-amber-400"><Edit size={14} /></button>
                                             <button onClick={() => handleDeleteModel(m.id)} className="p-2 bg-slate-800 hover:bg-red-900/40 rounded text-red-400"><Trash2 size={14} /></button>
                                         </div>
                                     </div>
@@ -1780,7 +1780,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                         {/* Level Assignments */}
                         <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
                             <h3 className="text-white font-bold mb-6 flex items-center gap-2">
-                                <Shield size={18} className="text-cyan-500" /> Atribuir por Nível
+                                <Shield size={18} className="text-amber-500" /> Atribuir por Nível
                             </h3>
                             <div className="space-y-4">
                                 {accessLevels.map(lvl => (
@@ -1789,7 +1789,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                         <select
                                             value={levelAssignments[lvl.id] || ''}
                                             onChange={e => setLevelAssignments({ ...levelAssignments, [lvl.id]: e.target.value ? parseInt(e.target.value) : (null as any) })}
-                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:border-purple-500 outline-none"
+                                            className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2.5 text-sm text-white focus:border-orange-500 outline-none"
                                         >
                                             <option value="">Padrão do Sistema (Triggers)</option>
                                             {referralModels.map(m => (
@@ -1801,7 +1801,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                 <button
                                     onClick={handleSaveAssignments}
                                     disabled={isSavingAssignments}
-                                    className="w-full mt-4 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2"
+                                    className="w-full mt-4 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg flex items-center justify-center gap-2"
                                 >
                                     {isSavingAssignments ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />} SALVAR ATRIBUIÇÕES
                                 </button>
@@ -1861,7 +1861,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                     </div>
                                     <div className="p-6 border-t border-slate-700 bg-slate-900/50 rounded-b-2xl flex gap-3">
                                         <button onClick={() => setEditModelMode(false)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-bold py-2.5 rounded-lg">CANCELAR</button>
-                                        <button onClick={handleSaveModel} disabled={isSavingModel} className="flex-1 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg">
+                                        <button onClick={handleSaveModel} disabled={isSavingModel} className="flex-1 bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-bold py-2.5 rounded-lg">
                                             {isSavingModel ? <Loader2 size={18} className="animate-spin mx-auto" /> : 'SALVAR'}
                                         </button>
                                     </div>
@@ -1881,7 +1881,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                     <div className="bg-slate-800 border border-slate-700 rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in zoom-in-95 duration-200">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-xl font-bold text-white flex items-center gap-2">
-                                <Gift className="text-blue-500" /> Presentear {selectedEmails.size} Usuários
+                                <Gift className="text-amber-500" /> Presentear {selectedEmails.size} Usuários
                             </h3>
                             <button onClick={() => setShowMassGiftModal(false)} className="text-slate-500 hover:text-white">
                                 <X size={20} />
@@ -1894,25 +1894,25 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                 <div className="grid grid-cols-2 gap-2">
                                     <button
                                         onClick={() => setMassGiftForm({ ...massGiftForm, type: 'usdc', id: '' })}
-                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'usdc' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
+                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'usdc' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
                                     >
                                         USDC
                                     </button>
                                     <button
                                         onClick={() => setMassGiftForm({ ...massGiftForm, type: 'item', id: gameUpgrades[0]?.id || '' })}
-                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'item' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
+                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'item' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
                                     >
                                         ITEM DO JOGO
                                     </button>
                                     <button
                                         onClick={() => setMassGiftForm({ ...massGiftForm, type: 'box', id: lootBoxes[0]?.id || '' })}
-                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'box' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
+                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'box' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
                                     >
                                         LOOT BOX
                                     </button>
                                     <button
                                         onClick={() => setMassGiftForm({ ...massGiftForm, type: 'coin', id: miningCoins[0]?.id || '' })}
-                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'coin' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
+                                        className={`py-2 px-3 rounded text-xs font-bold border transition-colors ${massGiftForm.type === 'coin' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}
                                     >
                                         COIN BALANCE
                                     </button>
@@ -1956,7 +1956,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                 <button
                                     onClick={handleBulkGift}
                                     disabled={isProcessingBulk || massGiftForm.qty <= 0}
-                                    className="flex-3 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold py-3 px-8 rounded-xl transition-colors flex items-center justify-center gap-2"
+                                    className="flex-3 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold py-3 px-8 rounded-xl transition-colors flex items-center justify-center gap-2"
                                 >
                                     {isProcessingBulk ? <Loader2 className="animate-spin" size={18} /> : <Gift size={18} />} ENVIAR PRESENTES
                                 </button>

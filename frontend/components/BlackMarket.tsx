@@ -295,7 +295,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                           setCustodyListings(custody);
                         }
                       }}
-                      className="bg-blue-900/50 hover:bg-blue-800 border border-blue-700 text-blue-300 text-xs px-3 py-1.5 rounded font-bold transition-colors"
+                      className="bg-amber-900/50 hover:bg-amber-800 border border-amber-700 text-amber-300 text-xs px-3 py-1.5 rounded font-bold transition-colors"
                     >
                       RESGATAR
                     </button>

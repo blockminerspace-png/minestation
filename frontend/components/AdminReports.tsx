@@ -269,7 +269,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                         setSubtab('transactions');
                         localStorage.setItem('adminReportsSubtab', 'transactions');
                     }}
-                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'transactions' ? 'bg-blue-600/20 text-white border-blue-600/50 shadow-[0_0_10px_rgba(37,99,235,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
+                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'transactions' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
                 >
                     <LayoutList size={16} />
                     Transações USDC
@@ -279,7 +279,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                         setSubtab('calculator');
                         localStorage.setItem('adminReportsSubtab', 'calculator');
                     }}
-                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'calculator' ? 'bg-blue-600/20 text-white border-blue-600/50 shadow-[0_0_10px_rgba(37,99,235,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
+                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'calculator' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
                 >
                     <Calculator size={16} />
                     Calculadora Mining
@@ -289,7 +289,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                         setSubtab('withdrawals');
                         localStorage.setItem('adminReportsSubtab', 'withdrawals');
                     }}
-                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'withdrawals' ? 'bg-blue-600/20 text-white border-blue-600/50 shadow-[0_0_10px_rgba(37,99,235,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
+                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'withdrawals' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
                 >
                     <Wallet size={16} />
                     Saques Manuais
@@ -301,7 +301,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                 <div className="flex-1 overflow-auto custom-scrollbar flex flex-col gap-6">
                     <div className="flex items-center justify-between px-6 py-2 bg-slate-800/30 rounded-lg border border-slate-700/50">
                         <div className="flex items-center gap-2">
-                            <Calculator size={20} className="text-blue-400" />
+                            <Calculator size={20} className="text-amber-400" />
                             <h3 className="font-bold text-white">Gestão da Calculadora</h3>
                         </div>
                         <button
@@ -309,7 +309,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                 setShowCoinManager(!showCoinManager);
                                 setEditingCoin(null);
                             }}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs transition-all ${showCoinManager ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-xs transition-all ${showCoinManager ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20' : 'bg-slate-700 text-slate-300 hover:bg-slate-600'}`}
                         >
                             <Settings size={14} />
                             {showCoinManager ? 'Ver Calculadora' : 'Configurar Moedas'}
@@ -335,7 +335,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     required
                                                     value={editingCoin?.name || ''}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, name: e.target.value }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none"
                                                     placeholder="Bitcoin"
                                                 />
                                             </div>
@@ -346,7 +346,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     required
                                                     value={editingCoin?.symbol || ''}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, symbol: e.target.value }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none"
                                                     placeholder="BTC"
                                                 />
                                             </div>
@@ -358,7 +358,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                 type="text"
                                                 value={editingCoin?.description || ''}
                                                 onChange={e => setEditingCoin(prev => ({ ...prev, description: e.target.value }))}
-                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none"
                                                 placeholder="Moeda principal..."
                                             />
                                         </div>
@@ -370,7 +370,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                 step="0.00000001"
                                                 value={editingCoin?.priceUSD || 0}
                                                 onChange={e => setEditingCoin(prev => ({ ...prev, priceUSD: parseFloat(e.target.value) }))}
-                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                             />
                                         </div>
 
@@ -382,7 +382,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     step="0.00000001"
                                                     value={editingCoin?.blockReward || 0}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, blockReward: parseFloat(e.target.value) }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                                 />
                                             </div>
                                             <div className="space-y-1">
@@ -391,7 +391,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     type="number"
                                                     value={editingCoin?.blockTime || 60}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, blockTime: parseInt(e.target.value) }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                                 />
                                             </div>
                                         </div>
@@ -402,7 +402,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                 type="number"
                                                 value={editingCoin?.networkHashrate || 0}
                                                 onChange={e => setEditingCoin(prev => ({ ...prev, networkHashrate: parseFloat(e.target.value) }))}
-                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                             />
                                         </div>
 
@@ -413,7 +413,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     type="text"
                                                     value={editingCoin?.algorithm || ''}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, algorithm: e.target.value }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none"
                                                     placeholder="SHA-256"
                                                 />
                                             </div>
@@ -423,7 +423,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     type="number"
                                                     value={editingCoin?.difficulty || 1}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, difficulty: parseFloat(e.target.value) }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                                 />
                                             </div>
                                         </div>
@@ -436,7 +436,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     step="0.1"
                                                     value={editingCoin?.multiplier || 1}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, multiplier: parseFloat(e.target.value) }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                                 />
                                             </div>
                                             <div className="space-y-1">
@@ -446,7 +446,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                     step="0.000000000001"
                                                     value={editingCoin?.minProportion || 0}
                                                     onChange={e => setEditingCoin(prev => ({ ...prev, minProportion: parseFloat(e.target.value) }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                                 />
                                             </div>
                                         </div>
@@ -457,7 +457,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                 type="number"
                                                 value={editingCoin?.targetDailyUSD || 0}
                                                 onChange={e => setEditingCoin(prev => ({ ...prev, targetDailyUSD: parseFloat(e.target.value) }))}
-                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-blue-500 outline-none font-mono"
+                                                className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
                                             />
                                         </div>
 
@@ -624,7 +624,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                         setStartDate(val);
                                         localStorage.setItem('adminReportsStartDate', val);
                                     }}
-                                    className="bg-slate-900 text-white text-xs px-2 py-1 rounded border border-slate-700 outline-none focus:border-blue-500"
+                                    className="bg-slate-900 text-white text-xs px-2 py-1 rounded border border-slate-700 outline-none focus:border-amber-500"
                                 />
                             </div>
 
@@ -638,7 +638,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
 
                             <button
                                 onClick={() => setShowEmail(!showEmail)}
-                                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded border transition-colors ${showEmail ? 'bg-blue-600/20 text-blue-400 border-blue-600/50' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}`}
+                                className={`flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded border transition-colors ${showEmail ? 'bg-amber-600/20 text-amber-400 border-amber-600/50' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}`}
                             >
                                 {showEmail ? <Mail size={14} /> : <User size={14} />}
                                 {showEmail ? 'Mostrar Emails' : 'Mostrar Usuários'}
@@ -647,12 +647,12 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                             <div className="h-6 w-px bg-slate-700 mx-2 hidden md:block"></div>
 
                             <div className="flex bg-slate-800 rounded p-1 border border-slate-700">
-                                <button onClick={() => setFilterPeriod('all')} className={`px-3 py-1.5 text-xs font-bold rounded transition-colors ${filterPeriod === 'all' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Tudo</button>
-                                <button onClick={() => setFilterPeriod('day')} className={`px-3 py-1.5 text-xs font-bold rounded transition-colors ${filterPeriod === 'day' ? 'bg-blue-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Por Dia</button>
+                                <button onClick={() => setFilterPeriod('all')} className={`px-3 py-1.5 text-xs font-bold rounded transition-colors ${filterPeriod === 'all' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Tudo</button>
+                                <button onClick={() => setFilterPeriod('day')} className={`px-3 py-1.5 text-xs font-bold rounded transition-colors ${filterPeriod === 'day' ? 'bg-amber-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>Por Dia</button>
                             </div>
 
                             {/* Search Field */}
-                            <div className="relative flex items-center bg-slate-800 rounded border border-slate-700 focus-within:border-blue-500 transition-colors">
+                            <div className="relative flex items-center bg-slate-800 rounded border border-slate-700 focus-within:border-amber-500 transition-colors">
                                 <div className="pl-3 text-slate-500">
                                     <Search size={14} />
                                 </div>
@@ -739,11 +739,11 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                 return (
                                                     <tr key={tx.hash} className="hover:bg-slate-800/40 transition-colors group">
                                                         <td className="px-4 py-3 text-center text-slate-600">
-                                                            <a href={`https://polygonscan.com/tx/${tx.hash}`} target="_blank" rel="noreferrer" className="hover:text-blue-400">
+                                                            <a href={`https://polygonscan.com/tx/${tx.hash}`} target="_blank" rel="noreferrer" className="hover:text-amber-400">
                                                                 <ExternalLink size={12} />
                                                             </a>
                                                         </td>
-                                                        <td className="px-4 py-3 font-mono text-blue-400/80 group-hover:text-blue-400">
+                                                        <td className="px-4 py-3 font-mono text-amber-400/80 group-hover:text-amber-400">
                                                             {truncateMiddle(tx.hash)}
                                                         </td>
                                                         <td className="px-4 py-3 text-slate-400 whitespace-nowrap">
@@ -754,7 +754,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                                 <div className="flex items-center gap-2 text-white font-medium">
                                                                     {showEmail ? <Mail size={12} className="text-slate-500" /> : <User size={12} className="text-slate-500" />}
                                                                     {showEmail ? user.email : user.username}
-                                                                    <span className="text-[9px] bg-blue-900/40 text-blue-300 px-1.5 rounded border border-blue-800">PLAYER</span>
+                                                                    <span className="text-[9px] bg-amber-900/40 text-amber-300 px-1.5 rounded border border-amber-800">PLAYER</span>
                                                                 </div>
                                                             ) : (
                                                                 <div className="flex items-center gap-2 group/edit">

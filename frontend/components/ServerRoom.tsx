@@ -301,14 +301,14 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         <Server size={18} /> {currentRoom?.name || 'SALA DE RIGS DE MINERAÇÃO'}
                     </h3>
                     <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-1.5 bg-cyan-500/10 text-cyan-500 px-2 py-0.5 rounded-full text-[10px] font-bold border border-cyan-500/20">
+                        <div className="flex items-center gap-1.5 bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20">
                             <Activity size={10} />
                             {formatProduction(roomTotalProduction)} H/s
                         </div>
                         {onOpenCalculator && (
                             <button
                                 onClick={onOpenCalculator}
-                                className="flex items-center gap-1.5 bg-purple-500/10 text-purple-500 px-2 py-0.5 rounded-full text-[10px] font-bold border border-purple-500/20 hover:bg-purple-500/20 transition-colors"
+                                className="flex items-center gap-1.5 bg-orange-500/10 text-orange-500 px-2 py-0.5 rounded-full text-[10px] font-bold border border-orange-500/20 hover:bg-orange-500/20 transition-colors"
                             >
                                 <Calculator size={10} /> Calculadora
                             </button>
@@ -339,18 +339,18 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                     const cap = room.initialCapacity + (room.unlockedSlots || 0);
                                     const nextPrice = room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
                                     return (
-                                        <div key={room.id} className={`p-3 rounded border ${roomIndex === idx ? 'border-cyan-700 bg-cyan-900/10 shadow-[0_0_15px_rgba(6,182,212,0.1)]' : 'border-slate-800 bg-slate-900/40'}`}>
+                                        <div key={room.id} className={`p-3 rounded border ${roomIndex === idx ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'border-slate-800 bg-slate-900/40'}`}>
                                             <div className="flex justify-between items-center">
-                                                <button onClick={() => setRoomIndex(idx)} className="font-bold text-slate-200 text-sm text-left hover:text-cyan-400 transition-colors uppercase tracking-wider">{room.name}</button>
+                                                <button onClick={() => setRoomIndex(idx)} className="font-bold text-slate-200 text-sm text-left hover:text-amber-400 transition-colors uppercase tracking-wider">{room.name}</button>
                                             </div>
                                             <div className="text-[10px] text-slate-500 mt-1 font-mono uppercase">Slots: {cap} / {room.maxCapacity}</div>
                                             {cap < room.maxCapacity && (
                                                 <div className="mt-3 flex justify-between items-center pt-2 border-t border-white/5">
-                                                    <div className="text-[10px] text-cyan-400 font-bold">USDC {nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+                                                    <div className="text-[10px] text-amber-400 font-bold">USDC {nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handlePurchaseSlot(room.id); }}
                                                         disabled={!!purchaseBusyId}
-                                                        className={`text-[9px] font-black px-2 py-1 rounded transition-all uppercase ${purchaseBusyId ? 'bg-slate-700 text-slate-500' : 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500 hover:text-white'}`}
+                                                        className={`text-[9px] font-black px-2 py-1 rounded transition-all uppercase ${purchaseBusyId ? 'bg-slate-700 text-slate-500' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500 hover:text-white'}`}
                                                     >
                                                         {purchaseBusyId ? 'Processando' : 'Novo Slot'}
                                                     </button>
@@ -382,13 +382,13 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             >
                                 <button
                                     onClick={() => handleSlotClick(null, slotIdx, null, true)}
-                                    className="flex-1 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900/10 hover:bg-cyan-50 dark:hover:bg-cyan-900/5 hover:border-cyan-400 dark:hover:border-cyan-800/50 transition-all flex flex-col items-center justify-center gap-4 group p-8"
+                                    className="flex-1 rounded-xl border-2 border-dashed border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900/10 hover:bg-amber-50 dark:hover:bg-amber-900/5 hover:border-amber-400 dark:hover:border-amber-800/50 transition-all flex flex-col items-center justify-center gap-4 group p-8"
                                 >
-                                    <div className="w-20 h-20 rounded-full bg-slate-100 dark:bg-slate-800 group-hover:bg-cyan-100 dark:group-hover:bg-cyan-900/30 flex items-center justify-center transition-all group-hover:scale-110 shadow-inner">
-                                        <Plus size={40} className="text-slate-400 dark:text-slate-600 group-hover:text-cyan-600 dark:group-hover:text-cyan-400" />
+                                    <div className="w-20 h-20 rounded-full bg-slate-100 dark:bg-slate-800 group-hover:bg-amber-100 dark:group-hover:bg-amber-900/30 flex items-center justify-center transition-all group-hover:scale-110 shadow-inner">
+                                        <Plus size={40} className="text-slate-400 dark:text-slate-600 group-hover:text-amber-600 dark:group-hover:text-amber-400" />
                                     </div>
                                     <div className="text-center">
-                                        <div className="font-extrabold text-slate-400 dark:text-slate-500 group-hover:text-cyan-600 dark:group-hover:text-cyan-400 transition-colors uppercase tracking-[0.2em] text-[10px]">Slot de Estrutura {slotIdx + 1}</div>
+                                        <div className="font-extrabold text-slate-400 dark:text-slate-500 group-hover:text-amber-600 dark:group-hover:text-amber-400 transition-colors uppercase tracking-[0.2em] text-[10px]">Slot de Estrutura {slotIdx + 1}</div>
                                         <div className="text-[10px] text-slate-400 dark:text-slate-600 mt-2 font-mono uppercase opacity-60">Vazio - Clique para Instalar</div>
                                     </div>
                                 </button>
@@ -530,7 +530,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     <select
                                                                         value={rack.selectedCoinId || ''}
                                                                         onChange={e => { e.stopPropagation(); onSetRackCoin && onSetRackCoin(rack.id, e.target.value); }}
-                                                                        className={`w-full h-full bg-transparent border-none text-[9px] appearance-none text-center outline-none cursor-pointer p-0 font-black tracking-tighter ${!rack.selectedCoinId ? 'text-amber-500' : 'text-cyan-400'}`}
+                                                                        className={`w-full h-full bg-transparent border-none text-[9px] appearance-none text-center outline-none cursor-pointer p-0 font-black tracking-tighter ${!rack.selectedCoinId ? 'text-amber-500' : 'text-amber-400'}`}
                                                                     >
                                                                         <option value="" className="bg-slate-900">SEL_COIN</option>
                                                                         {(miningCoins || []).map(c => (
@@ -549,7 +549,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
                                                                     <div
-                                                                        className={`h-full rounded-full transition-all duration-500 ${isInfinite ? 'bg-cyan-400 shadow-[0_0_10px_#22d3ee]' : (chargePercent < 20 ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.3)]')} ${isOperational && chargePercent < 99.9 ? 'animate-super-pulse' : (rack.isOn ? 'animate-pulse opacity-80' : '')}`}
+                                                                        className={`h-full rounded-full transition-all duration-500 ${isInfinite ? 'bg-amber-400 shadow-[0_0_10px_#f59e0b]' : (chargePercent < 20 ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.3)]')} ${isOperational && chargePercent < 99.9 ? 'animate-super-pulse' : (rack.isOn ? 'animate-pulse opacity-80' : '')}`}
                                                                         style={{ width: `${Math.min(100, chargePercent)}%` }}
                                                                     ></div>
                                                                 </div>
@@ -566,8 +566,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                 >
                                                                     <div className="flex justify-between items-center pb-1 mb-1 relative">
                                                                         <div className="flex items-center gap-1.5">
-                                                                            <Terminal size={10} className="text-cyan-400 animate-pulse" />
-                                                                            <span className="text-[7px] text-cyan-400/80 uppercase tracking-[0.2em] font-black">
+                                                                            <Terminal size={10} className="text-amber-400 animate-pulse" />
+                                                                            <span className="text-[7px] text-amber-400/80 uppercase tracking-[0.2em] font-black">
                                                                                 CMD PANEL
                                                                             </span>
                                                                         </div>
@@ -578,7 +578,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[8px]">
                                                                         <div className="flex flex-col">
                                                                             <span className="text-white/30 uppercase text-[5px] font-black tracking-widest">Rate</span>
-                                                                            <span className="text-cyan-400 font-black truncate">{isOperational ? formatProduction(finalProd) : "0.00"}</span>
+                                                                            <span className="text-amber-400 font-black truncate">{isOperational ? formatProduction(finalProd) : "0.00"}</span>
                                                                         </div>
                                                                         <div className="flex flex-col">
                                                                             <span className="text-white/30 uppercase text-[5px] font-black tracking-widest">Target</span>
@@ -588,7 +588,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                         </div>
                                                                         <div className="flex flex-col">
                                                                             <span className="text-white/30 uppercase text-[5px] font-black tracking-widest">Power</span>
-                                                                            <span className={`font-black truncate ${isInfinite ? 'text-cyan-400' : (chargePercent < 20 ? 'text-red-500' : 'text-emerald-500')}`}>
+                                                                            <span className={`font-black truncate ${isInfinite ? 'text-amber-400' : (chargePercent < 20 ? 'text-red-500' : 'text-emerald-500')}`}>
                                                                                 {isInfinite ? " ∞ | INFINITE" : `${rack.currentCharge.toFixed(0)}Wh`}
                                                                             </span>
                                                                         </div>
@@ -605,10 +605,10 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                             return (
                                                                 <div
                                                                     key={i}
-                                                                    className="absolute z-20 bg-black/60 backdrop-blur-md border border-cyan-500/20 rounded flex items-center justify-center p-1 shadow-inner shadow-cyan-500/5"
+                                                                    className="absolute z-20 bg-black/60 backdrop-blur-md border border-amber-500/20 rounded flex items-center justify-center p-1 shadow-inner shadow-amber-500/5"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
-                                                                    <span className="text-[11px] font-mono font-black text-cyan-400 tracking-tighter">
+                                                                    <span className="text-[11px] font-mono font-black text-amber-400 tracking-tighter">
                                                                         {isOperational ? formatProduction(finalProd) : "0.00"}
                                                                     </span>
                                                                 </div>
@@ -625,7 +625,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                             (slot.type === 'battery' && !rack.batteryId) ||
                                                                             (slot.type === 'wiring' && !rack.wiringId)
                                                                             ? 'bg-red-500/10 border-red-500/30 animate-pulse border-dashed'
-                                                                            : 'bg-cyan-500/5 border-dashed border-cyan-500/10 hover:bg-cyan-500/10 hover:border-cyan-500/30'
+                                                                            : 'bg-amber-500/5 border-dashed border-amber-500/10 hover:bg-amber-500/10 hover:border-amber-500/30'
                                                                     )}
                                                                     ${slot.type === 'machine' ? 'rounded-md' : 'rounded-lg'}
                                                                     ${item && !isOperational ? 'grayscale opacity-70 contrast-125' : ''}
@@ -648,13 +648,13 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
                                                                 {item && isOperational && (
                                                                     <>
-                                                                        <div className="absolute inset-0 bg-cyan-400/5 animate-pulse mix-blend-overlay pointer-events-none"></div>
+                                                                        <div className="absolute inset-0 bg-amber-400/5 animate-pulse mix-blend-overlay pointer-events-none"></div>
                                                                         <div className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_10px_#22c55e]`}></div>
                                                                     </>
                                                                 )}
                                                                 {!item && (
-                                                                    <div className="h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all bg-cyan-500/10 backdrop-blur-[2px]">
-                                                                        <Plus size={10} className="text-cyan-400 drop-shadow-[0_0_3px_rgba(34,211,238,0.5)]" />
+                                                                    <div className="h-full flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all bg-amber-500/10 backdrop-blur-[2px]">
+                                                                        <Plus size={10} className="text-amber-400 drop-shadow-[0_0_3px_rgba(251,191,36,0.45)]" />
                                                                     </div>
                                                                 )}
                                                             </button>
@@ -679,7 +679,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
                             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
                                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 uppercase">
-                                    <Box size={18} className="text-cyan-600 dark:text-cyan-400" />
+                                    <Box size={18} className="text-amber-600 dark:text-amber-400" />
                                     {selectionContext.type === 'machine' ? 'GPU' :
                                         selectionContext.type === 'battery' ? 'BATERIA' :
                                             selectionContext.type === 'multiplier' ? 'MÓDULO IA' :
@@ -751,9 +751,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                             <button
                                                 key={item.id}
                                                 onClick={() => handleItemSelect(item.id)}
-                                                className="flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-750 hover:border-cyan-500/50 transition-all text-left group"
+                                                className="flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-750 hover:border-amber-500/50 transition-all text-left group"
                                             >
-                                                <div className="text-2xl bg-white dark:bg-slate-900 w-12 h-12 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 group-hover:border-cyan-500/30 overflow-hidden">
+                                                <div className="text-2xl bg-white dark:bg-slate-900 w-12 h-12 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 group-hover:border-amber-500/30 overflow-hidden">
                                                     {item.image ? (
                                                         <img src={item.image} className="w-full h-full object-cover" />
                                                     ) : item.icon}
@@ -772,13 +772,13 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         )}
                                                         {item.type === 'multiplier' && (
                                                             <>
-                                                                <span className="text-purple-600 dark:text-purple-400">+{((item.multiplier || 0) * 100).toFixed(1)}% Boost</span>
+                                                                <span className="text-orange-600 dark:text-orange-400">+{((item.multiplier || 0) * 100).toFixed(1)}% Boost</span>
                                                                 <span className="text-red-500 dark:text-red-400">-{item.powerConsumption} W</span>
                                                             </>
                                                         )}
                                                     </div>
                                                 </div>
-                                                <div className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded text-xs font-mono text-cyan-700 dark:text-cyan-500 border border-slate-200 dark:border-slate-800">
+                                                <div className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded text-xs font-mono text-amber-700 dark:text-amber-500 border border-slate-200 dark:border-slate-800">
                                                     x{stock[item.id]}
                                                 </div>
                                             </button>
@@ -802,7 +802,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
                         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
                             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
-                                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 uppercase"><Cog size={18} className="text-cyan-600 dark:text-cyan-400" /> Configuração do Rig</h3>
+                                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 uppercase"><Cog size={18} className="text-amber-600 dark:text-amber-400" /> Configuração do Rig</h3>
                                 <button onClick={() => setConfigRackId(null)} className="text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors">
                                     <X size={20} />
                                 </button>

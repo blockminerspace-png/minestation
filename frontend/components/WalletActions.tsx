@@ -82,7 +82,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
   return (
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-lg flex flex-col gap-4 transition-colors">
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 mb-2">
-        <CreditCard size={18} className="text-purple-500 dark:text-purple-400" />
+        <CreditCard size={18} className="text-orange-500 dark:text-orange-400" />
         <h3 className="text-slate-800 dark:text-slate-300 font-bold">Depósitos</h3>
       </div>
       {depositStatus && (
@@ -122,9 +122,9 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
           </div>
           <div className="grid grid-cols-3 gap-2">
             {[
-              { id: 'polygon', name: 'Polygon', color: 'bg-purple-500', border: 'border-purple-500/50', text: 'text-purple-500' },
+              { id: 'polygon', name: 'Polygon', color: 'bg-orange-500', border: 'border-orange-500/50', text: 'text-orange-500' },
               { id: 'bnb', name: 'BNB Chain', color: 'bg-yellow-500', border: 'border-yellow-500/50', text: 'text-yellow-500' },
-              { id: 'base', name: 'Base', color: 'bg-blue-500', border: 'border-blue-500/50', text: 'text-blue-500' }
+              { id: 'base', name: 'Base', color: 'bg-amber-500', border: 'border-amber-500/50', text: 'text-amber-500' }
             ].filter(net => {
               if (net.id === 'polygon') return !depositPolygonDisabled;
               if (net.id === 'bnb') return !depositBnbDisabled;
@@ -173,7 +173,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
 
       <div className="bg-slate-50 dark:bg-slate-950/50 p-3 rounded border border-slate-200 dark:border-slate-800">
         <div className="flex justify-between items-center mb-2">
-          <span className="text-xs text-cyan-600 dark:text-cyan-500 font-bold flex items-center gap-1">
+          <span className="text-xs text-amber-600 dark:text-amber-500 font-bold flex items-center gap-1">
             <Upload size={12} /> SACAR CRIPTOMOEDA
           </span>
         </div>
@@ -204,7 +204,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
               const v = parseFloat(e.target.value);
               setCoinAmount(isNaN(v) ? e.target.value : String(Math.max(0, v)));
             }}
-            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-cyan-500 outline-none font-mono transition-colors"
+            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-amber-500 outline-none font-mono transition-colors"
           />
           <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
             {(() => {
@@ -254,8 +254,8 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
                     </div>
                   )}
                   <div className="flex justify-between items-center font-black pt-1 border-t border-slate-100 dark:border-slate-800">
-                    <span className="text-cyan-600 dark:text-cyan-400">VOCÊ RECEBE:</span>
-                    <span className="text-cyan-600 dark:text-cyan-400 font-mono text-xs">{formatAmount(netAmount)} {c?.symbol}</span>
+                    <span className="text-amber-600 dark:text-amber-400">VOCÊ RECEBE:</span>
+                    <span className="text-amber-600 dark:text-amber-400 font-mono text-xs">{formatAmount(netAmount)} {c?.symbol}</span>
                   </div>
                   <div className="pt-1 flex items-center gap-1 text-[8px] text-amber-600 dark:text-amber-500 font-bold uppercase tracking-tighter">
                     <Clock size={10} /> O saque será confirmado em até 24 horas
@@ -286,7 +286,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
                 return isNameMatch && (isNative || hasValidContract);
               })
             }
-            className="bg-cyan-100 dark:bg-cyan-900/30 hover:bg-cyan-200 dark:hover:bg-cyan-900/50 border border-cyan-300 dark:border-cyan-800 text-cyan-700 dark:text-cyan-400 text-xs font-bold px-4 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-9"
+            className="bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs font-bold px-4 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-9"
           >
             SACAR
           </button>
@@ -311,7 +311,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
 
       <div className="bg-slate-50 dark:bg-slate-950/50 p-3 rounded border border-slate-200 dark:border-slate-800">
         <div className="flex items-center gap-2 mb-2">
-          <Coins size={12} className="text-purple-600 dark:text-purple-400" />
+          <Coins size={12} className="text-orange-600 dark:text-orange-400" />
           <span className="text-xs text-slate-700 dark:text-slate-300 font-bold">CRIPTOMOEDAS EM MINERAÇÃO</span>
         </div>
         <div className="space-y-1">
@@ -320,7 +320,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
           ) : miningCoins.map(c => (
             <div key={c.id} className="flex items-center justify-between text-[12px] font-mono">
               <span className="text-slate-600 dark:text-slate-300">{c.name}</span>
-              <span className="text-cyan-700 dark:text-cyan-300">{formatAmount(coinRates[c.id] || 0)}/s</span>
+              <span className="text-amber-700 dark:text-amber-300">{formatAmount(coinRates[c.id] || 0)}/s</span>
             </div>
           ))}
         </div>

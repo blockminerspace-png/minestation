@@ -164,7 +164,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
     <div className="flex flex-col p-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
 
       <div className="flex items-center gap-3 mb-6 border-b border-slate-200 dark:border-slate-800 pb-4">
-        <div className="bg-slate-200 dark:bg-slate-800 p-2 rounded-lg text-cyan-600 dark:text-cyan-400">
+        <div className="bg-slate-200 dark:bg-slate-800 p-2 rounded-lg text-amber-600 dark:text-amber-400">
           <UserIcon size={24} />
         </div>
         <div>
@@ -186,7 +186,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
         <div className="space-y-6">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-              <UserIcon size={18} className="text-cyan-500" /> Identidade
+              <UserIcon size={18} className="text-amber-500" /> Identidade
             </h3>
             <form onSubmit={handleUpdateBasicInfo} className="space-y-4">
               <div className="space-y-1">
@@ -209,7 +209,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-slate-900 dark:text-white focus:border-cyan-500 outline-none transition-colors"
+                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-slate-900 dark:text-white focus:border-amber-500 outline-none transition-colors"
                   />
                 </div>
               </div>
@@ -220,16 +220,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                   <span className="text-sm font-bold">{currentLevelName}</span>
                 </div>
               </div>
-              <button type="submit" className="bg-cyan-600 hover:bg-cyan-500 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
+              <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
                 <Save size={16} /> SALVAR ALTERAÇÕES
               </button>
             </form>
           </div>
 
           {/* REFERRAL SYSTEM */}
-          <div className="bg-gradient-to-br from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 border border-blue-200 dark:border-blue-800 rounded-xl p-6 shadow-sm">
+          <div className="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-950/40 border border-amber-200 dark:border-amber-800 rounded-xl p-6 shadow-sm">
             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-              <Share2 size={18} className="text-blue-500" /> Sistema de Indicação
+              <Share2 size={18} className="text-amber-500" /> Sistema de Indicação
             </h3>
 
             <div className="space-y-4">
@@ -241,7 +241,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                   </div>
                   <button
                     onClick={copyReferralLink}
-                    className="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg"
+                    className="bg-amber-600 hover:bg-amber-500 text-white p-2 rounded-lg"
                     title="Copiar Link"
                   >
                     <Copy size={18} />
@@ -252,7 +252,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
               <div className="bg-white dark:bg-slate-950 rounded-lg p-3 border border-slate-200 dark:border-slate-800">
                 <div className="flex justify-between items-center mb-2">
                   <span className="text-xs font-bold text-slate-500 uppercase">Indicados</span>
-                  <span className="text-sm font-bold text-blue-600 dark:text-blue-400">{referrals.length}</span>
+                  <span className="text-sm font-bold text-amber-600 dark:text-amber-400">{referrals.length}</span>
                 </div>
 
                 {referrals.length > 0 ? (
@@ -274,7 +274,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                               <button
                                 onClick={handleClaimReferral}
                                 disabled={!claimable}
-                                className={`text-[10px] px-2 py-1 rounded font-bold ${claimable ? 'bg-blue-600 text-white hover:bg-blue-500' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed opacity-50'}`}
+                                className={`text-[10px] px-2 py-1 rounded font-bold ${claimable ? 'bg-amber-600 text-white hover:bg-amber-500' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed opacity-50'}`}
                               >
                                 {claimable ? 'Resgatar' : 'Pendente'}
                               </button>
@@ -330,7 +330,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
             return (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
                 <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-                  <Newspaper size={18} className="text-purple-500" /> Publicar notícia
+                  <Newspaper size={18} className="text-orange-500" /> Publicar notícia
                 </h3>
                 <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">Taxa: ${newsFee} USDC • Saldo: ${usdcBal.toFixed(2)} USDC</div>
                 <div className="space-y-3">
@@ -357,7 +357,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                       } else if (res && res.error) {
                         alert(res.error);
                       }
-                    }} className="bg-purple-600 hover:bg-purple-500 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors">ENVIAR</button>
+                    }} className="bg-orange-600 hover:bg-orange-500 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors">ENVIAR</button>
                     <button onClick={() => { setNewsText(''); setNewsLink(''); }} className="bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors">CANCELAR</button>
                   </div>
                 </div>
@@ -413,7 +413,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                   type="password"
                   value={newPass}
                   onChange={(e) => setNewPass(e.target.value)}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-cyan-500 outline-none transition-colors"
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-amber-500 outline-none transition-colors"
                 />
               </div>
               <div className="space-y-1">
@@ -422,7 +422,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                   type="password"
                   value={confirmPass}
                   onChange={(e) => setConfirmPass(e.target.value)}
-                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-cyan-500 outline-none transition-colors"
+                  className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-amber-500 outline-none transition-colors"
                 />
               </div>
               <button type="submit" className="bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
@@ -433,14 +433,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
 
           {/* CARTEIRA WEB3 */}
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-4 opacity-5 text-purple-500 pointer-events-none">
+            <div className="absolute top-0 right-0 p-4 opacity-5 text-orange-500 pointer-events-none">
               <Wallet size={100} />
             </div>
             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 relative z-10">
-              <Wallet size={18} className="text-purple-500" /> Carteira de Saque (Polygon)
+              <Wallet size={18} className="text-orange-500" /> Carteira de Saque (Polygon)
             </h3>
             <div className="flex items-center gap-2 mb-4 relative z-10">
-              <button onClick={handleConnectWallet} disabled={!!polygonWallet} className="bg-purple-100 dark:bg-purple-900/30 hover:bg-purple-200 dark:hover:bg-purple-900/50 border border-purple-300 dark:border-purple-800 text-purple-700 dark:text-purple-400 text-xs font-bold px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+              <button onClick={handleConnectWallet} disabled={!!polygonWallet} className="bg-orange-100 dark:bg-orange-900/30 hover:bg-orange-200 dark:hover:bg-orange-900/50 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400 text-xs font-bold px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 Conectar carteira do navegador
               </button>
               {polygonWallet && (

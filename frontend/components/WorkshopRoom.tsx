@@ -104,7 +104,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                     const canUnequip = !item || item.type !== 'charger' || (wsGroup?.currentCharge ?? 0) <= 0.000001;
 
                     return (
-                        <div key={idx} className={`relative aspect-square transition-all ${!item ? 'border-2 border-dashed border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 hover:border-cyan-500/50 rounded-xl' : 'rounded-none'}`}>
+                        <div key={idx} className={`relative aspect-square transition-all ${!item ? 'border-2 border-dashed border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 hover:border-amber-500/50 rounded-xl' : 'rounded-none'}`}>
                             {item ? (
                                 <div className="w-full h-full flex flex-col items-center justify-center relative group">
                                     <button
@@ -272,7 +272,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 <button
                                                                     key={i}
                                                                     onClick={handleClick}
-                                                                    className={`absolute border border-dashed border-cyan-500/30 bg-cyan-500/5 rounded-sm z-30 flex items-center justify-center hover:bg-cyan-500/20 transition-colors overflow-hidden ${equippedId ? 'border-none bg-transparent' : ''} ${isWiringCharging ? 'shadow-[0_0_15px_rgba(6,182,212,0.4)] brightness-125 animate-super-pulse' : ''}`}
+                                                                    className={`absolute border border-dashed border-amber-500/30 bg-amber-500/5 rounded-sm z-30 flex items-center justify-center hover:bg-amber-500/20 transition-colors overflow-hidden ${equippedId ? 'border-none bg-transparent' : ''} ${isWiringCharging ? 'shadow-[0_0_15px_rgba(245,158,11,0.4)] brightness-125 animate-super-pulse' : ''}`}
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%`, color: '#06b6d4' }}
                                                                 >
                                                                     {equippedId ? (
@@ -280,14 +280,14 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                             <div className="relative w-full h-full">
                                                                                 <img src={contentItem.image} alt={contentItem.name} className="w-full h-full object-contain" />
                                                                                 {isWiringCharging && (
-                                                                                    <div className="absolute inset-0 bg-cyan-400/20 animate-pulse mix-blend-overlay pointer-events-none"></div>
+                                                                                    <div className="absolute inset-0 bg-amber-400/20 animate-pulse mix-blend-overlay pointer-events-none"></div>
                                                                                 )}
                                                                             </div>
                                                                         ) : (
-                                                                            <span className={`text-[10px] ${isWiringCharging ? 'animate-pulse text-cyan-400' : ''}`}>{contentItem?.icon || '🔋'}</span>
+                                                                            <span className={`text-[10px] ${isWiringCharging ? 'animate-pulse text-amber-400' : ''}`}>{contentItem?.icon || '🔋'}</span>
                                                                         )
                                                                     ) : (
-                                                                        <Plus size={slot.w > 10 ? 12 : 8} className="text-cyan-500/50" />
+                                                                        <Plus size={slot.w > 10 ? 12 : 8} className="text-amber-500/50" />
                                                                     )}
                                                                 </button>
                                                             );
@@ -297,7 +297,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 <button
                                                                     key={i}
                                                                     onClick={() => onInstantRecharge(idx)}
-                                                                    className="absolute overflow-hidden rounded-full flex items-center justify-center border border-cyan-500/50 bg-cyan-950/80 text-cyan-400 z-30 hover:scale-110 active:scale-95 transition-transform hover:bg-cyan-900 shadow-[0_0_10px_rgba(6,182,212,0.3)]"
+                                                                    className="absolute overflow-hidden rounded-full flex items-center justify-center border border-amber-500/50 bg-amber-950/80 text-amber-400 z-30 hover:scale-110 active:scale-95 transition-transform hover:bg-amber-900 shadow-[0_0_10px_rgba(245,158,11,0.3)]"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                     title="Recarga Instantânea"
                                                                 >
@@ -373,12 +373,12 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 >
                                                                     <div className="flex justify-between items-center pb-0.5 mb-0.5">
                                                                         <div className="flex items-center gap-1">
-                                                                            <Terminal size={10} className="text-cyan-400 animate-pulse" />
-                                                                            <span className="text-[7px] text-cyan-400/80 uppercase tracking-widest font-black">CMD PANEL</span>
+                                                                            <Terminal size={10} className="text-amber-400 animate-pulse" />
+                                                                            <span className="text-[7px] text-amber-400/80 uppercase tracking-widest font-black">CMD PANEL</span>
                                                                         </div>
                                                                         <div className="flex gap-0.5">
-                                                                            <div className="w-1 h-1 rounded-full bg-blue-500/40"></div>
-                                                                            <div className="w-1 h-1 rounded-full bg-cyan-500/40"></div>
+                                                                            <div className="w-1 h-1 rounded-full bg-amber-500/40"></div>
+                                                                            <div className="w-1 h-1 rounded-full bg-amber-500/40"></div>
                                                                         </div>
                                                                     </div>
                                                                     <div className="grid grid-cols-2 gap-x-2 gap-y-0.5 text-[8px]">
@@ -388,7 +388,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                         </div>
                                                                         <div className="flex flex-col">
                                                                             <span className="text-slate-600 uppercase text-[6px] font-bold">Attached</span>
-                                                                            <span className="text-cyan-400 font-bold truncate">{attachedCount} items</span>
+                                                                            <span className="text-amber-400 font-bold truncate">{attachedCount} items</span>
                                                                         </div>
                                                                         <div className="flex flex-col">
                                                                             <span className="text-slate-600 uppercase text-[6px] font-bold">Avg_Btt</span>
@@ -396,7 +396,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                         </div>
                                                                         <div className="flex flex-col">
                                                                             <span className="text-slate-600 uppercase text-[6px] font-bold">Status</span>
-                                                                            <span className={`font-bold truncate ${isGlobalCharging ? 'text-blue-400 animate-super-pulse' : 'text-slate-500'}`}>
+                                                                            <span className={`font-bold truncate ${isGlobalCharging ? 'text-amber-400 animate-super-pulse' : 'text-slate-500'}`}>
                                                                                 {isGlobalCharging ? 'CHARGING' : 'IDLE'}
                                                                             </span>
                                                                         </div>
@@ -404,10 +404,10 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     <div className="mt-0.5 pt-0.5 border-t border-white/5 flex justify-between items-center">
                                                                         <div className="flex gap-0.5">
                                                                             {Array.from({ length: 4 }).map((_, idx) => (
-                                                                                <div key={idx} className="w-1 h-0.5 rounded-full bg-cyan-500/60 animate-pulse" style={{ animationDelay: `${idx * 0.2}s` }}></div>
+                                                                                <div key={idx} className="w-1 h-0.5 rounded-full bg-amber-500/60 animate-pulse" style={{ animationDelay: `${idx * 0.2}s` }}></div>
                                                                             ))}
                                                                         </div>
-                                                                        <span className="text-[7px] font-bold tracking-tighter text-cyan-600">STATION_READY</span>
+                                                                        <span className="text-[7px] font-bold tracking-tighter text-amber-600">STATION_READY</span>
                                                                     </div>
                                                                 </div>
                                                             );
@@ -416,10 +416,10 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             return (
                                                                 <div
                                                                     key={i}
-                                                                    className="absolute z-20 bg-black/60 backdrop-blur-sm border border-cyan-500/30 rounded flex items-center justify-center p-0.5"
+                                                                    className="absolute z-20 bg-black/60 backdrop-blur-sm border border-amber-500/30 rounded flex items-center justify-center p-0.5"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
-                                                                    <span className="text-[8px] font-mono font-bold text-cyan-400">100.0</span>
+                                                                    <span className="text-[8px] font-mono font-bold text-amber-400">100.0</span>
                                                                 </div>
                                                             );
                                                         }
@@ -438,9 +438,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                             ) : (
                                 <button
                                     onClick={() => setSelectingIndex(idx)}
-                                    className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 hover:text-cyan-500 transition-colors group p-4"
+                                    className="w-full h-full flex flex-col items-center justify-center gap-2 text-slate-400 hover:text-amber-500 transition-colors group p-4"
                                 >
-                                    <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center group-hover:bg-cyan-100 dark:group-hover:bg-cyan-900/30 transition-colors">
+                                    <div className="w-12 h-12 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center group-hover:bg-amber-100 dark:group-hover:bg-amber-900/30 transition-colors">
                                         <Plus size={24} />
                                     </div>
                                     <span className="text-xs font-bold uppercase tracking-wider">Instalar Estrutura</span>
@@ -457,7 +457,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
                         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
                             <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 uppercase">
-                                <Box size={18} className="text-cyan-600 dark:text-cyan-400" />
+                                <Box size={18} className="text-amber-600 dark:text-amber-400" />
                                 ESTRUTURAS DE OFICINA
                             </h3>
                             <button onClick={() => setSelectingIndex(null)} className="text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors">
@@ -479,9 +479,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                 onEquip(selectingIndex, item.id);
                                                 setSelectingIndex(null);
                                             }}
-                                            className="w-full flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-cyan-500 transition-all text-left group"
+                                            className="w-full flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-amber-500 transition-all text-left group"
                                         >
-                                            <div className="w-12 h-12 flex-shrink-0 flex items-center justify-center bg-white dark:bg-slate-950 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 group-hover:border-cyan-500/50">
+                                            <div className="w-12 h-12 flex-shrink-0 flex items-center justify-center bg-white dark:bg-slate-950 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 group-hover:border-amber-500/50">
                                                 {item.image ? (
                                                     <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                                                 ) : (
@@ -492,7 +492,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                 <div className="font-bold text-sm text-slate-800 dark:text-slate-200">{item.name}</div>
                                                 <div className="text-xs text-slate-500 line-clamp-1">{item.description}</div>
                                             </div>
-                                            <div className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded text-xs font-mono text-cyan-600 border border-slate-200 dark:border-slate-800">x{stock[item.id]}</div>
+                                            <div className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded text-xs font-mono text-amber-600 border border-slate-200 dark:border-slate-800">x{stock[item.id]}</div>
                                         </button>
                                     ))}
                                 </div>
@@ -587,7 +587,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                 onEquipComponent(selectingComponent.wsIdx, selectingComponent.slotId, item.id);
                                                 setSelectingComponent(null);
                                             }}
-                                            className="w-full flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-cyan-500 transition-all text-left"
+                                            className="w-full flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:border-amber-500 transition-all text-left"
                                         >
                                             <div className="w-12 h-12 flex items-center justify-center bg-white dark:bg-slate-900 rounded border border-slate-200 dark:border-slate-800 overflow-hidden">
                                                 {item.image ? (
@@ -598,7 +598,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                 <div className="font-bold text-sm text-slate-800 dark:text-slate-200">{item.name}</div>
                                                 <div className="text-xs text-slate-500">Disponível: {stock[item.id]}</div>
                                             </div>
-                                            <div className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded text-xs font-mono text-cyan-600 border border-slate-200 dark:border-slate-800">x{stock[item.id]}</div>
+                                            <div className="bg-slate-100 dark:bg-slate-950 px-2 py-1 rounded text-xs font-mono text-amber-600 border border-slate-200 dark:border-slate-800">x{stock[item.id]}</div>
                                         </button>
                                     ))}
                                 </div>

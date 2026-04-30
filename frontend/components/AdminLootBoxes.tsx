@@ -271,7 +271,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
             <div className="flex gap-2 mb-4 border-b border-slate-700 pb-2 overflow-x-auto custom-scrollbar flex-shrink-0">
                 <button
                     onClick={() => setActiveTab('all')}
-                    className={`px-3 py-2 text-sm font-bold uppercase rounded flex-shrink-0 whitespace-nowrap ${activeTab === 'all' ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                    className={`px-3 py-2 text-sm font-bold uppercase rounded flex-shrink-0 whitespace-nowrap ${activeTab === 'all' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                     Gestão Geral
                 </button>
@@ -279,7 +279,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                     <button
                         key={trigger}
                         onClick={() => setActiveTab(trigger)}
-                        className={`px-3 py-2 text-sm font-bold uppercase rounded flex-shrink-0 whitespace-nowrap ${activeTab === trigger ? 'bg-cyan-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                        className={`px-3 py-2 text-sm font-bold uppercase rounded flex-shrink-0 whitespace-nowrap ${activeTab === trigger ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}
                     >
                         {trigger === 'shop' ? 'Loja' : trigger === 'registration' ? 'Cadastro' : trigger === 'upgrade' ? 'Upgrade' : trigger === 'promo_code' ? 'Promo Code' : trigger === 'roleta_code' ? 'Roleta' : trigger === 'shop_once' ? 'Loja 1x' : trigger === 'special' ? 'Especial' : trigger === 'referral_sender' ? 'Indicou' : trigger === 'referral_receiver' ? 'Indicado' : trigger.startsWith('season:') ? `Temp: ${trigger.split(':')[1]}` : trigger}
                     </button>
@@ -296,7 +296,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
 
                     <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
                         {lootBoxes.filter(b => activeTab === 'all' || b.trigger === activeTab).map(box => (
-                            <div key={box.id} onClick={() => { handleEditBox(box); setSelectedBundle(null); setEditBundleMode(false); }} className={`p-3 rounded border cursor-pointer flex justify-between items-center transition-all ${editBoxMode && boxForm.id === box.id ? 'bg-slate-700 border-purple-500 ring-1 ring-purple-500' : 'bg-slate-900 border-slate-700 hover:border-slate-500'} ${box.isActive === false ? 'opacity-50 grayscale' : ''}`}>
+                            <div key={box.id} onClick={() => { handleEditBox(box); setSelectedBundle(null); setEditBundleMode(false); }} className={`p-3 rounded border cursor-pointer flex justify-between items-center transition-all ${editBoxMode && boxForm.id === box.id ? 'bg-slate-700 border-orange-500 ring-1 ring-orange-500' : 'bg-slate-900 border-slate-700 hover:border-slate-500'} ${box.isActive === false ? 'opacity-50 grayscale' : ''}`}>
                                 <div>
                                     <div className="font-bold text-white flex items-center gap-2">
                                         <span className="flex items-center justify-center w-5 h-5">{renderIcon(box.icon, "text-base", "w-4 h-4")}</span> {box.name}
@@ -398,7 +398,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                             {/* CONTENTS - Hide for Roleta Code as prize comes from wheel */}
                             {boxForm.trigger !== 'roleta_code' && (
                                 <div className="border-t border-slate-700 pt-4">
-                                    <h4 className="font-bold text-purple-400 mb-2">Conteúdo da Caixa</h4>
+                                    <h4 className="font-bold text-orange-400 mb-2">Conteúdo da Caixa</h4>
                                     <div className="bg-slate-900 rounded p-3 mb-4 space-y-2">
                                         {boxForm.items?.map((item, idx) => (
                                             <div key={idx} className="flex justify-between items-center text-sm bg-slate-800 p-2 rounded border border-slate-700">
@@ -455,7 +455,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                             <input type="number" min="1" max="100" value={newItemForm.probability} onChange={e => setNewItemForm({ ...newItemForm, probability: parseFloat(e.target.value) })} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
                                         </div>
                                         <div className="col-span-2">
-                                            <button onClick={handleAddBoxItem} className="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold py-1.5 rounded">ADD</button>
+                                            <button onClick={handleAddBoxItem} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-1.5 rounded">ADD</button>
                                         </div>
                                     </div>
                                 </div>
@@ -464,10 +464,10 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                             {/* PROMO CODES */}
                             {(boxForm.trigger === 'promo_code' || boxForm.trigger === 'roleta_code') && (
                                 <div className="border-t border-slate-700 pt-4 space-y-4">
-                                    <h4 className="font-bold text-purple-400 flex items-center gap-2 uppercase text-xs tracking-widest">
+                                    <h4 className="font-bold text-orange-400 flex items-center gap-2 uppercase text-xs tracking-widest">
                                         <Ticket size={16} /> Gerador de Códigos de Resgate
                                     </h4>
-                                    <div className="bg-slate-900/50 p-4 rounded-xl border border-purple-500/20">
+                                    <div className="bg-slate-900/50 p-4 rounded-xl border border-orange-500/20">
                                         <div className="flex flex-col md:flex-row gap-4 items-end mb-4">
                                             <div className="flex-1 w-full space-y-4">
                                                 <div>
@@ -508,7 +508,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                                 setPromoType('roleta_global_1x');
                                                             }
                                                         }}
-                                                        className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs focus:ring-1 focus:ring-purple-500 outline-none mb-2"
+                                                        className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs focus:ring-1 focus:ring-orange-500 outline-none mb-2"
                                                     >
                                                         {boxForm.trigger === 'roleta_code' ? (
                                                             <>
@@ -539,11 +539,11 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
 
                                                     {rewardType === 'upgrade' && (
                                                         <div className="mb-2 animate-in fade-in slide-in-from-top-1">
-                                                            <label className="text-[10px] text-blue-400 font-bold block mb-1 uppercase">Selecione o Item Espcífico:</label>
+                                                            <label className="text-[10px] text-amber-400 font-bold block mb-1 uppercase">Selecione o Item Espcífico:</label>
                                                             <select
                                                                 value={selectedUpgradeId}
                                                                 onChange={e => setSelectedUpgradeId(e.target.value)}
-                                                                className="w-full bg-slate-950 border border-blue-500/50 rounded p-2 text-white text-xs focus:ring-1 focus:ring-blue-500 outline-none"
+                                                                className="w-full bg-slate-950 border border-amber-500/50 rounded p-2 text-white text-xs focus:ring-1 focus:ring-amber-500 outline-none"
                                                             >
                                                                 <option value="">Selecione...</option>
                                                                 {gameUpgrades.sort((a, b) => a.name.localeCompare(b.name)).map(u => (
@@ -557,7 +557,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                             <button
                                                 onClick={handleGenerateCode}
                                                 disabled={generatingCode}
-                                                className={`w-full md:w-auto bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-purple-600/20 ${generatingCode ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                className={`w-full md:w-auto bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-orange-600/20 ${generatingCode ? 'opacity-50 cursor-not-allowed' : ''}`}
                                             >
                                                 <Plus size={14} /> {generatingCode ? 'GERANDO...' : 'GERAR CÓDIGO'}
                                             </button>
@@ -567,15 +567,15 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                             {boxCodes.map(c => (
                                                 <div key={c.code} className={`flex justify-between items-center bg-slate-950/50 p-3 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors ${!c.isActive ? 'opacity-50 grayscale-[0.5]' : ''}`}>
                                                     <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                                                        <span className={`font-mono font-bold text-sm tracking-widest ${!c.isActive ? 'text-slate-500' : 'text-purple-400'}`}>{c.code}</span>
-                                                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${c.type === 'per_player' ? 'bg-blue-900/40 text-blue-400 border border-blue-900/50' : 'bg-amber-900/40 text-amber-400 border border-amber-900/50'}`}>
+                                                        <span className={`font-mono font-bold text-sm tracking-widest ${!c.isActive ? 'text-slate-500' : 'text-orange-400'}`}>{c.code}</span>
+                                                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${c.type === 'per_player' ? 'bg-amber-900/40 text-amber-400 border border-amber-900/50' : 'bg-amber-900/40 text-amber-400 border border-amber-900/50'}`}>
                                                             {c.type === 'per_player' ? 'Multi-uso' : 'Global 1x'}
                                                         </span>
                                                         <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-300 border border-slate-700">
                                                             {c.adminUpgradeId ? (
                                                                 <span className="text-amber-400">💎 Pacote: {adminBundles.find(b => b.id === c.adminUpgradeId)?.name || 'Pacote Desconhecido'}</span>
                                                             ) : c.upgradeId ? (
-                                                                <span className="text-blue-400">🎁 Item: {gameUpgrades.find(u => u.id === c.upgradeId)?.name || 'Upgrade Desconhecido'}</span>
+                                                                <span className="text-amber-400">🎁 Item: {gameUpgrades.find(u => u.id === c.upgradeId)?.name || 'Upgrade Desconhecido'}</span>
                                                             ) : (
                                                                 <span>Box: {lootBoxes.find(b => b.id === c.lootBoxId)?.name || 'Caixa Desconhecida'}</span>
                                                             )}
@@ -606,7 +606,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                 <div className="text-center py-6 bg-slate-950/30 rounded-lg border border-dashed border-slate-800">
                                                     <p className="text-slate-600 italic text-xs">Nenhum código gerado para esta caixa.</p>
                                                     <p className="text-[9px] text-slate-800 font-mono mt-1 opacity-50">ID: {boxForm.id}</p>
-                                                    <p className="text-[9px] text-pink-900 font-mono mt-0.5 opacity-30">Total: {(window as any)._lastBoxCodesTotal || 0} | Filtered: 0</p>
+                                                    <p className="text-[9px] text-orange-950 font-mono mt-0.5 opacity-30">Total: {(window as any)._lastBoxCodesTotal || 0} | Filtered: 0</p>
                                                 </div>
                                             )}
                                         </div>
@@ -616,8 +616,8 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                             </button>
                                         </div>
                                     </div>
-                                    <div className="bg-slate-900/50 p-4 rounded-xl border border-blue-500/20 mt-4">
-                                        <h4 className="font-bold text-blue-400 flex items-center gap-2 uppercase text-xs tracking-widest mb-3">
+                                    <div className="bg-slate-900/50 p-4 rounded-xl border border-amber-500/20 mt-4">
+                                        <h4 className="font-bold text-amber-400 flex items-center gap-2 uppercase text-xs tracking-widest mb-3">
                                             <Users size={16} /> Histórico de Resgates
                                         </h4>
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -692,7 +692,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                     <div className="space-y-1">
                                         <div className="text-slate-400 font-bold uppercase text-[10px]">Recompensas Diretas:</div>
                                         <div className="text-white">• {selectedBundle.grantUsdc || 0} USDC</div>
-                                        {selectedBundle.grantAccessLevelId && <div className="text-blue-400">• Nível de Acesso: {selectedBundle.grantAccessLevelId}</div>}
+                                        {selectedBundle.grantAccessLevelId && <div className="text-amber-400">• Nível de Acesso: {selectedBundle.grantAccessLevelId}</div>}
                                     </div>
                                     <div className="space-y-1">
                                         <div className="text-slate-400 font-bold uppercase text-[10px]">Itens e Moedas:</div>
@@ -704,10 +704,10 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                             </div>
 
                             <div className="border-t border-slate-700 pt-4 space-y-4">
-                                <h4 className="font-bold text-purple-400 flex items-center gap-2 uppercase text-xs tracking-widest">
+                                <h4 className="font-bold text-orange-400 flex items-center gap-2 uppercase text-xs tracking-widest">
                                     <Ticket size={16} /> Gerador de Códigos de Resgate
                                 </h4>
-                                <div className="bg-slate-900/50 p-4 rounded-xl border border-purple-500/20">
+                                <div className="bg-slate-900/50 p-4 rounded-xl border border-orange-500/20">
                                     <div className="flex flex-col md:flex-row gap-4 items-end mb-4">
                                         <div className="flex-1 w-full space-y-4">
                                             <div>
@@ -715,7 +715,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                 <select
                                                     value={promoType}
                                                     onChange={e => setPromoType(e.target.value as any)}
-                                                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs focus:ring-1 focus:ring-purple-500 outline-none"
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs focus:ring-1 focus:ring-orange-500 outline-none"
                                                 >
                                                     <option value="per_player">Cada Jogador pode usar 1x (Multi-uso)</option>
                                                     <option value="global_once">Apenas a Primeira Pessoa que resgatar (Global 1x)</option>
@@ -724,7 +724,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                         </div>
                                         <button
                                             onClick={handleGenerateCode}
-                                            className="w-full lg:w-auto bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-purple-600/20"
+                                            className="w-full lg:w-auto bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-orange-600/20"
                                         >
                                             <Plus size={14} /> GERAR CÓDIGO
                                         </button>
@@ -734,15 +734,15 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                         {boxCodes.map(c => (
                                             <div key={c.code} className={`flex justify-between items-center bg-slate-950/50 p-3 rounded-lg border border-slate-800 hover:border-slate-700 transition-colors ${!c.isActive ? 'opacity-50 grayscale-[0.5]' : ''}`}>
                                                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                                                    <span className={`font-mono font-bold text-sm tracking-widest ${!c.isActive ? 'text-slate-500' : 'text-purple-400'}`}>{c.code}</span>
-                                                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${c.type === 'per_player' ? 'bg-blue-900/40 text-blue-400 border border-blue-900/50' : 'bg-amber-900/40 text-amber-400 border border-amber-900/50'}`}>
+                                                    <span className={`font-mono font-bold text-sm tracking-widest ${!c.isActive ? 'text-slate-500' : 'text-orange-400'}`}>{c.code}</span>
+                                                    <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${c.type === 'per_player' ? 'bg-amber-900/40 text-amber-400 border border-amber-900/50' : 'bg-amber-900/40 text-amber-400 border border-amber-900/50'}`}>
                                                         {c.type === 'per_player' ? 'Multi-uso' : 'Global 1x'}
                                                     </span>
                                                     <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-300 border border-slate-700">
                                                         {(c.adminUpgradeId || (c as any).admin_upgrade_id) ? (
                                                             <span className="text-amber-400">💎 Pacote: {adminBundles.find(b => b.id === (c.adminUpgradeId || (c as any).admin_upgrade_id))?.name || 'Pacote Desconhecido'}</span>
                                                         ) : (c.upgradeId || (c as any).upgrade_id) ? (
-                                                            <span className="text-blue-400">🎁 Item: {gameUpgrades.find(u => u.id === (c.upgradeId || (c as any).upgrade_id))?.name || 'Upgrade Desconhecido'}</span>
+                                                            <span className="text-amber-400">🎁 Item: {gameUpgrades.find(u => u.id === (c.upgradeId || (c as any).upgrade_id))?.name || 'Upgrade Desconhecido'}</span>
                                                         ) : (
                                                             <span>Box: {lootBoxes.find(b => b.id === (c.lootBoxId || (c as any).loot_box_id))?.name || 'Caixa Desconhecida'}</span>
                                                         )}

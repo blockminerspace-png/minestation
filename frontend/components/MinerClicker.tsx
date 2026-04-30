@@ -12,7 +12,7 @@ export const SystemMonitor: React.FC<SystemMonitorProps> = ({ productionRate }) 
       <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-20 pointer-events-none"></div>
       
       {/* Animated Scanline */}
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-cyan-500/5 to-transparent h-full w-full pointer-events-none animate-[scanline_3s_linear_infinite] opacity-30"></div>
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-amber-500/5 to-transparent h-full w-full pointer-events-none animate-[scanline_3s_linear_infinite] opacity-30"></div>
 
       <div className="relative z-10 w-full flex flex-col items-center gap-6">
         
@@ -20,16 +20,16 @@ export const SystemMonitor: React.FC<SystemMonitorProps> = ({ productionRate }) 
         <div className="relative">
             <div className="w-56 h-56 rounded-full border-4 border-slate-700/50 flex items-center justify-center bg-slate-950 shadow-[inset_0_0_40px_rgba(0,0,0,0.8)] relative overflow-hidden">
                 {/* Rotating Ring */}
-                <div className="absolute inset-0 border-2 border-dashed border-cyan-500/30 rounded-full animate-[spin_10s_linear_infinite]"></div>
-                <div className="absolute inset-2 border border-cyan-800/20 rounded-full animate-[spin_5s_linear_infinite_reverse]"></div>
+                <div className="absolute inset-0 border-2 border-dashed border-amber-500/30 rounded-full animate-[spin_10s_linear_infinite]"></div>
+                <div className="absolute inset-2 border border-amber-800/20 rounded-full animate-[spin_5s_linear_infinite_reverse]"></div>
                 
                 {/* Core Pulse */}
-                <div className={`w-32 h-32 rounded-full bg-cyan-500/10 blur-xl absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-1000 ${productionRate > 0 ? 'animate-pulse' : ''}`}></div>
+                <div className={`w-32 h-32 rounded-full bg-amber-500/10 blur-xl absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 transition-all duration-1000 ${productionRate > 0 ? 'animate-pulse' : ''}`}></div>
 
                 {/* Center Icon */}
-                <div className="relative z-10 flex flex-col items-center text-cyan-400 drop-shadow-[0_0_10px_rgba(34,211,238,0.5)]">
-                    <Server size={48} className={productionRate > 0 ? "text-cyan-400" : "text-slate-600"} />
-                    <span className="mt-2 text-xs font-mono tracking-widest uppercase text-cyan-500/70">
+                <div className="relative z-10 flex flex-col items-center text-amber-400 drop-shadow-[0_0_10px_rgba(251,191,36,0.45)]">
+                    <Server size={48} className={productionRate > 0 ? "text-amber-400" : "text-slate-600"} />
+                    <span className="mt-2 text-xs font-mono tracking-widest uppercase text-amber-500/70">
                         {productionRate > 0 ? 'Mining' : 'Offline'}
                     </span>
                 </div>
@@ -37,7 +37,7 @@ export const SystemMonitor: React.FC<SystemMonitorProps> = ({ productionRate }) 
 
             {/* Orbiting particles (CSS only) */}
             <div className="absolute top-1/2 left-1/2 w-64 h-64 -translate-x-1/2 -translate-y-1/2 rounded-full border border-slate-800/50 animate-[spin_20s_linear_infinite]">
-                 <div className="absolute top-0 left-1/2 w-2 h-2 bg-cyan-500 rounded-full shadow-[0_0_10px_#22d3ee]"></div>
+                 <div className="absolute top-0 left-1/2 w-2 h-2 bg-amber-500 rounded-full shadow-[0_0_10px_#f59e0b]"></div>
             </div>
         </div>
 
@@ -56,7 +56,7 @@ export const SystemMonitor: React.FC<SystemMonitorProps> = ({ productionRate }) 
                 <span className="text-slate-500 text-xs uppercase flex items-center gap-1">
                     <Database size={10} /> Hashrate
                 </span>
-                <span className="text-cyan-300 font-bold">
+                <span className="text-amber-300 font-bold">
                     {productionRate.toFixed(1)} H/s
                 </span>
             </div>
@@ -68,7 +68,7 @@ export const SystemMonitor: React.FC<SystemMonitorProps> = ({ productionRate }) 
                 </div>
                 <div className="w-full bg-slate-900 rounded-full h-1.5 overflow-hidden">
                     <div 
-                        className="h-full bg-gradient-to-r from-cyan-600 to-green-500 transition-all duration-500 ease-out"
+                        className="h-full bg-gradient-to-r from-amber-600 to-green-500 transition-all duration-500 ease-out"
                         style={{ width: `${Math.min(100, Math.max(5, productionRate))}%` }}
                     ></div>
                 </div>

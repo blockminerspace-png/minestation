@@ -43,7 +43,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatte
     return (
         <div className="flex flex-col p-6 animate-in fade-in slide-in-from-bottom-4 duration-300">
             <div className="flex items-center gap-3 mb-6 border-b border-slate-200 dark:border-slate-800 pb-4">
-                <div className="bg-slate-200 dark:bg-slate-800 p-2 rounded-lg text-cyan-600 dark:text-cyan-400">
+                <div className="bg-slate-200 dark:bg-slate-800 p-2 rounded-lg text-amber-600 dark:text-amber-400">
                     <Package size={24} />
                 </div>
                 <div>
@@ -120,8 +120,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatte
                 <div className="space-y-8">
                     {sortedCategories.map(category => (
                         <div key={category}>
-                            <h3 className="text-sm font-bold text-cyan-600 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-cyan-600"></span>
+                            <h3 className="text-sm font-bold text-amber-600 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-amber-600"></span>
                                 {category}
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
@@ -140,7 +140,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatte
                                         <div key={item.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 relative overflow-hidden group hover:border-slate-400 dark:hover:border-slate-700 transition-all shadow-sm flex flex-col">
                                             {/* NFT Badge */}
                                             {item.isNft && (
-                                                <div className="absolute top-2 right-2 bg-purple-600 text-white text-[9px] px-1.5 py-0.5 rounded shadow-lg z-10 flex items-center gap-1">
+                                                <div className="absolute top-2 right-2 bg-orange-600 text-white text-[9px] px-1.5 py-0.5 rounded shadow-lg z-10 flex items-center gap-1">
                                                     <Hexagon size={8} /> NFT
                                                 </div>
                                             )}

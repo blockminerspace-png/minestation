@@ -141,7 +141,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
 
             {/* HEADER */}
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex justify-between items-center shrink-0 z-20 shadow-md">
-                <h2 className="text-xl font-bold text-blue-600 dark:text-blue-500 flex items-center gap-2">
+                <h2 className="text-xl font-bold text-amber-600 dark:text-amber-500 flex items-center gap-2">
                     <Package size={20} /> Mercado de Hardware
                 </h2>
                 <div className="flex flex-col items-end">
@@ -159,25 +159,25 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
 
                     {/* FILTER MENU */}
                     <div className="flex overflow-x-auto p-2 gap-2 border-b border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900/50 custom-scrollbar shrink-0">
-                        <button onClick={() => setFilterType('all')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'all' ? 'bg-blue-100 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                        <button onClick={() => setFilterType('all')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'all' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <List size={14} /> Todos
                         </button>
-                        <button onClick={() => setFilterType('machine')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'machine' ? 'bg-blue-100 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                        <button onClick={() => setFilterType('machine')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'machine' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Cpu size={14} /> GPUs
                         </button>
-                        <button onClick={() => setFilterType('infrastructure')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'infrastructure' ? 'bg-blue-100 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                        <button onClick={() => setFilterType('infrastructure')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'infrastructure' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Server size={14} /> Rigs
                         </button>
-                        <button onClick={() => setFilterType('battery')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'battery' ? 'bg-blue-100 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                        <button onClick={() => setFilterType('battery')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'battery' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Battery size={14} /> Baterias
                         </button>
-                        <button onClick={() => setFilterType('wiring')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'wiring' ? 'bg-blue-100 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                        <button onClick={() => setFilterType('wiring')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'wiring' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Plug size={14} /> Circuito
                         </button>
-                        <button onClick={() => setFilterType('multiplier')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'multiplier' ? 'bg-blue-100 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                        <button onClick={() => setFilterType('multiplier')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'multiplier' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Zap size={14} /> Chips IA
                         </button>
-                        <button onClick={() => setFilterType('charger')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'charger' ? 'bg-blue-100 dark:bg-blue-950 border-blue-500 text-blue-700 dark:text-blue-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                        <button onClick={() => setFilterType('charger')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'charger' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Wrench size={14} /> Carregadores
                         </button>
                     </div>
@@ -211,13 +211,13 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                     className={`
                             w-full flex items-center p-3 rounded-lg border text-left transition-all duration-200 relative
                             ${inCart > 0
-                                            ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800'
+                                            ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
                                             : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700'}
                           `}
                                 >
                                     <div className={`
                             ${containerAspectRatio} w-24 relative flex items-center justify-center rounded-md border transition-colors shrink-0 overflow-hidden group
-                            ${inCart > 0 ? 'bg-white dark:bg-slate-900 border-blue-200 dark:border-blue-800' : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'}
+                            ${inCart > 0 ? 'bg-white dark:bg-slate-900 border-amber-200 dark:border-amber-800' : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'}
                           `}>
                                         {upgrade.image ? (
                                             <img src={upgrade.image} alt={upgrade.name} className={`w-full h-full ${isRack ? 'object-contain' : 'object-cover'}`} />
@@ -237,7 +237,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                                 </div>
                                                 {/* BADGES */}
                                                 <div className="flex items-center gap-2 mt-1">
-                                                    {upgrade.isNft && <span className="text-[9px] bg-purple-100 dark:bg-purple-900 text-purple-600 dark:text-purple-300 px-1 rounded flex items-center gap-0.5 border border-purple-200 dark:border-purple-800"><Hexagon size={8} /> NFT</span>}
+                                                    {upgrade.isNft && <span className="text-[9px] bg-orange-100 dark:bg-orange-900 text-orange-600 dark:text-orange-300 px-1 rounded flex items-center gap-0.5 border border-orange-200 dark:border-orange-800"><Hexagon size={8} /> NFT</span>}
                                                     {upgrade.status === 'limited' && <span className="text-[9px] bg-yellow-100 dark:bg-yellow-900 text-yellow-600 dark:text-yellow-300 px-1 rounded flex items-center gap-0.5 border border-yellow-200 dark:border-yellow-800"><Clock size={8} /> LTD</span>}
                                                 </div>
                                             </div>
@@ -262,7 +262,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                                     </div>
                                                 )}
                                                 {upgrade.type === 'multiplier' && (
-                                                    <div className="text-[10px] text-purple-600 dark:text-purple-400 font-mono flex items-center gap-2">
+                                                    <div className="text-[10px] text-orange-600 dark:text-orange-400 font-mono flex items-center gap-2">
                                                         <span>+{(((upgrade.multiplier || 0) * 100).toFixed(1))}%</span>
                                                         {typeof upgrade.powerConsumption === 'number' && (
                                                             <span className="text-red-500 dark:text-red-400/80 flex items-center gap-0.5"><Zap size={8} /> {upgrade.powerConsumption}W</span>
@@ -318,7 +318,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                                 >
                                                     <Minus size={12} />
                                                 </button>
-                                                <span className={`text-xs font-mono font-bold w-6 text-center ${inCart > 0 ? 'text-blue-600 dark:text-blue-400' : 'text-slate-400'}`}>
+                                                <span className={`text-xs font-mono font-bold w-6 text-center ${inCart > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'}`}>
                                                     {inCart}
                                                 </span>
                                                 <button
@@ -348,7 +348,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                     <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 bg-slate-50 dark:bg-slate-900">
                         <ShoppingCart size={18} className="text-slate-600 dark:text-slate-400" />
                         <h3 className="font-bold text-slate-700 dark:text-slate-300">Carrinho</h3>
-                        <span className="bg-blue-100 dark:bg-blue-900 text-blue-600 dark:text-blue-400 text-xs px-2 py-0.5 rounded-full font-bold ml-auto">
+                        <span className="bg-amber-100 dark:bg-amber-900 text-amber-600 dark:text-amber-400 text-xs px-2 py-0.5 rounded-full font-bold ml-auto">
                             {(Object.values(cart) as number[]).reduce((a, b) => a + b, 0)}
                         </span>
                     </div>
@@ -413,7 +413,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                         const missing = Math.max(0, cartTotal - gameState.usdc);
                                         onSuggestDeposit && onSuggestDeposit(parseFloat(missing.toFixed(2)));
                                     }}
-                                    className="px-3 py-2 rounded-lg bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md"
+                                    className="px-3 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold shadow-md"
                                 >
                                     DEPOSITAR USDC FALTANTE (${formatCost(Math.max(0, cartTotal - gameState.usdc))})
                                 </button>

@@ -228,7 +228,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     <>
                                         {console.log('[AdminPanel] Showing loader, isDataLoaded:', isDataLoaded)}
                                         <div className="flex flex-col items-center justify-center p-12 space-y-4">
-                                            <div className="text-cyan-500 text-4xl animate-spin">⏳</div>
+                                            <div className="text-amber-500 text-4xl animate-spin">⏳</div>
                                             <div className="text-slate-400 font-bold">Carregando dados administrativos...</div>
                                             <div className="text-xs text-slate-500">Aguardando informações do servidor.</div>
                                         </div>

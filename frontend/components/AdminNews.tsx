@@ -213,11 +213,11 @@ export const AdminNews: React.FC<AdminNewsProps> = ({ newsList, setNewsList, acc
 
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
                 <h3 className="text-white font-bold mb-4 flex items-center gap-2">
-                    <Newspaper size={20} className="text-blue-500" /> Anúncios Ativos
+                    <Newspaper size={20} className="text-amber-500" /> Anúncios Ativos
                 </h3>
                 <div className="space-y-2 h-[400px] overflow-y-auto custom-scrollbar pr-2">
                     {newsList.map(item => (
-                        <div key={item.id} className="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center group hover:border-blue-500/50 transition-colors">
+                        <div key={item.id} className="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center group hover:border-amber-500/50 transition-colors">
                             <div className="flex items-center gap-3 overflow-hidden">
                                 <div className={`shrink-0 rounded border border-slate-800 bg-slate-950 overflow-hidden flex items-center justify-center ${item.adType === 'vertical' ? 'w-8 h-12' : 'w-12 h-6'}`}>
                                     {item.imageUrl ? <img src={item.imageUrl} className="w-full h-full object-cover" /> : <Layout size={12} className="text-slate-700" />}
@@ -225,7 +225,7 @@ export const AdminNews: React.FC<AdminNewsProps> = ({ newsList, setNewsList, acc
                                 <div className="min-w-0">
                                     <div className="text-sm text-white font-bold truncate">{item.text || 'Sem texto'}</div>
                                     <div className="flex items-center gap-2 text-[10px] text-slate-500 uppercase font-bold">
-                                        <span className={item.adType === 'vertical' ? 'text-purple-400' : 'text-cyan-400'}>{item.adType === 'vertical' ? 'Vertical' : 'Horizontal'}</span>
+                                        <span className={item.adType === 'vertical' ? 'text-orange-400' : 'text-amber-400'}>{item.adType === 'vertical' ? 'Vertical' : 'Horizontal'}</span>
                                         <span>•</span>
                                         <span>{item.duration}s</span>
                                     </div>
@@ -254,14 +254,14 @@ export const AdminNews: React.FC<AdminNewsProps> = ({ newsList, setNewsList, acc
                                 <input type="number" value={newsFee} onChange={e => setNewsFeeState(parseFloat(e.target.value || '0'))} className="w-full bg-slate-900 border border-slate-700 rounded p-2 pl-8 text-white text-sm" />
                             </div>
                         </div>
-                        <button onClick={saveNewsFee} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold text-xs h-[38px] transition-colors">SALVAR</button>
+                        <button onClick={saveNewsFee} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-xs h-[38px] transition-colors">SALVAR</button>
                     </div>
 
                     <div>
                         <label className="text-xs uppercase font-bold text-slate-500 mb-1 block">Tempo de expiração (dias)</label>
                         <div className="flex items-center gap-2">
                             <input type="number" min={0} value={expireDays} onChange={e => setExpireDays(parseInt(e.target.value || '0'))} className="flex-1 bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" />
-                            <button onClick={async () => { await setNewsExpireDays(expireDays); alert('Expiração atualizada.'); }} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold text-xs h-[38px] transition-colors">SALVAR</button>
+                            <button onClick={async () => { await setNewsExpireDays(expireDays); alert('Expiração atualizada.'); }} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-xs h-[38px] transition-colors">SALVAR</button>
                         </div>
                     </div>
 
@@ -283,14 +283,14 @@ export const AdminNews: React.FC<AdminNewsProps> = ({ newsList, setNewsList, acc
 
             <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
                 <h3 className="text-white font-bold mb-4 flex items-center gap-2">
-                    <Newspaper size={20} className="text-purple-500" /> Submissões Pendentes
+                    <Newspaper size={20} className="text-orange-500" /> Submissões Pendentes
                 </h3>
                 <div className="space-y-2 max-h-[400px] overflow-y-auto custom-scrollbar pr-2">
                     {pendingSubs.map(item => (
                         <div key={item.id} className="bg-slate-900 p-4 rounded-lg border border-slate-700 flex flex-col gap-3">
                             <div>
                                 <div className="text-sm text-white font-bold italic">"{item.text}"</div>
-                                {item.link && <div className="text-xs text-blue-400 flex items-center gap-1 mt-1"><Layout size={10} /> {item.link}</div>}
+                                {item.link && <div className="text-xs text-amber-400 flex items-center gap-1 mt-1"><Layout size={10} /> {item.link}</div>}
                             </div>
                             <div className="flex items-center justify-between mt-1 pt-3 border-t border-slate-800">
                                 <div className="text-[10px] text-slate-500 font-bold uppercase tracking-wider">

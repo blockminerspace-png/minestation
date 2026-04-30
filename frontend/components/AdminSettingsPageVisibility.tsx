@@ -72,7 +72,7 @@ export const AdminSettingsPageVisibility: React.FC<Props> = ({ accessLevels, onU
               ? 'bg-slate-700 text-slate-500 cursor-not-allowed'
               : saveStatus === 'saved'
                 ? 'bg-green-600 text-white'
-                : 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-cyan-500/20'
+                : 'bg-amber-600 hover:bg-amber-500 text-white shadow-amber-500/20'
             }`}
         >
           {saveStatus === 'saving' ? (
@@ -90,7 +90,7 @@ export const AdminSettingsPageVisibility: React.FC<Props> = ({ accessLevels, onU
         return (
           <div key={lvl.id} className="mb-4 border border-slate-700 rounded-lg p-3 bg-slate-900/50">
             <div className="text-sm font-bold text-white mb-2 flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-cyan-500"></span>
+              <span className="w-2 h-2 rounded-full bg-amber-500"></span>
               {lvl.name}
             </div>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-2">
@@ -100,7 +100,7 @@ export const AdminSettingsPageVisibility: React.FC<Props> = ({ accessLevels, onU
                     type="checkbox"
                     checked={cur.includes(pg)}
                     onChange={() => toggle(lvl.id, pg)}
-                    className="accent-cyan-500 w-3 h-3 rounded border-slate-600"
+                    className="accent-amber-500 w-3 h-3 rounded border-slate-600"
                   />
                   <span className="group-hover:text-white transition-colors">{pageLabels[pg] || pg}</span>
                 </label>

@@ -85,14 +85,14 @@ const AutoBackupConfig: React.FC = () => {
                         max="10080"
                         value={interval}
                         onChange={(e) => setIntervalVal(parseInt(e.target.value) || 60)}
-                        className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-sm font-mono text-center focus:border-blue-500 outline-none"
+                        className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-sm font-mono text-center focus:border-amber-500 outline-none"
                     />
                 </div>
 
                 <button
                     onClick={handleSave}
                     disabled={saving}
-                    className="ml-4 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded font-bold text-sm transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
+                    className="ml-4 bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-sm transition-all shadow-lg shadow-amber-600/20 disabled:opacity-50"
                 >
                     {saving ? <Loader2 size={16} className="animate-spin" /> : 'Salvar Config'}
                 </button>
@@ -372,7 +372,7 @@ export const AdminBackup: React.FC = () => {
                                                                             <button
                                                                                 onClick={() => handleDownload(b.filename)}
                                                                                 disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                                className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
                                                                                 title="Baixar arquivo para o PC"
                                                                             >
                                                                                 <Download size={18} />
@@ -406,7 +406,7 @@ export const AdminBackup: React.FC = () => {
                                             {backups.filter(b => b.filename.startsWith('auto_')).length > 0 && (
                                                 <>
                                                     <tr className="bg-slate-800/80">
-                                                        <td colSpan={3} className="px-6 py-2 text-xs font-bold text-blue-400 uppercase tracking-widest border-b border-t border-slate-700">
+                                                        <td colSpan={3} className="px-6 py-2 text-xs font-bold text-amber-400 uppercase tracking-widest border-b border-t border-slate-700">
                                                             Backups Automáticos (Últimas 24h)
                                                         </td>
                                                     </tr>
@@ -442,7 +442,7 @@ export const AdminBackup: React.FC = () => {
                                                                             <button
                                                                                 onClick={() => handleDownload(b.filename)}
                                                                                 disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-blue-500 transition-colors"
+                                                                                className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
                                                                                 title="Baixar arquivo para o PC"
                                                                             >
                                                                                 <Download size={18} />

@@ -107,7 +107,7 @@ export const AdminMonetization: React.FC = () => {
                     </button>
                     <button
                         onClick={() => setSubTab('ads')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all text-xs font-bold ${subTab === 'ads' ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/20' : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300'}`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all text-xs font-bold ${subTab === 'ads' ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20' : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300'}`}
                     >
                         <Monitor size={14} /> ADS
                     </button>
@@ -119,7 +119,7 @@ export const AdminMonetization: React.FC = () => {
                     </button>
                     <button
                         onClick={() => setSubTab('promo')}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all text-xs font-bold ${subTab === 'promo' ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20' : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300'}`}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-md transition-all text-xs font-bold ${subTab === 'promo' ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/20' : 'text-slate-500 hover:bg-slate-900 hover:text-slate-300'}`}
                     >
                         <Ticket size={14} /> CÓDIGOS
                     </button>
@@ -148,7 +148,7 @@ export const AdminMonetization: React.FC = () => {
                                 </button>
                                 <button
                                     onClick={() => setRewardProvider('ezoic')}
-                                    className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${rewardProvider === 'ezoic' ? 'bg-blue-600 text-white' : 'bg-slate-800 text-slate-400'}`}
+                                    className={`px-3 py-1 rounded text-[10px] font-bold transition-all ${rewardProvider === 'ezoic' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400'}`}
                                 >
                                     EZOIC
                                 </button>
@@ -177,10 +177,10 @@ export const AdminMonetization: React.FC = () => {
 
                 {subTab === 'ads' && (
                     <div className="space-y-8 animate-in fade-in zoom-in-95 duration-300">
-                        <div className="flex items-start gap-4 p-4 bg-blue-900/10 border border-blue-900/30 rounded-xl">
-                            <Info className="text-blue-500 mt-1" size={20} />
+                        <div className="flex items-start gap-4 p-4 bg-amber-900/10 border border-amber-900/30 rounded-xl">
+                            <Info className="text-amber-500 mt-1" size={20} />
                             <div>
-                                <h3 className="text-blue-500 font-bold uppercase tracking-widest text-sm">Configuração de ADS Estáticos</h3>
+                                <h3 className="text-amber-500 font-bold uppercase tracking-widest text-sm">Configuração de ADS Estáticos</h3>
                                 <p className="text-slate-400 text-xs mt-1">Gerencie banners e pop-ups publicitários do sistema.</p>
                             </div>
                         </div>
@@ -191,7 +191,7 @@ export const AdminMonetization: React.FC = () => {
                                 <p className="text-sm font-bold text-slate-400 uppercase tracking-widest">Painel de Publicidade Offline</p>
                                 <p className="text-xs italic mt-2">Nenhum provedor de ADS configurado para esta instância.</p>
                             </div>
-                            <button className="mt-4 px-6 py-2 bg-blue-800/20 border border-blue-700/50 text-blue-400 rounded-lg font-bold text-[10px] uppercase tracking-widest hover:bg-blue-800/40 transition-all cursor-wait">
+                            <button className="mt-4 px-6 py-2 bg-amber-800/20 border border-amber-700/50 text-amber-400 rounded-lg font-bold text-[10px] uppercase tracking-widest hover:bg-amber-800/40 transition-all cursor-wait">
                                 Configurar SDK +
                             </button>
                         </div>
@@ -264,10 +264,10 @@ export const AdminMonetization: React.FC = () => {
 
                 {subTab === 'promo' && (
                     <div className="space-y-8 animate-in fade-in zoom-in-95 duration-300">
-                        <div className="flex items-start gap-4 p-4 bg-purple-900/10 border border-purple-900/30 rounded-xl">
-                            <Info className="text-purple-500 mt-1" size={20} />
+                        <div className="flex items-start gap-4 p-4 bg-orange-900/10 border border-orange-900/30 rounded-xl">
+                            <Info className="text-orange-500 mt-1" size={20} />
                             <div>
-                                <h3 className="text-purple-500 font-bold uppercase tracking-widest text-sm">Resgate por Código</h3>
+                                <h3 className="text-orange-500 font-bold uppercase tracking-widest text-sm">Resgate por Código</h3>
                                 <p className="text-slate-400 text-xs mt-1">Gere códigos promocionais vinculados a Caixas da Sorte.</p>
                             </div>
                         </div>
@@ -276,7 +276,7 @@ export const AdminMonetization: React.FC = () => {
                         {/* CREATE FORM */}
                         <div className="bg-slate-900/50 border border-slate-700 p-6 rounded-xl mb-6">
                             <h4 className="text-white font-bold text-xs uppercase tracking-widest mb-4 flex items-center gap-2">
-                                <Plus size={14} className="text-purple-500" /> Novo Código Promocional
+                                <Plus size={14} className="text-orange-500" /> Novo Código Promocional
                             </h4>
                             <div className="grid grid-cols-1 md:grid-cols-5 gap-4 items-end">
                                 <div>
@@ -382,7 +382,7 @@ export const AdminMonetization: React.FC = () => {
                                         }
                                     }}
                                     disabled={saving}
-                                    className={`bg-purple-600 hover:bg-purple-500 text-white rounded font-bold text-[10px] uppercase py-2.5 px-4 shadow-lg shadow-purple-600/20 transition-all ${saving ? 'opacity-50 cursor-wait' : ''}`}
+                                    className={`bg-orange-600 hover:bg-orange-500 text-white rounded font-bold text-[10px] uppercase py-2.5 px-4 shadow-lg shadow-orange-600/20 transition-all ${saving ? 'opacity-50 cursor-wait' : ''}`}
                                 >
                                     {saving ? 'Gerando...' : 'Gerar Código'}
                                 </button>
@@ -414,7 +414,7 @@ export const AdminMonetization: React.FC = () => {
                                             const box = lootBoxes.find(b => b.id === c.lootBoxId);
                                             return (
                                                 <tr key={c.code} className="hover:bg-slate-800/30 border-b border-slate-800/50 transition-colors">
-                                                    <td className="p-4 font-mono font-bold text-purple-400">{c.code}</td>
+                                                    <td className="p-4 font-mono font-bold text-orange-400">{c.code}</td>
                                                     <td className="p-4 text-slate-300">
                                                         {c.lootBoxId ? (
                                                             box ? `${box.icon} ${box.name}` : <span className="text-red-500 italic">Caixa Desconhecida ({c.lootBoxId})</span>
@@ -427,7 +427,7 @@ export const AdminMonetization: React.FC = () => {
                                                         )}
                                                     </td>
                                                     <td className="p-4">
-                                                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${c.type === 'per_player' ? 'bg-blue-900/30 text-blue-400' :
+                                                        <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${c.type === 'per_player' ? 'bg-amber-900/30 text-amber-400' :
                                                                 c.type === 'global_once' ? 'bg-amber-900/30 text-amber-400' :
                                                                     'bg-green-900/30 text-green-400'
                                                             }`}>

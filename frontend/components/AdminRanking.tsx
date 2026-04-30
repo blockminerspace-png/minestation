@@ -168,7 +168,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
             <div className="max-w-6xl mx-auto">
                 <div className="flex justify-between items-center mb-8">
                     <div className="flex flex-col gap-1">
-                        <h1 className="text-3xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent">
+                        <h1 className="text-3xl font-bold bg-gradient-to-r from-amber-400 to-orange-700 bg-clip-text text-transparent">
                             {isGlobal ? 'Ranking Global de Mineradores' : `Ranking ${activeCoinInfo?.name} (${activeCoinInfo?.symbol})`}
                         </h1>
                         <p className="text-gray-400 text-sm">Organizado por {rankingMode === 'POWER' ? 'Poder de Mineração' : 'Saldo Acumulado'}</p>
@@ -178,13 +178,13 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                         <div className="flex bg-[#16161e] p-1 rounded-xl border border-gray-800">
                             <button
                                 onClick={() => setRankingMode('POWER')}
-                                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${rankingMode === 'POWER' ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20' : 'text-gray-400 hover:text-white'}`}
+                                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${rankingMode === 'POWER' ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20' : 'text-gray-400 hover:text-white'}`}
                             >
                                 RANK PODER
                             </button>
                             <button
                                 onClick={() => setRankingMode('BALANCE')}
-                                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${rankingMode === 'BALANCE' ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20' : 'text-gray-400 hover:text-white'}`}
+                                className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${rankingMode === 'BALANCE' ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20' : 'text-gray-400 hover:text-white'}`}
                             >
                                 RANK SALDO
                             </button>
@@ -202,7 +202,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                     <button
                         onClick={() => setSelectedCoin('ALL')}
                         className={`px-4 py-2 rounded-lg transition font-medium ${selectedCoin === 'ALL'
-                            ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20'
+                            ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20'
                             : 'text-gray-400 hover:bg-gray-800 hover:text-white'
                             }`}
                     >
@@ -216,7 +216,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                                 key={coin.id}
                                 onClick={() => setSelectedCoin(coin.id)}
                                 className={`px-4 py-2 rounded-lg transition font-medium ${selectedCoin === coin.id
-                                    ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20'
+                                    ? 'bg-orange-600 text-white shadow-lg shadow-orange-500/20'
                                     : 'text-gray-400 hover:bg-gray-800 hover:text-white'
                                     }`}
                             >
@@ -231,7 +231,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                         <div className="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
                             <span className="text-6xl">⚡</span>
                         </div>
-                        <div className="p-3 bg-purple-500/10 rounded-full text-purple-400 text-2xl">⚡</div>
+                        <div className="p-3 bg-orange-500/10 rounded-full text-orange-400 text-2xl">⚡</div>
                         <div>
                             <div className="text-gray-400 text-sm">{isGlobal ? 'Poder Global Acumulado' : `Poder Total (${activeCoinInfo?.symbol})`}</div>
                             <div className="text-2xl font-bold text-white">
@@ -244,7 +244,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                         <div className="absolute right-0 top-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
                             <span className="text-6xl">📊</span>
                         </div>
-                        <div className="p-3 bg-blue-500/10 rounded-full text-blue-400 text-2xl">📊</div>
+                        <div className="p-3 bg-amber-500/10 rounded-full text-amber-400 text-2xl">📊</div>
                         <div>
                             <div className="text-gray-400 text-sm">Média por Jogador</div>
                             <div className="text-2xl font-bold text-white">
@@ -290,10 +290,10 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
 
                 {/* Bulk Actions (Admin only) */}
                 {showBalanceCol && list.length > 0 && (
-                    <div className="mb-6 bg-gradient-to-r from-blue-900/20 to-purple-900/20 p-6 rounded-2xl border border-blue-500/30 shadow-lg shadow-blue-500/5">
+                    <div className="mb-6 bg-gradient-to-r from-amber-900/20 to-orange-900/20 p-6 rounded-2xl border border-amber-500/30 shadow-lg shadow-amber-500/5">
                         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
                             <div>
-                                <h3 className="text-lg font-bold text-blue-400">Ações em Massa: {activeCoinInfo?.name}</h3>
+                                <h3 className="text-lg font-bold text-amber-400">Ações em Massa: {activeCoinInfo?.name}</h3>
                                 <p className="text-sm text-gray-400">Adicione ou remova saldo de todos os {list.length} mineradores ativos desta moeda.</p>
                             </div>
                             <div className="flex items-center gap-3">
@@ -303,7 +303,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                                         value={bulkAmount}
                                         onChange={(e) => setBulkAmount(parseFloat(e.target.value) || 0)}
                                         placeholder="Valor..."
-                                        className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-right text-white font-mono focus:border-blue-500 outline-none w-40"
+                                        className="bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 text-right text-white font-mono focus:border-amber-500 outline-none w-40"
                                     />
                                     <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs font-bold font-mono">
                                         {bulkAmount > 0 ? '+' : ''}
@@ -315,7 +315,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                                 <button
                                     onClick={handleBulkUpdate}
                                     disabled={bulkAmount === 0 || isBulkUpdating}
-                                    className="bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold px-6 py-3 rounded-xl transition shadow-lg shadow-blue-500/20 flex items-center gap-2 whitespace-nowrap"
+                                    className="bg-amber-600 hover:bg-amber-500 disabled:bg-gray-700 disabled:text-gray-500 text-white font-bold px-6 py-3 rounded-xl transition shadow-lg shadow-amber-500/20 flex items-center gap-2 whitespace-nowrap"
                                 >
                                     {isBulkUpdating ? (
                                         <>
@@ -369,7 +369,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                                                 {index === 1 && <span className="ml-2 text-gray-400">🥈</span>}
                                                 {index === 2 && <span className="ml-2 text-orange-700">🥉</span>}
                                             </td>
-                                            <td className="p-4 text-right font-mono text-purple-300">
+                                            <td className="p-4 text-right font-mono text-orange-300">
                                                 {user.power.toLocaleString()} <span className="text-xs text-gray-600">{isGlobal ? 'Pts' : ''}</span>
                                             </td>
                                             {showBalanceCol && (
@@ -398,7 +398,7 @@ export const AdminRanking: React.FC<AdminRankingProps> = ({ isPublic }) => {
                                                     <span className="text-sm text-gray-400 w-12">{share.toFixed(2)}%</span>
                                                     <div className="w-16 h-1.5 bg-gray-700 rounded-full overflow-hidden">
                                                         <div
-                                                            className="h-full bg-purple-500"
+                                                            className="h-full bg-orange-500"
                                                             style={{ width: `${share}%` }}
                                                         />
                                                     </div>

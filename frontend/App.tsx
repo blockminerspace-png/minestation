@@ -1828,7 +1828,7 @@ export default function App() {
   const formatHash = (val: number) => val === 0 ? "0 H/s" : (val < 0.0001 ? val.toFixed(8) + " H/s" : Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 2 }).format(val) + " H/s");
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-200 font-sans selection:bg-cyan-500/30 overflow-hidden transition-colors duration-300">
+    <div className="h-screen flex flex-col bg-slate-50 dark:bg-[#0f0c08] text-slate-800 dark:text-slate-200 font-sans selection:bg-amber-500/30 overflow-hidden transition-colors duration-300">
       {showRewardModal && (
         <RewardLoadingScreen
           rewards={pendingRewardSummary}
@@ -1840,16 +1840,16 @@ export default function App() {
       )}
 
       {/* GLOBAL NAVIGATION HEADER */}
-      <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-cyan-900/30 shrink-0 backdrop-blur-md z-50 shadow-sm transition-colors duration-300">
+      <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-amber-900/30 shrink-0 backdrop-blur-md z-50 shadow-sm transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
           {/* Logo */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => setGlobalView(user ? (user.isAdmin ? 'admin' : 'game') : 'home')}>
-            <div className="w-10 h-10 rounded-lg bg-cyan-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 text-white animate-pulse">
+            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-600 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/25 ring-1 ring-amber-400/30 text-white animate-pulse">
               <Cpu size={24} />
             </div>
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-cyan-600 to-blue-600 dark:from-cyan-400 dark:to-blue-500 bg-clip-text text-transparent">Genesis Miner</h1>
-              <span className="text-[10px] text-slate-500 dark:text-slate-500 tracking-wider">V0.5// Náutilos</span>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Genesis Miner</h1>
+              <span className="text-[10px] font-semibold tracking-wider bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">V0.5 // Genesis DAO</span>
             </div>
           </div>
 
@@ -1857,7 +1857,7 @@ export default function App() {
           {user && globalView === 'game' && (
             <div className="flex items-center gap-3 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 text-xs md:text-sm shadow-inner">
               <div className="flex flex-col items-end px-3 border-r border-slate-300 dark:border-slate-700">
-                <span className="text-[10px] text-cyan-600 dark:text-cyan-500 uppercase tracking-wider flex gap-1 items-center"><Coins size={10} /> Tokens <button onClick={() => setCoinsExpanded(e => !e)} className="ml-1 p-0.5 rounded text-slate-500 hover:text-slate-800 dark:hover:text-white">{coinsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</button></span>
+                <span className="text-[10px] text-amber-600 dark:text-amber-500 uppercase tracking-wider flex gap-1 items-center"><Coins size={10} /> Tokens <button onClick={() => setCoinsExpanded(e => !e)} className="ml-1 p-0.5 rounded text-slate-500 hover:text-slate-800 dark:hover:text-white">{coinsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</button></span>
                 <div className="flex flex-col gap-0.5 items-end">
                   {miningCoins.length === 0 ? (
                     <span className="font-mono text-slate-500">—</span>
@@ -1890,7 +1890,7 @@ export default function App() {
                           const total = (gameState.coinBalances || {})[c.id] || 0;
                           const isActive = highlightedCoinId === c.id;
                           return (
-                            <button key={c.id} onClick={() => setHighlightedCoinId(c.id)} className={`flex items-center gap-2 ${isActive ? 'text-cyan-600 dark:text-cyan-300' : 'text-slate-700 dark:text-slate-200'}`}>
+                            <button key={c.id} onClick={() => setHighlightedCoinId(c.id)} className={`flex items-center gap-2 ${isActive ? 'text-amber-600 dark:text-amber-300' : 'text-slate-700 dark:text-slate-200'}`}>
                               <span className="font-mono font-bold">{c.name}: {formatAmount(total)} • H/s {formatAmount(c.power)}</span>
                             </button>
                           );
@@ -1899,7 +1899,7 @@ export default function App() {
                         // Show highlighted if set, OR the first one (which is now the one with most power)
                         const c = highlightedCoinId ? coinsWithPower.find(x => x.id === highlightedCoinId) || coinsWithPower[0] : coinsWithPower[0];
                         const total = (gameState.coinBalances || {})[c.id] || 0;
-                        return <span className="font-mono font-bold text-cyan-700 dark:text-cyan-300">{c.name}: {formatAmount(total)}</span>;
+                        return <span className="font-mono font-bold text-amber-700 dark:text-amber-300">{c.name}: {formatAmount(total)}</span>;
                       }
                     })()
                   )}
@@ -1923,36 +1923,36 @@ export default function App() {
             {user && (
               <div className="flex md:hidden items-center gap-3">
                 {globalView === 'game' && (
-                  <button onClick={() => setCurrentView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={16} /></button>
+                  <button onClick={() => setCurrentView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={16} /></button>
                 )}
                 <div className="text-right">
                   <div className="text-[10px] text-slate-500 uppercase">{user.isAdmin ? 'ADMINISTRATOR' : 'Operador'}</div>
-                  <div className={`text-xs font-bold ${user.isAdmin ? 'text-red-500' : 'text-cyan-600 dark:text-cyan-400'}`}>{user.username}</div>
+                  <div className={`text-xs font-bold ${user.isAdmin ? 'text-red-500' : 'text-amber-600 dark:text-amber-400'}`}>{user.username}</div>
                 </div>
                 <button onClick={handleLogout} className="bg-red-100 dark:bg-red-900/20 hover:bg-red-200 dark:hover:bg-red-900/40 text-red-600 dark:text-red-400 p-2 rounded border border-red-200 dark:border-red-900/50 transition" title="Logout"><LogOut size={16} /></button>
               </div>
             )}
             <div className="hidden md:flex items-center gap-2">
-              <button onClick={() => setGlobalView('home')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'home' ? 'text-cyan-600 dark:text-cyan-400' : 'text-slate-500'}`} title="Página Inicial"><Home size={18} /></button>
+              <button onClick={() => setGlobalView('home')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'home' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Página Inicial"><Home size={18} /></button>
               <a href="https://discord.gg/pAx52fTZpR" target="_blank" rel="noopener noreferrer" className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-[#5865F2] transition" title="Discord"><DiscordIcon size={18} /></a>
               <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); }} className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-yellow-500 transition" title="Ranking Mineradores"><Trophy size={18} /></button>
-              <button onClick={() => setGlobalView('docs')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'docs' ? 'text-cyan-600 dark:text-cyan-400' : 'text-slate-500'}`} title="Documentação"><BookOpen size={18} /></button>
+              <button onClick={() => setGlobalView('docs')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'docs' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Documentação"><BookOpen size={18} /></button>
               {user && (globalView === 'home' || globalView === 'docs') && !user.isAdmin && (
                 <div className="flex gap-2">
-                  <button onClick={() => { setGlobalView('game'); setCurrentView('servers'); }} className="px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition text-cyan-600 dark:text-cyan-400" title="Voltar ao Jogo"><Play size={18} fill="currentColor" /></button>
+                  <button onClick={() => { setGlobalView('game'); setCurrentView('servers'); }} className="px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition text-amber-600 dark:text-amber-400" title="Voltar ao Jogo"><Play size={18} fill="currentColor" /></button>
                 </div>
               )}
 
               {!user ? (
-                <button onClick={() => setGlobalView('auth')} className="bg-cyan-600 hover:bg-cyan-500 text-white px-4 py-2 rounded font-bold text-sm shadow-lg shadow-cyan-900/20 transition flex items-center gap-2"><UserIcon size={16} /> LOGIN</button>
+                <button onClick={() => setGlobalView('auth')} className="bg-gradient-to-r from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-stone-950 px-4 py-2 rounded font-bold text-sm shadow-lg shadow-amber-600/30 border border-amber-300/40 transition flex items-center gap-2"><UserIcon size={16} /> LOGIN</button>
               ) : (
                 <div className="flex items-center gap-4">
                   {globalView === 'game' && (
-                    <button onClick={() => setCurrentView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-cyan-100 text-cyan-600 dark:bg-cyan-900/30 dark:text-cyan-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={18} /></button>
+                    <button onClick={() => setCurrentView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={18} /></button>
                   )}
                   <div className="text-right">
                     <div className="text-xs text-slate-500 uppercase">{user.isAdmin ? 'ADMINISTRATOR' : 'Operador'}</div>
-                    <div className={`text-sm font-bold ${user.isAdmin ? 'text-red-500' : 'text-cyan-600 dark:text-cyan-400'}`}>{user.username}</div>
+                    <div className={`text-sm font-bold ${user.isAdmin ? 'text-red-500' : 'text-amber-600 dark:text-amber-400'}`}>{user.username}</div>
                   </div>
 
                   {(user.isAdmin || user.isImpersonating) && globalView !== 'admin' && (
@@ -1975,18 +1975,18 @@ export default function App() {
           {mobileMenuOpen && (
             <div className="w-full md:hidden">
               <div className="w-full grid grid-cols-1 gap-2">
-                <button onClick={() => { setGlobalView('home'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'home' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Home size={16} /> Início</button>
+                <button onClick={() => { setGlobalView('home'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'home' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Home size={16} /> Início</button>
                 <a href="https://discord.gg/pAx52fTZpR" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-[#5865F2] hover:bg-slate-100 dark:hover:bg-slate-800 transition"><DiscordIcon size={16} /> Discord</a>
                 <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); setMobileMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-yellow-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><Trophy size={16} /> Ranking</button>
-                <button onClick={() => { setGlobalView('docs'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'docs' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><BookOpen size={16} /> Docs</button>
+                <button onClick={() => { setGlobalView('docs'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'docs' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><BookOpen size={16} /> Docs</button>
                 {user && (globalView === 'home' || globalView === 'docs') && !user.isAdmin && (
                   <>
-                    <button onClick={() => { setGlobalView('game'); setCurrentView('servers'); setMobileMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-cyan-500 text-cyan-600 dark:text-cyan-400"><Play size={16} fill="currentColor" /> Jogar</button>
+                    <button onClick={() => { setGlobalView('game'); setCurrentView('servers'); setMobileMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-amber-500 text-amber-600 dark:text-amber-400"><Play size={16} fill="currentColor" /> Jogar</button>
                   </>
                 )}
 
                 {!user ? (
-                  <button onClick={() => { setGlobalView('auth'); setMobileMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded bg-cyan-600 hover:bg-cyan-500 text-white"><UserIcon size={16} /> Login</button>
+                  <button onClick={() => { setGlobalView('auth'); setMobileMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded bg-gradient-to-r from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-stone-950 border border-amber-300/40 shadow-md"><UserIcon size={16} /> Login</button>
                 ) : (
                   <>
 
@@ -2029,27 +2029,27 @@ export default function App() {
               </div>
               {gameMenuOpen && (
                 <div className="max-w-7xl mx-auto md:hidden px-4 pb-3 grid grid-cols-1 gap-2">
-                  {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> Servidores</button>)}
+                  {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> Servidores</button>)}
                   {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'inventory' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Package size={16} /> Estoque</button>)}
-                  {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> Oficina</button>)}
-                  {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'hardware_store' ? 'border-blue-500 text-blue-600 dark:text-blue-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><ShoppingCart size={16} /> Hardware</button>)}
+                  {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> Oficina</button>)}
+                  {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><ShoppingCart size={16} /> Hardware</button>)}
                   {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Skull size={16} /> P2P</button>)}
-                  {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'arcade' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gamepad2 size={16} /> Arcade</button>)}
-                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'lucky_store' ? 'border-purple-500 text-purple-600 dark:text-purple-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gift size={16} /> Caixas da Sorte</button>)}
-                  {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'wallet' ? 'border-purple-500 text-purple-600 dark:text-purple-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
+                  {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gamepad2 size={16} /> Arcade</button>)}
+                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gift size={16} /> Caixas da Sorte</button>)}
+                  {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
                   {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'ranking' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Trophy size={16} /> Ranking</button>)}
                   {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Crown size={16} /> UPGRADE</button>)}
                 </div>
               )}
               <div className="max-w-7xl mx-auto hidden md:flex justify-center md:justify-start overflow-x-auto">
-                {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'servers' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={16} /> Servidores</button>)}
+                {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={16} /> Servidores</button>)}
                 {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={16} /> Estoque</button>)}
-                {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'oficina' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={16} /> Oficina</button>)}
-                {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'hardware_store' ? 'border-blue-500 text-blue-600 dark:text-blue-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><ShoppingCart size={16} /> Hardware</button>)}
+                {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={16} /> Oficina</button>)}
+                {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><ShoppingCart size={16} /> Hardware</button>)}
                 {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Skull size={16} /> P2P</button>)}
-                {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'arcade' ? 'border-cyan-500 text-cyan-600 dark:text-cyan-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gamepad2 size={16} /> Arcade</button>)}
-                {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'lucky_store' ? 'border-purple-500 text-purple-600 dark:text-purple-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gift size={16} /> Caixas da Sorte</button>)}
-                {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'wallet' ? 'border-purple-500 text-purple-600 dark:text-purple-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
+                {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gamepad2 size={16} /> Arcade</button>)}
+                {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gift size={16} /> Caixas da Sorte</button>)}
+                {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
                 {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'ranking' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Trophy size={16} /> Ranking</button>)}
                 {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Crown size={16} /> UPGRADE</button>)}
               </div>
@@ -2059,14 +2059,14 @@ export default function App() {
             <div className="flex-1 flex justify-center overflow-hidden relative w-full h-full">
 
               {/* Left Skyscraper (Dynamic) */}
-              <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-cyan-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-cyan-500/40 shadow-2xl shadow-cyan-500/5">
+              <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-amber-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-amber-500/40 shadow-2xl shadow-amber-500/5">
                 {verticalAds[0] ? (
                   <a href={verticalAds[0].link || '#'} target={verticalAds[0].link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
                     {verticalAds[0].imageUrl ? (
                       <img src={verticalAds[0].imageUrl} alt={verticalAds[0].text} className="w-full h-full object-contain" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center p-4 text-center bg-slate-950/50">
-                        <span className="text-xs text-cyan-400 font-bold uppercase">{verticalAds[0].text}</span>
+                        <span className="text-xs text-amber-400 font-bold uppercase">{verticalAds[0].text}</span>
                       </div>
                     )}
                   </a>
@@ -2083,7 +2083,7 @@ export default function App() {
                 <div className="shrink-0 z-20"><MarketNews /></div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar relative min-h-0 flex flex-col font-mono">
                   {!isReady && (
-                    <div className="flex h-screen w-full items-center justify-center bg-slate-900 text-cyan-500 font-mono">
+                    <div className="flex h-screen w-full items-center justify-center bg-slate-900 text-amber-500 font-mono">
                       <div className="text-2xl animate-pulse">GENESIS MINER</div>
                     </div>
                   )}
@@ -2115,7 +2115,7 @@ export default function App() {
                   {isReady && currentView === 'arcade' && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
                       <Gamepad2 size={48} className="animate-bounce" />
-                      <h2 className="text-2xl font-bold uppercase tracking-widest bg-gradient-to-r from-cyan-500 to-blue-500 bg-clip-text text-transparent">Em Breve</h2>
+                      <h2 className="text-2xl font-bold uppercase tracking-widest bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent">Em Breve</h2>
                       <p className="max-w-md text-center text-sm">Estamos preparando uma área de entretenimento para os jogadores. Aguarde novidades!</p>
                     </div>
                   )}
@@ -2139,14 +2139,14 @@ export default function App() {
               </main>
 
               {/* Right Skyscraper (Dynamic) */}
-              <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-purple-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-purple-500/40 shadow-2xl shadow-purple-500/5">
+              <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-orange-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-orange-500/40 shadow-2xl shadow-orange-500/5">
                 {verticalAds[1] || verticalAds[0] ? (
                   <a href={(verticalAds[1] || verticalAds[0]).link || '#'} target={(verticalAds[1] || verticalAds[0]).link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
                     {(verticalAds[1] || verticalAds[0]).imageUrl ? (
                       <img src={(verticalAds[1] || verticalAds[0]).imageUrl} alt={(verticalAds[1] || verticalAds[0]).text} className="w-full h-full object-contain" />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center p-4 text-center bg-slate-950/50">
-                        <span className="text-xs text-purple-400 font-bold uppercase">{(verticalAds[1] || verticalAds[0]).text}</span>
+                        <span className="text-xs text-orange-400 font-bold uppercase">{(verticalAds[1] || verticalAds[0]).text}</span>
                       </div>
                     )}
                   </a>
@@ -2196,13 +2196,13 @@ export default function App() {
                 {monetizationSettings?.ezoicEnabled && (
                   <button
                     onClick={() => { launchEzoic(adSelection.wsIdx); setAdSelection(null); }}
-                    className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-blue-600/50 p-6 rounded-2xl flex items-center justify-between transition-all group active:scale-[0.98]"
+                    className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-amber-600/50 p-6 rounded-2xl flex items-center justify-between transition-all group active:scale-[0.98]"
                   >
                     <div className="text-left">
                       <div className="text-white font-bold text-sm tracking-widest uppercase">Ezoic Ads</div>
-                      <div className="text-[10px] text-slate-500 group-hover:text-blue-500">Premium Video Network</div>
+                      <div className="text-[10px] text-slate-500 group-hover:text-amber-500">Premium Video Network</div>
                     </div>
-                    <Play size={18} className="text-slate-600 group-hover:text-blue-500" />
+                    <Play size={18} className="text-slate-600 group-hover:text-amber-500" />
                   </button>
                 )}
               </div>

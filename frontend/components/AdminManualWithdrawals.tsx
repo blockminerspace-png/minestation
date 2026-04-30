@@ -263,7 +263,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                             placeholder="Buscar por usuário, email ou carteira..."
                             value={searchTerm}
                             onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all"
+                            className="w-full pl-10 pr-4 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all"
                         />
                     </div>
 
@@ -272,7 +272,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                         <select
                             value={statusFilter}
                             onChange={(e) => setStatusFilter(e.target.value as any)}
-                            className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-sm p-2 focus:outline-none focus:ring-2 focus:ring-cyan-500 transition-all text-slate-700 dark:text-slate-300"
+                            className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg text-sm p-2 focus:outline-none focus:ring-2 focus:ring-amber-500 transition-all text-slate-700 dark:text-slate-300"
                         >
                             <option value="all">Todos os Status</option>
                             <option value="pending">Pendentes</option>
@@ -285,7 +285,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                 <button
                     onClick={loadRequests}
                     disabled={loading}
-                    className="flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold transition-all shadow-lg shadow-cyan-900/20 active:scale-95"
+                    className="flex items-center gap-2 px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white rounded-lg text-sm font-bold transition-all shadow-lg shadow-amber-900/20 active:scale-95"
                 >
                     <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
                     {loading ? 'Atualizando...' : 'Atualizar'}
@@ -331,7 +331,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                                         </td>
                                         <td className="px-6 py-4">
                                             <div className="flex items-center gap-2">
-                                                <div className="w-8 h-8 rounded-lg bg-cyan-100 dark:bg-cyan-900/30 flex items-center justify-center text-cyan-600 dark:text-cyan-400">
+                                                <div className="w-8 h-8 rounded-lg bg-amber-100 dark:bg-amber-900/30 flex items-center justify-center text-amber-600 dark:text-amber-400">
                                                     <Coins size={16} />
                                                 </div>
                                                 <div className="flex flex-col">
@@ -353,7 +353,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                                             </div>
                                         </td>
                                         <td className="px-6 py-4">
-                                            <div className="text-sm font-black font-mono text-cyan-600 dark:text-cyan-400">
+                                            <div className="text-sm font-black font-mono text-amber-600 dark:text-amber-400">
                                                 {req.netAmount?.toLocaleString('en-US', { maximumFractionDigits: 8 })} {req.coinSymbol}
                                             </div>
                                         </td>
@@ -366,7 +366,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                                                     href={`${getNetworkInfo(req.coinSymbol).explorer}/address/${req.walletAddress}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="text-slate-400 hover:text-cyan-500 transition-colors"
+                                                    className="text-slate-400 hover:text-amber-500 transition-colors"
                                                     title={`Ver no ${getNetworkInfo(req.coinSymbol).id === 56 ? 'BscScan' : 'Polygonscan'}`}
                                                 >
                                                     <ExternalLink size={14} />
@@ -379,7 +379,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                                                     href={`${getNetworkInfo(req.coinSymbol).explorer}/tx/${req.txHash}`}
                                                     target="_blank"
                                                     rel="noopener noreferrer"
-                                                    className="flex items-center justify-center gap-1 text-[10px] font-mono text-cyan-600 dark:text-cyan-400 hover:underline"
+                                                    className="flex items-center justify-center gap-1 text-[10px] font-mono text-amber-600 dark:text-amber-400 hover:underline"
                                                     title={req.txHash}
                                                 >
                                                     {req.txHash.substring(0, 6)}...{req.txHash.substring(req.txHash.length - 4)}
@@ -398,7 +398,7 @@ export const AdminManualWithdrawals: React.FC = () => {
                                                     <button
                                                         onClick={() => handleWeb3Payout(req)}
                                                         disabled={processingId === req.id}
-                                                        className="p-2 rounded-lg bg-cyan-100 text-cyan-600 hover:bg-cyan-600 hover:text-white dark:bg-cyan-900/20 dark:text-cyan-400 dark:hover:bg-cyan-600 dark:hover:text-white transition-all active:scale-95 disabled:opacity-50"
+                                                        className="p-2 rounded-lg bg-amber-100 text-amber-600 hover:bg-amber-600 hover:text-white dark:bg-amber-900/20 dark:text-amber-400 dark:hover:bg-amber-600 dark:hover:text-white transition-all active:scale-95 disabled:opacity-50"
                                                         title="Pagar via Web3"
                                                     >
                                                         <Wallet size={18} />

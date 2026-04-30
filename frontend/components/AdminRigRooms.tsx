@@ -207,30 +207,30 @@ export const AdminRigRooms: React.FC<Props> = ({ accessLevels }) => {
             <div className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-4">
               <div className="md:col-span-2">
                 <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Nome da Sala</label>
-                <input value={room.name} onChange={e => handleUpdateRoom(room.id, { name: e.target.value })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-blue-500 outline-none transition-colors" />
+                <input value={room.name} onChange={e => handleUpdateRoom(room.id, { name: e.target.value })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-amber-500 outline-none transition-colors" />
               </div>
               <div>
                 <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Slots Iniciais</label>
-                <input type="number" value={room.initialCapacity} onChange={e => handleUpdateRoom(room.id, { initialCapacity: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-blue-500 outline-none transition-colors" />
+                <input type="number" value={room.initialCapacity} onChange={e => handleUpdateRoom(room.id, { initialCapacity: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-amber-500 outline-none transition-colors" />
               </div>
               <div>
                 <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Máximo Slots</label>
-                <input type="number" value={room.maxCapacity} onChange={e => handleUpdateRoom(room.id, { maxCapacity: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-blue-500 outline-none transition-colors" />
+                <input type="number" value={room.maxCapacity} onChange={e => handleUpdateRoom(room.id, { maxCapacity: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-amber-500 outline-none transition-colors" />
               </div>
               <div>
                 <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Preço 1º Slot (USDC)</label>
-                <input type="number" step="0.01" value={room.baseSlotPrice} onChange={e => handleUpdateRoom(room.id, { baseSlotPrice: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-blue-500 outline-none transition-colors" />
+                <input type="number" step="0.01" value={room.baseSlotPrice} onChange={e => handleUpdateRoom(room.id, { baseSlotPrice: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-amber-500 outline-none transition-colors" />
               </div>
               <div>
                 <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Aumento por Slot (%)</label>
-                <input type="number" step="0.1" value={room.slotPriceIncreasePercent} onChange={e => handleUpdateRoom(room.id, { slotPriceIncreasePercent: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-blue-500 outline-none transition-colors" />
+                <input type="number" step="0.1" value={room.slotPriceIncreasePercent} onChange={e => handleUpdateRoom(room.id, { slotPriceIncreasePercent: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-amber-500 outline-none transition-colors" />
               </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-6 gap-3 mb-4">
               <div>
                 <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Ordem</label>
-                <input type="number" value={room.sortOrder} onChange={e => handleUpdateRoom(room.id, { sortOrder: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-blue-500 outline-none transition-colors" />
+                <input type="number" value={room.sortOrder} onChange={e => handleUpdateRoom(room.id, { sortOrder: Number(e.target.value || 0) })} className="w-full bg-slate-800 text-white text-sm p-2 rounded border border-slate-700 focus:border-amber-500 outline-none transition-colors" />
               </div>
               <div className="flex items-end pb-2">
                 <label className="flex items-center gap-2 text-xs text-slate-300 font-bold cursor-pointer group">
@@ -246,7 +246,7 @@ export const AdminRigRooms: React.FC<Props> = ({ accessLevels }) => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-800/40 p-3 rounded border border-slate-700/50">
                   {accessLevels.map(lvl => (
                     <label key={lvl.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:text-white transition-colors">
-                      <input type="checkbox" checked={(room.allowedLevels || []).includes(lvl.id)} onChange={() => toggleRoomLevel(room.id, lvl.id)} className="rounded bg-slate-700 border-slate-600 text-blue-500" />
+                      <input type="checkbox" checked={(room.allowedLevels || []).includes(lvl.id)} onChange={() => toggleRoomLevel(room.id, lvl.id)} className="rounded bg-slate-700 border-slate-600 text-amber-500" />
                       <span>{lvl.name}</span>
                     </label>
                   ))}
@@ -258,7 +258,7 @@ export const AdminRigRooms: React.FC<Props> = ({ accessLevels }) => {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 bg-slate-800/40 p-3 rounded border border-slate-700/50">
                   {seasonPasses.map(pass => (
                     <label key={pass.id} className="flex items-center gap-2 text-xs text-slate-300 cursor-pointer hover:text-white transition-colors">
-                      <input type="checkbox" checked={(room.allowedSeasonPassIds || []).includes(pass.id)} onChange={() => toggleRoomSeason(room.id, pass.id)} className="rounded bg-slate-700 border-slate-600 text-purple-500" />
+                      <input type="checkbox" checked={(room.allowedSeasonPassIds || []).includes(pass.id)} onChange={() => toggleRoomSeason(room.id, pass.id)} className="rounded bg-slate-700 border-slate-600 text-orange-500" />
                       <span className="truncate" title={pass.name}>{pass.name}</span>
                     </label>
                   ))}
@@ -272,7 +272,7 @@ export const AdminRigRooms: React.FC<Props> = ({ accessLevels }) => {
               {roomStatuses[room.id] === 'error' && <span className="text-[10px] font-bold text-red-500">✗ ERRO AO SALVAR</span>}
               <button
                 onClick={() => handleSaveRoom(room.id)}
-                className={`text-white text-xs font-bold px-4 py-2 rounded-lg shadow-lg transition-all active:scale-95 ${savingRoomId === room.id ? 'bg-blue-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-500 shadow-blue-900/20'}`}
+                className={`text-white text-xs font-bold px-4 py-2 rounded-lg shadow-lg transition-all active:scale-95 ${savingRoomId === room.id ? 'bg-amber-400 cursor-not-allowed' : 'bg-amber-600 hover:bg-amber-500 shadow-amber-900/20'}`}
                 disabled={savingRoomId !== null}
               >
                 {savingRoomId === room.id ? 'PROCESSANDO...' : 'SALVAR ALTERAÇÕES'}

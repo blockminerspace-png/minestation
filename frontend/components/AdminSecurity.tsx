@@ -163,7 +163,7 @@ export const AdminSecurity: React.FC = () => {
                         {/* Multi-Accounts (IP de Registro) */}
                         <div className="bg-slate-900/50 border border-slate-800 rounded-xl overflow-hidden shadow-xl">
                             <div className="bg-slate-950 p-4 border-b border-slate-800 flex items-center gap-3">
-                                <Users className="text-blue-500" size={20} />
+                                <Users className="text-amber-500" size={20} />
                                 <h3 className="text-lg font-bold text-slate-100 italic font-serif">Multi-contas (Registro)</h3>
                             </div>
                             <div className="overflow-x-auto">
@@ -180,7 +180,7 @@ export const AdminSecurity: React.FC = () => {
                                             stats.multiAccounts.map((acc, idx) => (
                                                 <tr key={idx} className="hover:bg-slate-800/50 transition-colors group">
                                                     <td className="px-4 py-4">
-                                                        <div className="font-mono text-xs text-blue-400">{acc.registration_ip}</div>
+                                                        <div className="font-mono text-xs text-amber-400">{acc.registration_ip}</div>
                                                         <div className="flex flex-wrap gap-1 mt-1">
                                                             {acc.usernames.slice(0, 3).map((u, i) => (
                                                                 <span key={i} className="text-[9px] bg-slate-800 px-1 py-0.2 rounded text-slate-500">
@@ -191,7 +191,7 @@ export const AdminSecurity: React.FC = () => {
                                                         </div>
                                                     </td>
                                                     <td className="px-4 py-4 text-center">
-                                                        <span className="bg-blue-900/20 text-blue-400 px-2 py-1 rounded text-xs font-bold ring-1 ring-blue-500/30">
+                                                        <span className="bg-amber-900/20 text-amber-400 px-2 py-1 rounded text-xs font-bold ring-1 ring-amber-500/30">
                                                             {acc.account_count}
                                                         </span>
                                                     </td>

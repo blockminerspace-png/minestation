@@ -43,7 +43,7 @@ export const DocsPage: React.FC = () => {
 
             <div className="mb-12 text-center">
                 <h1 className="text-4xl font-bold text-slate-900 dark:text-white mb-4 flex items-center justify-center gap-3">
-                    <BookOpen className="text-cyan-600 dark:text-cyan-500" /> Manual do Operador
+                    <BookOpen className="text-amber-600 dark:text-amber-500" /> Manual do Operador
                 </h1>
                 <p className="text-slate-500 dark:text-slate-400 text-lg">Guia de referência técnica, econômica e operacional do protocolo.</p>
             </div>
@@ -51,26 +51,26 @@ export const DocsPage: React.FC = () => {
             {/* ---------------------------------------------------------------------------------- */}
             {/* SEÇÃO 1: ECONOMIA WEB3 & BLOCKCHAIN */}
             {/* ---------------------------------------------------------------------------------- */}
-            <div className="bg-gradient-to-br from-indigo-50 to-white dark:from-indigo-950 dark:to-slate-900 border border-indigo-200 dark:border-indigo-500/30 rounded-2xl p-8 mb-16 relative overflow-hidden shadow-xl">
-                <div className="absolute top-0 right-0 p-8 opacity-10 text-indigo-500 pointer-events-none">
+            <div className="bg-gradient-to-br from-amber-50 to-white dark:from-amber-950 dark:to-slate-900 border border-amber-200 dark:border-amber-500/30 rounded-2xl p-8 mb-16 relative overflow-hidden shadow-xl">
+                <div className="absolute top-0 right-0 p-8 opacity-10 text-amber-500 pointer-events-none">
                     <Globe size={200} />
                 </div>
 
                 <div className="relative z-10">
-                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-3 border-b border-indigo-200 dark:border-indigo-500/30 pb-4">
-                        <Hexagon className="text-purple-600 dark:text-purple-500" /> Economia Web3 & Tokenomics
+                    <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-3 border-b border-amber-200 dark:border-amber-500/30 pb-4">
+                        <Hexagon className="text-orange-600 dark:text-orange-500" /> Economia Web3 & Tokenomics
                     </h2>
 
-                    <div className="bg-indigo-100/50 dark:bg-indigo-900/20 border border-indigo-200 dark:border-indigo-500/50 rounded-xl p-6 mb-8 backdrop-blur-sm">
-                        <p className="text-indigo-900 dark:text-white text-lg leading-relaxed font-medium">
+                    <div className="bg-amber-100/50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/50 rounded-xl p-6 mb-8 backdrop-blur-sm">
+                        <p className="text-amber-900 dark:text-white text-lg leading-relaxed font-medium">
                             "Genesis Miner não é apenas um simulador. Este é um jogo <strong>Play-to-Earn</strong> integrado à rede <strong>Polygon</strong>. Todos os ativos que você gerencia possuem valor real e propriedade digital comprovada via Blockchain, permitindo eventuais ganhos financeiros para operadores eficientes."
                         </p>
                     </div>
 
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                         {/* NFT ASSETS */}
-                        <div className="bg-white/80 dark:bg-slate-900/80 p-6 rounded-xl border border-purple-200 dark:border-purple-500/20">
-                            <h3 className="text-lg font-bold text-purple-600 dark:text-purple-400 mb-3 flex items-center gap-2">
+                        <div className="bg-white/80 dark:bg-slate-900/80 p-6 rounded-xl border border-orange-200 dark:border-orange-500/20">
+                            <h3 className="text-lg font-bold text-orange-600 dark:text-orange-400 mb-3 flex items-center gap-2">
                                 <Hexagon size={18} /> Ativos Digitais (NFTs)
                             </h3>
                             <ul className="text-sm space-y-2">
@@ -120,7 +120,7 @@ export const DocsPage: React.FC = () => {
             {/* ---------------------------------------------------------------------------------- */}
             <div className="mb-16">
                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-8 border-b border-slate-200 dark:border-slate-800 pb-4 flex items-center gap-2">
-                    <Cpu className="text-cyan-600 dark:text-cyan-500" /> Mecânicas de Engenharia
+                    <Cpu className="text-amber-600 dark:text-amber-500" /> Mecânicas de Engenharia
                 </h2>
 
                 <div className="space-y-8">
@@ -136,8 +136,8 @@ export const DocsPage: React.FC = () => {
                                 GPUs não funcionam no chão. Você precisa de Rigs de Mineração.
                             </p>
                             <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700 dark:text-slate-300">
-                                <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 bg-cyan-500 rounded-full"></span> <strong>Tamanho (U):</strong> Define quantos slots de GPUs o rig possui (4, 6, 8 ou 10), dispostos em 2 colunas.</li>
-                                <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 bg-cyan-500 rounded-full"></span> <strong>Slots IA:</strong> Rigs a partir de 6U possuem slots extras dedicados a chips de inteligência artificial.</li>
+                                <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span> <strong>Tamanho (U):</strong> Define quantos slots de GPUs o rig possui (4, 6, 8 ou 10), dispostos em 2 colunas.</li>
+                                <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span> <strong>Slots IA:</strong> Rigs a partir de 6U possuem slots extras dedicados a chips de inteligência artificial.</li>
                             </ul>
                         </div>
                     </div>
@@ -171,7 +171,7 @@ export const DocsPage: React.FC = () => {
 
                     {/* Mining & AI */}
                     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl border border-slate-200 dark:border-slate-800 flex gap-6 shadow-sm">
-                        <div className="shrink-0 bg-slate-100 dark:bg-slate-800 w-16 h-16 rounded-lg flex items-center justify-center text-purple-600 dark:text-purple-500">
+                        <div className="shrink-0 bg-slate-100 dark:bg-slate-800 w-16 h-16 rounded-lg flex items-center justify-center text-orange-600 dark:text-orange-500">
                             <Cpu size={32} />
                         </div>
                         <div>
@@ -183,7 +183,7 @@ export const DocsPage: React.FC = () => {
                                 <li className="text-slate-700 dark:text-slate-300">
                                     <strong>Produção Base:</strong> Soma da produção de todas as GPUs instaladas (CPUs, GPUs, ASICs).
                                 </li>
-                                <li className="text-purple-700 dark:text-purple-300">
+                                <li className="text-orange-700 dark:text-orange-300">
                                     <strong>Boost de IA:</strong> Chips instalados nos slots de IA multiplicam a produção TOTAL do rig.
                                     <br />
                                     <em className="text-slate-500 text-xs">Ex: Um rig com 100 H/s e um chip de +10% passa a 110 H/s. A produção de cada criptomoeda depende do yield configurado pelo administrador.</em>
@@ -207,7 +207,7 @@ export const DocsPage: React.FC = () => {
 
                     {/* TAB 1: SERVER ROOM */}
                     <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h3 className="text-cyan-600 dark:text-cyan-400 font-bold mb-2 flex items-center gap-2">
+                        <h3 className="text-amber-600 dark:text-amber-400 font-bold mb-2 flex items-center gap-2">
                             <LayoutGrid size={18} /> 1. Sala de Rigs
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
@@ -253,7 +253,7 @@ export const DocsPage: React.FC = () => {
 
                     {/* TAB 4: HARDWARE MARKET */}
                     <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h3 className="text-blue-600 dark:text-blue-500 font-bold mb-2 flex items-center gap-2">
+                        <h3 className="text-amber-600 dark:text-amber-500 font-bold mb-2 flex items-center gap-2">
                             <ShoppingCart size={18} /> 4. Mercado de Hardware
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
@@ -282,7 +282,7 @@ export const DocsPage: React.FC = () => {
 
                     {/* TAB 6: WALLET */}
                     <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h3 className="text-purple-600 dark:text-purple-500 font-bold mb-2 flex items-center gap-2">
+                        <h3 className="text-orange-600 dark:text-orange-500 font-bold mb-2 flex items-center gap-2">
                             <Wallet size={18} /> 6. Carteira
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
@@ -312,8 +312,8 @@ export const DocsPage: React.FC = () => {
 
                     return (
                         <div key={section.title}>
-                            <h3 className="text-lg font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-widest mb-4 flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-cyan-600"></span> {section.title}
+                            <h3 className="text-lg font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-4 flex items-center gap-2">
+                                <span className="w-2 h-2 rounded-full bg-amber-600"></span> {section.title}
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                 {sectionItems.map(item => (
@@ -330,7 +330,7 @@ export const DocsPage: React.FC = () => {
 
                                             <div className="flex gap-3 text-[10px] font-mono uppercase bg-slate-50 dark:bg-slate-900/50 p-2 rounded">
                                                 {item.baseProduction > 0 && (
-                                                    <span className="text-cyan-600 dark:text-cyan-400">Hash: {item.baseProduction < 0.001 ? item.baseProduction.toFixed(8) : item.baseProduction} H/s</span>
+                                                    <span className="text-amber-600 dark:text-amber-400">Hash: {item.baseProduction < 0.001 ? item.baseProduction.toFixed(8) : item.baseProduction} H/s</span>
                                                 )}
                                                 {item.powerConsumption && (
                                                     <span className="text-red-500 dark:text-red-400">Power: -{item.powerConsumption}W</span>
@@ -339,10 +339,10 @@ export const DocsPage: React.FC = () => {
                                                     <span className="text-yellow-600 dark:text-yellow-400">Cap: {item.powerCapacity}Wh</span>
                                                 )}
                                                 {item.multiplier && (
-                                                    <span className="text-purple-600 dark:text-purple-400">Boost: +{(item.multiplier * 100).toFixed(1)}%</span>
+                                                    <span className="text-orange-600 dark:text-orange-400">Boost: +{(item.multiplier * 100).toFixed(1)}%</span>
                                                 )}
                                                 {item.slotsCapacity && (
-                                                    <span className="text-blue-500 dark:text-blue-400">Slots: {item.slotsCapacity}</span>
+                                                    <span className="text-amber-500 dark:text-amber-400">Slots: {item.slotsCapacity}</span>
                                                 )}
                                                 <span className="text-slate-600 dark:text-slate-300">Tipo: {typeLabel(item.type)}</span>
                                                 <span className="text-slate-600 dark:text-slate-300">Status: {item.status}</span>

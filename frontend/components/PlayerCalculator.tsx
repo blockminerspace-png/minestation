@@ -164,7 +164,7 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
                 <div className="space-y-1">
                     <button
                         onClick={() => setScope('total')}
-                        className={`w-full flex items-center justify-between p-3 rounded-lg text-sm font-medium transition-all ${scope === 'total' ? 'bg-cyan-600/10 text-cyan-400 border border-cyan-500/50' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+                        className={`w-full flex items-center justify-between p-3 rounded-lg text-sm font-medium transition-all ${scope === 'total' ? 'bg-amber-600/10 text-amber-400 border border-amber-500/50' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
                     >
                         <span className="flex items-center gap-2"><Box size={16} /> Poder Total</span>
                     </button>
@@ -173,7 +173,7 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
                         <button
                             key={roomId}
                             onClick={() => setScope(roomId)}
-                            className={`w-full flex items-center justify-between p-3 rounded-lg text-sm font-medium transition-all ${scope === roomId ? 'bg-cyan-600/10 text-cyan-400 border border-cyan-500/50' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
+                            className={`w-full flex items-center justify-between p-3 rounded-lg text-sm font-medium transition-all ${scope === roomId ? 'bg-amber-600/10 text-amber-400 border border-amber-500/50' : 'text-slate-400 hover:bg-white/5 hover:text-slate-200'}`}
                         >
                             <span className="flex items-center gap-2"><Server size={16} /> {roomData.names[roomId]}</span>
                         </button>
@@ -199,7 +199,7 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
                                 <button
                                     key={c.id}
                                     onClick={() => setSelectedCoinId(c.id)}
-                                    className={`px-6 py-2 rounded-md text-sm font-bold uppercase tracking-wider transition-all ${selectedCoinId === c.id ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/50' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
+                                    className={`px-6 py-2 rounded-md text-sm font-bold uppercase tracking-wider transition-all ${selectedCoinId === c.id ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/50' : 'text-slate-500 hover:text-slate-300 hover:bg-white/5'}`}
                                 >
                                     {c.symbol || c.name}
                                 </button>
@@ -213,13 +213,13 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 {/* Daily Gains Card */}
                                 <div className="relative overflow-hidden rounded-3xl bg-slate-900 border border-slate-800 p-8 flex flex-col justify-between group h-48">
-                                    <div className="absolute top-0 left-0 w-2 h-full bg-gradient-to-b from-cyan-400 to-blue-500 rounded-sm"></div>
+                                    <div className="absolute top-0 left-0 w-2 h-full bg-gradient-to-b from-amber-400 to-orange-500 rounded-sm"></div>
                                     <div className="z-10">
                                         <div className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-1">Ganhos 24h ({selectedCoin.symbol})</div>
                                         <div className="text-4xl font-black text-white tracking-tight flex items-end gap-2">
                                             ${dailyUsd.toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })}
                                         </div>
-                                        <div className="text-cyan-400 font-mono text-sm mt-2 font-bold">
+                                        <div className="text-amber-400 font-mono text-sm mt-2 font-bold">
                                             {dailyCoins.toFixed(8)} {selectedCoin.symbol}
                                         </div>
                                     </div>
@@ -230,17 +230,17 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
 
                                 {/* Monthly Projection Card */}
                                 <div className="relative overflow-hidden rounded-3xl bg-slate-900 border border-slate-800 p-8 flex flex-col justify-between group h-48">
-                                    <div className="absolute top-0 left-0 w-2 h-full bg-gradient-to-b from-purple-400 to-pink-500 rounded-sm"></div>
+                                    <div className="absolute top-0 left-0 w-2 h-full bg-gradient-to-b from-amber-400 to-orange-600 rounded-sm"></div>
                                     <div className="z-10">
                                         <div className="text-[10px] font-bold uppercase text-slate-400 tracking-widest mb-1">Projeção 30 Dias</div>
                                         <div className="text-4xl font-black text-white tracking-tight">
                                             ${(dailyUsd * 30).toLocaleString('en-US', { minimumFractionDigits: 6, maximumFractionDigits: 6 })}
                                         </div>
-                                        <div className="text-purple-400 font-mono text-xs mt-3 italic">
+                                        <div className="text-orange-400 font-mono text-xs mt-3 italic">
                                             Câmbio: 1 {selectedCoin.symbol} = ${(selectedCoin.priceUSD || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} USDC
                                         </div>
                                     </div>
-                                    <div className="absolute right-8 top-8 opacity-20 text-purple-500">
+                                    <div className="absolute right-8 top-8 opacity-20 text-orange-500">
                                         <ArrowUpRight size={48} />
                                     </div>
                                 </div>
@@ -249,7 +249,7 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
                             {/* DETAILED TABLE */}
                             <div className="bg-slate-900 rounded-3xl border border-slate-800 p-8">
                                 <h3 className="flex items-center gap-2 text-slate-300 font-bold mb-6">
-                                    <TrendingUp size={18} className="text-cyan-400" />
+                                    <TrendingUp size={18} className="text-amber-400" />
                                     Detalhamento Financeiro (Projeções)
                                 </h3>
 

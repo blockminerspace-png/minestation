@@ -154,7 +154,7 @@ export const AdminSeasonPasses: React.FC<AdminSeasonPassesProps> = ({ seasonPass
                     <div className="bg-slate-800 border border-slate-600 rounded-xl w-full max-w-lg h-[80vh] flex flex-col shadow-2xl">
                         <div className="flex justify-between items-center p-4 border-b border-slate-700">
                             <h3 className="font-bold text-white flex items-center gap-2">
-                                <Users size={18} className="text-blue-400" />
+                                <Users size={18} className="text-amber-400" />
                                 Compradores do Passe
                             </h3>
                             <button onClick={() => setViewBuyers(null)} className="text-slate-400 hover:text-white bg-slate-700/50 p-1 rounded-full"><X size={20} /></button>
@@ -258,7 +258,7 @@ export const AdminSeasonPasses: React.FC<AdminSeasonPassesProps> = ({ seasonPass
                                 <input type="text" value={passForm.name} onChange={e => setPassForm({ ...passForm, name: e.target.value })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" />
                             </div>
                             <div>
-                                <label className="text-xs font-bold text-slate-500 block mb-1">ID da Temporada (ex: nautilos)</label>
+                                <label className="text-xs font-bold text-slate-500 block mb-1">ID da Temporada (ex: genesis_dao)</label>
                                 <input type="text" value={passForm.seasonId} onChange={e => setPassForm({ ...passForm, seasonId: e.target.value })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm font-mono" />
                             </div>
                             <div className="col-span-2">
@@ -336,7 +336,7 @@ export const AdminSeasonPasses: React.FC<AdminSeasonPassesProps> = ({ seasonPass
                                         />
                                     </div>
                                     <div className="col-span-2">
-                                        <button onClick={handleAddReward} className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-2 rounded text-xs">ADD</button>
+                                        <button onClick={handleAddReward} className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold py-2 rounded text-xs">ADD</button>
                                     </div>
                                 </div>
                             </div>

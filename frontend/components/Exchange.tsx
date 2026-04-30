@@ -42,15 +42,15 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
       <div className="relative z-10">
         <div className="flex flex-col gap-4 mb-6 border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex justify-between items-center">
-            <h3 className="text-cyan-600 dark:text-cyan-500 font-black text-xl flex items-center gap-2 tracking-tight">
+            <h3 className="text-amber-600 dark:text-amber-500 font-black text-xl flex items-center gap-2 tracking-tight">
               <Coins size={24} className="stroke-[3]" /> EXCHANGE
             </h3>
           </div>
 
           {settings && (
             <div className="grid grid-cols-2 gap-3">
-              <div className="bg-gradient-to-br from-cyan-500/10 to-blue-500/10 dark:from-cyan-900/40 dark:to-blue-900/40 border border-cyan-200 dark:border-cyan-800/50 rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 uppercase tracking-widest mb-1 font-sans">MÍNIMO DE TROCA</span>
+              <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 dark:from-amber-900/40 dark:to-orange-900/40 border border-amber-200 dark:border-amber-800/50 rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
+                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1 font-sans">MÍNIMO DE TROCA</span>
                 <span className="text-2xl font-black text-slate-800 dark:text-white leading-none font-mono">
                   ${settings.minExchangeAmount.toFixed(2)} <span className="text-xs font-bold text-slate-500">USDC</span>
                 </span>

@@ -130,7 +130,7 @@ export const AdminEconomy: React.FC = () => {
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6 relative z-10">
                                 {/* Stats Real */}
                                 <div className="bg-slate-950/50 p-3 rounded border border-slate-800/50">
-                                    <div className="text-xs text-blue-400 font-bold mb-2 flex items-center gap-1"><Activity size={12} /> Rede Real</div>
+                                    <div className="text-xs text-amber-400 font-bold mb-2 flex items-center gap-1"><Activity size={12} /> Rede Real</div>
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="text-slate-500">Mineradores:</span>
                                         <span className="text-white">{coin.realActiveMiners}</span>
@@ -143,7 +143,7 @@ export const AdminEconomy: React.FC = () => {
 
                                 {/* Config Atual */}
                                 <div className="bg-slate-950/50 p-3 rounded border border-slate-800/50">
-                                    <div className="text-xs text-purple-400 font-bold mb-2 flex items-center gap-1"><Cpu size={12} /> Config Atual</div>
+                                    <div className="text-xs text-orange-400 font-bold mb-2 flex items-center gap-1"><Cpu size={12} /> Config Atual</div>
                                     <div className="flex justify-between text-sm mb-1">
                                         <span className="text-slate-500">Reward:</span>
                                         <span className="text-white font-mono">{coin.block_reward.toFixed(6)}</span>
@@ -193,7 +193,7 @@ export const AdminEconomy: React.FC = () => {
                                     </div>
                                     <button
                                         onClick={() => handleApply(coin.id)}
-                                        className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold shadow-lg shadow-blue-600/20"
+                                        className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg flex items-center gap-2 font-bold shadow-lg shadow-amber-600/20"
                                     >
                                         <Save size={16} /> Aplicar
                                     </button>

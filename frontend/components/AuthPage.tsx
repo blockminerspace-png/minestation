@@ -224,7 +224,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
         <div className="flex flex-col items-center justify-center min-h-[80vh] px-4 animate-in fade-in zoom-in-95 duration-300">
 
             <div className="w-full max-w-md bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl overflow-hidden relative transition-colors">
-                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-cyan-500 to-purple-600"></div>
+                <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-amber-500 to-orange-600"></div>
 
                 <div className="p-8">
                     <div className="text-center mb-8">
@@ -239,8 +239,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                     {/* TABS (Hidden in recovery mode to focus) */}
                     {activeTab !== 'recovery' && (
                         <div className="flex mb-6 bg-slate-100 dark:bg-slate-950 p-1 rounded-lg">
-                            <button onClick={() => { setActiveTab('login'); resetForm(); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded ${activeTab === 'login' ? 'bg-white dark:bg-slate-800 shadow text-cyan-600' : 'text-slate-500'}`}>Login</button>
-                            <button onClick={() => { setActiveTab('register'); resetForm(); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded ${activeTab === 'register' ? 'bg-white dark:bg-slate-800 shadow text-cyan-600' : 'text-slate-500'}`}>Cadastro</button>
+                            <button onClick={() => { setActiveTab('login'); resetForm(); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded ${activeTab === 'login' ? 'bg-white dark:bg-slate-800 shadow text-amber-600' : 'text-slate-500'}`}>Login</button>
+                            <button onClick={() => { setActiveTab('register'); resetForm(); }} className={`flex-1 py-2 text-xs font-bold uppercase rounded ${activeTab === 'register' ? 'bg-white dark:bg-slate-800 shadow text-amber-600' : 'text-slate-500'}`}>Cadastro</button>
                         </div>
                     )}
 
@@ -282,7 +282,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                     >
                                         CONTINUAR <ArrowRight size={16} />
                                     </button>
-                                    <button onClick={() => setActiveTab('login')} className="w-full text-center text-xs text-slate-500 hover:text-cyan-500 mt-2">
+                                    <button onClick={() => setActiveTab('login')} className="w-full text-center text-xs text-slate-500 hover:text-amber-500 mt-2">
                                         Voltar para Login
                                     </button>
                                 </div>
@@ -291,7 +291,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                             {recoveryStep === 'wallet' && (
                                 <div className="space-y-4 text-center">
                                     <div className="flex justify-center mb-2">
-                                        <div className="w-16 h-16 bg-purple-100 dark:bg-purple-900/20 rounded-full flex items-center justify-center text-purple-600 animate-pulse">
+                                        <div className="w-16 h-16 bg-orange-100 dark:bg-orange-900/20 rounded-full flex items-center justify-center text-orange-600 animate-pulse">
                                             <Wallet size={32} />
                                         </div>
                                     </div>
@@ -302,7 +302,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                     <button
                                         onClick={handleConnectWalletForRecovery}
                                         disabled={isWeb3Processing}
-                                        className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
+                                        className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
                                     >
                                         {isWeb3Processing ? 'VERIFICANDO...' : 'CONECTAR CARTEIRA'} <Wallet size={18} />
                                     </button>
@@ -363,14 +363,14 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                         <div className="space-y-4">
                             <div className="bg-slate-50 dark:bg-slate-950/50 p-4 rounded-lg border border-slate-200 dark:border-slate-800">
                                 <h4 className="font-bold text-slate-800 dark:text-white mb-3 text-sm flex items-center gap-2">
-                                    <Wallet size={16} className="text-purple-500" /> Escolha seu Plano
+                                    <Wallet size={16} className="text-orange-500" /> Escolha seu Plano
                                 </h4>
                                 <div className="space-y-2">
                                     {paidLevels.map(level => (
                                         <div
                                             key={level.id}
                                             onClick={() => setSelectedLevelId(level.id)}
-                                            className={`p-3 rounded border cursor-pointer transition-all bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-purple-500/50 hover:shadow-md`}
+                                            className={`p-3 rounded border cursor-pointer transition-all bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 hover:border-orange-500/50 hover:shadow-md`}
                                         >
                                             <div className="flex justify-between items-center">
                                                 <span className="font-bold text-slate-700 dark:text-slate-200 text-sm">{level.name}</span>
@@ -391,9 +391,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
 
                             {/* Selected Plan Header */}
                             {activeTab === 'special' && selectedLevel && (
-                                <div className="bg-purple-100 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800/50 p-3 rounded-lg flex justify-between items-center mb-4">
+                                <div className="bg-orange-100 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800/50 p-3 rounded-lg flex justify-between items-center mb-4">
                                     <div>
-                                        <div className="text-xs text-purple-600 dark:text-purple-400 font-bold uppercase">Plano Selecionado</div>
+                                        <div className="text-xs text-orange-600 dark:text-orange-400 font-bold uppercase">Plano Selecionado</div>
                                         <div className="font-bold text-slate-800 dark:text-white">{selectedLevel.name} <span className="font-mono text-green-600 dark:text-green-400">(${selectedLevel.priceUsdc})</span></div>
                                     </div>
                                     <button type="button" onClick={() => setSelectedLevelId('')} className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-white underline">
@@ -411,7 +411,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                             type="text"
                                             value={username}
                                             onChange={(e) => setUsername(e.target.value)}
-                                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-all"
+                                            className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                             placeholder="Minerador_X"
                                         />
                                     </div>
@@ -426,7 +426,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                         type="email"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
-                                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-all"
+                                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                         placeholder="usuario@exemplo.com"
                                     />
                                 </div>
@@ -440,7 +440,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                         type="password"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
-                                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-all"
+                                        className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                         placeholder="••••••••"
                                     />
                                 </div>
@@ -448,7 +448,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                     <button
                                         type="button"
                                         onClick={() => { setActiveTab('recovery'); resetForm(); }}
-                                        className="text-[10px] text-slate-500 hover:text-cyan-500 block text-right mt-1"
+                                        className="text-[10px] text-slate-500 hover:text-amber-500 block text-right mt-1"
                                     >
                                         Esqueceu a senha?
                                     </button>
@@ -465,7 +465,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                                 type="password"
                                                 value={confirmPassword}
                                                 onChange={(e) => setConfirmPassword(e.target.value)}
-                                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-all"
+                                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                                 placeholder="••••••••"
                                             />
                                         </div>
@@ -478,7 +478,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                                 type="text"
                                                 value={referralInput}
                                                 onChange={(e) => setReferralInput(e.target.value)}
-                                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500 outline-none transition-all"
+                                                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                                 placeholder="código-de-amigo"
                                             />
                                         </div>
@@ -489,7 +489,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                             <button
                                 type="submit"
                                 disabled={isWeb3Processing}
-                                className={`w-full font-bold py-3 rounded-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 mt-6 ${activeTab === 'special' ? 'bg-purple-600 hover:bg-purple-500 text-white' : 'bg-gradient-to-r from-cyan-600 to-cyan-500 hover:from-cyan-500 hover:to-cyan-400 text-white'}`}
+                                className={`w-full font-bold py-3 rounded-lg shadow-lg transition-all active:scale-95 flex items-center justify-center gap-2 mt-6 ${activeTab === 'special' ? 'bg-orange-600 hover:bg-orange-500 text-white' : 'bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white'}`}
                             >
                                 {isWeb3Processing ? (
                                     <span className="animate-pulse">PROCESSANDO...</span>

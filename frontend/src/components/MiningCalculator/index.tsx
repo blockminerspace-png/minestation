@@ -198,7 +198,7 @@ const MiningCalculator: React.FC = () => {
             {/* Header Interno */}
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-6">
                 <div>
-                    <h2 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+                    <h2 className="text-2xl font-bold bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">
                         Calculadora de Mineração
                     </h2>
                     <p className="text-slate-400 text-sm">Rentabilidade em Tempo Real (Dados do Servidor)</p>
@@ -210,7 +210,7 @@ const MiningCalculator: React.FC = () => {
                                 key={coin.id}
                                 onClick={() => setSelectedCoinId(coin.id)}
                                 className={`px-4 py-2 rounded-md transition-all font-bold text-xs ${selectedCoinId === coin.id
-                                    ? 'bg-blue-600 text-white shadow-lg'
+                                    ? 'bg-amber-600 text-white shadow-lg'
                                     : 'text-slate-400 hover:text-white hover:bg-slate-800'
                                     }`}
                             >
@@ -220,7 +220,7 @@ const MiningCalculator: React.FC = () => {
                     </div>
                     <button
                         onClick={() => { setEditingCoin({}); setIsModalOpen(true); }}
-                        className="w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-cyan-400 flex items-center justify-center transition-colors shadow-lg border border-slate-700"
+                        className="w-9 h-9 rounded-full bg-slate-900 hover:bg-slate-800 text-amber-400 flex items-center justify-center transition-colors shadow-lg border border-slate-700"
                         title="Adicionar Moeda"
                     >
                         <Plus size={16} />
@@ -233,7 +233,7 @@ const MiningCalculator: React.FC = () => {
                 <section className="lg:col-span-1 space-y-6">
                     <div className="bg-slate-900/50 border border-slate-800 p-6 rounded-2xl space-y-6">
                         <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-cyan-400 font-semibold">
+                            <div className="flex items-center gap-2 text-amber-400 font-semibold">
                                 <Sliders size={18} />
                                 <h3>Configuração de {selectedCoin.symbol}</h3>
                             </div>
@@ -247,12 +247,12 @@ const MiningCalculator: React.FC = () => {
                                         type="number"
                                         value={hashrate}
                                         onChange={(e) => setHashrate(Number(e.target.value))}
-                                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-blue-500 outline-none font-mono text-white text-sm"
+                                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-amber-500 outline-none font-mono text-white text-sm"
                                     />
                                     <select
                                         value={unit}
                                         onChange={(e) => setUnit(e.target.value as HashUnit)}
-                                        className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-3 outline-none font-bold text-cyan-400 text-sm"
+                                        className="bg-slate-950 border border-slate-700 rounded-lg px-2 py-3 outline-none font-bold text-amber-400 text-sm"
                                     >
                                         {Object.values(HashUnit).map(u => (
                                             <option key={u} value={u}>{u}</option>
@@ -270,7 +270,7 @@ const MiningCalculator: React.FC = () => {
                                     step="0.01"
                                     value={selectedCoin.multiplier}
                                     onChange={(e) => updateCoinProperty(selectedCoin.id, { multiplier: Number(e.target.value) })}
-                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-purple-500 outline-none font-mono text-white text-sm"
+                                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-4 py-3 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-white text-sm"
                                 />
                                 <p className="text-[10px] text-slate-500 mt-1 italic">
                                     Afeta apenas o cálculo de {selectedCoin.symbol}.
@@ -278,7 +278,7 @@ const MiningCalculator: React.FC = () => {
                             </div>
 
                             <div className="pt-2 border-t border-slate-800">
-                                <label className="block text-[10px] text-purple-400 mb-2 uppercase tracking-widest font-bold">
+                                <label className="block text-[10px] text-orange-400 mb-2 uppercase tracking-widest font-bold">
                                     Valor de 1 {selectedCoin.symbol} em USDC
                                 </label>
                                 <div className="relative">
@@ -304,7 +304,7 @@ const MiningCalculator: React.FC = () => {
                                                 blockReward: newReward
                                             });
                                         }}
-                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-4 py-3 focus:ring-2 focus:ring-purple-500 outline-none font-mono text-white text-lg font-bold"
+                                        className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-4 py-3 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-white text-lg font-bold"
                                     />
                                 </div>
                                 <p className="text-[10px] text-slate-400 mt-2 flex items-center gap-1">
@@ -347,7 +347,7 @@ const MiningCalculator: React.FC = () => {
                         <div className="flex gap-2">
                             <button
                                 onClick={() => { setEditingCoin(selectedCoin); setIsModalOpen(true); }}
-                                className="px-3 py-1 bg-blue-900/40 text-blue-400 rounded-md hover:bg-blue-900/60 text-xs transition-colors flex items-center gap-2"
+                                className="px-3 py-1 bg-amber-900/40 text-amber-400 rounded-md hover:bg-amber-900/60 text-xs transition-colors flex items-center gap-2"
                             >
                                 <Sliders size={12} /> Editar
                             </button>
@@ -364,9 +364,9 @@ const MiningCalculator: React.FC = () => {
                 {/* Painel de Resultados */}
                 <section className="lg:col-span-2 space-y-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div className="bg-slate-900/50 p-8 rounded-2xl border-l-4 border-cyan-400 shadow-xl relative overflow-hidden group">
+                        <div className="bg-slate-900/50 p-8 rounded-2xl border-l-4 border-amber-400 shadow-xl relative overflow-hidden group">
                             <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                <Coins size={64} className="text-cyan-400" />
+                                <Coins size={64} className="text-amber-400" />
                             </div>
                             <p className="text-slate-400 text-[10px] mb-2 uppercase tracking-widest font-semibold flex items-center gap-2">
                                 Ganhos 24h ({selectedCoin.symbol})
@@ -374,20 +374,20 @@ const MiningCalculator: React.FC = () => {
                             <h3 className="text-3xl lg:text-4xl font-bold font-mono text-white overflow-hidden text-ellipsis">
                                 ${results.dailyUSD.toFixed(6)}
                             </h3>
-                            <p className="text-cyan-400 mt-2 text-sm font-medium">
+                            <p className="text-amber-400 mt-2 text-sm font-medium">
                                 {results.dailyCrypto.toFixed(8)} {selectedCoin.symbol}
                             </p>
                         </div>
 
-                        <div className="bg-slate-900/50 p-8 rounded-2xl border-l-4 border-purple-400 shadow-xl relative overflow-hidden group">
+                        <div className="bg-slate-900/50 p-8 rounded-2xl border-l-4 border-orange-400 shadow-xl relative overflow-hidden group">
                             <div className="absolute right-0 top-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
-                                <TrendingUp size={64} className="text-purple-400" />
+                                <TrendingUp size={64} className="text-orange-400" />
                             </div>
                             <p className="text-slate-400 text-[10px] mb-2 uppercase tracking-widest font-semibold">Projeção 30 Dias</p>
                             <h3 className="text-3xl lg:text-4xl font-bold font-mono text-white overflow-hidden text-ellipsis">
                                 ${results.monthlyUSD.toFixed(6)}
                             </h3>
-                            <p className="text-purple-400 mt-2 text-xs font-medium italic">
+                            <p className="text-orange-400 mt-2 text-xs font-medium italic">
                                 Câmbio: 1 {selectedCoin.symbol} = ${selectedCoin.priceUSD.toLocaleString(undefined, { minimumFractionDigits: 2 })} USDC
                             </p>
                         </div>
@@ -395,7 +395,7 @@ const MiningCalculator: React.FC = () => {
 
                     <div className="bg-slate-900/50 p-6 rounded-2xl border border-slate-800">
                         <h3 className="font-semibold text-sm mb-4 flex items-center gap-2 text-slate-300">
-                            <TrendingUp size={16} className="text-cyan-400" />
+                            <TrendingUp size={16} className="text-amber-400" />
                             Detalhamento Financeiro (Projeções)
                         </h3>
                         <div className="overflow-x-auto">
@@ -434,8 +434,8 @@ const MiningCalculator: React.FC = () => {
 
             {/* SEÇÃO DE ESTATÍSTICAS DE RANKING (DADOS OBTIDOS DA PÁGINA DE RANKING) */}
             <div className="mt-8 mb-8 border-t border-slate-800 pt-8">
-                <h3 className="text-xl font-bold bg-gradient-to-r from-purple-400 to-pink-600 bg-clip-text text-transparent mb-6 flex items-center gap-2">
-                    <TrendingUp className="text-pink-500" /> Estatísticas Reais da Rede (Via Ranking)
+                <h3 className="text-xl font-bold bg-gradient-to-r from-amber-400 to-orange-700 bg-clip-text text-transparent mb-6 flex items-center gap-2">
+                    <TrendingUp className="text-orange-500" /> Estatísticas Reais da Rede (Via Ranking)
                 </h3>
 
                 {rankingStats ? (
@@ -443,7 +443,7 @@ const MiningCalculator: React.FC = () => {
                         {/* Card 1: Quantidade de Mineradores na Moeda Selecionada */}
                         <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-4 opacity-10">
-                                <Plus className="w-12 h-12 text-blue-500" />
+                                <Plus className="w-12 h-12 text-amber-500" />
                             </div>
                             <p className="text-xs uppercase text-slate-500 font-bold mb-1">Mineradores Ativos ({selectedCoin.symbol})</p>
                             <h4 className="text-3xl font-mono font-bold text-white">
@@ -458,10 +458,10 @@ const MiningCalculator: React.FC = () => {
                         {/* Card 2: Poder Total de Mineração na Moeda */}
                         <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl relative overflow-hidden group">
                             <div className="absolute top-0 right-0 p-4 opacity-10">
-                                <TrendingUp className="w-12 h-12 text-cyan-500" />
+                                <TrendingUp className="w-12 h-12 text-amber-500" />
                             </div>
                             <p className="text-xs uppercase text-slate-500 font-bold mb-1">Hashrate Total ({selectedCoin.symbol})</p>
-                            <h4 className="text-3xl font-mono font-bold text-cyan-400">
+                            <h4 className="text-3xl font-mono font-bold text-amber-400">
                                 {(() => {
                                     const total = rankingStats.ranking.reduce((acc, u) => acc + (u.coins[selectedCoin.id] || 0), 0);
                                     // Auto format unit
@@ -541,12 +541,12 @@ const MiningCalculator: React.FC = () => {
                             {selectedCoin && (
                                 <div className="flex justify-between items-center py-2 border-b border-slate-800/50">
                                     <span className="text-slate-400 text-sm">Mineradores em {selectedCoin.symbol}</span>
-                                    <span className="text-cyan-400 font-mono font-bold">{economyStats?.activeMinersByCoin?.[selectedCoin.id] || 0}</span>
+                                    <span className="text-amber-400 font-mono font-bold">{economyStats?.activeMinersByCoin?.[selectedCoin.id] || 0}</span>
                                 </div>
                             )}
                             <div className="flex justify-between items-center py-2 border-b border-slate-800/50">
                                 <span className="text-slate-400 text-sm">Hashrate Real Total (Soma dos usuários)</span>
-                                <span className="text-cyan-400 font-mono font-bold">
+                                <span className="text-amber-400 font-mono font-bold">
                                     {economyStats?.realNetworkHashrates && selectedCoin
                                         ? (Number(economyStats.realNetworkHashrates[selectedCoin.id] || 0) / 1000000).toLocaleString('en-US') + ' MH/s'
                                         : '0 MH/s'}
@@ -683,7 +683,7 @@ const MiningCalculator: React.FC = () => {
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm overflow-y-auto">
                         <div className="bg-slate-900 border border-slate-700 p-6 rounded-2xl w-full max-w-lg space-y-4 shadow-2xl my-8">
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                <Coins className="text-cyan-400" size={24} />
+                                <Coins className="text-amber-400" size={24} />
                                 {editingCoin?.id ? 'Configurações do Ativo' : 'Adicionar Novo Ativo'}
                             </h2>
                             <form onSubmit={handleSaveCoin} className="space-y-4">
@@ -694,7 +694,7 @@ const MiningCalculator: React.FC = () => {
                                             required
                                             value={editingCoin?.name || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, name: e.target.value })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                     <div>
@@ -703,7 +703,7 @@ const MiningCalculator: React.FC = () => {
                                             required
                                             value={editingCoin?.symbol || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, symbol: e.target.value })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                 </div>
@@ -714,7 +714,7 @@ const MiningCalculator: React.FC = () => {
                                             type="number"
                                             value={editingCoin?.networkHashrate || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, networkHashrate: Number(e.target.value) })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                     <div>
@@ -722,7 +722,7 @@ const MiningCalculator: React.FC = () => {
                                         <input
                                             value={editingCoin?.algorithm || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, algorithm: e.target.value })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                 </div>
@@ -736,7 +736,7 @@ const MiningCalculator: React.FC = () => {
                                             step="0.00000001"
                                             value={editingCoin?.blockReward || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, blockReward: Number(e.target.value) })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                     <div>
@@ -745,7 +745,7 @@ const MiningCalculator: React.FC = () => {
                                             type="number"
                                             value={editingCoin?.blockTime || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, blockTime: Number(e.target.value) })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                 </div>
@@ -768,7 +768,7 @@ const MiningCalculator: React.FC = () => {
                                             step="0.00000001"
                                             value={editingCoin?.priceUSD || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, priceUSD: Number(e.target.value) })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                     <div>
@@ -778,7 +778,7 @@ const MiningCalculator: React.FC = () => {
                                             step="0.01"
                                             value={editingCoin?.multiplier || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, multiplier: Number(e.target.value) })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                 </div>
@@ -796,7 +796,7 @@ const MiningCalculator: React.FC = () => {
                                             <input
                                                 value={editingCoin?.color || ''}
                                                 onChange={e => setEditingCoin({ ...editingCoin, color: e.target.value })}
-                                                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                             />
                                         </div>
                                     </div>
@@ -805,7 +805,7 @@ const MiningCalculator: React.FC = () => {
                                         <input
                                             value={editingCoin?.description || ''}
                                             onChange={e => setEditingCoin({ ...editingCoin, description: e.target.value })}
-                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                            className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                 </div>
@@ -823,7 +823,7 @@ const MiningCalculator: React.FC = () => {
                                                 onChange={e => setEditingCoin({ ...editingCoin, isActive: e.target.checked ? 1 : 0 })}
                                                 className="sr-only peer"
                                             />
-                                            <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+                                            <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
                                         </label>
                                         <div className="flex-1">
                                             <p className={`text-sm font-bold ${(editingCoin?.isActive !== 0 && editingCoin?.isActive !== false) ? 'text-green-400' : 'text-red-400'}`}>
@@ -841,7 +841,7 @@ const MiningCalculator: React.FC = () => {
                                 <div>
                                     <label className="block text-xs text-slate-400 mb-1">Visibilidade no Exchange (Carteira)</label>
                                     <div className={`flex items-center gap-3 p-3 border rounded-lg transition-colors ${editingCoin?.showInExchange !== false
-                                        ? 'bg-cyan-900/20 border-cyan-900/50'
+                                        ? 'bg-amber-900/20 border-amber-900/50'
                                         : 'bg-slate-800/50 border-slate-700'
                                         }`}>
                                         <label className="relative inline-flex items-center cursor-pointer">
@@ -851,10 +851,10 @@ const MiningCalculator: React.FC = () => {
                                                 onChange={e => setEditingCoin({ ...editingCoin, showInExchange: e.target.checked })}
                                                 className="sr-only peer"
                                             />
-                                            <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-cyan-600"></div>
+                                            <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-amber-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-600"></div>
                                         </label>
                                         <div className="flex-1">
-                                            <p className={`text-sm font-bold ${editingCoin?.showInExchange !== false ? 'text-cyan-400' : 'text-slate-400'}`}>
+                                            <p className={`text-sm font-bold ${editingCoin?.showInExchange !== false ? 'text-amber-400' : 'text-slate-400'}`}>
                                                 {editingCoin?.showInExchange !== false ? 'EXIBIR NO EXCHANGE' : 'OCULTAR NO EXCHANGE'}
                                             </p>
                                             <p className="text-[10px] text-slate-400 leading-tight">
@@ -868,7 +868,7 @@ const MiningCalculator: React.FC = () => {
 
                                 <div className="flex gap-4 pt-4">
                                     <button type="button" onClick={() => setIsModalOpen(false)} className="flex-1 py-2 rounded-lg bg-slate-800 text-slate-400 text-sm font-bold">Cancelar</button>
-                                    <button type="submit" className="flex-1 py-2 rounded-lg bg-blue-600 text-white font-bold text-sm">Confirmar</button>
+                                    <button type="submit" className="flex-1 py-2 rounded-lg bg-amber-600 text-white font-bold text-sm">Confirmar</button>
                                 </div>
                             </form>
                         </div>

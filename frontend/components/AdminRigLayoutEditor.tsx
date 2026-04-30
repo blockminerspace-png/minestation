@@ -225,7 +225,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
         <div className="space-y-6 animate-in fade-in slide-in-from-right-4">
             <div className="flex justify-between items-center bg-slate-800 p-4 rounded-xl border border-slate-700">
                 <div className="flex items-center gap-4">
-                    <h2 className="text-xl font-bold text-white flex items-center gap-2"><Move size={24} className="text-cyan-500" /> Editor de Layout Visual</h2>
+                    <h2 className="text-xl font-bold text-white flex items-center gap-2"><Move size={24} className="text-amber-500" /> Editor de Layout Visual</h2>
                     <select
                         value={selectedRackId}
                         onChange={(e) => setSelectedRackId(e.target.value)}
@@ -243,7 +243,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                             </span>
                             <input
                                 type="number"
-                                className={`w-16 bg-black text-xs px-2 py-1 rounded border transition-colors ${selectedIdx !== null ? 'border-cyan-500 text-cyan-400' : 'border-slate-600 text-white'}`}
+                                className={`w-16 bg-black text-xs px-2 py-1 rounded border transition-colors ${selectedIdx !== null ? 'border-amber-500 text-amber-400' : 'border-slate-600 text-white'}`}
                                 value={selectedIdx !== null && layout.slots[selectedIdx]
                                     ? Math.round((layout.slots[selectedIdx].w / 100) * (layout.canvasWidth || 500))
                                     : (layout.canvasWidth || 0)}
@@ -260,7 +260,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                             <span className="text-slate-600">x</span>
                             <input
                                 type="number"
-                                className={`w-16 bg-black text-xs px-2 py-1 rounded border transition-colors ${selectedIdx !== null ? 'border-cyan-500 text-cyan-400' : 'border-slate-600 text-white'}`}
+                                className={`w-16 bg-black text-xs px-2 py-1 rounded border transition-colors ${selectedIdx !== null ? 'border-amber-500 text-amber-400' : 'border-slate-600 text-white'}`}
                                 value={selectedIdx !== null && layout.slots[selectedIdx]
                                     ? Math.round((layout.slots[selectedIdx].h / 100) * (layout.canvasHeight || 800))
                                     : (layout.canvasHeight || 0)}
@@ -283,7 +283,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 </button>
                             )}
                         </div>
-                        <button onClick={handleSave} className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all">
+                        <button onClick={handleSave} className="bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2 transition-all">
                             <Save size={18} /> SALVAR LAYOUT
                         </button>
                     </div>
@@ -298,7 +298,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                         <div className="grid grid-cols-1 gap-2">
                             {selectedRack?.type !== 'charger' && (
                                 <button onClick={() => addNewSlot('machine')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                    <Cpu size={18} className="text-cyan-500" /> <span className="text-sm">Adicionar Slot GPU</span>
+                                    <Cpu size={18} className="text-amber-500" /> <span className="text-sm">Adicionar Slot GPU</span>
                                 </button>
                             )}
                             {selectedRack?.type !== 'charger' && (
@@ -310,7 +310,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 <Battery size={18} className="text-green-500" /> <span className="text-sm">Slot Bateria</span>
                             </button>
                             <button onClick={() => addNewSlot('wiring')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                <Plug size={18} className="text-blue-500" /> <span className="text-sm">Slot Circuito</span>
+                                <Plug size={18} className="text-amber-500" /> <span className="text-sm">Slot Circuito</span>
                             </button>
                         </div>
 
@@ -329,7 +329,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 {selectedRack?.type === 'charger' && (
                                     <>
                                         <button onClick={() => addNewSlot('instant_recharge')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                            <RefreshCw size={18} className="text-cyan-400" /> <span className="text-sm">Botão Recarga Inst.</span>
+                                            <RefreshCw size={18} className="text-amber-400" /> <span className="text-sm">Botão Recarga Inst.</span>
                                         </button>
                                         <button onClick={() => addNewSlot('rewarded_ad')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
                                             <PlayCircle size={18} className="text-green-400" /> <span className="text-sm">Botão Assistir ADS (Play)</span>
@@ -354,7 +354,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                     </button>
                                 )}
                                 <button onClick={() => addNewSlot('production_display')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                    <Activity size={18} className="text-blue-400" /> <span className="text-sm">Display de Produção</span>
+                                    <Activity size={18} className="text-amber-400" /> <span className="text-sm">Display de Produção</span>
                                 </button>
                                 <button onClick={() => addNewSlot('stat_monitor')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
                                     <Terminal size={18} className="text-slate-400" /> <span className="text-sm">Monitor de Status (CMD)</span>
@@ -374,7 +374,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 />
                                 <label
                                     htmlFor="skin-upload"
-                                    className="w-full bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 border border-blue-500/30 p-2 rounded text-center text-xs font-bold cursor-pointer transition-all"
+                                    className="w-full bg-amber-600/20 hover:bg-amber-600/30 text-amber-400 border border-amber-500/30 p-2 rounded text-center text-xs font-bold cursor-pointer transition-all"
                                 >
                                     ALTERAR IMAGEM SKIN
                                 </label>
@@ -397,7 +397,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                         key={i}
                                         onClick={() => setSelectedIdx(i)}
                                         className={`bg-slate-900 p-2 rounded border flex justify-between items-center group cursor-pointer transition-all
-                                            ${selectedIdx === i ? 'border-cyan-500 bg-cyan-500/5' : 'border-slate-700'}
+                                            ${selectedIdx === i ? 'border-amber-500 bg-amber-500/5' : 'border-slate-700'}
                                         `}
                                     >
                                         <div className="flex flex-col">
@@ -421,7 +421,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                                         <div className="flex items-center gap-1 border-l border-slate-700 pl-1">
                                                             <input
                                                                 type="number"
-                                                                className="w-10 bg-slate-800 text-[9px] border border-slate-700 rounded px-1 text-cyan-400"
+                                                                className="w-10 bg-slate-800 text-[9px] border border-slate-700 rounded px-1 text-amber-400"
                                                                 value={Math.round((s.w / 100) * layout.canvasWidth)}
                                                                 onChange={e => updateSlotSize(i, (parseInt(e.target.value) / layout.canvasWidth!) * 100, s.h)}
                                                             />
@@ -444,7 +444,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                                         <div className="flex items-center gap-1 border-l border-slate-700 pl-1">
                                                             <input
                                                                 type="number"
-                                                                className="w-10 bg-slate-800 text-[9px] border border-slate-700 rounded px-1 text-cyan-400"
+                                                                className="w-10 bg-slate-800 text-[9px] border border-slate-700 rounded px-1 text-amber-400"
                                                                 value={Math.round((s.h / 100) * layout.canvasHeight)}
                                                                 onChange={e => updateSlotSize(i, s.w, (parseInt(e.target.value) / layout.canvasHeight!) * 100)}
                                                             />
@@ -471,7 +471,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                         setSelectedIdx(null);
                                     }
                                 }}
-                                className={`bg-slate-950 rounded-lg shadow-2xl border-2 relative transition-all ${isResizingCanvas ? 'border-cyan-500 ring-4 ring-cyan-500/20' : 'border-slate-700/50 hover:border-slate-500'}`}
+                                className={`bg-slate-950 rounded-lg shadow-2xl border-2 relative transition-all ${isResizingCanvas ? 'border-amber-500 ring-4 ring-amber-500/20' : 'border-slate-700/50 hover:border-slate-500'}`}
                                 style={{
                                     backgroundImage: tempImage ? `url(${tempImage})` : 'none',
                                     backgroundSize: '100% 100%',
@@ -489,7 +489,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 {/* Canvas Resize Handle */}
                                 <div
                                     onMouseDown={handleCanvasResizeStart}
-                                    className="absolute bottom-0 right-0 w-4 h-4 bg-cyan-600 rounded-tl cursor-nwse-resize z-50 flex items-center justify-center hover:bg-cyan-500 transition-colors"
+                                    className="absolute bottom-0 right-0 w-4 h-4 bg-amber-600 rounded-tl cursor-nwse-resize z-50 flex items-center justify-center hover:bg-amber-500 transition-colors"
                                 >
                                     <div className="w-1.5 h-1.5 border-r border-b border-white opacity-60"></div>
                                 </div>
@@ -508,14 +508,14 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                         className={`
                                             absolute cursor-move flex flex-col items-center justify-center transition-shadow border
                                             ${draggingIdx === i || resizingIdx === i || selectedIdx === i ? 'ring-2 ring-white z-50 shadow-2xl scale-105 border-white' : 'border-white/20 z-10 hover:border-white/50'}
-                                            ${s.type === 'machine' ? 'bg-cyan-600/20' :
+                                            ${s.type === 'machine' ? 'bg-amber-600/20' :
                                                 s.type === 'multiplier' ? 'bg-yellow-600/20' :
                                                     s.type === 'battery' ? 'bg-green-600/20' :
                                                         s.type === 'battery_bar' ? 'bg-emerald-600/20' :
                                                             s.type === 'charger_bar' ? 'bg-orange-600/20' :
                                                                 s.type === 'rewarded_ad' ? 'bg-green-600/30 border-green-500' :
                                                                     s.type === 'stat_monitor' ? 'bg-slate-800/60' :
-                                                                        s.type === 'production_display' ? 'bg-blue-600/20' : 'bg-blue-600/20'}
+                                                                        s.type === 'production_display' ? 'bg-amber-600/20' : 'bg-amber-600/20'}
                                         `}
                                         style={{
                                             left: `${s.x}%`,
@@ -531,18 +531,18 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                         ></div>
 
                                         <div className="bg-black/40 backdrop-blur-sm p-0.5 rounded flex items-center gap-1 border border-white/10 pointer-events-none select-none">
-                                            {s.type === 'machine' && <Cpu size={8} className="text-cyan-400" />}
+                                            {s.type === 'machine' && <Cpu size={8} className="text-amber-400" />}
                                             {s.type === 'multiplier' && <Zap size={8} className="text-yellow-400" />}
                                             {s.type === 'battery' && <Battery size={8} className="text-green-400" />}
-                                            {s.type === 'wiring' && <Plug size={8} className="text-blue-400" />}
+                                            {s.type === 'wiring' && <Plug size={8} className="text-amber-400" />}
                                             {s.type === 'power' && <Power size={8} className="text-green-500" />}
                                             {s.type === 'config' && <Cog size={8} className="text-slate-400" />}
                                             {s.type === 'coin_selector' && <Coins size={8} className="text-amber-500" />}
                                             {s.type === 'battery_bar' && <BarChart3 size={8} className="text-emerald-400" />}
                                             {s.type === 'charger_bar' && <Activity size={8} className="text-orange-400" />}
-                                            {s.type === 'production_display' && <Activity size={8} className="text-blue-400" />}
+                                            {s.type === 'production_display' && <Activity size={8} className="text-amber-400" />}
                                             {s.type === 'stat_monitor' && <Terminal size={8} className="text-slate-400" />}
-                                            {s.type === 'instant_recharge' && <RefreshCw size={8} className="text-cyan-400" />}
+                                            {s.type === 'instant_recharge' && <RefreshCw size={8} className="text-amber-400" />}
                                             {s.type === 'rewarded_ad' && <PlayCircle size={8} className="text-green-400" />}
                                             {s.type === 'daily_boost' && <Zap size={8} className="text-amber-400" />}
                                             <span className="text-[7px] text-white font-mono">{s.id}</span>
@@ -557,7 +557,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 <div className="flex gap-4">
                                     {selectedRack?.type !== 'charger' && (
                                         <div className="flex items-center gap-2 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 border border-slate-700">
-                                            <span className="w-2 h-2 rounded bg-cyan-600"></span> GPU
+                                            <span className="w-2 h-2 rounded bg-amber-600"></span> GPU
                                         </div>
                                     )}
                                     {selectedRack?.type !== 'charger' && (
@@ -579,7 +579,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                 </div>
             ) : (
                 <div className="h-[60vh] bg-slate-800 border border-slate-700 rounded-xl flex flex-col items-center justify-center text-slate-500 gap-4">
-                    <Move size={48} className="opacity-20 text-cyan-500" />
+                    <Move size={48} className="opacity-20 text-amber-500" />
                     <p className="text-sm">Selecione uma Rig no menu acima para começar a editar o layout.</p>
                 </div>
             )}

@@ -114,7 +114,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
         <div className="flex flex-col p-6 animate-in fade-in slide-in-from-bottom-4 duration-300 relative">
 
             <div className="flex items-center gap-3 mb-8 border-b border-slate-200 dark:border-slate-800 pb-4">
-                <div className="bg-gradient-to-br from-pink-500 to-purple-600 p-2 rounded-lg text-white shadow-lg">
+                <div className="bg-gradient-to-br from-amber-500 to-orange-700 p-2 rounded-lg text-white shadow-lg">
                     <Gift size={24} />
                 </div>
                 <div>
@@ -124,10 +124,10 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
             </div>
 
             {/* REDEEM CODE SECTION */}
-            <div className="mb-8 bg-gradient-to-r from-purple-900/10 to-pink-900/10 border border-purple-500/20 rounded-2xl p-6 shadow-sm">
+            <div className="mb-8 bg-gradient-to-r from-orange-900/10 to-amber-950/30 border border-orange-500/20 rounded-2xl p-6 shadow-sm">
                 <div className="flex flex-col md:flex-row md:items-center gap-6">
                     <div className="flex-1">
-                        <h3 className="text-sm font-black text-purple-600 dark:text-purple-400 uppercase tracking-widest flex items-center gap-2 mb-1">
+                        <h3 className="text-sm font-black text-orange-600 dark:text-orange-400 uppercase tracking-widest flex items-center gap-2 mb-1">
                             <Ticket size={18} /> Código de Resgate
                         </h3>
                         <p className="text-[11px] text-slate-500 uppercase font-bold tracking-tight">Utilize códigos promocionais para obter caixas exclusivas.</p>
@@ -138,12 +138,12 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                             value={promoCode}
                             onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
                             placeholder="DIGITE SEU CÓDIGO"
-                            className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm font-mono font-bold tracking-widest text-purple-600 focus:outline-none focus:ring-2 focus:ring-purple-500/50 w-full md:w-64"
+                            className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm font-mono font-bold tracking-widest text-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 w-full md:w-64"
                         />
                         <button
                             onClick={handleRedeem}
                             disabled={redeeming || !promoCode.trim()}
-                            className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold px-6 py-2 rounded-xl text-xs uppercase tracking-widest transition-all shadow-lg shadow-purple-600/20 active:scale-95 whitespace-nowrap"
+                            className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-bold px-6 py-2 rounded-xl text-xs uppercase tracking-widest transition-all shadow-lg shadow-orange-600/20 active:scale-95 whitespace-nowrap"
                         >
                             {redeeming ? '...' : 'RESGATAR'}
                         </button>
@@ -159,8 +159,8 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                     </h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         {ownedBoxes.map((box: any) => (
-                            <div key={box.id} className="bg-white dark:bg-slate-900 border-2 border-purple-500/30 rounded-xl p-4 flex flex-col items-center text-center shadow-lg relative overflow-hidden group">
-                                <div className="absolute inset-0 bg-purple-500/5 group-hover:bg-purple-500/10 transition-colors"></div>
+                            <div key={box.id} className="bg-white dark:bg-slate-900 border-2 border-orange-500/30 rounded-xl p-4 flex flex-col items-center text-center shadow-lg relative overflow-hidden group">
+                                <div className="absolute inset-0 bg-orange-500/5 group-hover:bg-orange-500/10 transition-colors"></div>
                                 <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner relative z-10 overflow-hidden">
                                     {renderIcon(box.icon, "text-3xl", "w-10 h-10")}
                                 </div>
@@ -189,13 +189,13 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                                         )}
                                     </div>
                                 </div>
-                                <div className="text-xs font-bold text-purple-600 dark:text-purple-400 bg-purple-100 dark:bg-purple-900/30 px-3 py-1 rounded-full mb-3 relative z-10">
+                                <div className="text-xs font-bold text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-900/30 px-3 py-1 rounded-full mb-3 relative z-10">
                                     Quantidade: {box.qty}
                                 </div>
                                 <button
                                     onClick={() => handleOpen(box.id)}
                                     disabled={openingBox !== null}
-                                    className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-2 rounded-lg transition-all active:scale-95 flex items-center justify-center gap-2 relative z-10 disabled:opacity-50"
+                                    className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 rounded-lg transition-all active:scale-95 flex items-center justify-center gap-2 relative z-10 disabled:opacity-50"
                                 >
                                     {openingBox === box.id ? <Sparkles className="animate-spin" size={16} /> : <Box size={16} />}
                                     {openingBox === box.id ? 'ABRINDO...' : 'ABRIR AGORA'}
@@ -213,7 +213,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                     {shopBoxes.map(box => (
-                        <div key={box.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-cyan-500 dark:hover:border-cyan-500 rounded-xl p-4 flex flex-col items-center text-center shadow-sm transition-all relative overflow-hidden group">
+                        <div key={box.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 rounded-xl p-4 flex flex-col items-center text-center shadow-sm transition-all relative overflow-hidden group">
                             <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner group-hover:scale-110 transition-transform overflow-hidden">
                                 {renderIcon(box.icon || '📦', "text-3xl", "w-10 h-10")}
                             </div>
@@ -249,7 +249,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                                     className={`
                                 w-full py-2 rounded-lg font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-1
                                 ${gameState.usdc >= box.price
-                                            ? 'bg-cyan-600 hover:bg-cyan-500 text-white shadow-lg shadow-cyan-500/20'
+                                            ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-500/20'
                                             : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}
                             `}
                                 >
@@ -277,12 +277,12 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
             {/* REWARDS MODAL */}
             {rewards && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
-                    <div className="bg-white dark:bg-slate-900 border border-purple-500 rounded-2xl shadow-[0_0_50px_rgba(168,85,247,0.3)] w-full max-w-md p-6 relative animate-in zoom-in-95 duration-300 flex flex-col items-center">
-                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-purple-600 text-white rounded-full p-4 shadow-lg border-4 border-slate-900 animate-bounce">
+                    <div className="bg-white dark:bg-slate-900 border border-orange-500 rounded-2xl shadow-[0_0_50px_rgba(194,65,12,0.3)] w-full max-w-md p-6 relative animate-in zoom-in-95 duration-300 flex flex-col items-center">
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-orange-600 text-white rounded-full p-4 shadow-lg border-4 border-slate-900 animate-bounce">
                             <Gift size={32} />
                         </div>
 
-                        <h3 className="mt-6 text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-600 to-pink-600 uppercase tracking-widest mb-2">
+                        <h3 className="mt-6 text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-500 to-orange-700 uppercase tracking-widest mb-2">
                             RECOMPENSAS!
                         </h3>
                         <p className="text-slate-500 text-sm mb-6">Você encontrou os seguintes itens:</p>
@@ -311,7 +311,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
 
                         <button
                             onClick={handleCloseRewards}
-                            className="bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform active:scale-95 flex items-center gap-2"
+                            className="bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 px-8 rounded-full shadow-lg transition-transform active:scale-95 flex items-center gap-2"
                         >
                             <CheckCircle2 size={18} /> COLETAR TUDO
                         </button>

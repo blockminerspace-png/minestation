@@ -164,9 +164,9 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
 
   const getTierStyles = (name: string) => {
     const n = name.toLowerCase();
-    if (n.includes('náutilos') || n.includes('nautilos')) return { border: 'neon-border-gold', text: 'text-yellow-500 neon-text-gold', btn: 'from-amber-600 to-yellow-500 shadow-yellow-500/20', glow: 'bg-yellow-500/10' };
-    if (n.includes('nemo')) return { border: 'neon-border-purple', text: 'text-purple-500 neon-text-purple', btn: 'from-purple-600 to-pink-600 shadow-purple-500/20', glow: 'bg-purple-500/10' };
-    if (n.includes('baleia')) return { border: 'neon-border-cyan', text: 'text-cyan-500 neon-text-cyan', btn: 'from-cyan-600 to-blue-600 shadow-cyan-500/20', glow: 'bg-cyan-500/10' };
+    if (n.includes('genesis dao') || n.includes('náutilos') || n.includes('nautilos')) return { border: 'neon-border-cyan', text: 'text-amber-300 neon-text-cyan', btn: 'from-amber-500 to-orange-600 shadow-amber-500/30', glow: 'bg-gradient-to-r from-amber-500/20 to-orange-500/25' };
+    if (n.includes('nemo')) return { border: 'neon-border-purple', text: 'text-orange-500 neon-text-purple', btn: 'from-orange-600 to-orange-800 shadow-orange-500/20', glow: 'bg-orange-500/10' };
+    if (n.includes('baleia')) return { border: 'neon-border-cyan', text: 'text-amber-500 neon-text-cyan', btn: 'from-amber-600 to-orange-600 shadow-amber-500/20', glow: 'bg-amber-500/10' };
     if (n.includes('kraken')) return { border: 'neon-border-green', text: 'text-green-500 neon-text-green', btn: 'from-green-600 to-emerald-600 shadow-green-500/20', glow: 'bg-green-500/10' };
     return { border: 'border-slate-800', text: 'text-white', btn: 'from-slate-700 to-slate-800', glow: 'bg-white/5' };
   };
@@ -179,13 +179,13 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
       <div className="relative z-10 w-full max-w-7xl mx-auto">
         <header className="text-center mb-12">
           <h2 className="text-4xl md:text-5xl font-black text-white mb-4 tracking-tight">
-            Escolha o <span className="bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">Melhor Upgrade</span> para Sua Sala!
+            Escolha o <span className="bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">Melhor Upgrade</span> para Sua Sala!
           </h2>
         </header>
 
         {loadingPasses ? (
           <div className="flex justify-center py-20">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

@@ -75,20 +75,20 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
     if (stage === 'terminal') {
         return (
             <div className="fixed inset-0 z-[1000] bg-black flex items-center justify-center font-mono">
-                <div className="w-full max-w-2xl bg-black border border-cyan-900/50 shadow-[0_0_50px_rgba(6,182,212,0.1)] p-6 rounded-lg">
-                    <div className="flex items-center gap-2 mb-4 border-b border-cyan-900/30 pb-2">
+                <div className="w-full max-w-2xl bg-black border border-amber-900/50 shadow-[0_0_50px_rgba(245,158,11,0.1)] p-6 rounded-lg">
+                    <div className="flex items-center gap-2 mb-4 border-b border-amber-900/30 pb-2">
                         <div className="flex gap-1.5">
                             <div className="w-3 h-3 rounded-full bg-red-500/50"></div>
                             <div className="w-3 h-3 rounded-full bg-yellow-500/50"></div>
                             <div className="w-3 h-3 rounded-full bg-green-500/50"></div>
                         </div>
-                        <span className="text-cyan-800 text-[10px] uppercase tracking-widest ml-4 flex items-center gap-2">
+                        <span className="text-amber-800 text-[10px] uppercase tracking-widest ml-4 flex items-center gap-2">
                             <Terminal size={12} /> System Terminal - Genesis Miner OS
                         </span>
                     </div>
                     <div
                         ref={scrollRef}
-                        className="h-64 overflow-y-auto custom-scrollbar text-cyan-400 text-xs md:text-sm space-y-1.5"
+                        className="h-64 overflow-y-auto custom-scrollbar text-amber-400 text-xs md:text-sm space-y-1.5"
                     >
                         {terminalText.map((line, i) => (
                             <div key={i} className="flex gap-2 animate-in fade-in slide-in-from-left-2 duration-100">
@@ -96,7 +96,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                                 <span>{line}</span>
                             </div>
                         ))}
-                        <div className="w-2 h-4 bg-cyan-400 animate-pulse inline-block ml-1"></div>
+                        <div className="w-2 h-4 bg-amber-400 animate-pulse inline-block ml-1"></div>
                     </div>
                 </div>
             </div>
@@ -109,11 +109,11 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
         return (
             <div className="fixed inset-0 z-[1000] bg-slate-950 flex items-center justify-center p-6">
                 <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-500">
-                    <div className="absolute -top-24 -right-24 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl"></div>
-                    <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl"></div>
+                    <div className="absolute -top-24 -right-24 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl"></div>
+                    <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl"></div>
 
                     <div className="relative text-center mb-10">
-                        <div className="w-24 h-24 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-cyan-500/20 animate-pulse">
+                        <div className="w-24 h-24 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-amber-500/20 animate-pulse">
                             <Zap className="text-white" size={48} />
                         </div>
                         <h2 className="text-3xl font-black text-white tracking-tighter uppercase mb-2 italic">
@@ -130,7 +130,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                     <div className="space-y-4 mb-10">
                         {hasEarnings ? (
                             <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800">
-                                <h3 className="text-cyan-400 text-xs uppercase tracking-widest font-bold mb-3 flex items-center gap-2">
+                                <h3 className="text-amber-400 text-xs uppercase tracking-widest font-bold mb-3 flex items-center gap-2">
                                     <Cpu size={14} /> Mineração Offline
                                 </h3>
                                 <div className="space-y-2">
@@ -166,7 +166,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
 
                     <button
                         onClick={onComplete}
-                        className="w-full py-4 bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase tracking-widest rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 group"
+                        className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-black font-black uppercase tracking-widest rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 group"
                     >
                         <Play size={20} className="group-hover:fill-current" />
                         Acessar Dashboard
@@ -185,11 +185,11 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
     return (
         <div className="fixed inset-0 z-[1000] bg-slate-950 flex items-center justify-center p-6">
             <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl relative overflow-hidden animate-in zoom-in-95 duration-500">
-                <div className="absolute -top-24 -right-24 w-64 h-64 bg-cyan-500/10 rounded-full blur-3xl"></div>
-                <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-purple-500/10 rounded-full blur-3xl"></div>
+                <div className="absolute -top-24 -right-24 w-64 h-64 bg-amber-500/10 rounded-full blur-3xl"></div>
+                <div className="absolute -bottom-24 -left-24 w-64 h-64 bg-orange-500/10 rounded-full blur-3xl"></div>
 
                 <div className="relative text-center mb-10">
-                    <div className="w-24 h-24 bg-gradient-to-br from-cyan-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-cyan-500/20 animate-bounce">
+                    <div className="w-24 h-24 bg-gradient-to-br from-amber-500 to-orange-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-2xl shadow-amber-500/20 animate-bounce">
                         <Gift className="text-white" size={48} />
                     </div>
                     <h2 className="text-3xl font-black text-white tracking-tighter uppercase mb-2 italic">
@@ -203,10 +203,10 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                 <div className="space-y-4 mb-10">
                     {rewards.length > 0 ? (
                         rewards.map((reward) => (
-                            <div key={reward.id} className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 flex items-center justify-between group hover:border-cyan-500/30 transition-colors">
+                            <div key={reward.id} className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 flex items-center justify-between group hover:border-amber-500/30 transition-colors">
                                 <div className="flex items-center gap-4">
-                                    <div className="w-12 h-12 rounded-xl bg-cyan-500/10 flex items-center justify-center group-hover:bg-cyan-500/20 transition-colors">
-                                        <CheckCircle2 className="text-cyan-400" size={24} />
+                                    <div className="w-12 h-12 rounded-xl bg-amber-500/10 flex items-center justify-center group-hover:bg-amber-500/20 transition-colors">
+                                        <CheckCircle2 className="text-amber-400" size={24} />
                                     </div>
                                     <div className="text-left">
                                         <div className="text-white font-bold text-lg">{reward.name}</div>
@@ -214,7 +214,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <div className="text-cyan-400 font-bold text-xl">x{reward.count}</div>
+                                    <div className="text-amber-400 font-bold text-xl">x{reward.count}</div>
                                 </div>
                             </div>
                         ))
@@ -227,7 +227,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
 
                 <button
                     onClick={onComplete}
-                    className="w-full py-4 bg-cyan-500 hover:bg-cyan-400 text-black font-black uppercase tracking-widest rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-cyan-500/25 flex items-center justify-center gap-2 group"
+                    className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-black font-black uppercase tracking-widest rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 group"
                 >
                     <Play size={20} className="group-hover:fill-current" />
                     Iniciar Mineração

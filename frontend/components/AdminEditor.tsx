@@ -105,13 +105,13 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
     return (
         <div className="animate-in fade-in slide-in-from-right-4">
             <div className="flex gap-2 mb-6 overflow-x-auto pb-2 border-b border-slate-700">
-                <button onClick={() => setEditorFilter('all')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'all' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><List size={14} /> Todos</button>
-                <button onClick={() => setEditorFilter('machine')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'machine' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Cpu size={14} /> GPUs</button>
-                <button onClick={() => setEditorFilter('infrastructure')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'infrastructure' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Server size={14} /> Rigs</button>
-                <button onClick={() => setEditorFilter('battery')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'battery' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Battery size={14} /> Baterias</button>
-                <button onClick={() => setEditorFilter('wiring')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'wiring' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Plug size={14} /> Circuito</button>
-                <button onClick={() => setEditorFilter('multiplier')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'multiplier' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Zap size={14} /> Chips IA</button>
-                <button onClick={() => setEditorFilter('charger')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'charger' ? 'bg-cyan-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Wrench size={14} /> Carregadores</button>
+                <button onClick={() => setEditorFilter('all')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'all' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><List size={14} /> Todos</button>
+                <button onClick={() => setEditorFilter('machine')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'machine' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Cpu size={14} /> GPUs</button>
+                <button onClick={() => setEditorFilter('infrastructure')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'infrastructure' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Server size={14} /> Rigs</button>
+                <button onClick={() => setEditorFilter('battery')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'battery' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Battery size={14} /> Baterias</button>
+                <button onClick={() => setEditorFilter('wiring')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'wiring' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Plug size={14} /> Circuito</button>
+                <button onClick={() => setEditorFilter('multiplier')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'multiplier' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Zap size={14} /> Chips IA</button>
+                <button onClick={() => setEditorFilter('charger')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'charger' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Wrench size={14} /> Carregadores</button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -122,7 +122,7 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                     </div>
                     <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
                         {filteredItems.map(u => (
-                            <div key={u.id} className="bg-slate-900 p-2 rounded border border-slate-700 hover:border-blue-500 cursor-pointer" onClick={() => handleEditItem(u)}>
+                            <div key={u.id} className="bg-slate-900 p-2 rounded border border-slate-700 hover:border-amber-500 cursor-pointer" onClick={() => handleEditItem(u)}>
                                 <div className="flex justify-between items-center">
                                     <div>
                                         <span className="font-bold text-sm text-white">{u.name}</span>
@@ -251,7 +251,7 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                                     <div className="grid grid-cols-2 gap-4 mt-2">
                                         <div><label className="text-xs font-bold text-slate-500 block mb-1">Velocidade Carga (Wh/s)</label><input type="number" value={itemForm.baseProduction} onChange={e => setItemForm({ ...itemForm, baseProduction: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
                                         <div><label className="text-xs font-bold text-slate-500 block mb-1">Capacidade Interna (Wh)</label><input type="number" value={itemForm.powerCapacity} onChange={e => setItemForm({ ...itemForm, powerCapacity: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
-                                        <div className="col-span-2"><label className="text-xs font-bold text-cyan-500 block mb-1">Recompensa por Anúncio (Wh)</label><input type="number" value={itemForm.rewardWh || 0} onChange={e => setItemForm({ ...itemForm, rewardWh: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-cyan-900 rounded p-2 text-white text-sm font-bold" /></div>
+                                        <div className="col-span-2"><label className="text-xs font-bold text-amber-500 block mb-1">Recompensa por Anúncio (Wh)</label><input type="number" value={itemForm.rewardWh || 0} onChange={e => setItemForm({ ...itemForm, rewardWh: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-amber-900 rounded p-2 text-white text-sm font-bold" /></div>
                                     </div>
                                 )}
                             </div>
@@ -284,7 +284,7 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
 
                             <div className="flex gap-4 pt-4 border-t border-slate-700 mt-4">
                                 <button onClick={() => setEditItemMode(false)} className="bg-slate-700 text-white px-4 py-2 rounded font-bold">CANCELAR</button>
-                                <button onClick={handleSaveItem} className="bg-blue-600 text-white px-4 py-2 rounded font-bold flex-1">SALVAR ITEM</button>
+                                <button onClick={handleSaveItem} className="bg-amber-600 text-white px-4 py-2 rounded font-bold flex-1">SALVAR ITEM</button>
                             </div>
                         </div>
                     ) : (

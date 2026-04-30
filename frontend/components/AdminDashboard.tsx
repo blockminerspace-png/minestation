@@ -202,7 +202,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                 <div className="bg-slate-800 border border-slate-700 rounded-xl overflow-hidden">
                     <div className="p-4 bg-slate-900/50 border-b border-slate-700 flex justify-between items-center">
                         <h3 className="font-bold text-white flex items-center gap-2">
-                            <Clock size={18} className="text-blue-500" /> Últimos Registros
+                            <Clock size={18} className="text-amber-500" /> Últimos Registros
                         </h3>
                     </div>
                     <div className="p-0">

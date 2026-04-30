@@ -224,7 +224,7 @@ export const Web3Withdraw: React.FC = () => {
 
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
         <div className="flex items-center gap-2 mb-4">
-          <Database size={18} className="text-blue-400" />
+          <Database size={18} className="text-amber-400" />
           <h3 className="font-bold text-white">Carteiras por Moeda Minerada</h3>
         </div>
         <p className="text-xs text-slate-400 mb-4">Configure os endereços de saque e verifique o saldo disponível para cada moeda ativa.</p>
@@ -327,7 +327,7 @@ export const Web3Withdraw: React.FC = () => {
                         className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs"
                       />
                       {cfg.minWithdrawalUsdc && coin.priceUSD > 0 && (
-                        <span className="text-[9px] text-cyan-500 mt-1 block">
+                        <span className="text-[9px] text-amber-500 mt-1 block">
                           ≈ {(cfg.minWithdrawalUsdc / coin.priceUSD).toLocaleString('en-US', { maximumFractionDigits: 6 })} {coin.symbol}
                         </span>
                       )}

@@ -72,7 +72,7 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
                     <div className="flex items-center gap-6">
                         <div className="bg-slate-900/50 px-4 py-2 rounded border border-slate-700">
                             <div className="text-[10px] uppercase text-slate-500 font-bold">Vendas Ativas (Volume)</div>
-                            <div className="text-xl font-mono text-cyan-400">{formatMoney(totalVolume)}</div>
+                            <div className="text-xl font-mono text-amber-400">{formatMoney(totalVolume)}</div>
                         </div>
                         <div className="bg-slate-900/50 px-4 py-2 rounded border border-slate-700">
                             <div className="text-[10px] uppercase text-slate-500 font-bold">Arrecadação Estimada</div>
@@ -150,7 +150,7 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
                                         <div className="text-xs text-slate-500 font-mono">{l.itemId}</div>
                                     </td>
                                     <td className="p-4">
-                                        <div className="text-cyan-400">{l.sellerName}</div>
+                                        <div className="text-amber-400">{l.sellerName}</div>
                                         <div className="text-xs text-slate-600 font-mono">ID: {l.sellerId}</div>
                                     </td>
                                     <td className="p-4 text-right font-mono text-slate-300">
@@ -161,7 +161,7 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
                                     </td>
                                     <td className="p-4 text-center">
                                         <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${l.status === 'active' ? 'bg-green-900/30 text-green-400 border border-green-900' :
-                                            l.status === 'sold' ? 'bg-blue-900/30 text-blue-400 border border-blue-900' :
+                                            l.status === 'sold' ? 'bg-amber-900/30 text-amber-400 border border-amber-900' :
                                                 'bg-slate-900 text-slate-500 border border-slate-700'
                                             }`}>
                                             {l.status === 'active' ? 'Ativo' : l.status === 'sold' ? 'Custódia' : l.status}

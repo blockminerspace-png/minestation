@@ -25,7 +25,7 @@ export const MarketNews: React.FC = () => {
     const displayAds = ads.length > 0 ? ads.slice(0, 2) : [];
 
     return (
-        <div className="bg-slate-900/80 border-t border-b border-cyan-500/20 py-2 px-4 flex flex-wrap justify-center items-center gap-6 overflow-hidden backdrop-blur-sm z-20">
+        <div className="bg-slate-900/80 border-t border-b border-amber-500/20 py-2 px-4 flex flex-wrap justify-center items-center gap-6 overflow-hidden backdrop-blur-sm z-20">
             <div className="flex flex-wrap justify-center gap-4 w-full max-w-5xl">
                 {displayAds.length > 0 ? (
                     displayAds.map(ad => (
@@ -34,23 +34,23 @@ export const MarketNews: React.FC = () => {
                             href={ad.link || '#'}
                             target={ad.link ? "_blank" : "_self"}
                             rel="noopener noreferrer"
-                            className="relative group overflow-hidden rounded-lg border border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)] transition-all hover:shadow-[0_0_20px_rgba(6,182,212,0.2)] hover:border-cyan-400/50 flex-shrink-0 w-[320px] h-[50px] block"
+                            className="relative group overflow-hidden rounded-lg border border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)] transition-all hover:shadow-[0_0_20px_rgba(245,158,11,0.2)] hover:border-amber-400/50 flex-shrink-0 w-[320px] h-[50px] block"
                         >
                             {ad.imageUrl ? (
                                 <img src={ad.imageUrl} alt={ad.text} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
                             ) : (
                                 <div className="w-full h-full bg-slate-950 flex items-center justify-center p-2 text-center">
-                                    <span className="text-[10px] text-cyan-400 font-bold uppercase truncate">{ad.text}</span>
+                                    <span className="text-[10px] text-amber-400 font-bold uppercase truncate">{ad.text}</span>
                                 </div>
                             )}
                         </a>
                     ))
                 ) : (
                     placeholders.map(p => (
-                        <div key={p.id} className={`relative group overflow-hidden rounded-lg border ${p.color === 'cyan' ? 'border-cyan-500/30 shadow-[0_0_15px_rgba(6,182,212,0.1)] hover:border-cyan-400/50' : 'border-purple-500/30 shadow-[0_0_15px_rgba(168,85,247,0.1)] hover:border-purple-400/50'} transition-all flex-shrink-0 w-[320px] h-[50px]`}>
+                        <div key={p.id} className={`relative group overflow-hidden rounded-lg border ${p.color === 'cyan' ? 'border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)] hover:border-amber-400/50' : 'border-orange-500/30 shadow-[0_0_15px_rgba(194,65,12,0.1)] hover:border-orange-400/50'} transition-all flex-shrink-0 w-[320px] h-[50px]`}>
                             <img src={p.img} alt={p.label} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
                             <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1 pointer-events-none">
-                                <span className={`text-[10px] ${p.color === 'cyan' ? 'text-cyan-400' : 'text-purple-400'} font-bold tracking-tighter uppercase`}>{p.label}</span>
+                                <span className={`text-[10px] ${p.color === 'cyan' ? 'text-amber-400' : 'text-orange-400'} font-bold tracking-tighter uppercase`}>{p.label}</span>
                             </div>
                         </div>
                     ))

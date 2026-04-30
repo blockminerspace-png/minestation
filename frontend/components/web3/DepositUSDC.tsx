@@ -82,12 +82,12 @@ export const Web3Deposit: React.FC = () => {
     <div className="space-y-6">
       <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
         <div className="flex items-center gap-2 mb-4">
-          <Wallet size={18} className="text-cyan-400" />
+          <Wallet size={18} className="text-amber-400" />
           <h3 className="font-bold text-white">Depósito (USDC)</h3>
         </div>
         <p className="text-xs text-slate-400 mb-3">Endereço para onde USDC será enviado quando jogadores depositarem.</p>
         <div className="flex items-center gap-2 mb-2">
-          <button onClick={handleConnectDepositWallet} className="bg-cyan-900/30 hover:bg-cyan-900/50 border border-cyan-700 text-cyan-300 text-xs font-bold px-3 py-2 rounded transition-colors">Conectar carteira</button>
+          <button onClick={handleConnectDepositWallet} className="bg-amber-900/30 hover:bg-amber-900/50 border border-amber-700 text-amber-300 text-xs font-bold px-3 py-2 rounded transition-colors">Conectar carteira</button>
           {depositWallet && <span className="text-[10px] font-mono text-slate-400 truncate">{depositWallet}</span>}
         </div>
         <input
@@ -99,7 +99,7 @@ export const Web3Deposit: React.FC = () => {
         />
         <div className="mt-4">
           <div className="flex items-center gap-2 mb-2">
-            <Hexagon size={16} className="text-cyan-400" />
+            <Hexagon size={16} className="text-amber-400" />
             <span className="text-xs text-slate-300 font-bold">Contrato do USDC</span>
           </div>
           <input
@@ -115,7 +115,7 @@ export const Web3Deposit: React.FC = () => {
               id="poly_disable"
               checked={depositPolygonDisabled}
               onChange={(e) => setDepositPolygonDisabled(e.target.checked)}
-              className="rounded border-slate-600 bg-slate-900 text-cyan-500 focus:ring-cyan-500"
+              className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500"
             />
             <label htmlFor="poly_disable" className="text-[10px] text-slate-400 font-bold uppercase cursor-pointer">Desativar Depósitos na Polygon</label>
           </div>
@@ -143,7 +143,7 @@ export const Web3Deposit: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2 mt-4 mb-2">
-            <Hexagon size={16} className="text-blue-500" />
+            <Hexagon size={16} className="text-amber-500" />
             <span className="text-xs text-slate-300 font-bold">Contrato USDC (BASE Chain)</span>
           </div>
           <input
@@ -159,7 +159,7 @@ export const Web3Deposit: React.FC = () => {
               id="base_disable"
               checked={depositBaseDisabled}
               onChange={(e) => setDepositBaseDisabled(e.target.checked)}
-              className="rounded border-slate-600 bg-slate-900 text-blue-500 focus:ring-blue-500"
+              className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500"
             />
             <label htmlFor="base_disable" className="text-[10px] text-slate-400 font-bold uppercase cursor-pointer">Desativar Depósitos na BASE</label>
           </div>
@@ -187,7 +187,7 @@ export const Web3Deposit: React.FC = () => {
         <button
           onClick={handleSave}
           disabled={saving}
-          className={`px-4 py-2 rounded text-sm font-bold border transition-colors ${saving ? 'bg-slate-700 text-slate-400 border-slate-700' : 'bg-cyan-900/30 text-cyan-300 border-cyan-700 hover:bg-cyan-900/50'}`}
+          className={`px-4 py-2 rounded text-sm font-bold border transition-colors ${saving ? 'bg-slate-700 text-slate-400 border-slate-700' : 'bg-amber-900/30 text-amber-300 border-amber-700 hover:bg-amber-900/50'}`}
         >
           {saving ? 'Salvando...' : 'Salvar Configurações'}
         </button>

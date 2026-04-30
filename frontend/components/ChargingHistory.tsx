@@ -131,7 +131,7 @@ export const ChargingHistory: React.FC<ChargingHistoryProps> = ({ onClose }) => 
             <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-5xl max-h-[85vh] flex flex-col shadow-2xl">
                 <div className="flex justify-between items-center p-4 border-b border-slate-700 bg-slate-800/50 rounded-t-xl">
                     <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                        <History className="text-blue-500" /> Histórico de Carregamento
+                        <History className="text-amber-500" /> Histórico de Carregamento
                     </h2>
                     <button onClick={onClose} className="text-slate-400 hover:text-white transition-colors">
                         <X size={24} />
@@ -202,7 +202,7 @@ export const ChargingHistory: React.FC<ChargingHistoryProps> = ({ onClose }) => 
                                                     </span>
                                                 </div>
                                             ) : (
-                                                <div className="flex items-center gap-2 text-blue-400 bg-blue-500/10 px-2 py-1 rounded w-fit">
+                                                <div className="flex items-center gap-2 text-amber-400 bg-amber-500/10 px-2 py-1 rounded w-fit">
                                                     <BatteryCharging size={14} />
                                                     <span className="text-xs font-bold">Carregando...</span>
                                                 </div>

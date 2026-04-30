@@ -220,12 +220,12 @@ const ConfigView: React.FC<ConfigViewProps> = ({ items, setItems, onSave, gameUp
       {/* Coluna 2: Lista de Jogadores */}
       <div className="bg-slate-800 p-8 rounded-3xl shadow-2xl border border-slate-700 h-fit">
         <div className="flex items-center gap-4 mb-8">
-          <div className="bg-blue-500/20 p-3 rounded-xl text-blue-400">
+          <div className="bg-amber-500/20 p-3 rounded-xl text-amber-400">
             <Users size={32} />
           </div>
           <div>
             <h2 className="text-3xl font-black text-white leading-tight">Jogadores</h2>
-            <p className="text-blue-400 text-xs uppercase tracking-widest font-bold">Quem participou</p>
+            <p className="text-amber-400 text-xs uppercase tracking-widest font-bold">Quem participou</p>
           </div>
         </div>
 
@@ -235,12 +235,12 @@ const ConfigView: React.FC<ConfigViewProps> = ({ items, setItems, onSave, gameUp
             placeholder="Nome de usuário..."
             value={newPlayerName}
             onChange={(e) => setNewPlayerName(e.target.value)}
-            className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
+            className="flex-1 bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-500 text-white"
           />
           <button
             type="submit"
             disabled={loadingPlayers}
-            className="bg-blue-600 hover:bg-blue-500 text-white px-4 rounded-xl transition-colors font-bold disabled:opacity-50"
+            className="bg-amber-600 hover:bg-amber-500 text-white px-4 rounded-xl transition-colors font-bold disabled:opacity-50"
           >
             <UserPlus size={20} />
           </button>
@@ -248,7 +248,7 @@ const ConfigView: React.FC<ConfigViewProps> = ({ items, setItems, onSave, gameUp
 
         <div className="space-y-2 max-h-[500px] overflow-y-auto custom-scrollbar">
           {players.map((p) => (
-            <div key={p.username} className="flex items-center justify-between bg-slate-900/50 p-4 rounded-xl border border-slate-700/30 group hover:border-blue-500/30 transition-all">
+            <div key={p.username} className="flex items-center justify-between bg-slate-900/50 p-4 rounded-xl border border-slate-700/30 group hover:border-amber-500/30 transition-all">
               <span className="font-bold text-slate-200">{p.username}</span>
               <button
                 onClick={() => handleDeletePlayer(p.username)}

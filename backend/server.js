@@ -434,8 +434,12 @@ const parseCookies = (req) => {
 };
 
 const getClientIp = (req) => {
+  const cf = req.headers['cf-connecting-ip'];
+  if (cf && typeof cf === 'string') return cf.split(',')[0].trim();
+  const tci = req.headers['true-client-ip'];
+  if (tci && typeof tci === 'string') return tci.split(',')[0].trim();
   const forwarded = req.headers['x-forwarded-for'];
-  if (forwarded) return forwarded.split(',')[0].trim();
+  if (forwarded) return String(forwarded).split(',')[0].trim();
   return req.ip || req.socket.remoteAddress || 'unknown';
 };
 
