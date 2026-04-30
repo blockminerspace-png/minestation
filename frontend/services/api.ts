@@ -692,6 +692,15 @@ export async function getMonetizationSettings(): Promise<MonetizationSettings | 
   } catch { return null; }
 }
 
+/** Inclui applixirCallbackSecret — apenas para o painel admin autenticado. */
+export async function getAdminMonetizationSettings(): Promise<MonetizationSettings | null> {
+  try {
+    const res = await apiFetch(`${base}/admin/monetization-settings`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
 export async function getSecurityStats(): Promise<SecurityStats | null> {
   try {
     const res = await apiFetch(`${base}/admin/security/stats`);

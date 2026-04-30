@@ -317,7 +317,8 @@ export interface MonetizationSettings {
   applixirZoneId: string;
   applixirAccountId: string;
   applixirRewardMessage: string;
-  applixirCallbackSecret: string;
+  /** Só presente na resposta admin; o GET público não expõe este segredo. */
+  applixirCallbackSecret?: string;
 
   ezoicEnabled: boolean;
   ezoicPublisherId: string;

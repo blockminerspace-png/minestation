@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Banknote, PlayCircle, Monitor, Save, Info, ShoppingCart, Ticket, RefreshCw, Trash2, Plus, Users, Gift } from 'lucide-react';
-import { getMonetizationSettings, setMonetizationSettings, getEconomySettings, setEconomySettings as apiSetEconomySettings, getLootBoxes, getUpgrades, getAdminUpgrades } from '../services/api';
+import { getAdminMonetizationSettings, setMonetizationSettings, getEconomySettings, setEconomySettings as apiSetEconomySettings, getLootBoxes, getUpgrades, getAdminUpgrades } from '../services/api';
 import { MonetizationSettings, EconomySettings, PromoCode, LootBox, Upgrade, AdminUpgrade } from '../types';
 import { ApplixirConfig } from './monetization/ApplixirConfig';
 import { EzoicConfig } from './monetization/EzoicConfig';
@@ -43,7 +43,7 @@ export const AdminMonetization: React.FC = () => {
         const load = async () => {
             try {
                 const [monet, econ, boxes, upgs, bndls] = await Promise.all([
-                    getMonetizationSettings(),
+                    getAdminMonetizationSettings(),
                     getEconomySettings(),
                     getLootBoxes(),
                     getUpgrades(),

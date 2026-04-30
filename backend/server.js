@@ -2744,31 +2744,47 @@ app.post('/api/upload-image', (req, res) => {
   return res.json({ path: `/img/${filename}` });
 });
 
+async function fetchMonetizationSettingsObject() {
+  const applixirEnabledRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_enabled'");
+  const applixirSiteIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_site_id'");
+  const applixirZoneIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_zone_id'");
+  const applixirAccountIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_account_id'");
+  const applixirRewardMsgRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_reward_message'");
+  const applixirCallbackSecretRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_callback_secret'");
+  const ezoicEnabledRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_enabled'");
+  const ezoicPubIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_publisher_id'");
+  const ezoicAppIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_app_id'");
+  const ezoicPlaceholderIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_placeholder_id'");
+  return {
+    applixirEnabled: (applixirEnabledRes.rows[0]?.value === '1'),
+    applixirSiteId: applixirSiteIdRes.rows[0]?.value || '',
+    applixirZoneId: applixirZoneIdRes.rows[0]?.value || '',
+    applixirAccountId: applixirAccountIdRes.rows[0]?.value || '',
+    applixirRewardMessage: applixirRewardMsgRes.rows[0]?.value || 'Parabéns! Você ganhou {reward} W/h',
+    applixirCallbackSecret: applixirCallbackSecretRes.rows[0]?.value || '',
+    ezoicEnabled: (ezoicEnabledRes.rows[0]?.value === '1'),
+    ezoicPublisherId: ezoicPubIdRes.rows[0]?.value || '',
+    ezoicAppId: ezoicAppIdRes.rows[0]?.value || '',
+    ezoicPlaceholderId: ezoicPlaceholderIdRes.rows[0]?.value || ''
+  };
+}
+
+/** Público: nunca envia applixirCallbackSecret (validação de reward fica no servidor). */
 app.get('/api/monetization-settings', async (req, res) => {
   try {
-    const applixirEnabledRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_enabled'");
-    const applixirSiteIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_site_id'");
-    const applixirZoneIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_zone_id'");
-    const applixirAccountIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_account_id'");
-    const applixirRewardMsgRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_reward_message'");
-    const applixirCallbackSecretRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_callback_secret'");
-    const ezoicEnabledRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_enabled'");
-    const ezoicPubIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_publisher_id'");
-    const ezoicAppIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_app_id'");
-    const ezoicPlaceholderIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_placeholder_id'");
+    const settings = await fetchMonetizationSettingsObject();
+    const { applixirCallbackSecret: _omit, ...publicSettings } = settings;
+    res.setHeader('Cache-Control', 'public, max-age=60');
+    res.json(publicSettings);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-    const settings = {
-      applixirEnabled: (applixirEnabledRes.rows[0]?.value === '1'),
-      applixirSiteId: applixirSiteIdRes.rows[0]?.value || '',
-      applixirZoneId: applixirZoneIdRes.rows[0]?.value || '',
-      applixirAccountId: applixirAccountIdRes.rows[0]?.value || '',
-      applixirRewardMessage: applixirRewardMsgRes.rows[0]?.value || 'Parabéns! Você ganhou {reward} W/h',
-      applixirCallbackSecret: applixirCallbackSecretRes.rows[0]?.value || '',
-      ezoicEnabled: (ezoicEnabledRes.rows[0]?.value === '1'),
-      ezoicPublisherId: ezoicPubIdRes.rows[0]?.value || '',
-      ezoicAppId: ezoicAppIdRes.rows[0]?.value || '',
-      ezoicPlaceholderId: ezoicPlaceholderIdRes.rows[0]?.value || ''
-    };
+app.get('/api/admin/monetization-settings', isAdmin, async (req, res) => {
+  try {
+    const settings = await fetchMonetizationSettingsObject();
+    res.setHeader('Cache-Control', 'no-store');
     res.json(settings);
   } catch (e) {
     res.status(500).json({ error: e.message });
