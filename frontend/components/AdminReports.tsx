@@ -126,25 +126,38 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
         setLoading(true);
         setError(null);
         try {
-            const data = (await getAdminTreasuryTokenTxs(page, limit)) as {
-                status?: string;
-                message?: string;
-                result?: Transaction[];
-            };
+            const raw = (await getAdminTreasuryTokenTxs(page, limit)) as Record<string, unknown>;
+            const statusVal = raw?.status != null ? String(raw.status) : '';
+            const message = typeof raw?.message === 'string' ? raw.message : '';
+            const result = raw?.result;
 
-            if (data.status === '1' && Array.isArray(data.result)) {
-                setTransactions(data.result);
-            } else {
-                if (data.message?.includes("No transactions found")) {
-                    setTransactions([]);
-                } else {
-                    console.error("API Error:", data.message);
-                    setError(data.message || "Falha ao carregar dados.");
-                }
+            if (statusVal === '1' && Array.isArray(result)) {
+                setTransactions(result as Transaction[]);
+                return;
             }
+
+            const msgLower = message.toLowerCase();
+            const emptyList =
+                (Array.isArray(result) && result.length === 0) ||
+                msgLower.includes('no transaction') ||
+                msgLower.includes('no records found');
+
+            if (emptyList) {
+                setTransactions([]);
+                return;
+            }
+
+            if (typeof result === 'string' && result.trim()) {
+                setError(`${message ? `${message}: ` : ''}${result}`.trim());
+                return;
+            }
+
+            console.error('API treasury txs:', message, result);
+            setError(message || 'Não foi possível carregar as transações USDC do treasury.');
         } catch (err) {
-            console.error("Fetch error:", err);
-            setError("Erro de conexão.");
+            console.error('Fetch error:', err);
+            const detail = err instanceof Error ? err.message : '';
+            setError(detail ? detail : 'Erro de conexão. Verifique a rede ou as permissões de administrador.');
         } finally {
             setLoading(false);
         }

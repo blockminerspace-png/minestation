@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { AccessLevel, User } from '../types';
-import { getUsers, updateUser, login, verifyRecoveryWallet, resetPasswordSecure } from '../services/api';
+import { getUsers, updateUser, login, requestPasswordReset, resetPasswordSecure } from '../services/api';
 import { Lock, Mail, User as UserIcon, ArrowRight, AlertCircle, CreditCard, Wallet, Share2, ShieldCheck, Key } from 'lucide-react';
 
 interface AuthPageProps {
@@ -25,8 +25,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
     const [selectedLevelId, setSelectedLevelId] = useState<string>('');
     const [isWeb3Processing, setIsWeb3Processing] = useState(false);
 
-    // Recovery State
-    const [recoveryStep, setRecoveryStep] = useState<'email' | 'wallet' | 'reset'>('email');
+    // Recovery State (link por email; token na URL /redefinir-senha?token=)
+    const [recoveryStep, setRecoveryStep] = useState<'email' | 'sent' | 'reset'>('email');
     const [recoveryToken, setRecoveryToken] = useState<string>('');
 
     // IP Restriction Modal State
@@ -34,8 +34,20 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
     const [existingAccounts, setExistingAccounts] = useState<any[]>([]);
 
     useEffect(() => {
-        // Check URL for referral code
         const params = new URLSearchParams(window.location.search);
+        const path = (window.location.pathname || '').toLowerCase();
+        const token = params.get('token');
+        if (token && path.includes('redefinir-senha')) {
+            try {
+                setRecoveryToken(decodeURIComponent(token));
+            } catch {
+                setRecoveryToken(token);
+            }
+            setActiveTab('recovery');
+            setRecoveryStep('reset');
+            setError(null);
+            return;
+        }
         const ref = params.get('ref');
         if (ref) {
             setReferralInput(ref);
@@ -48,39 +60,19 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
         setRecoveryStep('email'); setRecoveryToken('');
     }
 
-    const handleConnectWalletForRecovery = async () => {
-        try {
-            const eth = (window as any).ethereum;
-            if (!eth) {
-                setError('Instale uma carteira compatível (ex: MetaMask) para verificar sua identidade.');
-                return;
-            }
-            setIsWeb3Processing(true);
-            const accounts = await eth.request({ method: 'eth_requestAccounts' });
-            const addr = accounts && accounts[0];
-
-            if (!addr) {
-                setError('Falha ao conectar carteira.');
-                setIsWeb3Processing(false);
-                return;
-            }
-
-            // Verify with Backend
-            const res = await verifyRecoveryWallet(email, addr);
-            setIsWeb3Processing(false);
-
-            if (res.ok && res.resetToken) {
-                setRecoveryToken(res.resetToken);
-                setRecoveryStep('reset');
-                setError(null);
-            } else {
-                setError(res.error || 'Carteira não autorizada ou erro na verificação.');
-            }
-
-        } catch (e: any) {
-            console.error(e);
-            setIsWeb3Processing(false);
-            setError('Erro ao conectar carteira: ' + (e.message || 'Desconhecido'));
+    const handleRequestPasswordResetEmail = async () => {
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+            setError('Indique um email válido.');
+            return;
+        }
+        setError(null);
+        setIsWeb3Processing(true);
+        const res = await requestPasswordReset(email.trim());
+        setIsWeb3Processing(false);
+        if (res.ok) {
+            setRecoveryStep('sent');
+        } else {
+            setError(res.error || 'Não foi possível enviar o email.');
         }
     };
 
@@ -100,6 +92,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
         setIsWeb3Processing(false);
 
         if (res.ok) {
+            try {
+                window.history.replaceState({}, '', '/');
+            } catch { /* ignore */ }
             alert('Senha redefinida com sucesso! Faça login agora.');
             setActiveTab('login');
             resetForm();
@@ -232,7 +227,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                             {activeTab === 'register' ? 'Criar Identidade' : activeTab === 'special' ? 'Acesso Premium' : activeTab === 'recovery' ? 'Recuperação de Acesso' : 'Acesso ao Sistema'}
                         </h2>
                         <p className="text-slate-500 text-sm">
-                            {activeTab === 'register' ? 'Junte-se à rede de mineração global.' : activeTab === 'special' ? 'Adquira níveis exclusivos via Web3.' : activeTab === 'recovery' ? 'Autenticação via Carteira Digital.' : 'Entre com suas credenciais criptografadas.'}
+                            {activeTab === 'register' ? 'Junte-se à rede de mineração global.' : activeTab === 'special' ? 'Adquira níveis exclusivos via Web3.' : activeTab === 'recovery' ? 'Receba um link seguro no email para criar uma nova senha.' : 'Entre com suas credenciais criptografadas.'}
                         </p>
                     </div>
 
@@ -261,10 +256,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                         </div>
                                     </div>
                                     <p className="text-center text-xs text-slate-500 mb-4">
-                                        Para sua segurança, a redefinição de senha exige validação de identidade via carteira criptografada vinculada à conta.
+                                        Indique o email da sua conta. Se existir registo, enviaremos um link para redefinir a senha (verifique spam).
                                     </p>
                                     <div className="space-y-1">
-                                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Email Cadastrado</label>
+                                        <label className="text-xs font-bold text-slate-500 uppercase ml-1">Email cadastrado</label>
                                         <div className="relative">
                                             <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
                                             <input
@@ -277,38 +272,36 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                         </div>
                                     </div>
                                     <button
-                                        onClick={() => { if (email) setRecoveryStep('wallet'); else setError('Informe o email.'); }}
-                                        className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
+                                        type="button"
+                                        onClick={handleRequestPasswordResetEmail}
+                                        disabled={isWeb3Processing}
+                                        className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2 disabled:opacity-60"
                                     >
-                                        CONTINUAR <ArrowRight size={16} />
+                                        {isWeb3Processing ? 'A ENVIAR...' : 'ENVIAR LINK POR EMAIL'} <Mail size={16} />
                                     </button>
-                                    <button onClick={() => setActiveTab('login')} className="w-full text-center text-xs text-slate-500 hover:text-amber-500 mt-2">
-                                        Voltar para Login
+                                    <button type="button" onClick={() => setActiveTab('login')} className="w-full text-center text-xs text-slate-500 hover:text-amber-500 mt-2">
+                                        Voltar para login
                                     </button>
                                 </div>
                             )}
 
-                            {recoveryStep === 'wallet' && (
+                            {recoveryStep === 'sent' && (
                                 <div className="space-y-4 text-center">
                                     <div className="flex justify-center mb-2">
-                                        <div className="w-16 h-16 bg-orange-100 dark:bg-orange-900/20 rounded-full flex items-center justify-center text-orange-600 animate-pulse">
-                                            <Wallet size={32} />
+                                        <div className="w-16 h-16 bg-green-100 dark:bg-green-900/30 rounded-full flex items-center justify-center text-green-600">
+                                            <Mail size={32} />
                                         </div>
                                     </div>
-                                    <p className="text-xs text-slate-500">
-                                        Conecte a carteira original vinculada a conta <strong>{email}</strong>.
+                                    <p className="text-sm text-slate-600 dark:text-slate-300">
+                                        Se existir uma conta com <strong className="text-slate-900 dark:text-white">{email}</strong>, acabámos de enviar um email com o link para redefinir a senha.
                                     </p>
-
+                                    <p className="text-xs text-slate-500">O link expira em cerca de 1 hora.</p>
                                     <button
-                                        onClick={handleConnectWalletForRecovery}
-                                        disabled={isWeb3Processing}
-                                        className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 rounded-lg flex items-center justify-center gap-2"
+                                        type="button"
+                                        onClick={() => { setActiveTab('login'); resetForm(); }}
+                                        className="w-full bg-slate-800 hover:bg-slate-700 text-white font-bold py-3 rounded-lg"
                                     >
-                                        {isWeb3Processing ? 'VERIFICANDO...' : 'CONECTAR CARTEIRA'} <Wallet size={18} />
-                                    </button>
-
-                                    <button onClick={() => setRecoveryStep('email')} className="text-xs text-slate-400 hover:text-white underline">
-                                        Voltar
+                                        Voltar para login
                                     </button>
                                 </div>
                             )}
@@ -317,7 +310,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                 <form onSubmit={handleRecoveryReset} className="space-y-4">
                                     <div className="text-center mb-4">
                                         <div className="inline-flex items-center gap-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 px-3 py-1 rounded-full text-xs font-bold">
-                                            <ShieldCheck size={14} /> IDENTIDADE CONFIRMADA
+                                            <ShieldCheck size={14} /> LINK VÁLIDO
                                         </div>
                                     </div>
                                     <div className="space-y-1">

@@ -77,11 +77,13 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                 try {
                     const TREASURY_WALLET = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
                     const apiData = (await getAdminTreasuryTokenTxs(1, 1000)) as {
-                        status?: string;
-                        result?: any[];
+                        status?: string | number;
+                        result?: any[] | string;
+                        message?: string;
                     };
 
-                    if (apiData.status === '1' && Array.isArray(apiData.result)) {
+                    const st = apiData.status != null ? String(apiData.status) : '';
+                    if (st === '1' && Array.isArray(apiData.result)) {
                         const validTxs = apiData.result.filter((tx: any) => {
                             return tx.to.toLowerCase() === TREASURY_WALLET.toLowerCase() &&
                                 parseInt(tx.timeStamp) >= startDateTimestamp;

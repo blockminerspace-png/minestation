@@ -961,6 +961,21 @@ export async function saveWalletLabel(address: string, label: string): Promise<{
 
 
 // RECOVERY
+export async function requestPasswordReset(email: string): Promise<{ ok: boolean; message?: string; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/request-password-reset`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email.trim() }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; message?: string; error?: string };
+    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+    return { ok: !!data.ok, message: data.message };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Erro de rede' };
+  }
+}
+
 export async function verifyRecoveryWallet(email: string, walletAddress: string): Promise<{ ok: boolean; resetToken?: string; error?: string }> {
   try {
     const res = await apiFetch(`${base}/verify-recovery-wallet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, walletAddress }) });

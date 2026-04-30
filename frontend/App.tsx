@@ -56,7 +56,7 @@ import { LuckyBoxStore } from './components/LuckyBoxStore';
 import { WorkshopRoom } from './components/WorkshopRoom';
 import { RewardLoadingScreen } from './components/RewardLoadingScreen';
 import { AdminRanking } from './components/AdminRanking';
-import { Cpu, Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy } from 'lucide-react';
+import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy } from 'lucide-react';
 
 const DiscordIcon = ({ size = 18 }: { size?: number }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size}>
@@ -355,12 +355,18 @@ export default function App() {
   useEffect(() => {
     (async () => {
       const sess = await getSession();
+      const path = (window.location.pathname || '').toLowerCase().replace(/\/+$/, '');
+      const resetTokenParam = new URLSearchParams(window.location.search).get('token');
+      const isPasswordResetUrl = Boolean(resetTokenParam && path.includes('redefinir-senha'));
+
       if (sess) {
         setUser(sess);
-        setGlobalView(sess.isAdmin ? 'admin' : 'game');
+        if (isPasswordResetUrl) setGlobalView('auth');
+        else setGlobalView(sess.isAdmin ? 'admin' : 'game');
       } else {
         setUser(null);
-        setGlobalView('home');
+        if (isPasswordResetUrl) setGlobalView('auth');
+        else setGlobalView('home');
       }
       const ms = await getMonetizationSettings();
       if (ms) setMonetizationSettings(ms);
@@ -1844,8 +1850,8 @@ export default function App() {
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
           {/* Logo */}
           <div className="flex items-center gap-3 cursor-pointer" onClick={() => setGlobalView(user ? (user.isAdmin ? 'admin' : 'game') : 'home')}>
-            <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-amber-600 to-orange-600 flex items-center justify-center shadow-lg shadow-amber-500/25 ring-1 ring-amber-400/30 text-white animate-pulse">
-              <Cpu size={24} />
+            <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 ring-2 ring-amber-500/50 shadow-lg shadow-amber-600/25 bg-slate-900">
+              <img src="/genesis-miner-logo.png" alt="Genesis Miner" className="w-full h-full object-cover" width={40} height={40} />
             </div>
             <div>
               <h1 className="text-xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Genesis Miner</h1>

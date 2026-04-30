@@ -692,6 +692,21 @@ const authLimiter = rateLimit({
   validate: { trustProxy: false }
 });
 
+/** Pedidos de link por email (evita abuso / enumeração em massa). */
+const passwordResetRequestLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: parseRateLimit(process.env.PASSWORD_RESET_EMAIL_MAX_PER_HOUR, 8, 3, 30),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => getClientIp(req),
+  skip: (req) => {
+    const ip = getClientIp(req);
+    return ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
+  },
+  message: { error: 'Muitos pedidos de redefinição a partir deste IP. Tente novamente mais tarde.' },
+  validate: { trustProxy: false }
+});
+
 app.use('/api/', limiter);
 app.use('/api/login', authLimiter);
 
@@ -7249,7 +7264,40 @@ app.delete('/api/mining/coins/:id', isAdmin, async (req, res) => {
 });
 
 
-// PASSWORD RECOVERY BY WALLET
+/** Redefinição por email: envia link sem exigir carteira (resposta uniforme para não enumerar contas). */
+app.post('/api/request-password-reset', passwordResetRequestLimiter, async (req, res) => {
+  const raw = req.body && req.body.email != null ? String(req.body.email).trim() : '';
+  const genericOk = {
+    ok: true,
+    message: 'Se existir uma conta com este email, enviámos um link para redefinir a senha.'
+  };
+  if (!raw || raw.length > 254) {
+    return res.status(400).json({ error: 'Indique um email válido.' });
+  }
+  const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  if (!emailRx.test(raw)) {
+    return res.status(400).json({ error: 'Indique um email válido.' });
+  }
+  try {
+    const r = await db.query('SELECT email FROM users WHERE lower(email) = lower($1)', [raw]);
+    if (r.rows.length === 0) {
+      return res.json(genericOk);
+    }
+    const email = r.rows[0].email;
+    const timestamp = Date.now();
+    const resetPayload = JSON.stringify({ email, expiry: timestamp + 60 * 60 * 1000 });
+    const signature = crypto.createHmac('sha256', process.env.JWT_SECRET || 'secret').update(resetPayload).digest('hex');
+    const resetToken = Buffer.from(resetPayload).toString('base64') + '.' + signature;
+
+    await sendResetEmail(email, resetToken, { validityMinutes: 60 });
+    return res.json(genericOk);
+  } catch (e) {
+    console.error('[request-password-reset]', e.message || e);
+    return res.json(genericOk);
+  }
+});
+
+// PASSWORD RECOVERY BY WALLET (legado; o fluxo principal é por email)
 app.post('/api/verify-recovery-wallet', async (req, res) => {
   const { email, walletAddress } = req.body;
   if (!email || !walletAddress) return res.status(400).json({ error: 'Dados incompletos' });
@@ -7278,8 +7326,7 @@ app.post('/api/verify-recovery-wallet', async (req, res) => {
 
     res.json({ ok: true, resetToken });
 
-    // Enviar e-mail de recuperação de forma assíncrona
-    sendResetEmail(email, resetToken).catch(err => {
+    sendResetEmail(email, resetToken, { validityMinutes: 10 }).catch(err => {
       console.error('[Mailer Error] Falha ao enviar e-mail:', err.message);
     });
 
@@ -7305,8 +7352,12 @@ app.post('/api/reset-password-secure', async (req, res) => {
     if (Date.now() > payload.expiry) return res.status(403).json({ error: 'Sessão de recuperação expirada' });
 
     const email = payload.email;
+    if (!email || typeof email !== 'string') {
+      return res.status(400).json({ error: 'Token inválido' });
+    }
 
-    await db.query('UPDATE users SET password = $1 WHERE email = $2', [newPassword, email]);
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    await db.query('UPDATE users SET password = $1 WHERE lower(email) = lower($2)', [hashedPassword, email]);
     res.json({ ok: true });
 
   } catch (e) {
