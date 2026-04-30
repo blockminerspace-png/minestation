@@ -43,9 +43,9 @@ export const DocsPage: React.FC = () => {
 
             <div className="mb-12 text-center">
                 <h1 className="text-4xl font-bold text-slate-900 dark:text-white mb-4 flex items-center justify-center gap-3">
-                    <BookOpen className="text-amber-600 dark:text-amber-500" /> Manual do Operador
+                    <BookOpen className="text-amber-600 dark:text-amber-500" /> Manual Genesis Miner
                 </h1>
-                <p className="text-slate-500 dark:text-slate-400 text-lg">Guia de referência técnica, econômica e operacional do protocolo.</p>
+                <p className="text-slate-500 dark:text-slate-400 text-lg">Referência técnica e econômica do Genesis Miner — peças, salas e regras de mercado.</p>
             </div>
 
             {/* ---------------------------------------------------------------------------------- */}
@@ -58,12 +58,12 @@ export const DocsPage: React.FC = () => {
 
                 <div className="relative z-10">
                     <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 flex items-center gap-3 border-b border-amber-200 dark:border-amber-500/30 pb-4">
-                        <Hexagon className="text-orange-600 dark:text-orange-500" /> Economia Web3 & Tokenomics
+                        <Hexagon className="text-orange-600 dark:text-orange-500" /> Tokenomics & economia on-chain
                     </h2>
 
                     <div className="bg-amber-100/50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-500/50 rounded-xl p-6 mb-8 backdrop-blur-sm">
                         <p className="text-amber-900 dark:text-white text-lg leading-relaxed font-medium">
-                            "Genesis Miner não é apenas um simulador. Este é um jogo <strong>Play-to-Earn</strong> integrado à rede <strong>Polygon</strong>. Todos os ativos que você gerencia possuem valor real e propriedade digital comprovada via Blockchain, permitindo eventuais ganhos financeiros para operadores eficientes."
+                            O Genesis Miner mistura <strong>simulação profunda</strong> com camada <strong>Web3 na Polygon</strong>: o que você mexe no inventário pode existir on-chain, com regras claras de mint, burn e saques — e recompensas para quem opera com disciplina.
                         </p>
                     </div>
 
@@ -120,7 +120,7 @@ export const DocsPage: React.FC = () => {
             {/* ---------------------------------------------------------------------------------- */}
             <div className="mb-16">
                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-8 border-b border-slate-200 dark:border-slate-800 pb-4 flex items-center gap-2">
-                    <Cpu className="text-amber-600 dark:text-amber-500" /> Mecânicas de Engenharia
+                    <Cpu className="text-amber-600 dark:text-amber-500" /> Mecânicas Genesis (engenharia)
                 </h2>
 
                 <div className="space-y-8">
@@ -131,9 +131,9 @@ export const DocsPage: React.FC = () => {
                             <Server size={32} />
                         </div>
                         <div>
-                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">1. Infraestrutura (Rigs de Mineração)</h3>
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">1. Infraestrutura — racks de mineração</h3>
                             <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-                                GPUs não funcionam no chão. Você precisa de Rigs de Mineração.
+                                Nenhuma GPU opera solta: tudo passa por racks com energia, fiação e bateria dimensionados.
                             </p>
                             <ul className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm text-slate-700 dark:text-slate-300">
                                 <li className="flex items-center gap-2"><span className="w-1.5 h-1.5 bg-amber-500 rounded-full"></span> <strong>Tamanho (U):</strong> Define quantos slots de GPUs o rig possui (4, 6, 8 ou 10), dispostos em 2 colunas.</li>
@@ -148,9 +148,9 @@ export const DocsPage: React.FC = () => {
                             <Zap size={32} />
                         </div>
                         <div>
-                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">2. Sistema Elétrico (Fiação & Bateria)</h3>
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">2. Malha elétrica (fiação e bateria)</h3>
                             <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-                                Para um Rig ligar, ele precisa de 3 componentes instalados na base:
+                                Cada rack só entra em produção quando a base tem três peças encaixadas:
                             </p>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm font-mono">
                                 <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded border border-slate-200 dark:border-slate-700">
@@ -163,7 +163,7 @@ export const DocsPage: React.FC = () => {
                                 </div>
                                 <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded border border-slate-200 dark:border-slate-700">
                                     <strong className="text-green-600 dark:text-green-400 block">3. Power ON</strong>
-                                    O botão de energia no painel frontal deve estar ativado.
+                                    O interruptor frontal precisa permanecer ligado para liberar o hashrate.
                                 </div>
                             </div>
                         </div>
@@ -175,9 +175,9 @@ export const DocsPage: React.FC = () => {
                             <Cpu size={32} />
                         </div>
                         <div>
-                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">3. Mineração & Multiplicadores IA</h3>
+                            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-2">3. Mineração e boosters de IA</h3>
                             <p className="text-sm text-slate-500 dark:text-slate-400 mb-3">
-                                A produção de criptomoedas é calculada por Rig.
+                                O rendimento é contabilizado rack a rack, somando GPUs e multiplicadores ativos.
                             </p>
                             <ul className="text-sm space-y-2 mb-4">
                                 <li className="text-slate-700 dark:text-slate-300">
@@ -200,7 +200,7 @@ export const DocsPage: React.FC = () => {
             {/* ---------------------------------------------------------------------------------- */}
             <div className="mb-16">
                 <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-8 border-b border-slate-200 dark:border-slate-800 pb-4 flex items-center gap-2">
-                    <MousePointer className="text-green-600 dark:text-green-500" /> Manual Operacional (Interface)
+                    <MousePointer className="text-green-600 dark:text-green-500" /> Manual operacional (interface)
                 </h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -211,14 +211,14 @@ export const DocsPage: React.FC = () => {
                             <LayoutGrid size={18} /> 1. Sala de Rigs
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
-                            É o coração da sua operação. Aqui você monta e gerencia seus Rigs.
+                            Centro nervoso da mina: instala racks, encaixa GPUs e controla energia em tempo real.
                         </p>
                         <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
                             <li><strong>Instalar Rig:</strong> Se tiver rigs no estoque, clique nos cartões "fantasmas" no final da lista.</li>
                             <li><strong>Equipar Máquinas:</strong> Clique em um slot vazio (linha preta) para abrir o inventário e escolher uma GPU.</li>
                             <li><strong>Equipar Elétrica:</strong> Na base do rig, clique nos slots pontilhados para instalar Fiação e Bateria.</li>
                             <li><strong>Recarregar:</strong> Quando a bateria acabar, clique no botão "RECARREGAR" (texto azul).</li>
-                            <li><strong>Desmontar:</strong> O ícone "X" no topo do rig remove o equipamento e envia TODOS os itens dentro dele de volta para o Estoque.</li>
+                            <li><strong>Desmontar:</strong> O ícone &quot;X&quot; no topo do rack devolve toda a carga útil ao depósito de peças.</li>
                         </ul>
                     </div>
 
@@ -228,10 +228,10 @@ export const DocsPage: React.FC = () => {
                             <Terminal size={18} /> 2. Estoque
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
-                            Visão geral de tudo que você comprou mas não está usando.
+                            Inventário vivo: compras do Genesis Supply e retiradas de rack aparecem aqui.
                         </p>
                         <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
-                            <li>Itens comprados no Mercado vêm para cá.</li>
+                            <li>Peças recém-adquiridas no Genesis Supply caem direto neste depósito.</li>
                             <li><strong>Baterias Usadas:</strong> O jogo salva a carga das suas baterias. Se você remover uma bateria com 50% de carga de um rack, ela aparecerá aqui na seção "Usadas". Você pode reinstalá-la depois sem perder a carga.</li>
                         </ul>
                     </div>
@@ -242,56 +242,56 @@ export const DocsPage: React.FC = () => {
                             <Wrench size={18} /> 3. Oficina
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
-                            Espaço dedicado à manutenção de equipamentos e recarga de baterias.
+                            Laboratório para carregadores, bancadas de serviço e rotinas de recarga.
                         </p>
                         <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
                             <li><strong>Carregador de Baterias:</strong> Já em operação. Permite recarregar de <strong>Baterias</strong> para manter as <strong>Rigs </strong>em operação.</li>
                             <li><strong>Tipos de Carga:</strong> Existem carregadores que recuperam energia da <strong>Capacidade Interna </strong>através de anúncios (Reward Ad) e outros através de carga diária (Daily Boost).</li>
-                            <li><strong>Manutenção (Em Breve):</strong> Espaço reservado para a Mesa de Manutenção de GPUs e Mesa de Manutenção de Rigs de mineração.</li>
+                            <li><strong>Manutenção (em breve):</strong> Mesas dedicadas para revisão de GPUs e racks mineradores.</li>
                         </ul>
                     </div>
 
                     {/* TAB 4: HARDWARE MARKET */}
                     <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h3 className="text-amber-600 dark:text-amber-500 font-bold mb-2 flex items-center gap-2">
-                            <ShoppingCart size={18} /> 4. Mercado de Hardware
+                            <ShoppingCart size={18} /> 4. Genesis Supply — hardware
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
-                            Loja oficial de equipamentos novos.
+                            Canal oficial para SKUs novos, com carrinho e precificação dinâmica.
                         </p>
                         <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
-                            <li>Use o <strong>Carrinho</strong> para comprar múltiplos itens de uma vez.</li>
-                            <li>O preço dos itens aumenta progressivamente (inflação de demanda). O carrinho calcula esse custo extra automaticamente.</li>
-                            <li>Observe o Consumo (W) antes de comprar.</li>
+                            <li>Use o <strong>carrinho Genesis</strong> para fechar pedidos com várias linhas.</li>
+                            <li>Os preços reagem à demanda agregada; o carrinho já projeta o impacto antes do checkout.</li>
+                            <li>Confira o consumo em watts antes de comprometer a malha elétrica.</li>
                         </ul>
                     </div>
 
                     {/* TAB 5: BLACK MARKET (P2P) */}
                     <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h3 className="text-red-600 dark:text-red-500 font-bold mb-2 flex items-center gap-2">
-                            <Skull size={18} /> 5. Mercado Negro (P2P) - Em desenvolvimento.
+                            <Skull size={18} /> 5. Mercado paralelo (P2P) — beta contínuo
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
-                            Compra e venda entre jogadores anonimizados.
+                            Liquidez peer-to-peer com custódia automática até o match final.
                         </p>
                         <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
-                            <li>As ofertas expiram rapidamente.</li>
-                            <li>Você pode encontrar itens abaixo do preço de mercado (usados) ou raridades superfaturadas.</li>
+                            <li>As reservas expiram rápido para evitar bloqueio de capital ocioso.</li>
+                            <li>Boas oportunidades aparecem abaixo da referência oficial; raridades podem carregar prêmio.</li>
                         </ul>
                     </div>
 
                     {/* TAB 6: WALLET */}
                     <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h3 className="text-orange-600 dark:text-orange-500 font-bold mb-2 flex items-center gap-2">
-                            <Wallet size={18} /> 6. Carteira
+                            <Wallet size={18} /> 6. Carteira on-chain
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
-                            Centro financeiro. Gerencie Cripto, Fiat e NFTs.
+                            Hub financeiro: USDC, ativos minerados e NFTs do ecossistema.
                         </p>
                         <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
-                            <li><strong>Cripto Exchange:</strong> Converta moedas mineradas em USDC para comprar upgrades.</li>
-                            <li><strong>Depósitos:</strong> Injete capital (Depósito USDC fictício para teste) ou Saque tokens.</li>
-                            <li><strong>Gerenciador de NFTs:</strong> Mint/Burn de ativos.</li>
+                            <li><strong>Desk de câmbio:</strong> zere posições em cripto minerada e receba USDC para novos upgrades.</li>
+                            <li><strong>Entradas e saídas:</strong> injete USDC nas redes suportadas ou levante tokens elegíveis.</li>
+                            <li><strong>NFT manager:</strong> emissão e queima controladas de ativos on-chain.</li>
                         </ul>
                     </div>
 
@@ -302,7 +302,7 @@ export const DocsPage: React.FC = () => {
             {/* SEÇÃO 4: CATÁLOGO (EXISTENTE) */}
             {/* ---------------------------------------------------------------------------------- */}
             <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-8 border-b border-slate-200 dark:border-slate-800 pb-4">
-                Catálogo Técnico de Hardware
+                Catálogo técnico Genesis
             </h2>
 
             <div className="space-y-12">

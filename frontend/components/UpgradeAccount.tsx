@@ -179,7 +179,7 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
       <div className="relative z-10 w-full max-w-7xl mx-auto">
         <header className="text-center mb-12">
           <h2 className="text-4xl md:text-5xl font-black text-white mb-4 tracking-tight">
-            Escolha o <span className="bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">Melhor Upgrade</span> para Sua Sala!
+            Escolha o <span className="bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">nível certo</span> para a sua sala
           </h2>
         </header>
 
@@ -224,7 +224,7 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
 
                       {/* Description */}
                       <div className="text-sm text-slate-300 font-medium mb-8 leading-relaxed">
-                        {offer.description || 'Acelere sua jornada de mineração!'}
+                        {offer.description || 'Desbloqueie vantagens e conteúdos extras na sua operação.'}
                       </div>
 
                       {/* Price */}

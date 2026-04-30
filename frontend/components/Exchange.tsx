@@ -43,21 +43,21 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
         <div className="flex flex-col gap-4 mb-6 border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex justify-between items-center">
             <h3 className="text-amber-600 dark:text-amber-500 font-black text-xl flex items-center gap-2 tracking-tight">
-              <Coins size={24} className="stroke-[3]" /> EXCHANGE
+              <Coins size={24} className="stroke-[3]" /> Desk de câmbio
             </h3>
           </div>
 
           {settings && (
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 dark:from-amber-900/40 dark:to-orange-900/40 border border-amber-200 dark:border-amber-800/50 rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1 font-sans">MÍNIMO DE TROCA</span>
+                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1 font-sans">Piso mínimo (USDC)</span>
                 <span className="text-2xl font-black text-slate-800 dark:text-white leading-none font-mono">
                   ${settings.minExchangeAmount.toFixed(2)} <span className="text-xs font-bold text-slate-500">USDC</span>
                 </span>
               </div>
 
               <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 dark:from-amber-900/40 dark:to-orange-900/40 border border-amber-200 dark:border-amber-800/50 rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
-                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1 font-sans">TAXA DE SERVIÇO</span>
+                <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1 font-sans">Taxa do desk</span>
                 <span className="text-2xl font-black text-slate-800 dark:text-white leading-none font-mono">
                   {settings.exchangeFeePercent}<span className="text-sm font-bold text-slate-500">%</span>
                 </span>
@@ -68,10 +68,10 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
 
         <div className="flex flex-col gap-3">
           <div className="mt-1">
-            <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">Criptomoedas Disponíveis</div>
+            <div className="text-xs text-slate-500 dark:text-slate-400 mb-2">Pares minerados elegíveis</div>
             <div className="space-y-2">
               {miningCoins.filter(c => (c as any).showInExchange !== false).length === 0 ? (
-                <div className="text-[12px] text-slate-500">Nenhuma criptomoeda disponível para troca.</div>
+                <div className="text-[12px] text-slate-500">Nenhum par listado no desk neste momento.</div>
               ) : miningCoins.filter(c => (c as any).showInExchange !== false).map(c => {
                 const bal = coinBalances[c.id] || 0;
                 const est = bal * c.usdcRate;
@@ -84,21 +84,21 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
                     <div className="flex items-center justify-between">
                       <div className="flex flex-col">
                         <span className="text-[12px] font-mono text-slate-700 dark:text-slate-200 font-bold">{c.name}</span>
-                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">Saldo: {bal < 1 && bal > 0 ? bal.toFixed(8) : bal.toLocaleString('en-US', { maximumFractionDigits: 6 })}</span>
+                        <span className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">Saldo minerado: {bal < 1 && bal > 0 ? bal.toFixed(8) : bal.toLocaleString('en-US', { maximumFractionDigits: 6 })}</span>
                       </div>
                       <div className="text-right">
                         <div className="text-[12px] text-green-600 dark:text-green-400 font-mono font-bold">${formatMoney(net)}</div>
-                        <div className="text-[10px] text-slate-400">Bruto: ${formatMoney(est)}</div>
+                        <div className="text-[10px] text-slate-400">Pré-taxa: ${formatMoney(est)}</div>
                       </div>
                     </div>
 
                     <div className="grid grid-cols-3 gap-1">
                       <button onClick={() => onSellCoin(c.id, 0.1)} disabled={bal <= 0 || isBelowMin} className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-[10px] py-1 px-2 rounded border border-slate-200 dark:border-slate-700 transition-colors">10%</button>
                       <button onClick={() => onSellCoin(c.id, 0.5)} disabled={bal <= 0 || isBelowMin} className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-[10px] py-1 px-2 rounded border border-slate-200 dark:border-slate-700 transition-colors">50%</button>
-                      <button onClick={() => onSellCoin(c.id, 1)} disabled={bal <= 0 || isBelowMin} className="bg-green-100 dark:bg-green-900/40 hover:bg-green-200 dark:hover:bg-green-800/60 disabled:opacity-50 disabled:cursor-not-allowed text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50 text-[10px] py-1 px-2 rounded font-bold transition-colors">VENDER TUDO</button>
+                      <button onClick={() => onSellCoin(c.id, 1)} disabled={bal <= 0 || isBelowMin} className="bg-green-100 dark:bg-green-900/40 hover:bg-green-200 dark:hover:bg-green-800/60 disabled:opacity-50 disabled:cursor-not-allowed text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50 text-[10px] py-1 px-2 rounded font-bold transition-colors">Liquidar tudo</button>
                     </div>
                     {isBelowMin && (
-                      <div className="text-[9px] text-red-500 text-center">Mínimo não atingido</div>
+                      <div className="text-[9px] text-red-500 text-center">Abaixo do piso mínimo em USDC</div>
                     )}
                   </div>
                 );

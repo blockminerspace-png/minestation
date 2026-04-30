@@ -142,10 +142,10 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
             {/* HEADER */}
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex justify-between items-center shrink-0 z-20 shadow-md">
                 <h2 className="text-xl font-bold text-amber-600 dark:text-amber-500 flex items-center gap-2">
-                    <Package size={20} /> Mercado de Hardware
+                    <Package size={20} /> Genesis Supply — Hardware
                 </h2>
                 <div className="flex flex-col items-end">
-                    <span className="text-xs text-slate-500 uppercase tracking-wide">Saldo Disponível</span>
+                    <span className="text-xs text-slate-500 uppercase tracking-wide">Reserva USDC</span>
                     <span className="text-sm font-mono font-bold text-green-600 dark:text-green-400 flex items-center">
                         <DollarSign size={12} /> {formatCost(gameState.usdc)}
                     </span>
@@ -172,7 +172,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                             <Battery size={14} /> Baterias
                         </button>
                         <button onClick={() => setFilterType('wiring')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'wiring' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
-                            <Plug size={14} /> Circuito
+                            <Plug size={14} /> Fiação
                         </button>
                         <button onClick={() => setFilterType('multiplier')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'multiplier' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Zap size={14} /> Chips IA
@@ -197,7 +197,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                     return r ? r.name : id;
                                 })
                                 : [];
-                            const compText = rackNames.length ? rackNames.join(', ') : 'Todos os Racks';
+                            const compText = rackNames.length ? rackNames.join(', ') : 'Qualquer rack compatível';
 
                             const containerAspectRatio = isRack
                                 ? 'aspect-[5/6]'
@@ -325,7 +325,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                                     onClick={() => handleAddToCart(upgrade.id, 1)}
                                                     className="w-6 h-6 flex items-center justify-center rounded bg-white dark:bg-slate-800 hover:bg-green-100 dark:hover:bg-green-900/50 text-slate-600 dark:text-slate-400 hover:text-green-500 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-600"
                                                     disabled={(upgrade.status === 'limited' && ((upgrade.totalSold || 0) + inCart) >= (upgrade.maxGlobalStock || 0))}
-                                                    title={(upgrade.status === 'limited' && ((upgrade.totalSold || 0) + inCart) >= (upgrade.maxGlobalStock || 0)) ? "Estoque Esgotado" : "Adicionar"}
+                                                    title={(upgrade.status === 'limited' && ((upgrade.totalSold || 0) + inCart) >= (upgrade.maxGlobalStock || 0)) ? "Lote esgotado" : "Adicionar ao carrinho"}
                                                 >
                                                     <Plus size={12} />
                                                 </button>
@@ -337,7 +337,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                         })}
                         {filteredUpgrades.length === 0 && (
                             <div className="text-center py-10 text-slate-500 dark:text-slate-400 italic">
-                                Nenhum item encontrado nesta categoria.
+                                Nenhum SKU corresponde a este filtro.
                             </div>
                         )}
                     </div>
@@ -347,7 +347,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                 <div className="w-full lg:w-80 shrink-0 bg-white dark:bg-slate-950 border-t lg:border-t-0 lg:border-l border-slate-200 dark:border-slate-800 flex flex-col z-10 shadow-[-5px_0_15px_rgba(0,0,0,0.05)]">
                     <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2 bg-slate-50 dark:bg-slate-900">
                         <ShoppingCart size={18} className="text-slate-600 dark:text-slate-400" />
-                        <h3 className="font-bold text-slate-700 dark:text-slate-300">Carrinho</h3>
+                        <h3 className="font-bold text-slate-700 dark:text-slate-300">Carrinho Genesis</h3>
                         <span className="bg-amber-100 dark:bg-amber-900 text-amber-600 dark:text-amber-400 text-xs px-2 py-0.5 rounded-full font-bold ml-auto">
                             {(Object.values(cart) as number[]).reduce((a, b) => a + b, 0)}
                         </span>
@@ -358,7 +358,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                         {cartItemsList.length === 0 ? (
                             <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-600 gap-2 opacity-50">
                                 <ShoppingCart size={48} />
-                                <span className="text-sm font-bold">Carrinho Vazio</span>
+                                <span className="text-sm font-bold">Carrinho vazio</span>
                             </div>
                         ) : (
                             cartItemsList.map(item => (
@@ -392,7 +392,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                     {/* Cart Footer / Checkout */}
                     <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 space-y-3">
                         <div className="flex justify-between items-center text-sm">
-                            <span className="text-slate-500 uppercase text-xs font-bold">Total Estimado</span>
+                            <span className="text-slate-500 uppercase text-xs font-bold">Total do pedido</span>
                             <span className={`font-mono font-bold text-lg ${gameState.usdc >= cartTotal ? 'text-green-600 dark:text-green-400' : 'text-red-500'}`}>
                                 ${formatCost(cartTotal)}
                             </span>
@@ -403,7 +403,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                 onClick={() => setCart({})}
                                 disabled={cartTotal === 0}
                                 className="p-3 rounded-lg border border-slate-200 dark:border-slate-700 hover:bg-red-50 dark:hover:bg-red-900/20 text-slate-500 hover:text-red-500 transition-colors disabled:opacity-50"
-                                title="Limpar Carrinho"
+                                title="Esvaziar carrinho"
                             >
                                 <Trash2 size={18} />
                             </button>
@@ -415,7 +415,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                     }}
                                     className="px-3 py-2 rounded-lg bg-orange-600 hover:bg-orange-500 text-white text-xs font-bold shadow-md"
                                 >
-                                    DEPOSITAR USDC FALTANTE (${formatCost(Math.max(0, cartTotal - gameState.usdc))})
+                                    Cobrir déficit (${formatCost(Math.max(0, cartTotal - gameState.usdc))} USDC)
                                 </button>
                             )}
                             <button
@@ -428,7 +428,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                         : 'bg-green-600 hover:bg-green-500 text-white shadow-green-500/30'}
                             `}
                             >
-                                {!isEnabled ? 'MERCADO DESATIVADO' : (gameState.usdc < cartTotal ? 'SALDO INSUFICIENTE' : 'FINALIZAR')} <CheckCircle2 size={16} />
+                                {!isEnabled ? 'Compras pausadas' : (gameState.usdc < cartTotal ? 'USDC insuficiente' : 'Confirmar compra')} <CheckCircle2 size={16} />
                             </button>
                         </div>
                     </div>

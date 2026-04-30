@@ -1855,7 +1855,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Genesis Miner</h1>
-              <span className="text-[10px] font-semibold tracking-wider bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">V0.5 // Genesis DAO</span>
+              <span className="text-[10px] font-semibold tracking-wider bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Ecossistema online V0.5 — Genesis DAO</span>
             </div>
           </div>
 
@@ -1939,9 +1939,9 @@ export default function App() {
               </div>
             )}
             <div className="hidden md:flex items-center gap-2">
-              <button onClick={() => setGlobalView('home')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'home' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Página Inicial"><Home size={18} /></button>
+              <button onClick={() => setGlobalView('home')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'home' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Início (landing)"><Home size={18} /></button>
               <a href="https://discord.gg/pAx52fTZpR" target="_blank" rel="noopener noreferrer" className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-[#5865F2] transition" title="Discord"><DiscordIcon size={18} /></a>
-              <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); }} className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-yellow-500 transition" title="Ranking Mineradores"><Trophy size={18} /></button>
+              <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); }} className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-yellow-500 transition" title="Ranking de mineradores"><Trophy size={18} /></button>
               <button onClick={() => setGlobalView('docs')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'docs' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Documentação"><BookOpen size={18} /></button>
               {user && (globalView === 'home' || globalView === 'docs') && !user.isAdmin && (
                 <div className="flex gap-2">
@@ -2121,8 +2121,8 @@ export default function App() {
                   {isReady && currentView === 'arcade' && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
                       <Gamepad2 size={48} className="animate-bounce" />
-                      <h2 className="text-2xl font-bold uppercase tracking-widest bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent">Em Breve</h2>
-                      <p className="max-w-md text-center text-sm">Estamos preparando uma área de entretenimento para os jogadores. Aguarde novidades!</p>
+                      <h2 className="text-2xl font-bold uppercase tracking-widest bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent">Arcade em preparação</h2>
+                      <p className="max-w-md text-center text-sm">Estamos montando uma zona arcade dentro do Genesis Miner. Volte em breve para novidades.</p>
                     </div>
                   )}
                   {isReady && currentView === 'inventory' && <div className="flex-1 flex flex-col"><div className="flex-1 p-6"><InventoryView stock={gameState.stock} storedBatteries={gameState.storedBatteries} upgrades={gameUpgrades} /></div><Footer /></div>}

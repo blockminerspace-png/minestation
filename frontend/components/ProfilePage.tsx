@@ -168,8 +168,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
           <UserIcon size={24} />
         </div>
         <div>
-          <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Perfil do Operador</h2>
-          <p className="text-sm text-slate-500">Gerencie sua identidade, segurança e indicações.</p>
+          <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Console do operador Genesis</h2>
+          <p className="text-sm text-slate-500">Identidade on-chain, segurança da conta e rede de indicações.</p>
         </div>
       </div>
 
@@ -186,11 +186,11 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
         <div className="space-y-6">
           <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">
             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-              <UserIcon size={18} className="text-amber-500" /> Identidade
+              <UserIcon size={18} className="text-amber-500" /> Identidade na rede
             </h3>
             <form onSubmit={handleUpdateBasicInfo} className="space-y-4">
               <div className="space-y-1">
-                <label className="text-xs uppercase font-bold text-slate-500">Email (ID de Registro)</label>
+                <label className="text-xs uppercase font-bold text-slate-500">E-mail (ID do cadastro)</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                   <input
@@ -214,14 +214,14 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                 </div>
               </div>
               <div className="space-y-1">
-                <label className="text-xs uppercase font-bold text-slate-500">Nível</label>
+                <label className="text-xs uppercase font-bold text-slate-500">Nível de acesso</label>
                 <div className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg py-2 px-3 text-slate-700 dark:text-slate-300">
                   <ShieldCheck size={16} className="text-green-600 dark:text-green-400" />
                   <span className="text-sm font-bold">{currentLevelName}</span>
                 </div>
               </div>
               <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-white text-sm font-bold py-2 px-4 rounded-lg transition-colors flex items-center gap-2">
-                <Save size={16} /> SALVAR ALTERAÇÕES
+                <Save size={16} /> Salvar alterações
               </button>
             </form>
           </div>
@@ -229,12 +229,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
           {/* REFERRAL SYSTEM */}
           <div className="bg-gradient-to-br from-amber-50 to-orange-50 dark:from-amber-900/20 dark:to-orange-950/40 border border-amber-200 dark:border-amber-800 rounded-xl p-6 shadow-sm">
             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2">
-              <Share2 size={18} className="text-amber-500" /> Sistema de Indicação
+              <Share2 size={18} className="text-amber-500" /> Programa Genesis Referral
             </h3>
 
             <div className="space-y-4">
               <div>
-                <label className="text-xs uppercase font-bold text-slate-500">Seu Link de Convite</label>
+                <label className="text-xs uppercase font-bold text-slate-500">Seu link de convite</label>
                 <div className="flex gap-2 mt-1">
                   <div className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-slate-600 dark:text-slate-400 text-sm font-mono truncate flex-1">
                     {user.referralCode ? `${window.location.origin}?ref=${user.referralCode}` : 'Código não gerado'}
@@ -251,7 +251,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
 
               <div className="bg-white dark:bg-slate-950 rounded-lg p-3 border border-slate-200 dark:border-slate-800">
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-xs font-bold text-slate-500 uppercase">Indicados</span>
+                  <span className="text-xs font-bold text-slate-500 uppercase">Operadores convidados</span>
                   <span className="text-sm font-bold text-amber-600 dark:text-amber-400">{referrals.length}</span>
                 </div>
 

@@ -131,7 +131,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                         {hasEarnings ? (
                             <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800">
                                 <h3 className="text-amber-400 text-xs uppercase tracking-widest font-bold mb-3 flex items-center gap-2">
-                                    <Cpu size={14} /> Mineração Offline
+                                    <Cpu size={14} /> Produção offline
                                 </h3>
                                 <div className="space-y-2">
                                     {Object.entries(offlineEarnings || {}).map(([coin, amount]) => {
@@ -159,7 +159,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                             </div>
                         ) : (
                             <div className="bg-slate-950/50 rounded-xl p-4 border border-slate-800 text-center py-8">
-                                <p className="text-slate-500 text-sm">Nenhuma atividade de mineração registrada durante a ausência.</p>
+                                <p className="text-slate-500 text-sm">Sem produção offline neste intervalo: mantenha rigs ligados e energizados para acumular mesmo ausente.</p>
                             </div>
                         )}
                     </div>
@@ -169,7 +169,7 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                         className="w-full py-4 bg-amber-500 hover:bg-amber-400 text-black font-black uppercase tracking-widest rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] shadow-lg shadow-amber-500/25 flex items-center justify-center gap-2 group"
                     >
                         <Play size={20} className="group-hover:fill-current" />
-                        Acessar Dashboard
+                        Ir para o painel
                     </button>
 
                     <div className="text-center mt-6">
@@ -193,10 +193,10 @@ export const RewardLoadingScreen: React.FC<RewardLoadingScreenProps> = ({ onComp
                         <Gift className="text-white" size={48} />
                     </div>
                     <h2 className="text-3xl font-black text-white tracking-tighter uppercase mb-2 italic">
-                        Ativos Identificados
+                        Recompensas liberadas
                     </h2>
                     <p className="text-slate-400">
-                        Sua conta foi verificada e novos pacotes de recompensas foram liberados para o seu perfil.
+                        A conta foi validada e há novos itens prontos para levantar no inventário.
                     </p>
                 </div>
 

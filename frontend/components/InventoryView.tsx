@@ -47,8 +47,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatte
                     <Package size={24} />
                 </div>
                 <div>
-                    <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Gerenciamento de Estoque</h2>
-                    <p className="text-sm text-slate-500">Itens armazenados prontos para instalação.</p>
+                    <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Depósito de peças</h2>
+                    <p className="text-sm text-slate-500">Tudo que já comprou e ainda não está em rack ou oficina.</p>
                 </div>
             </div>
 
@@ -56,7 +56,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatte
                 <div className="mb-8">
                     <h3 className="text-sm font-bold text-yellow-600 uppercase tracking-widest mb-3 flex items-center gap-2">
                         <span className="w-2 h-2 rounded-full bg-yellow-600"></span>
-                        Baterias Usadas (Armazenadas)
+                        Baterias fora de rack (carga preservada)
                     </h3>
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         {Object.entries(storedBatteries.reduce((acc, bat) => {

@@ -63,11 +63,11 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
     if (!isNaN(val) && val >= minW && val > 0 && val <= bal && enabled) {
       const fee = matching?.feePercent ? (val * (matching.feePercent / 100)) : 0;
       const net = val - fee;
-      const msg = `Confirmar solicitação de saque?\n\n` +
-        `Valor Bruto: ${formatAmount(val)} ${coin?.symbol}\n` +
+      const msg = `Confirmar pedido de levantamento?\n\n` +
+        `Valor bruto: ${formatAmount(val)} ${coin?.symbol}\n` +
         `Taxa (${matching?.feePercent || 0}%): -${formatAmount(fee)} ${coin?.symbol}\n` +
-        `Líquido a Receber: ${formatAmount(net)} ${coin?.symbol}\n\n` +
-        `O saque será analisado e confirmado em sua carteira em ATÉ 24 HORAS.`;
+        `Líquido estimado: ${formatAmount(net)} ${coin?.symbol}\n\n` +
+        `O processamento pode levar até 24 horas na sua carteira conectada.`;
 
       if (confirm(msg)) {
         onWithdrawCoin(selectedCoinId, val);
@@ -83,20 +83,26 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-4 shadow-lg flex flex-col gap-4 transition-colors">
       <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2 mb-2">
         <CreditCard size={18} className="text-orange-500 dark:text-orange-400" />
-        <h3 className="text-slate-800 dark:text-slate-300 font-bold">Depósitos</h3>
+        <h3 className="text-slate-800 dark:text-slate-300 font-bold">Entradas em USDC</h3>
       </div>
       {depositStatus && (
-        <div className="mt-3 p-3 rounded border text-center \
-        ${depositStatus==='awaiting' ? 'bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-400' : ''} \
-        ${depositStatus==='success' ? 'bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400' : ''} \
-        ${depositStatus==='cancelled' ? 'bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400' : ''} \
-        ${depositStatus==='failed' ? 'bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-400' : ''}">
+        <div
+          className={
+            depositStatus === 'awaiting'
+              ? 'mt-3 p-3 rounded border text-center bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-400'
+              : depositStatus === 'success'
+                ? 'mt-3 p-3 rounded border text-center bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400'
+                : depositStatus === 'cancelled'
+                  ? 'mt-3 p-3 rounded border text-center bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400'
+                  : 'mt-3 p-3 rounded border text-center bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-400'
+          }
+        >
           {depositStatus === 'awaiting' && (
-            <div className="text-[12px]">Aguardando confirmação de depósito{typeof depositAmount === 'number' ? ` de ${depositAmount} USDC` : ''} na carteira.</div>
+            <div className="text-[12px]">Aguardando confirmação na rede{typeof depositAmount === 'number' ? ` (${depositAmount} USDC)` : ''}.</div>
           )}
           {depositStatus === 'success' && (
             <div className="flex flex-col items-center gap-2">
-              <div className="text-[12px] font-bold">Depósito confirmado</div>
+              <div className="text-[12px] font-bold">Entrada confirmada</div>
               <button onClick={onCloseDepositStatus} className="text-[12px] bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded">Fechar</button>
             </div>
           )}
@@ -118,7 +124,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
       <div className="bg-slate-50 dark:bg-slate-950/50 p-3 rounded border border-slate-200 dark:border-slate-800">
         <div className="mb-4">
           <div className="flex items-center gap-2 mb-2">
-            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">SELECIONAR REDE DE DEPÓSITO</span>
+            <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Rede da entrada</span>
           </div>
           <div className="grid grid-cols-3 gap-2">
             {[
@@ -160,21 +166,21 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
             disabled={!hasWallet || !usdcAmount || parseFloat(usdcAmount) < (typeof minDepositUsdc === 'number' ? minDepositUsdc : 0.001)}
             className="bg-green-100 dark:bg-green-900/30 hover:bg-green-200 dark:hover:bg-green-900/50 border border-green-300 dark:border-green-800 text-green-700 dark:text-green-400 text-xs font-bold px-4 rounded transition-colors"
           >
-            DEPOSITAR
+            ENVIAR USDC
           </button>
         </div>
         {!hasWallet && (
-          <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Conecte uma carteira no Perfil para depositar.</p>
+          <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Conecte uma carteira no perfil para creditar USDC.</p>
         )}
         <p className="text-[10px] text-slate-500 dark:text-slate-600 mt-2 italic flex items-center gap-2">
-          <Shield size={10} className="text-green-500" /> Depósito automático via Smart Contract.
+          <Shield size={10} className="text-green-500" /> Liquidação automática via contrato inteligente.
         </p>
       </div>
 
       <div className="bg-slate-50 dark:bg-slate-950/50 p-3 rounded border border-slate-200 dark:border-slate-800">
         <div className="flex justify-between items-center mb-2">
           <span className="text-xs text-amber-600 dark:text-amber-500 font-bold flex items-center gap-1">
-            <Upload size={12} /> SACAR CRIPTOMOEDA
+            <Upload size={12} /> Levantar cripto minerada
           </span>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 items-center">
@@ -188,7 +194,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
             ))}
           </select>
           <div className="text-[12px] text-slate-500 dark:text-slate-400 font-mono">
-            Saldo: {formatAmount(coinBalances[selectedCoinId] || 0)}
+            Saldo on-chain: {formatAmount(coinBalances[selectedCoinId] || 0)}
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono flex items-center gap-1 justify-end">
             <TrendingUp size={10} /> {formatAmount(coinRates[selectedCoinId] || 0)}/s
@@ -288,7 +294,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
             }
             className="bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs font-bold px-4 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-9"
           >
-            SACAR
+            LEVANTAR
           </button>
 
         </div>
@@ -299,24 +305,24 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
           const hasValidContract = /^0x[a-fA-F0-9]{40}$/.test(t.contract || '');
           return isNameMatch && (isNative || hasValidContract);
         }) && (
-            <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Saque indisponível para este token.</p>
+            <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Levantamento indisponível para este par.</p>
           )}
         <p className="text-[10px] text-slate-500 dark:text-slate-600 mt-2 italic flex items-center gap-1">
-          <HardDrive size={10} /> Os fundos serão removidos do saldo da criptomoeda selecionada.
+          <HardDrive size={10} /> O valor sai do saldo minerado do ativo selecionado.
         </p>
         {!hasWallet && (
-          <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Conecte uma carteira Polygon no Perfil para sacar.</p>
+          <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Conecte uma carteira Polygon no perfil para levantar.</p>
         )}
       </div>
 
       <div className="bg-slate-50 dark:bg-slate-950/50 p-3 rounded border border-slate-200 dark:border-slate-800">
         <div className="flex items-center gap-2 mb-2">
           <Coins size={12} className="text-orange-600 dark:text-orange-400" />
-          <span className="text-xs text-slate-700 dark:text-slate-300 font-bold">CRIPTOMOEDAS EM MINERAÇÃO</span>
+          <span className="text-xs text-slate-700 dark:text-slate-300 font-bold">Ativos em mineração</span>
         </div>
         <div className="space-y-1">
           {miningCoins.length === 0 ? (
-            <div className="text-[12px] text-slate-500">Nenhuma moeda configurada.</div>
+            <div className="text-[12px] text-slate-500">Nenhum par ativo no momento.</div>
           ) : miningCoins.map(c => (
             <div key={c.id} className="flex items-center justify-between text-[12px] font-mono">
               <span className="text-slate-600 dark:text-slate-300">{c.name}</span>

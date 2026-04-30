@@ -81,17 +81,17 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
             </style>
             <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-4">
                 <h3 className="text-slate-700 dark:text-slate-300 font-bold flex items-center gap-2">
-                    <Wrench size={18} /> OFICINA
+                    <Wrench size={18} /> Oficina Genesis
                 </h3>
                 <div className="flex items-center gap-3">
                     <button
                         onClick={() => setShowHistory(true)}
                         className="text-xs flex items-center gap-1 bg-slate-200 dark:bg-slate-800 hover:bg-slate-300 dark:hover:bg-slate-700 px-2 py-1 rounded text-slate-600 dark:text-slate-400 transition-colors"
                     >
-                        <History size={14} /> Histórico
+                        <History size={14} /> Log de carga
                     </button>
                     <div className="text-xs text-slate-500 font-mono">
-                        6 Slots Disponíveis
+                        6 bancadas ativas
                     </div>
                 </div>
             </div>
@@ -111,7 +111,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                         onClick={() => { if (canUnequip) onUnequip(idx); }}
                                         disabled={!canUnequip}
                                         className={`absolute top-2 right-2 p-1 text-white opacity-0 group-hover:opacity-100 transition-all z-40 bg-black/60 rounded-full ${canUnequip ? 'hover:bg-red-600' : 'cursor-not-allowed opacity-40'}`}
-                                        title="Remover Estrutura"
+                                        title="Remover estrutura"
                                     >
                                         <X size={18} />
                                     </button>
@@ -135,10 +135,10 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                         key={i}
                                                                         className="absolute z-30 flex flex-col items-center justify-center bg-red-600/90 text-white rounded px-1 animate-pulse shadow-lg border border-red-400 overflow-hidden"
                                                                         style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
-                                                                        title="Fiação Necessária para carregar!"
+                                                                        title="Instale a fiação para liberar a carga"
                                                                     >
                                                                         <AlertTriangle size={slot.w > 15 ? 14 : 10} />
-                                                                        {slot.w > 25 && <span className="text-[6px] font-bold uppercase">Sem Fiação</span>}
+                                                                        {slot.w > 25 && <span className="text-[6px] font-bold uppercase">Sem fiação</span>}
                                                                     </div>
                                                                 );
                                                             }
@@ -468,7 +468,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                             {availableItems.length === 0 ? (
                                 <div className="text-center py-8 text-slate-500 bg-slate-50 dark:bg-slate-800 border border-dashed border-slate-300 dark:border-slate-700 rounded-lg">
                                     <p>Nenhuma estrutura de oficina no estoque.</p>
-                                    <p className="text-xs mt-1">Habilite ou compre itens da categoria "Oficina".</p>
+                                    <p className="text-xs mt-1">Ative ou adquira itens da categoria Oficina no Genesis Supply.</p>
                                 </div>
                             ) : (
                                 <div className="space-y-2">
@@ -519,7 +519,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                             {selectingComponent.type === 'battery' ? (
                                 <div className="space-y-4">
                                     {/* Filtrar baterias que não estão cheias */}
-                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 p-2 rounded">Baterias (Necessitam Carga)</div>
+                                    <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 p-2 rounded">Baterias aguardando carga</div>
                                     {storedBatteries.filter(b => {
                                         const def = upgrades.find(u => u.id === b.itemId);
                                         if (b.currentCharge >= (def?.powerCapacity || 100)) return false;

@@ -438,9 +438,15 @@ const getClientIp = (req) => {
   if (cf && typeof cf === 'string') return cf.split(',')[0].trim();
   const tci = req.headers['true-client-ip'];
   if (tci && typeof tci === 'string') return tci.split(',')[0].trim();
+  // Preferir req.ip: com trust proxy definido, o Express aplica a cadeia correta de XFF
+  // (evita primeiro hop spoofado e alinha com o mesmo IP usado em req.ip em setups com proxy).
+  if (req.ip) {
+    const ip = String(req.ip).trim();
+    if (ip && ip !== '::1' && ip !== '127.0.0.1' && ip !== '::ffff:127.0.0.1') return ip;
+  }
   const forwarded = req.headers['x-forwarded-for'];
   if (forwarded) return String(forwarded).split(',')[0].trim();
-  return req.ip || req.socket.remoteAddress || 'unknown';
+  return req.socket.remoteAddress || 'unknown';
 };
 
 const isIpFromUser = async (ip) => {
@@ -607,7 +613,10 @@ const uploadAd = multer({
     else cb(new Error('Formato de arquivo não permitido'));
   }
 });
-app.set('trust proxy', true);
+// Número de proxies à frente do Node (ex.: 1 = só Nginx; 2 = Cloudflare + Nginx). Evita trust proxy=true,
+// que confia em todos os hops e pode distorcer req.ip. Ajuste TRUST_PROXY_HOPS no .env se o IP real vier errado.
+const trustProxyHops = parseInt(String(process.env.TRUST_PROXY_HOPS ?? '1'), 10);
+app.set('trust proxy', Number.isFinite(trustProxyHops) && trustProxyHops > 0 ? trustProxyHops : 1);
 const desiredPort = parseInt(process.env.API_PORT || process.env.PORT || '3001', 10);
 
 app.use(helmet({
@@ -660,8 +669,9 @@ const parseRateLimit = (raw, fallback, min, max) => {
   if (Number.isNaN(n)) return fallback;
   return Math.min(Math.max(n, min), max);
 };
-// Limites por IP (atrás de Nginx use Cloudflare / limit_req como camada extra). Ajuste via env em picos reais.
-const apiRateLimitMax = parseRateLimit(process.env.API_RATE_LIMIT_MAX, 4000, 200, 100000);
+// Limite global /api por IP. O SPA faz várias chamadas em paralelo a cada 10–15s; IPs partilhados (CGNAT, café,
+// escritório) somam no mesmo bucket — piso baixo (ex.: 200) bloqueava utilizadores “do nada”. Ajuste API_RATE_LIMIT_MAX.
+const apiRateLimitMax = parseRateLimit(process.env.API_RATE_LIMIT_MAX, 20000, 5000, 250000);
 const authRateLimitMax = parseRateLimit(process.env.AUTH_RATE_LIMIT_MAX, 40, 5, 1000);
 
 const limiter = rateLimit({
@@ -675,7 +685,7 @@ const limiter = rateLimit({
     return ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
   },
   message: { error: 'Muitas requisições vindas deste IP, tente novamente mais tarde.' },
-  validate: { trustProxy: false }
+  validate: { trustProxy: true }
 });
 
 const authLimiter = rateLimit({
@@ -689,7 +699,7 @@ const authLimiter = rateLimit({
     return ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
   },
   message: { error: 'Muitas tentativas de login, tente novamente mais tarde.' },
-  validate: { trustProxy: false }
+  validate: { trustProxy: true }
 });
 
 /** Pedidos de link por email (evita abuso / enumeração em massa). */
@@ -704,7 +714,7 @@ const passwordResetRequestLimiter = rateLimit({
     return ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
   },
   message: { error: 'Muitos pedidos de redefinição a partir deste IP. Tente novamente mais tarde.' },
-  validate: { trustProxy: false }
+  validate: { trustProxy: true }
 });
 
 app.use('/api/', limiter);

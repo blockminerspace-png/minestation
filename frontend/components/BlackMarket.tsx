@@ -18,7 +18,7 @@ interface BlackMarketProps {
 }
 
 export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListing, onCreateListing, onCancelListing, upgrades, currentUserName, currentUserEmail, isEnabled = true, onClaimSuccess, refreshTrigger = 0 }) => {
-  if (!upgrades || upgrades.length === 0) return <div className="p-8 text-center text-slate-500 animate-pulse">Carregando mercado...</div>;
+  if (!upgrades || upgrades.length === 0) return <div className="p-8 text-center text-slate-500 animate-pulse">Sincronizando ofertas P2P…</div>;
 
 
 
@@ -131,17 +131,17 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
       <div className="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center relative z-10">
         <div>
           <h2 className="text-xl font-bold text-red-500 flex items-center gap-2 animate-pulse">
-            <Skull size={20} /> MERCADO NEGRO (P2P)
+            <Skull size={20} /> Mercado paralelo (P2P)
           </h2>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest">Conexão Criptografada • Não-Rastreável</p>
+          <p className="text-[10px] text-slate-500 uppercase tracking-widest">Liquidez entre operadores • Itens em custódia até o fechamento</p>
         </div>
 
         <div className="flex gap-2 items-center">
           {(gameState.blackMarketBalance || 0) > 0 && (
             <div className="mr-2 flex items-center gap-2 bg-yellow-900/50 px-3 py-1 rounded border border-yellow-700 animate-in fade-in zoom-in">
-              <span className="text-[10px] text-yellow-500 uppercase font-bold">Saldo:</span>
+              <span className="text-[10px] text-yellow-500 uppercase font-bold">Proventos:</span>
               <span className="text-sm font-mono font-bold text-yellow-400">${formatCost(gameState.blackMarketBalance || 0)}</span>
-              <div className="text-[10px] text-yellow-600">(Resgate no Cofre)</div>
+              <div className="text-[10px] text-yellow-600">(liquidar no cofre)</div>
             </div>
           )}
 
@@ -175,7 +175,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
           <div className="space-y-3">
             {marketListings.length === 0 ? (
               <div className="text-center py-8 text-slate-400 border border-dashed border-slate-800 rounded-lg">
-                Nenhuma oferta disponível no momento.
+                Nenhuma oferta aberta neste instante.
               </div>
             ) : (
               <div className="space-y-2">
@@ -224,7 +224,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                                             ${(!canAfford || isOwn || isReservedForOther || !isEnabled) ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-red-900/50 text-red-400 border border-red-800 hover:bg-red-800'}
                                         `}
                         >
-                          {!isEnabled ? 'DESATIVADO' : 'COMPRAR'}
+                          {!isEnabled ? 'Desk offline' : 'Comprar'}
                         </button>
                       </div>
                     </div>
@@ -243,7 +243,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
           {(gameState.blackMarketBalance || 0) > 0 && (
             <div className="bg-yellow-900/20 border border-yellow-800/50 p-4 rounded-lg flex items-center justify-between">
               <div>
-                <div className="text-yellow-500 font-bold text-sm uppercase mb-1">Saldo de Vendas</div>
+                <div className="text-yellow-500 font-bold text-sm uppercase mb-1">Proventos de vendas</div>
                 <div className="text-2xl font-mono text-yellow-400 font-bold">${formatCost(gameState.blackMarketBalance || 0)}</div>
               </div>
               <button
@@ -255,19 +255,19 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                 }}
                 className="bg-yellow-600 hover:bg-yellow-500 text-black font-bold px-6 py-2 rounded shadow-lg transition-colors border border-yellow-400"
               >
-                RESGATAR SALDO
+                Liquidar proventos
               </button>
             </div>
           )}
 
           <h3 className="text-slate-400 font-bold text-xs uppercase flex items-center gap-2 mt-4">
-            <Lock size={14} /> Itens em Custódia ({custodyListings.length})
+            <Lock size={14} /> Itens em custódia ({custodyListings.length})
           </h3>
 
           {custodyListings.length === 0 ? (
             <div className="text-center py-12 text-slate-600 border border-dashed border-slate-800 rounded-lg">
               <Lock size={48} className="mx-auto mb-4 opacity-20" />
-              Seu cofre está vazio.
+              Nenhum item aguardando retirada no cofre.
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -284,7 +284,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                         {item.name}
                         {(l.qty && l.qty > 1) && <span className="text-xs text-slate-500 ml-2">x{l.qty}</span>}
                       </div>
-                      <div className="text-xs text-slate-500">Comprado por: ${formatCost(l.price)}</div>
+                      <div className="text-xs text-slate-500">Valor pago: ${formatCost(l.price)}</div>
                     </div>
                     <button
                       onClick={async () => {
@@ -297,7 +297,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                       }}
                       className="bg-amber-900/50 hover:bg-amber-800 border border-amber-700 text-amber-300 text-xs px-3 py-1.5 rounded font-bold transition-colors"
                     >
-                      RESGATAR
+                      Resgatar item
                     </button>
                   </div>
                 )
@@ -314,19 +314,19 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
           {/* Sell Form */}
           <div className="bg-slate-950 p-4 rounded-xl border border-slate-800">
             <h3 className="text-slate-300 font-bold mb-4 flex items-center gap-2 text-sm border-b border-slate-800 pb-2">
-              <PlusCircle size={16} className="text-red-500" /> CRIAR NOVA OFERTA
+              <PlusCircle size={16} className="text-red-500" /> Nova oferta P2P
             </h3>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="space-y-1">
-                <label className="text-[10px] text-slate-500 uppercase font-bold">Item do Estoque</label>
+                <label className="text-[10px] text-slate-500 uppercase font-bold">Peça no estoque</label>
                 <div className="relative">
                   <select
                     value={sellItemId}
                     onChange={(e) => setSellItemId(e.target.value)}
                     className="w-full bg-slate-900 border border-slate-700 rounded p-2 pl-9 text-slate-200 text-sm outline-none focus:border-red-500 appearance-none"
                   >
-                    {sellableItems.length === 0 && <option value="">Estoque Vazio</option>}
+                    {sellableItems.length === 0 && <option value="">Sem itens negociáveis</option>}
                     {sellableItems.map(u => (
                       <option key={u.id} value={u.id}>{u.name} (x{gameState.stock[u.id]})</option>
                     ))}
@@ -377,9 +377,9 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
 
             {selectedSellItem && (
               <div className="mt-3 flex justify-between items-center text-xs text-slate-500 bg-slate-900/50 p-2 rounded">
-                <span>Preço de Mercado (Loja): <span className="text-green-500 font-mono">${formatCost(marketPrice)}</span></span>
+                <span>Referência Genesis Supply: <span className="text-green-500 font-mono">${formatCost(marketPrice)}</span></span>
                 <span>
-                  Seu Preço:
+                  Seu preço:
                   <span className={`font-mono font-bold ${(() => { const p = parseFloat(sellPrice); return isNaN(p) ? '' : (p >= marketPrice ? 'text-red-500' : 'text-green-500'); })()}`}>
                     ${sellPrice ? formatCost(parseFloat(sellPrice)) : '0.00'}
                   </span>
@@ -389,7 +389,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
 
             {selectedSellItem && (
               <div className="mt-2 text-[10px] text-slate-400">
-                Sugestão: 5% abaixo do mercado. Limite: ±20% da última oferta deste item, ou ±20% do preço de mercado se não houver oferta anterior.
+                Dica: preços muito acima do book demoram a fechar. Limite: ±20% da última oferta deste item ou ±20% da referência oficial se não houver histórico.
               </div>
             )}
 
@@ -398,22 +398,22 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
               disabled={publishDisabled || !isEnabled}
               className="w-full mt-4 bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold py-2 rounded transition-colors text-sm flex items-center justify-center gap-2"
             >
-              {!isEnabled ? 'MERCADO DESATIVADO' : 'PUBLICAR OFERTA'} <ArrowRight size={16} />
+              {!isEnabled ? 'Desk offline' : 'Publicar oferta'} <ArrowRight size={16} />
             </button>
           </div>
 
           {/* Active Player Listings (Custody) */}
           <div className="flex-1 overflow-y-auto bg-slate-950/30 p-3 rounded-lg border border-slate-800/50">
             <h3 className="text-slate-300 font-bold mb-1 flex items-center gap-2 text-xs uppercase tracking-wider">
-              <Tag size={14} className="text-green-500" /> Minhas Ofertas Ativas
+              <Tag size={14} className="text-green-500" /> Suas ofertas ativas
             </h3>
             <p className="text-[10px] text-slate-500 mb-4 flex items-center gap-1">
-              <ShieldCheck size={10} /> Seus itens ficam seguros no cofre do mercado até a venda.
+              <ShieldCheck size={10} /> Itens ficam bloqueados no cofre até vender ou cancelar.
             </p>
 
             {gameState.playerListings.length === 0 ? (
               <div className="text-center py-8 text-slate-600 border border-dashed border-slate-800 rounded-lg">
-                Nenhuma oferta ativa no momento.
+                Nenhuma linha ativa no book.
               </div>
             ) : (
               <div className="space-y-2">
@@ -454,7 +454,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
         confirmListing && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 w-full max-w-md shadow-2xl">
-              <h3 className="text-red-500 font-bold text-sm mb-3">Confirmar Compra</h3>
+              <h3 className="text-red-500 font-bold text-sm mb-3">Fechar negócio</h3>
               {(() => {
                 const item = upgrades.find(u => u.id === confirmListing.itemId);
                 const canAfford = gameState.usdc >= confirmListing.price;
@@ -477,11 +477,11 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                       <span className={`font-mono ${canAfford ? 'text-green-400' : 'text-red-500'}`}>${formatCost(confirmListing.price)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-slate-400">Saldo atual</span>
+                      <span className="text-slate-400">Reserva USDC</span>
                       <span className="font-mono text-slate-300">${formatCost(gameState.usdc)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
-                      <span className="text-slate-400">Saldo após compra</span>
+                      <span className="text-slate-400">Reserva após compra</span>
                       <span className={`font-mono ${canAfford ? 'text-slate-300' : 'text-red-500'}`}>${formatCost(gameState.usdc - confirmListing.price)}</span>
                     </div>
                     <div className="flex gap-2 pt-2">
@@ -503,8 +503,8 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                           const list = await getMarketListings();
                           setMarketListings(list);
                         } else {
-                          if (res.error === 'Insufficient USDC') alert(`Saldo insuficiente. Faltam $${res.missing?.toFixed(2) || '0.00'}`);
-                          else alert(res.error || 'Erro ao comprar item.');
+                          if (res.error === 'Insufficient USDC') alert(`USDC insuficiente. Déficit: $${res.missing?.toFixed(2) || '0.00'}`);
+                          else alert(res.error || 'Não foi possível concluir a compra.');
                         }
                       }} disabled={gameState.usdc < confirmListing.price} className="flex-1 px-3 py-2 text-xs font-bold uppercase rounded border bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white border-red-700">
                         Confirmar

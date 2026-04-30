@@ -224,10 +224,10 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                 <div className="p-8">
                     <div className="text-center mb-8">
                         <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-2">
-                            {activeTab === 'register' ? 'Criar Identidade' : activeTab === 'special' ? 'Acesso Premium' : activeTab === 'recovery' ? 'Recuperação de Acesso' : 'Acesso ao Sistema'}
+                            {activeTab === 'register' ? 'Criar conta' : activeTab === 'special' ? 'Planos premium' : activeTab === 'recovery' ? 'Recuperar senha' : 'Entrar'}
                         </h2>
                         <p className="text-slate-500 text-sm">
-                            {activeTab === 'register' ? 'Junte-se à rede de mineração global.' : activeTab === 'special' ? 'Adquira níveis exclusivos via Web3.' : activeTab === 'recovery' ? 'Receba um link seguro no email para criar uma nova senha.' : 'Entre com suas credenciais criptografadas.'}
+                            {activeTab === 'register' ? 'Abra a sua conta e comece a montar a operação na Polygon.' : activeTab === 'special' ? 'Desbloqueie níveis pagos com USDC na simulação Web3.' : activeTab === 'recovery' ? 'Receba um link seguro no email para criar uma nova senha.' : 'Use email e senha para voltar ao painel.'}
                         </p>
                     </div>
 
