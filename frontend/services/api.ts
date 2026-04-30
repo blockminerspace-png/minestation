@@ -9,16 +9,6 @@ async function apiFetch(url: string, options: RequestInit = {}) {
   });
 }
 
-export async function checkBackendHealth(): Promise<boolean> {
-  try {
-    // Uses a lightweight endpoint (system/time) to verify connectivity
-    const res = await fetch(`${base}/system/time`, { method: 'GET' });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
 export async function getUpgrades(): Promise<Upgrade[]> {
   try {
     const res = await apiFetch(`${base}/upgrades`);

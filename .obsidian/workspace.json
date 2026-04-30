@@ -179,17 +179,18 @@
   },
   "active": "c175800055f830de",
   "lastOpenFiles": [
-    "README.md",
-    "backend/tmp_import_json.js",
-    "tmp_import_json.js",
-    "hojeatual_2026-04-29T18-49-06-312Z.sql",
+    "frontend/dist/assets/lucide-BOXqCtZG.js",
     "frontend/dist/index.html",
-    "frontend/dist/assets/vendor-wGySg1uH.js",
-    "frontend/dist/assets/lucide-0SgFktUI.js",
-    "frontend/dist/assets/index-zRRcmARt.js",
-    "frontend/dist/assets/index-D96mRrpb.css",
+    "frontend/dist/assets/vendor-CiAXMcwn.js",
+    "frontend/dist/assets/index-KgHI-tJO.js",
+    "frontend/dist/assets/index-DsvYNZal.css",
     "frontend/dist/assets",
-    "frontend/vite.config.ts.timestamp-1777488306801-25dfb5ccc878a8.mjs",
+    "frontend/dist/maintenance.html",
+    "frontend/vite.config.ts.timestamp-1777556971592-67bb3dfac536c8.mjs",
+    "frontend/public/maintenance.html",
+    "frontend/dist/assets/index-B0t65shp.js",
+    "frontend/dist/assets/index-D96mRrpb.css",
+    "README.md",
     "frontend/dist/img/items/whale.png",
     "frontend/node_modules/@rollup/rollup-linux-x64-musl/README.md",
     "frontend/node_modules/@rollup/rollup-linux-x64-gnu/README.md",
@@ -214,7 +215,6 @@
     "frontend/node_modules/postcss-value-parser/README.md",
     "frontend/node_modules/fastq/README.md",
     "frontend/node_modules/chokidar/README.md",
-    "frontend/node_modules/reusify/SECURITY.md",
-    "frontend/node_modules/es-errors/README.md"
+    "frontend/node_modules/reusify/SECURITY.md"
   ]
 }

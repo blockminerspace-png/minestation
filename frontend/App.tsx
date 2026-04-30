@@ -33,8 +33,7 @@ import {
   setUpgrades as apiSetUpgrades,
   setAccessLevels as apiSetAccessLevels,
   setLootBoxes as apiSetLootBoxes,
-  logout as apiLogout,
-  checkBackendHealth
+  logout as apiLogout
 } from './services/api';
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId } from './types';
 import { UpgradeShop } from './components/UpgradeShop';
@@ -201,19 +200,6 @@ export default function App() {
   const [timeOffset, setTimeOffset] = useState<number>(0);
   const [web3SettingsState, setWeb3SettingsState] = useState<Web3Settings | null>(null);
   const [monetizationSettings, setMonetizationSettings] = useState<MonetizationSettings | null>(null);
-
-  // Offline Detection & Redirect
-  useEffect(() => {
-    const runHealthCheck = async () => {
-      const isOnline = await checkBackendHealth();
-      if (!isOnline) {
-        window.location.href = '/maintenance.html';
-      }
-    };
-    runHealthCheck();
-    const interval = setInterval(runHealthCheck, 30000); // Check every 30s
-    return () => clearInterval(interval);
-  }, []);
 
   // Game State
   const [gameState, setGameState] = useState<GameState>(INITIAL_STATE);
