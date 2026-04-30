@@ -247,7 +247,16 @@ export async function toggleUserBlocked(email: string, blocked: boolean): Promis
 export async function updateUser(user: User & { newReferralFor?: string }): Promise<{ ok: boolean; error?: string; code?: string; accounts?: any[] }> {
   try {
     const res = await apiFetch(`${base}/user`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(user) });
-    return await res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: (data as { error?: string }).error || `Erro ${res.status}`,
+        code: (data as { code?: string }).code,
+        accounts: (data as { accounts?: any[] }).accounts
+      };
+    }
+    return { ok: true, ...(typeof data === 'object' && data ? data : {}) } as { ok: boolean; error?: string; code?: string; accounts?: any[] };
   } catch {
     return { ok: false, error: 'Network error' };
   }

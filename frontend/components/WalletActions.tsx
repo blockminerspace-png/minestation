@@ -12,7 +12,7 @@ interface WalletActionsProps {
   withdrawTokens?: Array<{ name: string; contract: string; minAmount?: number; minWithdrawalUsdc?: number; feePercent?: number }>;
 
   prefillAmount?: number;
-  depositStatus?: 'awaiting' | 'success' | 'cancelled' | 'failed';
+  depositStatus?: 'awaiting' | 'success' | 'queued' | 'cancelled' | 'failed';
   depositAmount?: number;
   onCloseDepositStatus?: () => void;
   minDepositUsdc?: number;
@@ -92,9 +92,11 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
               ? 'mt-3 p-3 rounded border text-center bg-yellow-50 border-yellow-200 text-yellow-700 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-400'
               : depositStatus === 'success'
                 ? 'mt-3 p-3 rounded border text-center bg-green-50 border-green-200 text-green-700 dark:bg-green-900/20 dark:border-green-800 dark:text-green-400'
-                : depositStatus === 'cancelled'
-                  ? 'mt-3 p-3 rounded border text-center bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400'
-                  : 'mt-3 p-3 rounded border text-center bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-400'
+                : depositStatus === 'queued'
+                  ? 'mt-3 p-3 rounded border text-center bg-sky-50 border-sky-200 text-sky-800 dark:bg-sky-900/20 dark:border-sky-800 dark:text-sky-300'
+                  : depositStatus === 'cancelled'
+                    ? 'mt-3 p-3 rounded border text-center bg-red-50 border-red-200 text-red-700 dark:bg-red-900/20 dark:border-red-800 dark:text-red-400'
+                    : 'mt-3 p-3 rounded border text-center bg-orange-50 border-orange-200 text-orange-700 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-400'
           }
         >
           {depositStatus === 'awaiting' && (
@@ -104,6 +106,13 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
             <div className="flex flex-col items-center gap-2">
               <div className="text-[12px] font-bold">Entrada confirmada</div>
               <button onClick={onCloseDepositStatus} className="text-[12px] bg-green-600 hover:bg-green-500 text-white px-3 py-1 rounded">Fechar</button>
+            </div>
+          )}
+          {depositStatus === 'queued' && (
+            <div className="flex flex-col items-center gap-2">
+              <div className="text-[12px] font-bold">Confirmação na fila do servidor</div>
+              <div className="text-[11px] opacity-90">Os USDC serão creditados após a rede confirmar — pode fechar o site. Atualize o saldo mais tarde ou reabra a carteira.</div>
+              <button onClick={onCloseDepositStatus} className="text-[12px] bg-sky-700 hover:bg-sky-600 text-white px-3 py-1 rounded">Entendi</button>
             </div>
           )}
           {depositStatus === 'cancelled' && (

@@ -229,6 +229,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                         <p className="text-slate-500 text-sm">
                             {activeTab === 'register' ? 'Abra a sua conta e comece a montar a operação na Polygon.' : activeTab === 'special' ? 'Desbloqueie níveis pagos com USDC na simulação Web3.' : activeTab === 'recovery' ? 'Receba um link seguro no email para criar uma nova senha.' : 'Use email e senha para voltar ao painel.'}
                         </p>
+                        {(activeTab === 'register' || activeTab === 'special') && (
+                            <p className="text-slate-500 text-xs mt-2 leading-relaxed">
+                                Novos cadastros: Gmail, Outlook, Yahoo, Hotmail, Live, Mail.ru ou Web.de. E-mails temporários não são aceites.
+                            </p>
+                        )}
                     </div>
 
                     {/* TABS (Hidden in recovery mode to focus) */}

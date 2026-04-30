@@ -115,7 +115,9 @@ export const AdminBackup: React.FC = () => {
             const resp = await fetch('/api/admin/backups');
             if (resp.ok) {
                 const data = await resp.json();
-                setBackups(data);
+                setBackups(Array.isArray(data) ? data : []);
+            } else {
+                setBackups([]);
             }
         } catch (e) {
             console.error('Erro ao carregar backups:', e);
@@ -250,8 +252,8 @@ export const AdminBackup: React.FC = () => {
                 <div className="flex gap-2">
                     <label className={`cursor-pointer bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm transition-all flex items-center gap-2 ${actionLoading === 'upload' ? 'opacity-50 pointer-events-none' : ''}`}>
                         {actionLoading === 'upload' ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} className="rotate-180" />}
-                        Subir Backup (.db)
-                        <input type="file" onChange={handleUpload} className="hidden" accept=".db,.sqlite,.back" />
+                        Subir backup (.json / .db / …)
+                        <input type="file" onChange={handleUpload} className="hidden" accept=".db,.sqlite,.back,.json,.sql,.gz" />
                     </label>
                 </div>
             </div>

@@ -58,9 +58,9 @@ import { RewardLoadingScreen } from './components/RewardLoadingScreen';
 import { AdminRanking } from './components/AdminRanking';
 import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy } from 'lucide-react';
 
-const DiscordIcon = ({ size = 18 }: { size?: number }) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size}>
-    <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z" />
+const TelegramIcon = ({ size = 18 }: { size?: number }) => (
+  <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} aria-hidden>
+    <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 1 0 24 0 12 12 0 0 0-12-12zm4.962 7.224c.1-.422.436-.698.795-.652l2.318.327c.36 0 .65.268.65.588 0 .12-.025.24-.065.358l-3.738 13.45c-.23.824-.704 1.03-1.38.644l-3.84-2.83-1.854 1.78c-.204.205-.376.376-.77.376-.244 0-.49-.11-.642-.355l-1.314-2.01-3.68-2.84c-.66-.54-.53-.978.11-1.46l14.378-8.284z" />
   </svg>
 );
 
@@ -457,27 +457,20 @@ export default function App() {
   }, [user]);
 
   useEffect(() => {
-    // Only trigger if user is logged in, NOT admin, AND save is loaded (so we have offline stats)
-    if (user && !user.isAdmin && saveLoaded && !hasShownIntro.current) {
+    // Terminal intro first: do not wait for save (avoids flashing the game shell before the overlay).
+    if (user && !user.isAdmin && !hasShownIntro.current) {
       hasShownIntro.current = true;
-
-      // Determine what to show in the "CMD" modal
-      // If new registration, show Welcome Package
-      // If returning user, show generic "System Online" or check for pending rewards (simulated)
 
       const rewardsToShow = [];
       if ((user as any).isNewRegistration) {
         rewardsToShow.push({ id: 'reg_bonus', name: 'Pacote de Boas-vindas', count: 1 });
-        // If referred, show referral bonus
         if (user.referredBy) rewardsToShow.push({ id: 'ref_bonus', name: 'Prêmio de Indicado', count: 1 });
-      } else {
-        // Returning user
       }
 
       setPendingRewardSummary(rewardsToShow);
       setShowRewardModal(true);
     }
-  }, [user, saveLoaded]);
+  }, [user]);
 
   // Recalculate Production Rate
   useEffect(() => {
@@ -915,7 +908,7 @@ export default function App() {
     }
   }, [getWeb3Settings, user]);
 
-  const [depositFlow, setDepositFlow] = useState<{ pending: boolean; status?: 'awaiting' | 'success' | 'cancelled' | 'failed'; amount?: number; txHash?: string }>({ pending: false });
+  const [depositFlow, setDepositFlow] = useState<{ pending: boolean; status?: 'awaiting' | 'success' | 'queued' | 'cancelled' | 'failed'; amount?: number; txHash?: string }>({ pending: false });
   const handleStartDeposit = useCallback(async (amt: number, network: string = 'polygon') => {
     const minDep = web3SettingsState?.minDepositUsdc ?? 0.001;
     if (!amt || amt < minDep || !user?.polygonWallet || !user?.email) return;
@@ -943,6 +936,9 @@ export default function App() {
         if (verifyData.ok) {
           setGameState(p => ({ ...p, usdc: verifyData.newUsdc }));
           setDepositFlow({ pending: false, status: 'success', amount: amt, txHash: res.tx });
+        } else if (verifyData.pending) {
+          setDepositFlow({ pending: false, status: 'queued', amount: amt, txHash: res.tx });
+          alert(verifyData.message || 'Transação enviada. Os USDC serão creditados quando a rede confirmar — pode fechar a página.');
         } else {
           setDepositFlow({ pending: false, status: 'failed', amount: amt, txHash: res.tx });
           console.error('[DepositVerify] Failed:', verifyData.error);
@@ -1835,16 +1831,6 @@ export default function App() {
 
   return (
     <div className="h-screen flex flex-col bg-slate-50 dark:bg-[#0f0c08] text-slate-800 dark:text-slate-200 font-sans selection:bg-amber-500/30 overflow-hidden transition-colors duration-300">
-      {showRewardModal && (
-        <RewardLoadingScreen
-          rewards={pendingRewardSummary}
-          onComplete={() => {
-            setShowRewardModal(false);
-            setCurrentView('lucky_store');
-          }}
-        />
-      )}
-
       {/* GLOBAL NAVIGATION HEADER */}
       <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-amber-900/30 shrink-0 backdrop-blur-md z-50 shadow-sm transition-colors duration-300">
         <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -1940,7 +1926,7 @@ export default function App() {
             )}
             <div className="hidden md:flex items-center gap-2">
               <button onClick={() => setGlobalView('home')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'home' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Início (landing)"><Home size={18} /></button>
-              <a href="https://discord.gg/pAx52fTZpR" target="_blank" rel="noopener noreferrer" className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-[#5865F2] transition" title="Discord"><DiscordIcon size={18} /></a>
+              <a href="https://t.me/+Fm72joLwb-tjYTZh" target="_blank" rel="noopener noreferrer" className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-[#229ED9] transition" title="Telegram — Genesis Miner"><TelegramIcon size={18} /></a>
               <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); }} className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-yellow-500 transition" title="Ranking de mineradores"><Trophy size={18} /></button>
               <button onClick={() => setGlobalView('docs')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'docs' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Documentação"><BookOpen size={18} /></button>
               {user && (globalView === 'home' || globalView === 'docs') && !user.isAdmin && (
@@ -1982,7 +1968,7 @@ export default function App() {
             <div className="w-full md:hidden">
               <div className="w-full grid grid-cols-1 gap-2">
                 <button onClick={() => { setGlobalView('home'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'home' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Home size={16} /> Início</button>
-                <a href="https://discord.gg/pAx52fTZpR" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-[#5865F2] hover:bg-slate-100 dark:hover:bg-slate-800 transition"><DiscordIcon size={16} /> Discord</a>
+                <a href="https://t.me/+Fm72joLwb-tjYTZh" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-[#229ED9] hover:bg-slate-100 dark:hover:bg-slate-800 transition"><TelegramIcon size={16} /> Telegram</a>
                 <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); setMobileMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-yellow-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><Trophy size={16} /> Ranking</button>
                 <button onClick={() => { setGlobalView('docs'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'docs' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><BookOpen size={16} /> Docs</button>
                 {user && (globalView === 'home' || globalView === 'docs') && !user.isAdmin && (

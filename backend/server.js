@@ -1999,7 +1999,49 @@ const generateReferralCode = (username) => {
   return `${base}-${rand}_${num}`;
 };
 
-const getUserIdByEmail = async (email, ip = null) => {
+/** Domínios permitidos para novo cadastro público (contas antigas não são alteradas). */
+const SIGNUP_EMAIL_ALLOWLIST = new Set([
+  'gmail.com', 'googlemail.com',
+  'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+  'yahoo.com', 'yahoo.com.br', 'yahoo.co.uk', 'yahoo.fr', 'yahoo.de', 'yahoo.es', 'yahoo.it', 'yahoo.ca', 'yahoo.com.ar',
+  'ymail.com', 'rocketmail.com',
+  'mail.ru', 'inbox.ru', 'bk.ru', 'list.ru',
+  'web.de'
+]);
+
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'mailinator.com', 'guerrillamail.com', 'guerrillamailblock.com', 'sharklasers.com', 'yopmail.com', 'yopmail.fr',
+  'tempmail.com', 'temp-mail.org', 'throwaway.email', 'trashmail.com', '10minutemail.com', '10minutemail.net',
+  'fakeinbox.com', 'getnada.com', 'maildrop.cc', 'dispostable.com', 'emailondeck.com', 'burnermail.io',
+  'moakt.com', 'tmpmail.org', 'mailcatch.com', 'spam4.me', 'grr.la', 'mailnesia.com', 'trashmail.de',
+  'discard.email', 'discardmail.com', 'wegwerfmail.de', 'trashmail.ws', 'armyspy.com', 'cuvox.de', 'dayrep.com',
+  'einrot.com', 'fleckens.hu', 'gustr.com', 'jourrapide.com', 'rhyta.com', 'superrito.com', 'teleworm.us'
+]);
+
+const assertPublicSignupEmailAllowed = (normalizedEmail) => {
+  const at = normalizedEmail.lastIndexOf('@');
+  if (at < 1 || at === normalizedEmail.length - 1) {
+    return { ok: false, error: 'E-mail inválido.' };
+  }
+  const domain = normalizedEmail.slice(at + 1).toLowerCase().trim();
+  if (!domain || domain.includes('..') || domain.startsWith('.') || domain.endsWith('.')) {
+    return { ok: false, error: 'E-mail inválido.' };
+  }
+  if (DISPOSABLE_EMAIL_DOMAINS.has(domain) || domain.endsWith('.yopmail.com')) {
+    return {
+      ok: false,
+      error: 'E-mails temporários ou descartáveis não são aceites. Cadastre-se com Gmail, Outlook, Yahoo, Hotmail, Live, Mail.ru ou Web.de. Suporte: https://t.me/+Fm72joLwb-tjYTZh'
+    };
+  }
+  if (SIGNUP_EMAIL_ALLOWLIST.has(domain)) return { ok: true };
+  return {
+    ok: false,
+    error: 'Cadastro permitido apenas com contas Gmail, Outlook, Yahoo, Hotmail, Live, Mail.ru ou Web.de. E-mails temporários não são aceites. Comunidade: https://t.me/+Fm72joLwb-tjYTZh'
+  };
+};
+
+const getUserIdByEmail = async (email, ip = null, opts = {}) => {
+  const allowAnyDomain = !!opts.allowAnyDomain;
   if (!email) throw new Error('Email is required for getUserIdByEmail');
   const normalizedEmail = email.toLowerCase();
   const rowRes = await db.query('SELECT id, username, referral_code FROM users WHERE email = $1', [normalizedEmail]);
@@ -2028,6 +2070,14 @@ const getUserIdByEmail = async (email, ip = null) => {
     tries++;
   }
   try {
+    if (!allowAnyDomain) {
+      const policy = assertPublicSignupEmailAllowed(normalizedEmail);
+      if (!policy.ok) {
+        const err = new Error(policy.error);
+        err.code = 'EMAIL_POLICY';
+        throw err;
+      }
+    }
     if (ip) {
       const countRes = await db.query('SELECT COUNT(*) FROM users WHERE registration_ip = $1', [ip]);
       if (parseInt(countRes.rows[0].count) >= 3) {
@@ -3052,179 +3102,284 @@ app.post('/api/reward-ad', async (req, res) => {
   }
 });
 
-// --- WEB3 DEPOSIT VERIFICATION ---
-app.post('/api/deposit/verify', async (req, res) => {
-  const { email, txHash, network } = req.body || {};
-  console.log('[DepositVerify] Request received:', { email, txHash, network, userId: req.userId });
+// --- WEB3 DEPOSIT VERIFICATION (RPC + Polygonscan/Bscscan/Basescan + fila app_cache) ---
+const depositExplorerApi = (net) => {
+  const n = (net || 'polygon').toLowerCase();
+  if (n === 'polygon') return 'https://api.polygonscan.com/api';
+  if (n === 'bnb' || n === 'bsc') return 'https://api.bscscan.com/api';
+  if (n === 'base') return 'https://api.basescan.org/api';
+  return null;
+};
 
-  if (!email || !txHash) return res.status(400).json({ error: 'Missing email or transaction hash' });
+async function fetchDepositReceiptRpc(rpcUrl, txHash) {
+  try {
+    const rpcRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_getTransactionReceipt', params: [txHash], id: 1 })
+    });
+    const j = await rpcRes.json();
+    if (j && j.result) return j;
+  } catch (e) {
+    console.warn('[DepositVerify] RPC receipt:', e.message);
+  }
+  return null;
+}
 
-  const uid = req.userId;
-  if (!uid) return res.status(401).json({ error: 'Sessão necessária para verificar depósito.' });
+async function fetchDepositReceiptExplorer(net, txHash) {
+  const apiKey = String(process.env.ETHERSCAN_API_KEY || '').trim();
+  if (!apiKey) return null;
+  const base = depositExplorerApi(net);
+  if (!base) return null;
+  try {
+    const url = `${base}?module=proxy&action=eth_getTransactionReceipt&txhash=${encodeURIComponent(txHash)}&apikey=${encodeURIComponent(apiKey)}`;
+    const r = await fetch(url);
+    const j = await r.json();
+    let result = j.result;
+    if (typeof result === 'string') {
+      try {
+        result = result && result !== 'null' ? JSON.parse(result) : null;
+      } catch {
+        result = null;
+      }
+    }
+    if (!result) return null;
+    return { result };
+  } catch (e) {
+    console.warn('[DepositVerify] Explorer receipt:', e.message);
+    return null;
+  }
+}
 
-  // Prevenir re-processamento do mesmo hash
-  const checkTx = await db.query('SELECT 1 FROM daily_actions WHERE action_key = $1', [`tx_${txHash}`]);
-  if (checkTx.rowCount > 0) {
-    console.warn('[DepositVerify] Transação já processada previously:', txHash);
-    return res.status(400).json({ error: 'Transação já processada' });
+async function fetchDepositReceiptUnified(net, rpcUrl, txHash) {
+  const a = await fetchDepositReceiptRpc(rpcUrl, txHash);
+  if (a && a.result) return a;
+  const b = await fetchDepositReceiptExplorer(net, txHash);
+  if (b && b.result) return b;
+  return a || b;
+}
+
+async function loadDepositSettings() {
+  const keys = [
+    'web3_deposit_wallet', 'web3_deposit_token_contract',
+    'web3_deposit_token_contract_bnb', 'web3_deposit_token_contract_base',
+    'web3_min_deposit_usdc'
+  ];
+  const web3Res = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [keys]);
+  return web3Res.rows.reduce((acc, r) => { acc[r.key] = r.value; return acc; }, {});
+}
+
+function resolveDepositNetwork(settings, network) {
+  const net = (network || 'polygon').toLowerCase();
+  let usdcContract = '';
+  let rpcUrl = '';
+  if (net === 'polygon') {
+    usdcContract = (settings.web3_deposit_token_contract || '').toLowerCase().trim();
+    rpcUrl = process.env.POLYGON_RPC || 'https://polygon-rpc.com';
+  } else if (net === 'bnb' || net === 'bsc') {
+    usdcContract = (settings.web3_deposit_token_contract_bnb || '').toLowerCase().trim();
+    rpcUrl = process.env.BNB_RPC || 'https://bsc-dataseed.binance.org/';
+  } else if (net === 'base') {
+    usdcContract = (settings.web3_deposit_token_contract_base || '').toLowerCase().trim();
+    rpcUrl = process.env.BASE_RPC || 'https://mainnet.base.org';
+  } else {
+    return { error: 'Rede não suportada: ' + net };
+  }
+  const targetWallet = (settings.web3_deposit_wallet || '').toLowerCase().trim();
+  if (!targetWallet || !usdcContract) {
+    return { error: 'Configuração de depósito incompleta no servidor para ' + net };
+  }
+  return { net, targetWallet, usdcContract, rpcUrl };
+}
+
+async function queueDepositPending(txHash, payload) {
+  const key = `deposit_pending:${txHash}`;
+  await db.query(
+    `INSERT INTO app_cache (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = NOW()`,
+    [key, JSON.stringify(payload)]
+  );
+}
+
+/** Credita USDC a partir de um receipt já obtido (idempotente via daily_actions.tx_*). */
+async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) {
+  const resolved = resolveDepositNetwork(settings, net);
+  if (resolved.error) return { ok: false, error: resolved.error };
+  const { targetWallet, usdcContract, rpcUrl } = resolved;
+
+  if (!receipt || !receipt.result) {
+    return { ok: false, pending: true, error: 'receipt_missing' };
   }
 
+  if (receipt.result.status !== '0x1' && receipt.result.status !== 1) {
+    return { ok: false, error: 'Transação falhou na blockchain ' + net };
+  }
+
+  const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
+  const targetTopic2 = targetWallet.replace(/^0x/, '').padStart(64, '0').toLowerCase();
+  const log = (receipt.result.logs || []).find((l) => {
+    const addrMatch = l.address.toLowerCase() === usdcContract;
+    const topicMatch = l.topics && l.topics[0] === transferTopic;
+    const destMatch = l.topics && l.topics[2] && l.topics[2].toLowerCase().includes(targetTopic2);
+    return addrMatch && topicMatch && destMatch;
+  });
+
+  if (!log) {
+    return { ok: false, error: 'Transação inválida: contrato ou destino incorretos na rede ' + net };
+  }
+
+  let decimals = (net === 'bnb' || net === 'bsc') ? 18 : 6;
   try {
-    const keys = [
-      'web3_deposit_wallet', 'web3_deposit_token_contract',
-      'web3_deposit_token_contract_bnb', 'web3_deposit_token_contract_base',
-      'web3_min_deposit_usdc'
-    ];
-    const web3Res = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [keys]);
-    const settings = web3Res.rows.reduce((acc, r) => { acc[r.key] = r.value; return acc; }, {});
-
-    const targetWallet = (settings.web3_deposit_wallet || '').toLowerCase().trim();
-
-    let usdcContract = '';
-    let rpcUrl = '';
-    const net = (network || 'polygon').toLowerCase();
-
-    if (net === 'polygon') {
-      usdcContract = (settings.web3_deposit_token_contract || '').toLowerCase().trim();
-      rpcUrl = process.env.POLYGON_RPC || 'https://polygon-rpc.com';
-    } else if (net === 'bnb' || net === 'bsc') {
-      usdcContract = (settings.web3_deposit_token_contract_bnb || '').toLowerCase().trim();
-      rpcUrl = process.env.BNB_RPC || 'https://bsc-dataseed.binance.org/';
-    } else if (net === 'base') {
-      usdcContract = (settings.web3_deposit_token_contract_base || '').toLowerCase().trim();
-      rpcUrl = process.env.BASE_RPC || 'https://mainnet.base.org';
-    } else {
-      console.error('[DepositVerify] Unsupported network:', net);
-      return res.status(400).json({ error: 'Rede não suportada: ' + net });
-    }
-
-    console.log('[DepositVerify] Config:', { net, targetWallet, usdcContract, rpcUrl });
-
-    if (!targetWallet || !usdcContract) {
-      console.error('[DepositVerify] Configuração incompleta para a rede:', net, { targetWallet, usdcContract });
-      return res.status(500).json({ error: 'Configuração de depósito incompleta no servidor para ' + net });
-    }
-
-    const rpcRes = await fetch(rpcUrl, {
+    const decRes = await fetch(rpcUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         jsonrpc: '2.0',
-        method: 'eth_getTransactionReceipt',
-        params: [txHash],
-        id: 1
+        method: 'eth_call',
+        params: [{ to: usdcContract, data: '0x313ce567' }, 'latest'],
+        id: 2
       })
     });
-
-    const receipt = await rpcRes.json();
-    if (!receipt || !receipt.result) {
-      console.error('[DepositVerify] TX Receipt not found or pending:', receipt);
-      return res.status(400).json({ error: 'Transação não encontrada ou ainda pendente na rede ' + net });
+    const decData = await decRes.json();
+    if (decData && decData.result && decData.result !== '0x') {
+      const parsedDec = parseInt(decData.result, 16);
+      if (!isNaN(parsedDec) && parsedDec > 0 && parsedDec < 36) decimals = parsedDec;
     }
+  } catch (err) {
+    console.warn('[DepositVerify] decimais fallback:', decimals, err.message);
+  }
 
-    if (receipt.result.status !== '0x1' && receipt.result.status !== 1) {
-      console.error('[DepositVerify] TX Failed on chain:', receipt.result.status);
-      return res.status(400).json({ error: 'Transação falhou na blockchain ' + net });
-    }
+  const amountRaw = BigInt(log.data);
+  const amountUsdc = Number(amountRaw) / Math.pow(10, decimals);
+  if (isNaN(amountUsdc)) return { ok: false, error: 'Erro ao calcular o valor do depósito' };
 
-    // Validar logs (Transferência ERC20)
-    const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
-    const targetTopic2 = targetWallet.replace(/^0x/, '').padStart(64, '0').toLowerCase();
+  const minUsdc = settings.web3_min_deposit_usdc ? parseFloat(settings.web3_min_deposit_usdc) : 0;
+  if (amountUsdc < minUsdc) {
+    return { ok: false, error: `Valor depositado (${amountUsdc}) é menor que o mínimo permitido (${minUsdc})` };
+  }
+  if (amountUsdc <= 0) return { ok: false, error: 'Valor zero na transação' };
 
-    console.log('[DepositVerify] Searching logs for targetTopic2:', targetTopic2);
-
-    const log = receipt.result.logs.find(l => {
-      const addrMatch = l.address.toLowerCase() === usdcContract;
-      const topicMatch = l.topics && l.topics[0] === transferTopic;
-      // Topic 2 usually contains the 'to' address
-      const destMatch = l.topics && l.topics[2] && l.topics[2].toLowerCase().includes(targetTopic2);
-      
-      if (addrMatch && topicMatch && !destMatch) {
-         console.log('[DepositVerify] Potential match but dest mismatch:', { logAddr: l.address, topic2: l.topics[2] });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))', [
+      'ms_deposit_credit',
+      String(txHash).toLowerCase()
+    ]);
+    const dup = await client.query('SELECT user_id FROM daily_actions WHERE action_key = $1', [`tx_${txHash}`]);
+    if (dup.rowCount > 0) {
+      const owner = dup.rows[0].user_id;
+      if (Number(owner) !== Number(uid)) {
+        await client.query('ROLLBACK');
+        return { ok: false, error: 'Esta transação já foi utilizada por outra conta.' };
       }
-      
-      return addrMatch && topicMatch && destMatch;
-    });
-
-    if (!log) {
-      console.error('[DepositVerify] Log de transferência válida não encontrado. Logs:', JSON.stringify(receipt.result.logs));
-      return res.status(400).json({ error: 'Transação inválida: contrato ou destino incorretos na rede ' + net });
-    }
-
-    // Decimais Dynamicos via eth_call (fallback por rede)
-    let decimals = (net === 'bnb' || net === 'bsc') ? 18 : 6;
-    try {
-      const decRes = await fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          method: 'eth_call',
-          params: [{ to: usdcContract, data: '0x313ce567' }, 'latest'],
-          id: 2
-        })
-      });
-      const decData = await decRes.json();
-      if (decData && decData.result && decData.result !== '0x') {
-        const parsedDec = parseInt(decData.result, 16);
-        if (!isNaN(parsedDec) && parsedDec > 0 && parsedDec < 36) {
-           decimals = parsedDec;
-        }
-      }
-    } catch (err) {
-      console.warn('[DepositVerify] Falha ao detectar decimais, usando fallback:', decimals, err.message);
-    }
-
-    const amountHex = log.data;
-    const amountRaw = BigInt(amountHex);
-    const amountUsdc = Number(amountRaw) / Math.pow(10, decimals);
-    console.log('[DepositVerify] Amount computed:', amountUsdc, 'Decimals:', decimals);
-
-    if (isNaN(amountUsdc)) {
-      console.error('[DepositVerify] Calculated amount is NaN');
-      return res.status(500).json({ error: 'Erro ao calcular o valor do depósito' });
-    }
-
-    const minUsdc = settings.web3_min_deposit_usdc ? parseFloat(settings.web3_min_deposit_usdc) : 0;
-    if (amountUsdc < minUsdc) {
-      console.warn('[DepositVerify] Valor insuficiente:', { amountUsdc, minUsdc });
-      return res.status(400).json({ error: `Valor depositado (${amountUsdc}) é menor que o mínimo permitido (${minUsdc})` });
-    }
-
-    if (amountUsdc <= 0) {
-      console.error('[DepositVerify] Zero amount in transaction');
-      return res.status(400).json({ error: 'Valor zero na transação' });
-    }
-
-    const client = await db.connect();
-    try {
-      await client.query('BEGIN');
-      const now = Date.now();
-      // FIX: Use COALESCE to prevent NULL + value = NULL bug
-      await client.query(`
-        UPDATE game_states 
-        SET usdc = COALESCE(usdc, 0) + $1, 
-            total_usdc_deposited = COALESCE(total_usdc_deposited, 0) + $1,
-            server_updated_at = $2,
-            last_updated_at = $2
-        WHERE user_id = $3
-      `, [amountUsdc, now, uid]);
-      
-      await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3)', [uid, `tx_${txHash}`, now]);
-      await client.query('COMMIT');
-
-      console.log(`[DepositVerify] Success! Credited ${amountUsdc} USDC to user ${uid}`);
-      const newBalRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-      res.json({ ok: true, amount: amountUsdc, newUsdc: newBalRes.rows[0].usdc });
-    } catch (dbErr) {
       await client.query('ROLLBACK');
-      console.error('[DepositVerify] Database error:', dbErr);
-      throw dbErr;
-    } finally {
-      client.release();
+      const bal = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
+      await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
+      return { ok: true, amount: 0, newUsdc: bal.rows[0]?.usdc, already: true };
+    }
+    const now = Date.now();
+    await client.query(
+      `UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1,
+        total_usdc_deposited = COALESCE(total_usdc_deposited, 0) + $1,
+        server_updated_at = $2, last_updated_at = $2 WHERE user_id = $3`,
+      [amountUsdc, now, uid]
+    );
+    await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3)', [uid, `tx_${txHash}`, now]);
+    await client.query('COMMIT');
+    await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
+    const newBalRes = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
+    return { ok: true, amount: amountUsdc, newUsdc: newBalRes.rows[0].usdc };
+  } catch (dbErr) {
+    await client.query('ROLLBACK');
+    throw dbErr;
+  } finally {
+    client.release();
+  }
+}
+
+async function sweepPendingDepositsOnce() {
+  if (WORKER_ROLE !== 'BACKGROUND' && WORKER_ROLE !== 'ALL') return;
+  try {
+    const rows = await db.query("SELECT key, value FROM app_cache WHERE key LIKE 'deposit_pending:%' LIMIT 40");
+    if (!rows.rowCount) return;
+    const settings = await loadDepositSettings();
+    for (const row of rows.rows) {
+      const txHash = String(row.key).replace(/^deposit_pending:/, '');
+      const meta = row.value && typeof row.value === 'object' ? row.value : (typeof row.value === 'string' ? JSON.parse(row.value) : {});
+      const { userId, network } = meta;
+      if (!userId || !network || !/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
+        await db.query('DELETE FROM app_cache WHERE key = $1', [row.key]);
+        continue;
+      }
+      const resolved = resolveDepositNetwork(settings, network);
+      if (resolved.error) continue;
+      const receipt = await fetchDepositReceiptUnified(network, resolved.rpcUrl, txHash);
+      const r = await tryCreditDepositFromReceipt(userId, txHash, network, settings, receipt);
+      if (r.ok) {
+        console.log('[DepositSweep] OK', txHash, r.amount);
+      } else if (!r.pending) {
+        const age = (Date.now() - (meta.createdAt || 0));
+        if (age > 72 * 3600 * 1000) await db.query('DELETE FROM app_cache WHERE key = $1', [row.key]);
+      }
     }
   } catch (e) {
-    console.error('[DepositVerify] General error:', e);
+    console.error('[DepositSweep]', e.message);
+  }
+}
+
+app.post('/api/deposit/verify', async (req, res) => {
+  const { email, txHash, network } = req.body || {};
+  console.log('[DepositVerify] Request:', { email, txHash, network, userId: req.userId });
+
+  if (!email || !txHash) return res.status(400).json({ error: 'Missing email or transaction hash' });
+  const uid = req.userId;
+  if (!uid) return res.status(401).json({ error: 'Sessão necessária para verificar depósito.' });
+
+  const checkTx = await db.query('SELECT user_id FROM daily_actions WHERE action_key = $1', [`tx_${txHash}`]);
+  if (checkTx.rowCount > 0) {
+    const owner = checkTx.rows[0].user_id;
+    if (Number(owner) !== Number(uid)) {
+      return res.status(400).json({ error: 'Esta transação já foi utilizada por outra conta.' });
+    }
+    const bal = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
+    await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
+    return res.json({ ok: true, amount: 0, newUsdc: bal.rows[0]?.usdc, already: true });
+  }
+
+  try {
+    const settings = await loadDepositSettings();
+    const resolved = resolveDepositNetwork(settings, network);
+    if (resolved.error) {
+      return res.status(resolved.error.startsWith('Rede') ? 400 : 500).json({ error: resolved.error });
+    }
+    const { net, rpcUrl } = resolved;
+
+    const receipt = await fetchDepositReceiptUnified(net, rpcUrl, txHash);
+    if (!receipt || !receipt.result) {
+      await queueDepositPending(txHash, { userId: uid, network: net, createdAt: Date.now() });
+      return res.json({
+        ok: false,
+        pending: true,
+        message: 'Transação ainda na mempool ou RPC indisponível. Os USDC serão creditados automaticamente quando a rede confirmar — pode fechar esta página.'
+      });
+    }
+
+    const out = await tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt);
+    if (out.ok) {
+      return res.json({ ok: true, amount: out.amount, newUsdc: out.newUsdc, already: !!out.already });
+    }
+    if (out.pending) {
+      await queueDepositPending(txHash, { userId: uid, network: net, createdAt: Date.now() });
+      return res.json({
+        ok: false,
+        pending: true,
+        message: 'Aguardando confirmação na rede. O saldo será atualizado em breve; pode fechar o site.'
+      });
+    }
+    return res.status(400).json({ error: out.error || 'Falha na validação' });
+  } catch (e) {
+    console.error('[DepositVerify]', e);
     res.status(500).json({ error: 'Erro ao validar transação: ' + e.message });
   }
 });
@@ -3658,8 +3813,10 @@ app.post('/api/rig-rooms', isAdmin, async (req, res) => {
 
 app.get('/api/my-rig-rooms/:email', async (req, res) => {
   try {
-    const email = req.params.email;
-    const uid = await getUserIdByEmail(email, req.ip);
+    const email = String(req.params.email || '').toLowerCase();
+    const uidRes = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (!uidRes.rowCount) return res.status(404).json({ error: 'Usuário não encontrado' });
+    const uid = uidRes.rows[0].id;
     const urowRes = await db.query('SELECT access_level_id FROM users WHERE id = $1', [uid]);
     const urow = urowRes.rows[0];
     const currentLvlId = urow?.access_level_id || null;
@@ -4263,9 +4420,11 @@ app.post('/api/season-passes', isAdmin, async (req, res) => {
 });
 
 app.get('/api/season-purchases/:email', async (req, res) => {
-  const email = req.params.email;
+  const email = String(req.params.email || '').toLowerCase();
   try {
-    const uid = await getUserIdByEmail(email, req.ip);
+    const uidRes = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (!uidRes.rowCount) return res.status(404).json({ error: 'Usuário não encontrado' });
+    const uid = uidRes.rows[0].id;
     const rowsRes = await db.query('SELECT pass_id, season_id, purchased_at FROM season_purchases WHERE user_id = $1', [uid]);
     const list = rowsRes.rows.map(r => ({ passId: r.pass_id, seasonId: r.season_id, purchasedAt: r.purchased_at }));
     res.json(list);
@@ -4332,7 +4491,7 @@ app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
   const { email, passId } = req.body || {};
   if (!email || !passId) return res.status(400).json({ error: 'Missing fields' });
   try {
-    const uid = await getUserIdByEmail(email, req.ip);
+    const uid = await getUserIdByEmail(email, req.ip, { allowAnyDomain: true });
     const passRes = await db.query('SELECT * FROM season_passes WHERE id = $1', [passId]);
     const pass = passRes.rows[0];
     if (!pass) return res.status(404).json({ error: 'Pass not found' });
@@ -4789,8 +4948,10 @@ app.get('/api/leaderboard', async (req, res) => {
 // --- REFERRALS ---
 app.get('/api/referrals/:email', async (req, res) => {
   try {
-    const email = req.params.email;
-    const uid = await getUserIdByEmail(email, req.ip);
+    const email = String(req.params.email || '').toLowerCase();
+    const uidRes = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+    if (!uidRes.rowCount) return res.status(404).json({ error: 'Usuário não encontrado' });
+    const uid = uidRes.rows[0].id;
     const rowsRes = await db.query('SELECT referred_username FROM referrals WHERE user_id = $1 ORDER BY id ASC', [uid]);
     res.json(rowsRes.rows.map(r => r.referred_username));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -5348,7 +5509,7 @@ app.put('/api/user', async (req, res) => {
         if (u.id) {
           uid = u.id;
         } else {
-          uid = await getUserIdByEmail(normalizedEmail, req.ip);
+          uid = await getUserIdByEmail(normalizedEmail, req.ip, { allowAnyDomain: true });
         }
       } else {
         uid = req.userId;
@@ -5363,6 +5524,12 @@ app.put('/api/user', async (req, res) => {
       const existing = existingRes.rows[0];
       if (existing && existing.password) {
         return res.status(403).json({ error: 'Este email já está cadastrado. Por favor, faça login.' });
+      }
+      if (!existing) {
+        const ev = assertPublicSignupEmailAllowed(normalizedEmail);
+        if (!ev.ok) {
+          return res.status(400).json({ ok: false, error: ev.error });
+        }
       }
       uid = await getUserIdByEmail(normalizedEmail, req.ip);
     }
@@ -5488,6 +5655,9 @@ app.put('/api/user', async (req, res) => {
         code: 'IP_LIMIT_REACHED',
         accounts: e.existingAccounts
       });
+    }
+    if (e.code === 'EMAIL_POLICY') {
+      return res.status(400).json({ ok: false, error: e.message });
     }
     const errorMessage = e.message || 'Erro interno no servidor durante o registro.';
     res.status(500).json({ error: errorMessage, stack: process.env.NODE_ENV === 'development' ? e.stack : undefined });
@@ -5640,7 +5810,7 @@ app.get('/api/game-state/:email', async (req, res) => {
       if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
       uid = req.userId; // Força o próprio UID se não for admin
     } else {
-      uid = await getUserIdByEmail(email, req.ip);
+      uid = await getUserIdByEmail(email, req.ip, { allowAnyDomain: true });
     }
   }
 
@@ -6136,19 +6306,33 @@ app.post('/api/save-game', async (req, res) => {
 app.get('/api/admin/backups', isAdmin, async (req, res) => {
   try {
     if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    const files = fs.readdirSync(BACKUP_DIR).filter(f =>
-      f.endsWith('.db') ||
-      f.endsWith('.sqlite') ||
-      f.endsWith('.back') ||
-      f.endsWith('.sql') || // legacy JSON backups misnamed as .sql
-      f.endsWith('.json')
-    );
-    const list = files.map(f => {
-      const stats = fs.statSync(path.join(BACKUP_DIR, f));
-      return { filename: f, size: stats.size, createdAt: stats.mtimeMs };
-    });
+    const isBackupFilename = (name) => {
+      const lower = String(name).toLowerCase();
+      return (
+        lower.endsWith('.db') ||
+        lower.endsWith('.sqlite') ||
+        lower.endsWith('.back') ||
+        lower.endsWith('.sql') ||
+        lower.endsWith('.json') ||
+        lower.endsWith('.json.gz') ||
+        lower.endsWith('.dump')
+      );
+    };
+    const list = [];
+    for (const ent of fs.readdirSync(BACKUP_DIR, { withFileTypes: true })) {
+      if (!ent.isFile() || !isBackupFilename(ent.name)) continue;
+      try {
+        const stats = fs.statSync(path.join(BACKUP_DIR, ent.name));
+        list.push({ filename: ent.name, size: stats.size, createdAt: stats.mtimeMs });
+      } catch (statErr) {
+        console.warn('[Backups] Ignorando ficheiro ao listar:', ent.name, statErr.message);
+      }
+    }
     res.json(list.sort((a, b) => b.createdAt - a.createdAt));
-  } catch (e) { res.status(500).json({ error: 'Falha ao listar backups' }); }
+  } catch (e) {
+    console.error('[Backups] Listagem:', e);
+    res.status(500).json({ error: 'Falha ao listar backups' });
+  }
 });
 
 app.post('/api/admin/backup', isAdmin, async (req, res) => {
@@ -6763,7 +6947,7 @@ app.post('/api/admin/impersonate', isAdmin, async (req, res) => {
   try {
     const sRes = await db.query('SELECT user_id FROM sessions WHERE session_id = $1', [sid]);
     const adminId = sRes.rows[0]?.user_id;
-    const targetId = await getUserIdByEmail(targetEmail, req.ip);
+    const targetId = await getUserIdByEmail(targetEmail, req.ip, { allowAnyDomain: true });
     if (!targetId || targetId === adminId) return res.status(400).json({ error: 'Invalid target' });
     await db.query('UPDATE sessions SET user_id = $1, original_user_id = $2 WHERE session_id = $3', [targetId, adminId, sid]);
     res.json({ ok: true });
@@ -7114,7 +7298,7 @@ app.post('/api/admin/ranking-exclusion', isAdmin, async (req, res) => {
   const { email, excluded } = req.body || {};
   if (!email) return res.status(400).json({ error: 'Email inválido' });
   try {
-    const uid = await getUserIdByEmail(email, req.ip);
+    const uid = await getUserIdByEmail(email, req.ip, { allowAnyDomain: true });
     await db.query('UPDATE users SET ranking_excluded = $1 WHERE id = $2', [excluded ? 1 : 0, uid]);
     dashboardStatsCache = null;
     lastDashboardFetch = 0;
@@ -7818,6 +8002,8 @@ if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
   // OPTIMIZATION: Increased from 10s to 60s to reduce CPU load
   setInterval(calculateHashratesAndRanking, 60000);
   setTimeout(calculateHashratesAndRanking, 5000);
+  setInterval(sweepPendingDepositsOnce, 90000);
+  setTimeout(sweepPendingDepositsOnce, 8000);
 }
 
 // Admin Ranking Endpoint
