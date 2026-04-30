@@ -21,20 +21,41 @@ interface WalletActionsProps {
   depositBaseDisabled?: boolean;
 }
 
+const MAX_USDC_DEPOSIT_UI = 50_000_000;
+
 export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStartDeposit, hasWallet = false, coinBalances, miningCoins, coinRates = {}, onWithdrawCoin, prefillAmount, withdrawTokens, depositStatus, depositAmount, onCloseDepositStatus, minDepositUsdc, depositPolygonDisabled, depositBnbDisabled, depositBaseDisabled }) => {
   const [usdcAmount, setUsdcAmount] = useState<string>('');
   const [selectedNetwork, setSelectedNetwork] = useState<'polygon' | 'bnb' | 'base'>('polygon');
   const [selectedCoinId, setSelectedCoinId] = useState<string>(miningCoins[0]?.id || '');
   const [coinAmount, setCoinAmount] = useState<string>('');
+  const [depositFieldError, setDepositFieldError] = useState<string>('');
+
+  React.useEffect(() => {
+    if (miningCoins.length > 0 && !miningCoins.some(c => c.id === selectedCoinId)) {
+      setSelectedCoinId(miningCoins[0].id);
+    }
+  }, [miningCoins, selectedCoinId]);
 
   const handleDeposit = () => {
-    const val = parseFloat(usdcAmount);
-    if (!hasWallet) return;
-    const minDep = typeof minDepositUsdc === 'number' ? minDepositUsdc : 0.001;
-    if (!isNaN(val) && val >= minDep) {
-      if (onStartDeposit) onStartDeposit(val, selectedNetwork); else onAddUSDC(val, selectedNetwork);
-      setUsdcAmount('');
+    setDepositFieldError('');
+    if (!hasWallet) {
+      setDepositFieldError('Conecte uma carteira no perfil.');
+      return;
     }
+    const raw = usdcAmount.replace(/\s/g, '').replace(',', '.');
+    const val = parseFloat(raw);
+    const minDep = typeof minDepositUsdc === 'number' && Number.isFinite(minDepositUsdc) ? Math.max(0.000001, minDepositUsdc) : 0.001;
+    if (!Number.isFinite(val) || val < minDep) {
+      setDepositFieldError(`Informe um valor numérico ≥ ${minDep} USDC.`);
+      return;
+    }
+    if (val > MAX_USDC_DEPOSIT_UI) {
+      setDepositFieldError('Valor acima do limite permitido nesta interface.');
+      return;
+    }
+    if (onStartDeposit) onStartDeposit(val, selectedNetwork);
+    else onAddUSDC(val, selectedNetwork);
+    setUsdcAmount('');
   };
 
   React.useEffect(() => {
@@ -44,7 +65,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
   }, [prefillAmount]);
 
   const handleWithdrawCoin = () => {
-    const val = parseFloat(coinAmount);
+    const val = parseFloat(String(coinAmount).replace(/\s/g, '').replace(',', '.'));
     const bal = (coinBalances[selectedCoinId] || 0);
     const coin = miningCoins.find(c => c.id === selectedCoinId);
     const matching = (withdrawTokens || []).find(t => {
@@ -60,7 +81,13 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
       minW = matching.minWithdrawalUsdc / coin.priceUSD;
     }
 
-    if (!isNaN(val) && val >= minW && val > 0 && val <= bal && enabled) {
+    if (
+      enabled &&
+      Number.isFinite(val) &&
+      val >= minW &&
+      val > 0 &&
+      val <= bal * (1 + 1e-10)
+    ) {
       const fee = matching?.feePercent ? (val * (matching.feePercent / 100)) : 0;
       const net = val - fee;
       const msg = `Confirmar pedido de levantamento?\n\n` +
@@ -162,17 +189,27 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
         </div>
         <div className="flex gap-2">
           <input
-            type="number"
-            min={typeof minDepositUsdc === 'number' ? minDepositUsdc : 0.001}
-            step="0.001"
+            type="text"
+            inputMode="decimal"
+            autoComplete="off"
+            maxLength={24}
             placeholder="0.00"
             value={usdcAmount}
-            onChange={(e) => setUsdcAmount(e.target.value)}
+            onChange={(e) => {
+              const t = e.target.value.replace(/[^\d.,]/g, '');
+              setUsdcAmount(t);
+              if (depositFieldError) setDepositFieldError('');
+            }}
             className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-green-500 outline-none font-mono transition-colors"
           />
           <button
             onClick={handleDeposit}
-            disabled={!hasWallet || !usdcAmount || parseFloat(usdcAmount) < (typeof minDepositUsdc === 'number' ? minDepositUsdc : 0.001)}
+            disabled={(() => {
+              if (!hasWallet || !usdcAmount) return true;
+              const v = parseFloat(usdcAmount.replace(/\s/g, '').replace(',', '.'));
+              const minD = typeof minDepositUsdc === 'number' && Number.isFinite(minDepositUsdc) ? minDepositUsdc : 0.001;
+              return !Number.isFinite(v) || v < minD || v > MAX_USDC_DEPOSIT_UI;
+            })()}
             className="bg-green-100 dark:bg-green-900/30 hover:bg-green-200 dark:hover:bg-green-900/50 border border-green-300 dark:border-green-800 text-green-700 dark:text-green-400 text-xs font-bold px-4 rounded transition-colors"
           >
             ENVIAR USDC
@@ -180,6 +217,9 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
         </div>
         {!hasWallet && (
           <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Conecte uma carteira no perfil para creditar USDC.</p>
+        )}
+        {depositFieldError && (
+          <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">{depositFieldError}</p>
         )}
         <p className="text-[10px] text-slate-500 dark:text-slate-600 mt-2 italic flex items-center gap-2">
           <Shield size={10} className="text-green-500" /> Liquidação automática via contrato inteligente.

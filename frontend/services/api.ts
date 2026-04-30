@@ -599,7 +599,6 @@ export async function saveGameState(email: string, state: Partial<GameState>, op
     targetEmail: email
   };
   try {
-    console.log(`[APIService] Saving Game State for ${email}`, payload.changes);
     const res = await apiFetch(`${base}/save-game`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -607,7 +606,12 @@ export async function saveGameState(email: string, state: Partial<GameState>, op
       keepalive: true
     });
     if (!res.ok) {
-      try { return await res.json(); } catch { return { ok: false }; }
+      try {
+        const errBody = await res.json();
+        return { ok: false, ...errBody };
+      } catch {
+        return { ok: false, error: `HTTP ${res.status}` };
+      }
     }
     try {
       const data = await res.json();
@@ -868,16 +872,24 @@ export async function stopImpersonate(): Promise<{ ok: boolean; error?: string }
 
 export async function openLootBox(email: string, boxId: string): Promise<{ ok: boolean; rewards?: any[]; error?: string }> {
   try {
-    const res = await apiFetch(`${base}/loot-boxes/open`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ boxId }) });
+    const res = await apiFetch(`${base}/loot-boxes/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boxId, email })
+    });
     return await res.json();
   } catch {
     return { ok: false, error: 'Network error' };
   }
 }
 
-export async function buyLootBox(email: string, boxId: string): Promise<{ ok: boolean; error?: string }> {
+export async function buyLootBox(email: string, boxId: string): Promise<{ ok: boolean; error?: string; newUsdc?: number }> {
   try {
-    const res = await apiFetch(`${base}/loot-boxes/buy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ boxId }) });
+    const res = await apiFetch(`${base}/loot-boxes/buy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ boxId, email })
+    });
     return await res.json();
   } catch {
     return { ok: false, error: 'Network error' };

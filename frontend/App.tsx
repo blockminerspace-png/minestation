@@ -274,6 +274,10 @@ export default function App() {
       const res = await apiSaveGameState(user.email!, gameStateRef.current);
       if (res && res.forceReload) {
         handleReloadGameState();
+      } else if (res && res.ok === false && (res as { error?: string }).error) {
+        console.error('[SaveGame]', (res as { error?: string }).error);
+        alert('Não foi possível guardar: ' + (res as { error?: string }).error + '\nA recarregar o estado do servidor.');
+        handleReloadGameState();
       }
     }, 500); // 500ms debounce
     return () => clearTimeout(timeout);
@@ -667,6 +671,9 @@ export default function App() {
         const res = await apiSaveGameState(user.email, gameStateRef.current);
         if (res && res.forceReload) {
           handleReloadGameState();
+        } else if (res && res.ok === false && (res as { error?: string }).error) {
+          console.error('[SaveGame]', (res as { error?: string }).error);
+          handleReloadGameState();
         }
       }
     }, 30000); // Optimized: 30s instead of 5s to reduce network and CPU load
@@ -993,14 +1000,15 @@ export default function App() {
   }, [gameUpgrades, requestSave]);
 
   const handleRemoveRack = useCallback((rackId: string) => {
+    if (!confirm('Desmontar esta rig? Todos os componentes (GPUs, fiação, bateria, multiplicadores) voltam para o estoque.')) return;
     setGameState(p => {
       const r = p.placedRacks.find(x => x.id === rackId);
       if (!r) return p;
       const ns = { ...p.stock };
       let nb = [...p.storedBatteries];
       ns[r.itemId] = (ns[r.itemId] || 0) + 1;
-      r.slots.forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
-      r.multiplierSlots?.forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
+      (Array.isArray(r.slots) ? r.slots : []).forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
+      (Array.isArray(r.multiplierSlots) ? r.multiplierSlots : []).forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
       if (r.wiringId) ns[r.wiringId] = (ns[r.wiringId] || 0) + 1;
       if (r.batteryId) {
         const upg = gameUpgrades.find(u => u.id === r.batteryId);
@@ -2074,13 +2082,13 @@ export default function App() {
               <main className="flex-1 overflow-hidden relative max-w-7xl w-full flex flex-col min-h-0">
                 <div className="shrink-0 z-20"><MarketNews /></div>
                 <div className="flex-1 overflow-y-auto custom-scrollbar relative min-h-0 flex flex-col font-mono">
-                  {!isReady && (
-                    <div className="flex h-screen w-full items-center justify-center bg-slate-900 text-amber-500 font-mono">
-                      <div className="text-2xl animate-pulse">GENESIS MINER</div>
+                  {!saveLoaded && (
+                    <div className="flex min-h-[40vh] w-full items-center justify-center bg-slate-900/80 text-amber-500 font-mono rounded-xl border border-amber-900/20">
+                      <div className="text-xl animate-pulse tracking-widest">A carregar estado…</div>
                     </div>
                   )}
 
-                  {isReady && currentView === 'servers' && (
+                  {saveLoaded && currentView === 'servers' && (
                     <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
                       <div className="flex-1 flex flex-col">
                         <ServerRoom {...gameState} onPlaceRack={handlePlaceRack} onRemoveRack={handleRemoveRack} onEquipMiner={handleEquipMiner} onUnequipMiner={handleUnequipMiner} onEquipAux={handleEquipAux} onUnequipAux={handleUnequipAux} onTogglePower={handleTogglePower} onRecharge={handleRecharge} upgrades={gameUpgrades} miningCoins={miningCoins} onSetRackCoin={handleSetRackCoin} userEmail={user?.email} onRoomPurchase={() => handleReloadGameState()} onOpenCalculator={() => setCurrentView('calculator')} />
@@ -2089,14 +2097,14 @@ export default function App() {
                     </div>
                   )}
 
-                  {isReady && currentView === 'calculator' && (
+                  {saveLoaded && currentView === 'calculator' && (
                     <div className="flex-1 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300">
                       <PlayerCalculator gameState={gameState} upgrades={gameUpgrades} miningCoins={miningCoins} onBack={() => setCurrentView('servers')} userEmail={user?.email} isAdmin={user?.isAdmin} />
                     </div>
                   )}
 
 
-                  {isReady && currentView === 'oficina' && (
+                  {saveLoaded && currentView === 'oficina' && (
                     <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
                       <div className="flex-1">
                         <WorkshopRoom slots={gameState.workshopSlots || [null, null, null]} stock={gameState.stock} upgrades={gameUpgrades} onEquip={handleEquipWorkshop} onUnequip={handleUnequipWorkshop} onEquipComponent={handleEquipWorkshopComponent} onUnequipComponent={handleUnequipWorkshopComponent} storedBatteries={gameState.storedBatteries} onInstantRecharge={handleWorkshopInstantRecharge} onRewardedAd={handleRewardedAd} onDailyBoost={handleDailyBoost} timeOffset={timeOffset} dailyActions={gameState.dailyActions} />
@@ -2104,21 +2112,21 @@ export default function App() {
                       <Footer />
                     </div>
                   )}
-                  {isReady && currentView === 'arcade' && (
+                  {saveLoaded && currentView === 'arcade' && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
                       <Gamepad2 size={48} className="animate-bounce" />
                       <h2 className="text-2xl font-bold uppercase tracking-widest bg-gradient-to-r from-amber-500 to-orange-500 bg-clip-text text-transparent">Arcade em preparação</h2>
                       <p className="max-w-md text-center text-sm">Estamos montando uma zona arcade dentro do Genesis Miner. Volte em breve para novidades.</p>
                     </div>
                   )}
-                  {isReady && currentView === 'inventory' && <div className="flex-1 flex flex-col"><div className="flex-1 p-6"><InventoryView stock={gameState.stock} storedBatteries={gameState.storedBatteries} upgrades={gameUpgrades} /></div><Footer /></div>}
-                  {isReady && currentView === 'hardware_store' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1"><UpgradeShop gameState={gameState} user={user} onBatchBuy={handleBatchBuy} upgrades={gameUpgrades} onSuggestDeposit={handleSuggestDeposit} isEnabled={economySettings.hardwareMarketEnabled} /></div><Footer /></div>)}
-                  {isReady && currentView === 'lucky_store' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1"><LuckyBoxStore gameState={gameState} lootBoxes={lootBoxDefs} upgrades={gameUpgrades} onBuyBox={handleBuyBox} onOpenBox={handleOpenBox} onRedeemSuccess={handleRedeemSuccess} /></div><Footer /></div>)}
-                  {isReady && currentView === 'black_market' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1 min-h-0" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}><BlackMarket gameState={gameState} onBuyListing={handleP2PBuy} onCreateListing={handleCreateListing} onCancelListing={handleCancelListing} upgrades={gameUpgrades} currentUserName={user?.username} currentUserEmail={user?.email} isEnabled={economySettings.blackMarketEnabled} onClaimSuccess={handleReloadGameState} refreshTrigger={marketRefreshTrigger} /></div><Footer /></div>)}
-                  {isReady && currentView === 'wallet' && (<div className="flex-1 flex flex-col p-6 space-y-6 animate-in fade-in slide-in-from-left-4 duration-300"><div className="flex-1"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6"><Exchange coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, usdcRate: c.usdcRate, showInExchange: c.showInExchange }))} onSellCoin={handleSellCoin} /><WalletActions onAddUSDC={handleAddUSDC} onStartDeposit={handleStartDeposit} depositStatus={depositFlow.status} depositAmount={depositFlow.amount} onCloseDepositStatus={() => setDepositFlow({ pending: false })} hasWallet={!!user?.polygonWallet} coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, symbol: c.symbol, priceUSD: c.priceUSD || 0 }))} coinRates={(() => { const rates: Record<string, number> = {}; gameState.placedRacks.forEach(r => { if (!r.isOn || !r.wiringId || !r.batteryId || !r.selectedCoinId) return; let base = 0; r.slots.forEach(sid => { if (!sid) return; const up = gameUpgrades.find(u => u.id === sid); if (up) base += up.baseProduction; }); let mult = 1; r.multiplierSlots?.forEach(sid => { if (!sid) return; const mod = gameUpgrades.find(u => u.id === sid); if (mod && mod.multiplier) mult += mod.multiplier; }); const prod = base * mult; const coin = miningCoins.find(c => c.id === r.selectedCoinId); const yieldPerHash = coin ? (coin.minProportion || 0) : 0; const rate = prod * yieldPerHash; rates[r.selectedCoinId] = (rates[r.selectedCoinId] || 0) + rate; }); return rates; })()} onWithdrawCoin={handleWithdrawCoin} prefillAmount={depositPrefill} withdrawTokens={web3SettingsState?.withdrawTokens?.map(t => ({ name: t.name, contract: t.contract, minAmount: t.minAmount, minWithdrawalUsdc: t.minWithdrawalUsdc, feePercent: t.feePercent }))} minDepositUsdc={web3SettingsState?.minDepositUsdc} depositPolygonDisabled={web3SettingsState?.depositPolygonDisabled} depositBnbDisabled={web3SettingsState?.depositBnbDisabled} depositBaseDisabled={web3SettingsState?.depositBaseDisabled} /><div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between md:col-span-2 lg:col-span-2 xl:col-span-2 transition-colors"><div><h3 className="text-slate-700 dark:text-slate-300 font-bold flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-800 pb-2"><LayoutDashboard size={18} /> ESTATÍSTICAS</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-4"><div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Máquinas Ativas</span><span className="font-mono text-slate-700 dark:text-slate-200">{countActiveMachines(gameState.placedRacks)} Unidades</span></div><div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Rigs Instalados</span><span className="font-mono text-slate-700 dark:text-slate-200">{gameState.placedRacks.length} Unidades</span></div></div></div><div className="mt-8 pt-4 border-t border-slate-200 dark:border-slate-800"></div></div></div></div><Footer /></div>)}
+                  {saveLoaded && currentView === 'inventory' && <div className="flex-1 flex flex-col"><div className="flex-1 p-6"><InventoryView stock={gameState.stock} storedBatteries={gameState.storedBatteries} upgrades={gameUpgrades} /></div><Footer /></div>}
+                  {saveLoaded && currentView === 'hardware_store' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1"><UpgradeShop gameState={gameState} user={user} onBatchBuy={handleBatchBuy} upgrades={gameUpgrades} onSuggestDeposit={handleSuggestDeposit} isEnabled={economySettings.hardwareMarketEnabled} /></div><Footer /></div>)}
+                  {saveLoaded && currentView === 'lucky_store' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1"><LuckyBoxStore gameState={gameState} lootBoxes={lootBoxDefs} upgrades={gameUpgrades} onBuyBox={handleBuyBox} onOpenBox={handleOpenBox} onRedeemSuccess={handleRedeemSuccess} /></div><Footer /></div>)}
+                  {saveLoaded && currentView === 'black_market' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1 min-h-0" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}><BlackMarket gameState={gameState} onBuyListing={handleP2PBuy} onCreateListing={handleCreateListing} onCancelListing={handleCancelListing} upgrades={gameUpgrades} currentUserName={user?.username} currentUserEmail={user?.email} isEnabled={economySettings.blackMarketEnabled} onClaimSuccess={handleReloadGameState} refreshTrigger={marketRefreshTrigger} /></div><Footer /></div>)}
+                  {saveLoaded && currentView === 'wallet' && (<div className="flex-1 flex flex-col p-6 space-y-6 animate-in fade-in slide-in-from-left-4 duration-300"><div className="flex-1"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6"><Exchange coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, usdcRate: c.usdcRate, showInExchange: c.showInExchange }))} onSellCoin={handleSellCoin} /><WalletActions onAddUSDC={handleAddUSDC} onStartDeposit={handleStartDeposit} depositStatus={depositFlow.status} depositAmount={depositFlow.amount} onCloseDepositStatus={() => setDepositFlow({ pending: false })} hasWallet={!!user?.polygonWallet} coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, symbol: c.symbol, priceUSD: c.priceUSD || 0 }))} coinRates={(() => { const rates: Record<string, number> = {}; gameState.placedRacks.forEach(r => { if (!r.isOn || !r.wiringId || !r.batteryId || !r.selectedCoinId) return; let base = 0; r.slots.forEach(sid => { if (!sid) return; const up = gameUpgrades.find(u => u.id === sid); if (up) base += up.baseProduction; }); let mult = 1; r.multiplierSlots?.forEach(sid => { if (!sid) return; const mod = gameUpgrades.find(u => u.id === sid); if (mod && mod.multiplier) mult += mod.multiplier; }); const prod = base * mult; const coin = miningCoins.find(c => c.id === r.selectedCoinId); const yieldPerHash = coin ? (coin.minProportion || 0) : 0; const rate = prod * yieldPerHash; rates[r.selectedCoinId] = (rates[r.selectedCoinId] || 0) + rate; }); return rates; })()} onWithdrawCoin={handleWithdrawCoin} prefillAmount={depositPrefill} withdrawTokens={web3SettingsState?.withdrawTokens?.map(t => ({ name: t.name, contract: t.contract, minAmount: t.minAmount, minWithdrawalUsdc: t.minWithdrawalUsdc, feePercent: t.feePercent }))} minDepositUsdc={web3SettingsState?.minDepositUsdc} depositPolygonDisabled={web3SettingsState?.depositPolygonDisabled} depositBnbDisabled={web3SettingsState?.depositBnbDisabled} depositBaseDisabled={web3SettingsState?.depositBaseDisabled} /><div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between md:col-span-2 lg:col-span-2 xl:col-span-2 transition-colors"><div><h3 className="text-slate-700 dark:text-slate-300 font-bold flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-800 pb-2"><LayoutDashboard size={18} /> ESTATÍSTICAS</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-4"><div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Máquinas Ativas</span><span className="font-mono text-slate-700 dark:text-slate-200">{countActiveMachines(gameState.placedRacks)} Unidades</span></div><div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Rigs Instalados</span><span className="font-mono text-slate-700 dark:text-slate-200">{gameState.placedRacks.length} Unidades</span></div></div></div><div className="mt-8 pt-4 border-t border-slate-200 dark:border-slate-800"></div></div></div></div><Footer /></div>)}
 
-                  {isReady && currentView === 'upgrade' && (<div className="flex-1 flex flex-col"><div className="flex-1"><UpgradeAccount user={user} accessLevels={accessLevels} onUpgrade={handleUpgradeAccess} usdcBalance={gameState.usdc} onSuggestDeposit={handleSuggestDeposit} onPassPurchased={handlePassPurchased} onReloadGameState={handleReloadGameState} /></div><Footer /></div>)}
-                  {isReady && currentView === 'ranking' && (
+                  {saveLoaded && currentView === 'upgrade' && (<div className="flex-1 flex flex-col"><div className="flex-1"><UpgradeAccount user={user} accessLevels={accessLevels} onUpgrade={handleUpgradeAccess} usdcBalance={gameState.usdc} onSuggestDeposit={handleSuggestDeposit} onPassPurchased={handlePassPurchased} onReloadGameState={handleReloadGameState} /></div><Footer /></div>)}
+                  {saveLoaded && currentView === 'ranking' && (
                     <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
                       <div className="flex-1">
                         <AdminRanking isPublic={true} />
@@ -2126,7 +2134,7 @@ export default function App() {
                       <Footer />
                     </div>
                   )}
-                  {isReady && currentView === 'profile' && user && (<div className="flex-1 flex flex-col"><div className="flex-1"><ProfilePage user={user} onUpdateProfile={handleUpdateUser} onUpdateGameState={(next) => setGameState(next)} /></div><Footer /></div>)}
+                  {saveLoaded && currentView === 'profile' && user && (<div className="flex-1 flex flex-col"><div className="flex-1"><ProfilePage user={user} onUpdateProfile={handleUpdateUser} onUpdateGameState={(next) => setGameState(next)} /></div><Footer /></div>)}
                 </div>
               </main>
 

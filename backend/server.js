@@ -2604,127 +2604,136 @@ app.post('/api/upgrades', isAdmin, async (req, res) => {
 app.post('/api/upgrades/buy', async (req, res) => {
   const { cart } = req.body || {};
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-  if (!cart || Object.keys(cart).length === 0) {
+  if (!cart || typeof cart !== 'object' || Array.isArray(cart)) {
     return res.status(400).json({ error: 'Carrinho vazio ou inválido' });
+  }
+
+  const entries = Object.entries(cart);
+  if (entries.length === 0 || entries.length > 100) {
+    return res.status(400).json({ error: 'Carrinho inválido' });
+  }
+
+  const ID_RE = /^[a-zA-Z0-9_.-]{1,160}$/;
+  const MAX_LINE_QTY = 50000;
+  for (const [id, rawQty] of entries) {
+    if (!ID_RE.test(id)) return res.status(400).json({ error: 'Item inválido no carrinho.' });
+    const q = Number(rawQty);
+    if (!Number.isInteger(q) || q < 1 || q > MAX_LINE_QTY) {
+      return res.status(400).json({ error: 'Quantidade inválida.' });
+    }
   }
 
   const client = await db.connect();
   try {
     const uid = req.userId;
 
-    // 1. Calculate Total Cost & Validate Items
+    const hwDis = await client.query("SELECT value FROM settings WHERE key = 'hardware_market_enabled'");
+    if (hwDis.rows[0] && hwDis.rows[0].value !== '1') {
+      return res.status(403).json({ error: 'Mercado de hardware pausado.' });
+    }
+
     const upgradeIds = Object.keys(cart);
-    // Fetch items with locking for update if we are going to modify stock?
-    // For now, simpler check, but ideally we should lock specific rows if high concurrency.
-    // Let's rely on atomic UPDATE or check constraints.
-    const upgradesRes = await client.query('SELECT id, base_cost, name, sell_in_hardware_market, status, max_global_stock, total_sold FROM upgrades WHERE id = ANY($1)', [upgradeIds]);
-    const upgrades = upgradesRes.rows;
+    const upgradesRes = await client.query(
+      `SELECT id, base_cost, name, sell_in_hardware_market, status, max_global_stock, total_sold,
+              COALESCE(is_active, 1) AS ia
+       FROM upgrades WHERE id = ANY($1::text[])`,
+      [upgradeIds]
+    );
+    if (upgradesRes.rows.length !== upgradeIds.length) {
+      return res.status(400).json({ error: 'Um ou mais itens do carrinho não existem.' });
+    }
 
     let totalCost = 0;
     const itemsToBuy = [];
-    const limitedItemsToUpdate = []; // { id, qty }
+    const limitedItemsToUpdate = [];
 
-    for (const [id, qty] of Object.entries(cart)) {
-      if (qty <= 0) continue;
-      const u = upgrades.find(x => x.id === id);
-      if (!u) throw new Error(`Item inválido: ${id}`);
-      if (u.sell_in_hardware_market === 0) throw new Error(`Item não disponível para venda: ${u.name}`);
+    for (const [id, rawQty] of Object.entries(cart)) {
+      const qty = Number(rawQty);
+      const u = upgradesRes.rows.find(x => x.id === id);
+      if (!u) return res.status(400).json({ error: `Item inválido: ${id}` });
+      if (Number(u.ia) === 0) {
+        return res.status(400).json({ error: `Item indisponível: ${u.name}` });
+      }
+      if (u.sell_in_hardware_market === 0) {
+        return res.status(400).json({ error: `Item não disponível para venda: ${u.name}` });
+      }
 
-      // Check Stock
       if (u.status === 'limited') {
-        const currentStock = (u.max_global_stock || 0);
-        // We assume max_global_stock is the INITIAL total stock? Or remaining?
-        // Usually "Stock" means remaining. But user request says "total stock ... and how many sold".
-        // Let's assume max_global_stock is the LIMIT, and we calculate remaining as (max - total_sold).
-        // OR user wants max_global_stock to decrease?
-        // Request: "aparecer o item indicando quantos deste item estão disponivel no estoque e quantos já forão vendidos"
-        // Interpretation:
-        // Available = max_global_stock (if we treat it as Remaining)
-        // OR Available = Cap - Sold.
-        // Let's Stick to: max_global_stock is the CAP (Static limit), total_sold is dynamic.
-        // wait, usually "stock" reduces.
-        // Let's treat max_global_stock as "Initial Total Supply".
-        // Available = max_global_stock - total_sold.
-        // IF Available < qty -> Error.
-
-        const available = (u.max_global_stock || 0) - (u.total_sold || 0);
+        const available = (Number(u.max_global_stock) || 0) - (Number(u.total_sold) || 0);
         if (available < qty) {
-          throw new Error(`Estoque insuficiente para ${u.name}. Restam apenas ${available}.`);
+          return res.status(400).json({ error: `Estoque insuficiente para ${u.name}. Restam ${available}.` });
         }
         limitedItemsToUpdate.push({ id: u.id, qty });
       }
 
-      const cost = u.base_cost * qty;
+      const unit = Number(u.base_cost);
+      if (!Number.isFinite(unit) || unit < 0 || unit > 1e12) {
+        return res.status(400).json({ error: 'Preço de item inválido.' });
+      }
+      const cost = unit * qty;
+      if (!Number.isFinite(cost) || cost < 0 || cost > 1e15) {
+        return res.status(400).json({ error: 'Valor de compra inválido.' });
+      }
       totalCost += cost;
       itemsToBuy.push({ id, qty, name: u.name });
     }
 
-    // 2. Check Balance
-    const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-    const currentUsdc = gsRes.rows[0]?.usdc ?? 0;
+    await client.query('BEGIN');
 
+    const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
+    const currentUsdc = Number(gsRes.rows[0]?.usdc) || 0;
     if (currentUsdc < totalCost) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Saldo insuficiente', missing: totalCost - currentUsdc });
     }
 
-    // 3. Process Transaction
-    await client.query('BEGIN');
-
-    // Deduct USDC & Update Timestamp
     const newUsdc = currentUsdc - totalCost;
     const now = Date.now();
-    await client.query('UPDATE game_states SET usdc = $1, last_updated_at = $2, server_updated_at = $2 WHERE user_id = $3', [newUsdc, now, uid]);
-
-    // Add Items to Stock
-    for (const item of itemsToBuy) {
-      await client.query(`
-        INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3)
-        ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty
-      `, [uid, item.id, item.qty]);
+    const deductRes = await client.query(
+      `UPDATE game_states SET usdc = $1, last_updated_at = $2, server_updated_at = $2
+       WHERE user_id = $3 AND usdc >= $4`,
+      [newUsdc, now, uid, totalCost]
+    );
+    if (deductRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Saldo insuficiente' });
     }
 
-    // (Optional) Log Transaction?
-    // await client.query('INSERT INTO transactions ...')
-
-    await client.query('COMMIT');
-
-    // 4. Update Stock (Post-Commit or Inside? Inside is safer for consistency)
-    // Re-opening transaction or doing it inside.
-    // Actually, we should have done it inside the transaction above.
-    // Let's move the COMMIT to after stock update.
-    // But wait, I put COMMIT above. Let me fix.
-    // Correct flow:
-    // BEGIN
-    // ... deduct user money
-    // ... give user items
-    // ... update total_sold for limited items (With Lock check ideally, but simple update here)
-    // COMMIT
-
-    // Doing the limited items update inside the SAME transaction:
-    // But I can't restart block easily here with search/replace.
-    // I will insert a new block before COMMIT.
-
-    // UPDATE LIMITED STOCK
     for (const lim of limitedItemsToUpdate) {
-      // Atomic increment of total_sold
-      // Extra safety: check max_stock again
-      const updateRes = await client.query(`
-            UPDATE upgrades 
-            SET total_sold = total_sold + $1 
-            WHERE id = $2 
-            AND (max_global_stock - total_sold) >= $1
-        `, [lim.qty, lim.id]);
-
+      const updateRes = await client.query(
+        `UPDATE upgrades SET total_sold = total_sold + $1
+         WHERE id = $2 AND (max_global_stock - total_sold) >= $1`,
+        [lim.qty, lim.id]
+      );
       if (updateRes.rowCount === 0) {
-        throw new Error(`Falha de concorrência: Estoque acabou para item ${lim.id} durante a transação.`);
+        throw new Error(`Falha de concorrência: estoque esgotado para o item ${lim.id}.`);
       }
     }
 
-    await client.query('COMMIT');
-    res.json({ ok: true, newUsdc });
+    for (const item of itemsToBuy) {
+      await client.query(
+        `INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3)
+         ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty`,
+        [uid, item.id, item.qty]
+      );
+    }
 
+    await client.query('COMMIT');
+
+    const unameRes = await db.query('SELECT username FROM users WHERE id = $1', [uid]);
+    const username = unameRes.rows[0]?.username || '';
+    console.log('[HardwareBuy] ts=%s userId=%s username=%s totalUsdc=%s newUsdc=%s lines=%s',
+      new Date().toISOString(),
+      uid,
+      username,
+      totalCost.toFixed(6),
+      newUsdc.toFixed(6),
+      JSON.stringify(itemsToBuy.map((i) => ({ id: i.id, qty: i.qty, name: i.name })))
+    );
+
+    res.json({ ok: true, newUsdc });
   } catch (e) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
     console.error('[BuyUpgrades] Error:', e);
     res.status(500).json({ error: e.message || 'Erro ao processar compra' });
   } finally {
@@ -3289,6 +3298,8 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
     await client.query('COMMIT');
     await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
     const newBalRes = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
+    console.log('[DepositCredit] userId=%s network=%s amountUsdc=%s tx=%s newUsdc=%s',
+      uid, net, Number(amountUsdc).toFixed(8), String(txHash).slice(0, 18) + '…', newBalRes.rows[0].usdc);
     return { ok: true, amount: amountUsdc, newUsdc: newBalRes.rows[0].usdc };
   } catch (dbErr) {
     await client.query('ROLLBACK');
@@ -3317,7 +3328,10 @@ async function sweepPendingDepositsOnce() {
       const receipt = await fetchDepositReceiptUnified(network, resolved.rpcUrl, txHash);
       const r = await tryCreditDepositFromReceipt(userId, txHash, network, settings, receipt);
       if (r.ok) {
-        console.log('[DepositSweep] OK', txHash, r.amount);
+        if (r.amount > 0) {
+          console.log('[DepositSweep] credited userId=%s network=%s amountUsdc=%s tx=%s',
+            userId, network, Number(r.amount).toFixed(8), String(txHash).slice(0, 18) + '…');
+        }
       } else if (!r.pending) {
         const age = (Date.now() - (meta.createdAt || 0));
         if (age > 72 * 3600 * 1000) await db.query('DELETE FROM app_cache WHERE key = $1', [row.key]);
@@ -3330,20 +3344,32 @@ async function sweepPendingDepositsOnce() {
 
 app.post('/api/deposit/verify', async (req, res) => {
   const { email, txHash, network } = req.body || {};
-  console.log('[DepositVerify] Request:', { email, txHash, network, userId: req.userId });
 
   if (!email || !txHash) return res.status(400).json({ error: 'Missing email or transaction hash' });
   const uid = req.userId;
   if (!uid) return res.status(401).json({ error: 'Sessão necessária para verificar depósito.' });
 
-  const checkTx = await db.query('SELECT user_id FROM daily_actions WHERE action_key = $1', [`tx_${txHash}`]);
+  const txNorm = String(txHash).trim();
+  if (!/^0x[a-fA-F0-9]{64}$/.test(txNorm)) {
+    return res.status(400).json({ error: 'Hash de transação inválido.' });
+  }
+
+  const who = await db.query('SELECT lower(trim(email::text)) AS em FROM users WHERE id = $1', [uid]);
+  if (!who.rows[0]) return res.status(401).json({ error: 'Utilizador inválido.' });
+  if (String(email).trim().toLowerCase() !== who.rows[0].em) {
+    return res.status(403).json({ error: 'O email não corresponde à sessão autenticada.' });
+  }
+
+  console.log('[DepositVerify] userId=%s network=%s tx=%s', uid, network, txNorm.slice(0, 14) + '…');
+
+  const checkTx = await db.query('SELECT user_id FROM daily_actions WHERE action_key = $1', [`tx_${txNorm}`]);
   if (checkTx.rowCount > 0) {
     const owner = checkTx.rows[0].user_id;
     if (Number(owner) !== Number(uid)) {
       return res.status(400).json({ error: 'Esta transação já foi utilizada por outra conta.' });
     }
     const bal = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-    await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
+    await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txNorm}`]);
     return res.json({ ok: true, amount: 0, newUsdc: bal.rows[0]?.usdc, already: true });
   }
 
@@ -3355,9 +3381,9 @@ app.post('/api/deposit/verify', async (req, res) => {
     }
     const { net, rpcUrl } = resolved;
 
-    const receipt = await fetchDepositReceiptUnified(net, rpcUrl, txHash);
+    const receipt = await fetchDepositReceiptUnified(net, rpcUrl, txNorm);
     if (!receipt || !receipt.result) {
-      await queueDepositPending(txHash, { userId: uid, network: net, createdAt: Date.now() });
+      await queueDepositPending(txNorm, { userId: uid, network: net, createdAt: Date.now() });
       return res.json({
         ok: false,
         pending: true,
@@ -3365,12 +3391,12 @@ app.post('/api/deposit/verify', async (req, res) => {
       });
     }
 
-    const out = await tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt);
+    const out = await tryCreditDepositFromReceipt(uid, txNorm, net, settings, receipt);
     if (out.ok) {
       return res.json({ ok: true, amount: out.amount, newUsdc: out.newUsdc, already: !!out.already });
     }
     if (out.pending) {
-      await queueDepositPending(txHash, { userId: uid, network: net, createdAt: Date.now() });
+      await queueDepositPending(txNorm, { userId: uid, network: net, createdAt: Date.now() });
       return res.json({
         ok: false,
         pending: true,
@@ -4004,25 +4030,51 @@ app.post('/api/loot-boxes', isAdmin, async (req, res) => {
 });
 
 app.post('/api/loot-boxes/open', async (req, res) => {
-  const { boxId } = req.body || {};
+  const { boxId: rawBoxId, email } = req.body || {};
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-  if (!boxId) return res.status(400).json({ error: 'Missing boxId' });
+  const boxId = typeof rawBoxId === 'string' ? rawBoxId.trim() : '';
+  if (!boxId || boxId.length > 200 || !/^[a-zA-Z0-9_.-]+$/.test(boxId)) {
+    return res.status(400).json({ error: 'Caixa inválida.' });
+  }
 
   const client = await db.connect();
   try {
     const uid = req.userId;
-    const boxCountRes = await client.query('SELECT qty FROM unopened_boxes WHERE user_id = $1 AND box_id = $2', [uid, boxId]);
-    const boxCount = boxCountRes.rows[0];
-    if (!boxCount || boxCount.qty < 1) return res.status(400).json({ error: 'No boxes available' });
 
-    const boxDefRes = await client.query('SELECT * FROM loot_boxes WHERE id = $1', [boxId]);
+    if (email) {
+      const who = await client.query('SELECT lower(trim(email::text)) AS em FROM users WHERE id = $1', [uid]);
+      if (who.rows[0] && String(email).trim().toLowerCase() !== who.rows[0].em) {
+        return res.status(403).json({ error: 'Sessão não corresponde ao email.' });
+      }
+    }
+
+    await client.query('BEGIN');
+
+    const boxCountRes = await client.query(
+      'SELECT qty FROM unopened_boxes WHERE user_id = $1 AND box_id = $2 FOR UPDATE',
+      [uid, boxId]
+    );
+    const boxCount = boxCountRes.rows[0];
+    if (!boxCount || boxCount.qty < 1) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'No boxes available' });
+    }
+
+    const boxDefRes = await client.query(
+      'SELECT * FROM loot_boxes WHERE id = $1 AND COALESCE(is_active, 1) = 1',
+      [boxId]
+    );
     const boxDef = boxDefRes.rows[0];
-    if (!boxDef) return res.status(404).json({ error: 'Box definition not found' });
+    if (!boxDef) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Box definition not found' });
+    }
 
     const itemsRes = await client.query('SELECT * FROM loot_box_items WHERE box_id = $1', [boxId]);
     const items = itemsRes.rows;
 
     if (items.length === 0) {
+      await client.query('ROLLBACK');
       console.error(`[LootBox] Critical Error: Box ${boxId} ("${boxDef.name}") has no items configured.`);
       return res.status(500).json({ error: 'Configuração da caixa inválida (sem itens).' });
     }
@@ -4033,10 +4085,12 @@ app.post('/api/loot-boxes/open', async (req, res) => {
     const gainedCoins = {};
     const gainedBundles = [];
 
-    items.forEach(item => {
+    items.forEach((item) => {
       const roll = Math.random() * 100;
       if (roll <= item.probability) {
-        const qty = Math.floor(Math.random() * (item.max_qty - item.min_qty + 1)) + item.min_qty;
+        const minQ = Math.max(0, Number(item.min_qty) || 0);
+        const maxQ = Math.max(minQ, Number(item.max_qty) || minQ);
+        const qty = Math.floor(Math.random() * (maxQ - minQ + 1)) + minQ;
         if (item.item_type === 'currency') {
           if (item.item_id === 'usdc') gainedUsdc += qty;
           rewards.push({ type: 'currency', id: item.item_id, qty });
@@ -4053,7 +4107,6 @@ app.post('/api/loot-boxes/open', async (req, res) => {
       }
     });
 
-    await client.query('BEGIN');
     if (boxCount.qty <= 1) {
       await client.query('DELETE FROM unopened_boxes WHERE user_id = $1 AND box_id = $2', [uid, boxId]);
     } else {
@@ -4062,74 +4115,155 @@ app.post('/api/loot-boxes/open', async (req, res) => {
 
     if (gainedUsdc > 0) {
       await client.query(`
-        UPDATE game_states 
-        SET usdc = COALESCE(usdc, 0) + $1, 
-            usdc_bonus = COALESCE(usdc_bonus, 0) + $1 
+        UPDATE game_states
+        SET usdc = COALESCE(usdc, 0) + $1,
+            usdc_bonus = COALESCE(usdc_bonus, 0) + $1
         WHERE user_id = $2`,
-        [gainedUsdc, uid]);
+      [gainedUsdc, uid]);
     }
 
     for (const [id, qty] of Object.entries(gainedItems)) {
-      await client.query('INSERT INTO stock (user_id, item_id, qty) VALUES ($1,$2,$3) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty', [uid, id, qty]);
+      await client.query(
+        'INSERT INTO stock (user_id, item_id, qty) VALUES ($1,$2,$3) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty',
+        [uid, id, qty]
+      );
     }
 
     for (const [id, qty] of Object.entries(gainedCoins)) {
-      await client.query('INSERT INTO coin_balances (user_id, coin_id, amount) VALUES ($1,$2,$3) ON CONFLICT(user_id, coin_id) DO UPDATE SET amount = coin_balances.amount + EXCLUDED.amount', [uid, id, qty]);
+      await client.query(
+        'INSERT INTO coin_balances (user_id, coin_id, amount) VALUES ($1,$2,$3) ON CONFLICT(user_id, coin_id) DO UPDATE SET amount = coin_balances.amount + EXCLUDED.amount',
+        [uid, id, qty]
+      );
     }
 
-    // Process Bundles (AdminUpgrades)
     for (const b of gainedBundles) {
       for (let i = 0; i < b.qty; i++) {
         await grantAdminUpgradeRewards(uid, b.id, client);
       }
     }
+
     await client.query('COMMIT');
+
+    const unameRes = await db.query('SELECT username FROM users WHERE id = $1', [uid]);
+    const username = unameRes.rows[0]?.username || '';
+    console.log('[LootBoxOpen] ts=%s userId=%s username=%s boxId=%s boxName=%s rewards=%s gainedUsdc=%s',
+      new Date().toISOString(),
+      uid,
+      username,
+      boxId,
+      boxDef.name,
+      JSON.stringify(rewards),
+      gainedUsdc
+    );
 
     res.json({ ok: true, rewards });
   } catch (err) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
     console.error('[BoxOpen] Error:', err);
-    res.status(500).json({ error: 'Internal server error', details: err.message });
-  } finally { client.release(); }
+    res.status(500).json({ error: 'Erro ao abrir caixa.' });
+  } finally {
+    client.release();
+  }
 });
 
 app.post('/api/loot-boxes/buy', async (req, res) => {
+  const { boxId: rawBoxId, email } = req.body || {};
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const boxId = typeof rawBoxId === 'string' ? rawBoxId.trim() : '';
+  if (!boxId || boxId.length > 200 || !/^[a-zA-Z0-9_.-]+$/.test(boxId)) {
+    return res.status(400).json({ error: 'Caixa inválida.' });
+  }
+
   const client = await db.connect();
   try {
-    const { boxId } = req.body || {};
-    if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-    if (!boxId) return res.status(400).json({ error: 'Missing boxId' });
-
     const uid = req.userId;
 
-    const boxRes = await client.query('SELECT * FROM loot_boxes WHERE id = $1', [boxId]);
+    if (email) {
+      const who = await client.query('SELECT lower(trim(email::text)) AS em FROM users WHERE id = $1', [uid]);
+      if (who.rows[0] && String(email).trim().toLowerCase() !== who.rows[0].em) {
+        return res.status(403).json({ error: 'Sessão não corresponde ao email.' });
+      }
+    }
+
+    const boxRes = await client.query(
+      'SELECT * FROM loot_boxes WHERE id = $1 AND COALESCE(is_active, 1) = 1',
+      [boxId]
+    );
     const box = boxRes.rows[0];
     if (!box) return res.status(404).json({ error: 'Box not found' });
-    if (box.trigger !== 'shop' && box.trigger !== 'shop_once') return res.status(400).json({ error: 'Box not for sale' });
-
-    if (box.trigger === 'shop_once') {
-      const claimedRes = await client.query('SELECT 1 FROM player_claimed_boxes WHERE user_id = $1 AND box_id = $2', [uid, boxId]);
-      if (claimedRes.rowCount > 0) return res.status(400).json({ error: 'Already purchased' });
+    if (box.trigger !== 'shop' && box.trigger !== 'shop_once') {
+      return res.status(400).json({ error: 'Box not for sale' });
     }
 
-    const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-    const gs = gsRes.rows[0];
-    if (!gs || gs.usdc < box.price) return res.status(400).json({ error: 'Insufficient funds' });
+    const price = Number(box.price);
+    if (!Number.isFinite(price) || price < 0 || price > 1e12) {
+      return res.status(400).json({ error: 'Preço da caixa inválido.' });
+    }
 
     await client.query('BEGIN');
-    await client.query('UPDATE game_states SET usdc = usdc - $1 WHERE user_id = $2', [box.price, uid]);
-    await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, boxId]);
+
     if (box.trigger === 'shop_once') {
-      await client.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3)', [uid, boxId, Date.now()]);
+      try {
+        await client.query(
+          'INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3)',
+          [uid, boxId, Date.now()]
+        );
+      } catch (insErr) {
+        if (insErr && insErr.code === '23505') {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Already purchased' });
+        }
+        throw insErr;
+      }
     }
+
+    const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
+    const gs = gsRes.rows[0];
+    const bal = Number(gs?.usdc) || 0;
+    if (bal < price) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient funds' });
+    }
+
+    const payRes = await client.query(
+      'UPDATE game_states SET usdc = usdc - $1, last_updated_at = $2, server_updated_at = $2 WHERE user_id = $3 AND usdc >= $1 RETURNING usdc',
+      [price, Date.now(), uid]
+    );
+    if (payRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient funds' });
+    }
+
+    await client.query(
+      `INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1)
+       ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1`,
+      [uid, boxId]
+    );
+
     await client.query('COMMIT');
 
-    res.json({ ok: true });
+    const newUsdc = payRes.rows[0].usdc;
+    const unameRes = await db.query('SELECT username FROM users WHERE id = $1', [uid]);
+    const username = unameRes.rows[0]?.username || '';
+    console.log('[LootBoxBuy] ts=%s userId=%s username=%s boxId=%s boxName=%s priceUsdc=%s newUsdc=%s trigger=%s',
+      new Date().toISOString(),
+      uid,
+      username,
+      boxId,
+      box.name,
+      price.toFixed(6),
+      Number(newUsdc).toFixed(6),
+      box.trigger
+    );
+
+    res.json({ ok: true, newUsdc });
   } catch (err) {
-    await client.query('ROLLBACK');
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
     console.error('[BoxBuy] Error:', err);
-    res.status(500).json({ error: 'Internal server error' });
-  } finally { client.release(); }
+    res.status(500).json({ error: 'Erro ao comprar caixa.' });
+  } finally {
+    client.release();
+  }
 });
 
 // --- SYSTEM NEWS ---
@@ -5972,6 +6106,58 @@ app.get('/api/game-state/:email', async (req, res) => {
   }
 });
 
+const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
+
+async function validatePlacedRacksForSave(dbq, racks) {
+  if (!Array.isArray(racks)) return { ok: false, error: 'placedRacks inválido.' };
+  if (racks.length > 350) return { ok: false, error: 'Número de rigs excede o permitido.' };
+  const upgradeIds = new Set();
+  const coinIds = new Set();
+  for (const r of racks) {
+    if (!r || typeof r !== 'object') return { ok: false, error: 'Rig inválida.' };
+    if (typeof r.id !== 'string' || !RACK_ID_RE.test(r.id)) return { ok: false, error: 'ID de rig inválido.' };
+    if (r.itemId != null && r.itemId !== '' && !RACK_ID_RE.test(String(r.itemId))) return { ok: false, error: 'Chassi inválido.' };
+    if (r.wiringId && !RACK_ID_RE.test(String(r.wiringId))) return { ok: false, error: 'Fiação inválida.' };
+    if (r.batteryId && !RACK_ID_RE.test(String(r.batteryId))) return { ok: false, error: 'Bateria inválida.' };
+    if (r.slots != null && !Array.isArray(r.slots)) return { ok: false, error: 'Slots inválidos.' };
+    if (r.slots && r.slots.length > 128) return { ok: false, error: 'Demasiados slots de máquina.' };
+    if (r.multiplierSlots != null && !Array.isArray(r.multiplierSlots)) return { ok: false, error: 'Slots de multiplicador inválidos.' };
+    if (r.multiplierSlots && r.multiplierSlots.length > 64) return { ok: false, error: 'Demasiados multiplicadores.' };
+    if (r.itemId) upgradeIds.add(String(r.itemId));
+    if (r.wiringId) upgradeIds.add(String(r.wiringId));
+    if (r.batteryId) upgradeIds.add(String(r.batteryId));
+    for (const s of r.slots || []) {
+      if (!s) continue;
+      if (!RACK_ID_RE.test(String(s))) return { ok: false, error: 'Peça inválida num slot.' };
+      upgradeIds.add(String(s));
+    }
+    for (const s of r.multiplierSlots || []) {
+      if (!s) continue;
+      if (!RACK_ID_RE.test(String(s))) return { ok: false, error: 'Peça inválida num slot de multiplicador.' };
+      upgradeIds.add(String(s));
+    }
+    if (r.selectedCoinId) {
+      if (!RACK_ID_RE.test(String(r.selectedCoinId))) return { ok: false, error: 'Moeda selecionada inválida.' };
+      coinIds.add(String(r.selectedCoinId));
+    }
+  }
+  if (upgradeIds.size > 0) {
+    const chk = await dbq.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [[...upgradeIds]]);
+    if (chk.rowCount !== upgradeIds.size) {
+      const have = new Set(chk.rows.map((x) => x.id));
+      const missing = [...upgradeIds].filter((id) => !have.has(id));
+      return { ok: false, error: `Item desconhecido no equipamento: ${missing.slice(0, 4).join(', ')}` };
+    }
+  }
+  if (coinIds.size > 0) {
+    const cres = await dbq.query('SELECT id FROM mining_coins WHERE id = ANY($1::text[])', [[...coinIds]]);
+    if (cres.rowCount !== coinIds.size) {
+      return { ok: false, error: 'Moeda inválida numa rig.' };
+    }
+  }
+  return { ok: true };
+}
+
 app.post('/api/save-game', async (req, res) => {
   const { changes, adminOverride, targetEmail } = req.body;
   if (!req.userId || !changes) return res.status(400).json({ error: 'Missing fields' });
@@ -6003,6 +6189,13 @@ app.post('/api/save-game', async (req, res) => {
     if (!effectiveAdminOverride && changes.lastLoadTime && dbServerUpdatedAt > Number(changes.lastLoadTime)) {
       // console.log(`[SaveGame] Conflict detected. DB: ${dbServerUpdatedAt}, Client: ${changes.lastLoadTime}`);
       return res.json({ forceReload: true });
+    }
+
+    if (changes.placedRacks) {
+      const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks);
+      if (!rackVal.ok) {
+        return res.status(400).json({ error: rackVal.error });
+      }
     }
 
     await client.query('BEGIN');
@@ -6108,6 +6301,33 @@ app.post('/api/save-game', async (req, res) => {
     }
 
     if (changes.placedRacks) {
+      const ts = new Date().toISOString();
+      const prevRacksRes = await client.query('SELECT id, item_id, wiring_id, battery_id FROM placed_racks WHERE user_id = $1', [uid]);
+      const prevMap = new Map(prevRacksRes.rows.map((row) => [row.id, row]));
+      const nextIdSet = new Set(changes.placedRacks.map((r) => r.id));
+
+      for (const row of prevRacksRes.rows) {
+        if (!nextIdSet.has(row.id)) {
+          const [slots, multis] = await Promise.all([
+            client.query('SELECT slot_index, machine_item_id FROM rack_slots WHERE rack_id = $1 ORDER BY slot_index', [row.id]),
+            client.query('SELECT slot_index, multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1 ORDER BY slot_index', [row.id])
+          ]);
+          const dismantledParts = {
+            chassis: row.item_id,
+            wiring: row.wiring_id,
+            battery: row.battery_id,
+            miners: slots.rows.filter((s) => s.machine_item_id).map((s) => ({ slot: s.slot_index, id: s.machine_item_id })),
+            multipliers: multis.rows.filter((m) => m.multiplier_item_id).map((m) => ({ slot: m.slot_index, id: m.multiplier_item_id }))
+          };
+          console.log(`[RackDismantle] ts=${ts} userId=${uid} rackId=${row.id} parts=${JSON.stringify(dismantledParts)}`);
+        }
+      }
+      for (const r of changes.placedRacks) {
+        if (!prevMap.has(r.id)) {
+          console.log(`[RackPlace] ts=${ts} userId=${uid} rackId=${r.id} itemId=${r.itemId} room=${r.roomId ?? ''} slotIndex=${r.slotIndex ?? 0}`);
+        }
+      }
+
       const currentRackIds = changes.placedRacks.map(r => r.id);
       if (currentRackIds.length > 0) {
         // Optimized range delete
@@ -6218,6 +6438,10 @@ app.post('/api/save-game', async (req, res) => {
           let finalSlotCharges = w.slotCharges ? { ...w.slotCharges } : {};
           validInstalledAt = Date.now();
 
+          if (!existing || !existing.item_id || existing.item_id !== w.itemId) {
+            console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
+          }
+
           if (existing && existing.item_id === w.itemId) {
             // 1. Preserve highest progress for individual battery slots
             if (existing.slot_charges) {
@@ -6251,6 +6475,7 @@ app.post('/api/save-game', async (req, res) => {
           wsInstalledAts.push(validInstalledAt);
         } else {
           if (existing && existing.item_id) {
+            console.log(`[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`);
             const itemDef = workshopUpgradesMap.get(existing.item_id);
             if (itemDef && itemDef.type === 'charger') {
               if (existing.current_charge > 0.001) throw new Error("Não é possível remover um carregador com carga.");
@@ -7622,52 +7847,99 @@ app.post('/api/exchange-settings', isAdmin, async (req, res) => {
 });
 
 app.post('/api/exchange/sell', async (req, res) => {
-  const { coinId, percentage } = req.body;
+  const { coinId, percentage } = req.body || {};
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-  if (!coinId || !percentage || percentage <= 0 || percentage > 1) return res.status(400).json({ error: 'Invalid parameters' });
+
+  const cid = typeof coinId === 'string' ? coinId.trim() : '';
+  if (!cid || !/^[a-zA-Z0-9_-]{1,80}$/.test(cid)) {
+    return res.status(400).json({ error: 'Moeda inválida.' });
+  }
+
+  const pct = Number(percentage);
+  if (!Number.isFinite(pct) || pct <= 0 || pct > 1) {
+    return res.status(400).json({ error: 'Percentual inválido (use entre 0 e 1, ex.: 0.5).' });
+  }
 
   const client = await db.connect();
   try {
     const uid = req.userId;
 
-    // Get settings
     const minRes = await client.query('SELECT value FROM settings WHERE key = $1', ['exchange_min_usdc']);
     const feeRes = await client.query('SELECT value FROM settings WHERE key = $1', ['exchange_fee_percent']);
-    const minUsdc = Number(minRes.rows[0]?.value) || 0.1;
-    const feePercent = Number(feeRes.rows[0]?.value) || 0;
+    const minUsdc = Math.max(0, Number(minRes.rows[0]?.value)) || 0.1;
+    const feePercent = Math.max(0, Math.min(100, Number(feeRes.rows[0]?.value) || 0));
 
-    // Get coin balance and rate
-    const balRes = await client.query('SELECT amount FROM coin_balances WHERE user_id = $1 AND coin_id = $2', [uid, coinId]);
+    await client.query('BEGIN');
+
+    const coinRes = await client.query(
+      `SELECT id, name, usdc_rate, COALESCE(show_in_exchange, 1) AS sx, is_active
+       FROM mining_coins WHERE id = $1`,
+      [cid]
+    );
+    const coinDef = coinRes.rows[0];
+    if (!coinDef || !coinDef.is_active) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Moeda não encontrada ou inativa.' });
+    }
+    if (Number(coinDef.sx) === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Esta moeda não está disponível no desk de câmbio.' });
+    }
+
+    const rate = Number(coinDef.usdc_rate);
+    if (!Number.isFinite(rate) || rate <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(500).json({ error: 'Taxa USDC da moeda indisponível.' });
+    }
+
+    const balRes = await client.query(
+      'SELECT amount FROM coin_balances WHERE user_id = $1 AND coin_id = $2 FOR UPDATE',
+      [uid, cid]
+    );
     const balance = Number(balRes.rows[0]?.amount) || 0;
 
-    if (balance <= 0) return res.status(400).json({ error: 'Insufficient balance' });
+    if (balance <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
 
-    const coinRes = await client.query('SELECT usdc_rate, name FROM mining_coins WHERE id = $1', [coinId]);
-    const coinDef = coinRes.rows[0];
-    if (!coinDef) return res.status(404).json({ error: 'Coin not found' });
+    const sellAmount = balance * pct;
+    if (!Number.isFinite(sellAmount) || sellAmount <= 0 || sellAmount > balance + 1e-12) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Valor de troca inválido.' });
+    }
 
-    const sellAmount = balance * percentage;
-    const grossUsdc = sellAmount * coinDef.usdc_rate;
-
-    if (grossUsdc < minUsdc) {
+    const grossUsdc = sellAmount * rate;
+    if (!Number.isFinite(grossUsdc) || grossUsdc < minUsdc) {
+      await client.query('ROLLBACK');
       return res.status(400).json({ error: `Valor mínimo para troca é $${minUsdc.toFixed(2)} USDC` });
     }
 
     const feeAmount = grossUsdc * (feePercent / 100);
     const netUsdc = grossUsdc - feeAmount;
+    if (!Number.isFinite(netUsdc) || netUsdc <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Valor líquido inválido após taxas.' });
+    }
 
-    await client.query('BEGIN');
+    const updCoin = await client.query(
+      'UPDATE coin_balances SET amount = amount - $1 WHERE user_id = $2 AND coin_id = $3 AND amount >= $1 RETURNING amount',
+      [sellAmount, uid, cid]
+    );
+    if (updCoin.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient balance' });
+    }
 
-    // Deduct coin
-    await client.query('UPDATE coin_balances SET amount = amount - $1 WHERE user_id = $2 AND coin_id = $3', [sellAmount, uid, coinId]);
-
-    // Add USDC
     await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [netUsdc, uid]);
 
     await client.query('COMMIT');
 
     const finalGs = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-    const finalBal = await client.query('SELECT amount FROM coin_balances WHERE user_id = $1 AND coin_id = $2', [uid, coinId]);
+    const finalBal = await client.query('SELECT amount FROM coin_balances WHERE user_id = $1 AND coin_id = $2', [uid, cid]);
+
+    console.log('[ExchangeSell] userId=%s coinId=%s coinName=%s pct=%s soldAmount=%s grossUsdc=%s feeUsdc=%s netUsdc=%s',
+      uid, cid, coinDef.name, String(pct), sellAmount, grossUsdc.toFixed(8), feeAmount.toFixed(8), netUsdc.toFixed(8));
 
     res.json({
       ok: true,
@@ -7677,12 +7949,12 @@ app.post('/api/exchange/sell', async (req, res) => {
       newUsdc: finalGs.rows[0]?.usdc || 0,
       newCoinBalance: finalBal.rows[0]?.amount || 0
     });
-
   } catch (e) {
-    if (client) await client.query('ROLLBACK');
-    res.status(500).json({ error: e.message });
+    try { await client.query('ROLLBACK'); } catch (rbErr) { /* ignore */ }
+    console.error('[ExchangeSell]', e.message);
+    res.status(500).json({ error: 'Erro ao processar troca.' });
   } finally {
-    if (client) client.release();
+    client.release();
   }
 });
 

@@ -162,6 +162,11 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
     }
   };
 
+  const visibleAdminOffers = adminUpgrades
+    .filter(u => u.isActive !== false)
+    .filter(u => !u.visibleToAccessLevelIds || u.visibleToAccessLevelIds.length === 0 || (user.accessLevelIds && user.accessLevelIds.some(l => u.visibleToAccessLevelIds!.includes(l))) || (user.accessLevelId && u.visibleToAccessLevelIds.includes(user.accessLevelId)))
+    .sort((a, b) => (a.priceUsdc || 0) - (b.priceUsdc || 0));
+
   const getTierStyles = (name: string) => {
     const n = name.toLowerCase();
     if (n.includes('genesis dao') || n.includes('náutilos') || n.includes('nautilos')) return { border: 'neon-border-cyan', text: 'text-amber-300 neon-text-cyan', btn: 'from-amber-500 to-orange-600 shadow-amber-500/30', glow: 'bg-gradient-to-r from-amber-500/20 to-orange-500/25' };
@@ -187,11 +192,17 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
           <div className="flex justify-center py-20">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-amber-500"></div>
           </div>
+        ) : visibleAdminOffers.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-20 px-6 text-center rounded-3xl border border-slate-800 bg-slate-900/40 max-w-xl mx-auto">
+            <Crown className="text-slate-600 mb-4" size={48} />
+            <p className="text-lg font-bold text-slate-200 mb-2">Nenhum upgrade disponível no momento</p>
+            <p className="text-sm text-slate-500 max-w-md">
+              Não há pacotes de nível à venda para o seu perfil agora, ou todos já foram adquiridos. Volte mais tarde ou fale com o suporte se esperava ver uma oferta aqui.
+            </p>
+          </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {adminUpgrades
-              .filter(u => !u.visibleToAccessLevelIds || u.visibleToAccessLevelIds.length === 0 || (user.accessLevelIds && user.accessLevelIds.some(l => u.visibleToAccessLevelIds!.includes(l))) || (user.accessLevelId && u.visibleToAccessLevelIds.includes(user.accessLevelId)))
-              .sort((a, b) => (a.priceUsdc || 0) - (b.priceUsdc || 0))
+            {visibleAdminOffers
               .map(offer => {
                 const styles = getTierStyles(offer.name);
                 const alreadyBought = adminUpgradePurchases.includes(offer.id) ||
