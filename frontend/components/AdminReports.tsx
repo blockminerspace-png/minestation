@@ -2,14 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { RefreshCw, ExternalLink, Eye, Copy, ArrowRight, Filter, ChevronLeft, ChevronRight, Calendar, User, Mail, Pencil, Download, Search, X as CloseIcon, Calculator, LayoutList, Wallet, Plus, Trash2, Save, Settings } from 'lucide-react';
 import { PlayerCalculator } from './PlayerCalculator';
 import { User as UserType, MiningCoin, Upgrade } from '../types';
-import { getWalletLabels, saveWalletLabel, getMiningCoins, getUpgrades, saveMiningCoin, deleteMiningCoin } from '../services/api';
+import { getWalletLabels, saveWalletLabel, getMiningCoins, getUpgrades, saveMiningCoin, deleteMiningCoin, getAdminTreasuryTokenTxs } from '../services/api';
 
 import { AdminManualWithdrawals } from './AdminManualWithdrawals';
 
-
-const USDC_CONTRACT = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
 const TREASURY_WALLET = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
-const API_KEY = 'UEKZNAPKSIC9X78PZI18YNDQ26RUC4GF47';
 
 interface Transaction {
     hash: string;
@@ -129,16 +126,16 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
         setLoading(true);
         setError(null);
         try {
-            // Etherscan V2 API - Reverted to USDC Token Transfers
-            const url = `https://api.etherscan.io/v2/api?chainid=137&module=account&action=tokentx&contractaddress=${USDC_CONTRACT}&address=${TREASURY_WALLET}&page=${page}&offset=${limit}&startblock=0&endblock=99999999&sort=desc&apikey=${API_KEY}`;
-
-            const response = await fetch(url);
-            const data = await response.json();
+            const data = (await getAdminTreasuryTokenTxs(page, limit)) as {
+                status?: string;
+                message?: string;
+                result?: Transaction[];
+            };
 
             if (data.status === '1' && Array.isArray(data.result)) {
                 setTransactions(data.result);
             } else {
-                if (data.message.includes("No transactions found")) {
+                if (data.message?.includes("No transactions found")) {
                     setTransactions([]);
                 } else {
                     console.error("API Error:", data.message);

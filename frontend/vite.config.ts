@@ -5,11 +5,17 @@ import react from '@vitejs/plugin-react';
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, '.', '');
   const apiPort = env.PORT || env.API_PORT || '3000';
+  const isDev = mode === 'development';
   return {
     server: {
-      allowedHosts: true,
       port: 5173,
       host: '0.0.0.0',
+      ...(isDev
+        ? {
+            // Nunca `true`: fora desta lista o Vite recusa o Host (evita `vite dev` aberto na Internet).
+            allowedHosts: ['localhost', '127.0.0.1', 'minestation.online', 'www.minestation.online', 'minestation.tech', 'www.minestation.tech'],
+          }
+        : {}),
       proxy: {
         '/api': {
           target: `http://127.0.0.1:${apiPort}`,
@@ -29,10 +35,6 @@ export default defineConfig(({ mode }) => {
       }
     },
     plugins: [react()],
-    define: {
-      'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-      'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-    },
     build: {
       chunkSizeWarningLimit: 1000,
       rollupOptions: {

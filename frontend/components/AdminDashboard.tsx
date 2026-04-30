@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { User, Upgrade, PlacedRack } from '../types';
-import { Users, Zap, Database, Activity, Clock, Trophy, DollarSign, Download, EyeOff } from 'lucide-react';
-import { getGameState, getTopWithdrawalsByCoin, getMiningCoins, getAdminDashboardStats, toggleRankingExclusion } from '../services/api';
+import { Users, Zap, Database, Activity, Clock, Trophy, DollarSign, Download, EyeOff, Eye } from 'lucide-react';
+import { getGameState, getTopWithdrawalsByCoin, getMiningCoins, getAdminDashboardStats, toggleRankingExclusion, getAdminTreasuryTokenTxs } from '../services/api';
 
 interface AdminDashboardProps {
     users: User[];
@@ -35,7 +35,18 @@ const calculateUserProduction = (placedRacks: PlacedRack[], upgradesList: Upgrad
 };
 
 export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgrades }) => {
-    const [stats, setStats] = useState<{ totalUsers: number; onlineUsers: number; totalHashrate: number; top10: { username: string; email: string; power: number; coinBalances?: Record<string, number> }[]; last10: User[]; totalDeposited: number; topDeposits: { username: string; email: string; amount: number }[]; totalWithdrawn: number; topWithdrawalsByCoin: Array<{ coinId: string; coinName: string; top: { username: string; email: string; total: number }[] }> }>({ totalUsers: 0, onlineUsers: 0, totalHashrate: 0, top10: [], last10: [], totalDeposited: 0, topDeposits: [], totalWithdrawn: 0, topWithdrawalsByCoin: [] });
+    const [stats, setStats] = useState<{
+        totalUsers: number;
+        onlineUsers: number;
+        totalHashrate: number;
+        top10: { username: string; email: string; power: number; coinBalances?: Record<string, number> }[];
+        rankingExcluded: { username: string; email: string }[];
+        last10: User[];
+        totalDeposited: number;
+        topDeposits: { username: string; email: string; amount: number }[];
+        totalWithdrawn: number;
+        topWithdrawalsByCoin: Array<{ coinId: string; coinName: string; top: { username: string; email: string; total: number }[] }>;
+    }>({ totalUsers: 0, onlineUsers: 0, totalHashrate: 0, top10: [], rankingExcluded: [], last10: [], totalDeposited: 0, topDeposits: [], totalWithdrawn: 0, topWithdrawalsByCoin: [] });
     const [selectedCoinId, setSelectedCoinId] = useState<string>('');
     const [miningCoins, setMiningCoins] = useState<{ id: string; name: string }[]>([]);
 
@@ -64,14 +75,11 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
 
             if (now - lastEthFetch > 60000) {
                 try {
-                    // Fetch last 1000 token transfers for USDC to/from Treasury
                     const TREASURY_WALLET = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
-                    const USDC_CONTRACT = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
-                    const API_KEY = 'UEKZNAPKSIC9X78PZI18YNDQ26RUC4GF47';
-
-                    const url = `https://api.etherscan.io/v2/api?chainid=137&module=account&action=tokentx&contractaddress=${USDC_CONTRACT}&address=${TREASURY_WALLET}&page=1&offset=1000&startblock=0&endblock=99999999&sort=desc&apikey=${API_KEY}`;
-                    const resp = await fetch(url);
-                    const apiData = await resp.json();
+                    const apiData = (await getAdminTreasuryTokenTxs(1, 1000)) as {
+                        status?: string;
+                        result?: any[];
+                    };
 
                     if (apiData.status === '1' && Array.isArray(apiData.result)) {
                         const validTxs = apiData.result.filter((tx: any) => {
@@ -126,7 +134,8 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                     username: m.username,
                     email: m.email,
                     power: m.amount
-                }))
+                })),
+                rankingExcluded: Array.isArray(data.rankingExcluded) ? data.rankingExcluded : []
             }));
 
             if (!selectedCoinId && coins.length > 0) setSelectedCoinId(coins[0].id);
@@ -251,16 +260,32 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                                         <td className="px-4 py-2 text-right text-yellow-400 font-mono text-xs">{formatHash(item.power)}</td>
                                         <td className="px-4 py-2 text-right">
                                             <button
+                                                type="button"
                                                 onClick={async () => {
-                                                    if (!window.confirm(`Ocultar ${item.username} do ranking?`)) return;
-                                                    await toggleRankingExclusion(item.email, true);
-                                                    setStats(prev => ({
-                                                        ...prev,
-                                                        top10: prev.top10.filter(m => m.username !== item.username)
-                                                    }));
+                                                    if (!window.confirm(`Ocultar ${item.username} do ranking público? Podes voltar a mostrar na secção abaixo.`)) return;
+                                                    const r = await toggleRankingExclusion(item.email, true);
+                                                    if (!r.ok) {
+                                                        alert(r.error || 'Falha ao atualizar');
+                                                        return;
+                                                    }
+                                                    const data = await getAdminDashboardStats();
+                                                    if (data) {
+                                                        setStats(prev => ({
+                                                            ...prev,
+                                                            totalUsers: data.totalUsers,
+                                                            onlineUsers: data.onlineUsers,
+                                                            totalHashrate: data.globalPower || 0,
+                                                            top10: (data.topMiners || []).map((m: any) => ({
+                                                                username: m.username,
+                                                                email: m.email,
+                                                                power: m.amount
+                                                            })),
+                                                            rankingExcluded: Array.isArray(data.rankingExcluded) ? data.rankingExcluded : []
+                                                        }));
+                                                    }
                                                 }}
                                                 className="text-slate-500 hover:text-red-400"
-                                                title="Ocultar do Ranking"
+                                                title="Ocultar do ranking público"
                                             >
                                                 <EyeOff size={14} />
                                             </button>
@@ -268,11 +293,54 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                                     </tr>
                                 ))}
                                 {stats.top10.length === 0 && (
-                                    <tr><td colSpan={3} className="px-4 py-4 text-center text-slate-500 italic">Sem mineradores ativos.</td></tr>
+                                    <tr><td colSpan={4} className="px-4 py-4 text-center text-slate-500 italic">Sem mineradores ativos.</td></tr>
                                 )}
                             </tbody>
                         </table>
                     </div>
+                    {stats.rankingExcluded.length > 0 && (
+                        <div className="border-t border-slate-700 bg-slate-900/40 p-4">
+                            <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wide mb-2">Ocultos do ranking ({stats.rankingExcluded.length})</h4>
+                            <p className="text-xs text-slate-500 mb-3">Estas contas não aparecem no leaderboard público. Clica no olho para voltarem ao ranking.</p>
+                            <ul className="space-y-2 max-h-48 overflow-y-auto">
+                                {stats.rankingExcluded.map((row) => (
+                                    <li key={row.email} className="flex items-center justify-between gap-2 text-sm text-slate-300">
+                                        <span className="truncate"><span className="font-semibold text-slate-200">{row.username}</span> <span className="text-slate-500 text-xs">{row.email}</span></span>
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                if (!window.confirm(`Mostrar ${row.username} de novo no ranking?`)) return;
+                                                const r = await toggleRankingExclusion(row.email, false);
+                                                if (!r.ok) {
+                                                    alert(r.error || 'Falha ao atualizar');
+                                                    return;
+                                                }
+                                                const data = await getAdminDashboardStats();
+                                                if (data) {
+                                                    setStats(prev => ({
+                                                        ...prev,
+                                                        totalUsers: data.totalUsers,
+                                                        onlineUsers: data.onlineUsers,
+                                                        totalHashrate: data.globalPower || 0,
+                                                        top10: (data.topMiners || []).map((m: any) => ({
+                                                            username: m.username,
+                                                            email: m.email,
+                                                            power: m.amount
+                                                        })),
+                                                        rankingExcluded: Array.isArray(data.rankingExcluded) ? data.rankingExcluded : []
+                                                    }));
+                                                }
+                                            }}
+                                            className="shrink-0 p-1.5 rounded text-slate-500 hover:text-emerald-400 hover:bg-slate-700/50"
+                                            title="Voltar a mostrar no ranking"
+                                        >
+                                            <Eye size={16} />
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        </div>
+                    )}
                 </div>
 
             </div>

@@ -22,6 +22,7 @@ const __dirname = path.dirname(__filename);
 
 import db from './db.js';
 import { initDb } from './db.pg.js';
+import { sendResetEmail } from './utils/mailer.js';
 
 // Helper to find pg_restore
 const getPgRestorePath = () => {
@@ -481,6 +482,30 @@ const checkIsAdmin = async (uid) => {
   }
 };
 
+/** Origens explícitas + FRONTEND_URL + CORS_ALLOWED_ORIGINS (lista separada por vírgulas). */
+function buildCorsOriginSet() {
+  const s = new Set();
+  const add = (o) => {
+    if (o == null || typeof o !== 'string') return;
+    const t = o.trim();
+    if (t) s.add(t);
+  };
+  add(process.env.FRONTEND_URL);
+  for (const part of String(process.env.CORS_ALLOWED_ORIGINS || '').split(',')) add(part);
+  [
+    'https://minestation.online',
+    'http://minestation.online',
+    'https://www.minestation.online',
+    'http://www.minestation.online',
+    'https://minestation.tech',
+    'http://minestation.tech',
+    'https://www.minestation.tech',
+    'http://www.minestation.tech',
+  ].forEach(add);
+  return s;
+}
+const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
+
 const isAdmin = async (req, res, next) => {
   const ip = getClientIp(req);
   if (!req.originalUrl.includes('/api/admin/dashboard-stats') && !req.originalUrl.includes('/api/system/time')) {
@@ -600,9 +625,6 @@ app.use(helmet({
   hsts: process.env.NODE_ENV === 'production' ? { maxAge: 31536000, includeSubDomains: true, preload: true } : false,
 }));
 
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
 // IP Blacklist Middleware (GLOBAL)
 app.use(async (req, res, next) => {
   const ip = getClientIp(req);
@@ -618,45 +640,50 @@ app.use(async (req, res, next) => {
 
 app.use(cors({
   origin: (origin, callback) => {
-    // Permite requisições sem origin (como apps mobile ou curl)
     if (!origin) return callback(null, true);
-    // Permite qualquer localhost ou 127.0.0.1 (dev), com ou sem porta
-    if (origin.match(/^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/)) return callback(null, true);
-    // Permite URL definida no env
-    if (process.env.FRONTEND_URL && origin === process.env.FRONTEND_URL) return callback(null, true);
+    if (origin.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/)) return callback(null, true);
+    if (ALLOWED_CORS_ORIGINS.has(origin)) return callback(null, true);
     if (origin === 'http://149.56.81.30' || origin === 'https://149.56.81.30' || origin.includes('149.56.81.30')) return callback(null, true);
-    // Permite minestation.online e www.minestation.online
-    if (origin === 'https://minestation.online' || origin === 'http://minestation.online') return callback(null, true);
-    if (origin === 'https://www.minestation.online' || origin === 'http://www.minestation.online') return callback(null, true);
-
-    // Permite minestation.tech e www.minestation.tech
-    if (origin === 'https://minestation.tech' || origin === 'http://minestation.tech') return callback(null, true);
-    if (origin === 'https://www.minestation.tech' || origin === 'http://www.minestation.tech') return callback(null, true);
-
     console.error('CORS blocked origin:', origin);
-    // Em produção, restringir. CORS Error se não bater.
-    callback(new Error('Not allowed by CORS'));
+    // [] = origem negada com resposta preflight válida (evita callback(Error) → next(err) sem cabeçalhos CORS).
+    return callback(null, []);
   },
   credentials: true
 }));
 
+const parseRateLimit = (raw, fallback, min, max) => {
+  const n = parseInt(String(raw ?? ''), 10);
+  if (Number.isNaN(n)) return fallback;
+  return Math.min(Math.max(n, min), max);
+};
+// Limites por IP (atrás de Nginx use Cloudflare / limit_req como camada extra). Ajuste via env em picos reais.
+const apiRateLimitMax = parseRateLimit(process.env.API_RATE_LIMIT_MAX, 4000, 200, 100000);
+const authRateLimitMax = parseRateLimit(process.env.AUTH_RATE_LIMIT_MAX, 40, 5, 1000);
+
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10000, // Aumentado para 10000 para evitar bloqueios em produção com muitos usuários
+  max: apiRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.ip === '::1' || req.ip === '127.0.0.1' || req.ip === '::ffff:127.0.0.1',
+  keyGenerator: (req) => getClientIp(req),
+  skip: (req) => {
+    const ip = getClientIp(req);
+    return ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
+  },
   message: { error: 'Muitas requisições vindas deste IP, tente novamente mais tarde.' },
   validate: { trustProxy: false }
 });
 
-// Aplicar limiter apenas em rotas sensíveis como login e registro
 const authLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 100, // Aumentado para 100 tentativas de login/hora
+  max: authRateLimitMax,
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => req.ip === '::1' || req.ip === '127.0.0.1' || req.ip === '::ffff:127.0.0.1',
+  keyGenerator: (req) => getClientIp(req),
+  skip: (req) => {
+    const ip = getClientIp(req);
+    return ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
+  },
   message: { error: 'Muitas tentativas de login, tente novamente mais tarde.' },
   validate: { trustProxy: false }
 });
@@ -667,6 +694,7 @@ app.use('/api/login', authLimiter);
 
 
 app.use(express.json({ limit: '5mb' })); // Reduzido o limite para 5MB por segurança
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
 app.use((req, res, next) => {
   const url = req.url || '';
@@ -1881,6 +1909,31 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
   }
 });
 
+// Proxy Etherscan (chave só no servidor) — usado pelo painel admin Relatórios / Dashboard.
+app.get('/api/admin/etherscan/treasury-token-txs', isAdmin, async (req, res) => {
+  const apiKey = (process.env.ETHERSCAN_API_KEY || '').trim();
+  if (!apiKey) {
+    return res.status(503).json({ error: 'ETHERSCAN_API_KEY não configurada no servidor.' });
+  }
+  const page = Math.min(100, Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1));
+  const offset = Math.min(1000, Math.max(1, parseInt(String(req.query.offset ?? '20'), 10) || 20));
+  const USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
+  const treasury = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
+  const url = `https://api.etherscan.io/v2/api?chainid=137&module=account&action=tokentx&contractaddress=${USDC}&address=${treasury}&page=${page}&offset=${offset}&startblock=0&endblock=99999999&sort=desc&apikey=${encodeURIComponent(apiKey)}`;
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 20000);
+    const r = await fetch(url, { signal: ac.signal, headers: { Accept: 'application/json' } });
+    clearTimeout(t);
+    const data = await r.json();
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(data);
+  } catch (e) {
+    console.error('[etherscan proxy]', e.message || e);
+    res.status(502).json({ error: 'Falha ao contactar Etherscan.' });
+  }
+});
+
 app.post('/api/admin/economy-settings', isAdmin, async (req, res) => {
   const { coinId, networkHashrate, blockReward } = req.body;
 
@@ -1937,8 +1990,41 @@ app.post('/api/wallet-labels', isAdmin, async (req, res) => {
   }
 });
 
-const BACKUP_DIR = path.join(__dirname, '../backups');
-try { fs.mkdirSync(BACKUP_DIR, { recursive: true }); } catch { }
+/** Diretório de backups: em Docker monte um volume aqui (ex.: /app/backups). BACKUP_DIR no .env = caminho absoluto. */
+const BACKUP_DIR = (() => {
+  const raw = process.env.BACKUP_DIR && String(process.env.BACKUP_DIR).trim();
+  const dir = raw ? path.resolve(raw) : path.join(__dirname, '../backups');
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch { /* ignore */ }
+  return dir;
+})();
+
+/** Caminho absoluto dentro de BACKUP_DIR (evita path traversal em nome de ficheiro). */
+const resolveSafeBackupPath = (filename) => {
+  const base = path.resolve(BACKUP_DIR);
+  const safeName = path.basename(String(filename ?? ''));
+  if (!safeName || safeName === '.' || safeName === '..') return null;
+  const resolved = path.resolve(base, safeName);
+  const baseSep = base.endsWith(path.sep) ? base : base + path.sep;
+  if (resolved !== base && !resolved.startsWith(baseSep)) return null;
+  return resolved;
+};
+
+/** Tabelas permitidas em restore (JSON/SQLite) — nomes de tabela nunca vêm concatenados sem whitelist. */
+const RESTORE_ALLOWED_TABLES = new Set([
+  'users', 'referrals', 'mining_coins', 'access_levels', 'upgrades', 'upgrade_compat_racks',
+  'loot_boxes', 'loot_box_items', 'system_news', 'season_passes', 'season_purchases',
+  'game_states', 'settings', 'stock', 'unopened_boxes', 'stored_batteries', 'placed_racks',
+  'rack_slots', 'rack_multiplier_slots', 'player_listings', 'nft_items', 'sessions',
+  'coin_balances', 'coin_withdrawals', 'admin_upgrades', 'admin_upgrade_items',
+  'admin_upgrade_boxes', 'admin_upgrade_passes', 'admin_upgrade_coins', 'admin_upgrade_purchases',
+  'player_news_submissions', 'rig_rooms', 'user_rig_rooms', 'workshop_slots',
+  'player_claimed_boxes', 'daily_actions', 'promo_codes', 'promo_code_redemptions',
+  'economy_settings', 'withdrawal_requests'
+]);
+
+const isSafeSqlIdentifier = (name) => typeof name === 'string' && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
 
 // API UTILITIES
 const generateReferralCode = (username) => {
@@ -4604,6 +4690,13 @@ app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
 
     const globalPower = powerRes.rows.reduce((acc, r) => acc + Number(r.power), 0);
 
+    const rankingExcludedRes = await db.query(`
+      SELECT username, email FROM users
+      WHERE is_admin = 0 AND COALESCE(ranking_excluded, 0) = 1
+      ORDER BY LOWER(username)
+      LIMIT 200
+    `);
+
     // --- Top withdrawals per coin ---
     const coinsRes = await db.query('SELECT id, name FROM mining_coins');
     const withdrawalsByCoin = [];
@@ -4634,7 +4727,8 @@ app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
       topDeposits: topDepositsRes.rows.map(r => ({ ...r, amount: Number(r.amount) })),
       topWithdrawalsByCoin: withdrawalsByCoin,
       globalPower: globalPower,
-      topMiners: topMinersList
+      topMiners: topMinersList,
+      rankingExcluded: rankingExcludedRes.rows
     };
     lastDashboardFetch = Date.now();
     res.json(dashboardStatsCache);
@@ -6076,8 +6170,10 @@ app.get('/api/admin/backups', isAdmin, async (req, res) => {
 
 app.post('/api/admin/backup', isAdmin, async (req, res) => {
   const { name } = req.body || {};
-  const filename = `${name || 'backup'}_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
-  const dest = path.join(BACKUP_DIR, filename);
+  const safeBase = path.basename(String(name || 'backup')).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'backup';
+  const filename = `${safeBase}_${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+  const dest = resolveSafeBackupPath(filename);
+  if (!dest) return res.status(400).json({ error: 'Nome de backup inválido' });
   try {
     const tables = [
       'users', 'referrals', 'mining_coins', 'access_levels', 'upgrades', 'upgrade_compat_racks',
@@ -6101,9 +6197,8 @@ app.post('/api/admin/backup', isAdmin, async (req, res) => {
 });
 
 app.delete('/api/admin/backups/:filename', isAdmin, async (req, res) => {
-  const file = req.params.filename;
-  if (file.includes('..') || file.includes('/') || file.includes('\\')) return res.status(400).json({ error: 'Nome de arquivo inválido' });
-  const fullPath = path.join(BACKUP_DIR, file);
+  const fullPath = resolveSafeBackupPath(req.params.filename);
+  if (!fullPath) return res.status(400).json({ error: 'Nome de arquivo inválido' });
   try {
     if (fs.existsSync(fullPath)) {
       fs.unlinkSync(fullPath);
@@ -6332,7 +6427,8 @@ app.post('/api/admin/backups/upload', isAdmin, async (req, res) => {
   }
   try {
     console.log(`[BackupUpload] Receiving file: ${filename}, size: ${content.length}`);
-    const dest = path.join(BACKUP_DIR, filename);
+    const dest = resolveSafeBackupPath(filename);
+    if (!dest) return res.status(400).json({ error: 'Nome de arquivo inválido' });
     const base64Data = content.includes('base64,') ? content.split('base64,')[1] : content;
     const buffer = Buffer.from(base64Data, 'base64');
     fs.writeFileSync(dest, buffer);
@@ -6345,8 +6441,8 @@ app.post('/api/admin/backups/upload', isAdmin, async (req, res) => {
 });
 
 app.get('/api/admin/backups/download/:filename', isAdmin, (req, res) => {
-  const file = req.params.filename;
-  const fullPath = path.join(BACKUP_DIR, file);
+  const fullPath = resolveSafeBackupPath(req.params.filename);
+  if (!fullPath) return res.status(400).json({ error: 'Nome de arquivo inválido' });
   if (fs.existsSync(fullPath)) res.download(fullPath);
   else res.status(404).json({ error: 'Arquivo não encontrado' });
 });
@@ -6354,7 +6450,8 @@ app.get('/api/admin/backups/download/:filename', isAdmin, (req, res) => {
 app.post('/api/admin/restore', isAdmin, async (req, res) => {
   const { filename } = req.body || {};
   if (!filename) return res.status(400).json({ error: 'Nome do arquivo ausente' });
-  const bkpPath = path.join(BACKUP_DIR, filename);
+  const bkpPath = resolveSafeBackupPath(filename);
+  if (!bkpPath) return res.status(400).json({ error: 'Nome de arquivo inválido' });
   if (!fs.existsSync(bkpPath)) return res.status(404).json({ error: 'Backup não encontrado' });
 
   // Check for PGDMP binary header
@@ -6468,11 +6565,19 @@ app.post('/api/admin/restore', isAdmin, async (req, res) => {
       });
 
       for (const tableName of sortedTables) {
+        if (!RESTORE_ALLOWED_TABLES.has(tableName) || !isSafeSqlIdentifier(tableName)) {
+          console.warn(`[Restore] Tabela ignorada (não permitida): ${tableName}`);
+          continue;
+        }
         const existsRes = await client.query("SELECT 1 FROM information_schema.tables WHERE table_name = $1", [tableName]);
         if (existsRes.rowCount === 0) continue;
         const backupRows = bkpDb.prepare(`SELECT * FROM ${tableName}`).all();
         if (backupRows.length === 0) continue;
         const cols = Object.keys(backupRows[0]);
+        if (!cols.every(isSafeSqlIdentifier)) {
+          console.warn(`[Restore] Colunas inválidas na tabela ${tableName}, ignorando.`);
+          continue;
+        }
         const colList = cols.join(', ');
         const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
         for (const row of backupRows) {
@@ -6499,9 +6604,17 @@ app.post('/api/admin/restore', isAdmin, async (req, res) => {
       });
 
       for (const table of sortedKeys) {
+        if (!RESTORE_ALLOWED_TABLES.has(table) || !isSafeSqlIdentifier(table)) {
+          console.warn(`[Restore] Tabela ignorada (não permitida): ${table}`);
+          continue;
+        }
         const rows = backupData[table];
         if (!Array.isArray(rows) || rows.length === 0) continue;
         const cols = Object.keys(rows[0]);
+        if (!cols.every(isSafeSqlIdentifier)) {
+          console.warn(`[Restore] Colunas inválidas na tabela ${table}, ignorando.`);
+          continue;
+        }
         const colList = cols.join(', ');
         const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
         for (const row of rows) {
@@ -7020,6 +7133,8 @@ app.post('/api/admin/ranking-exclusion', isAdmin, async (req, res) => {
   try {
     const uid = await getUserIdByEmail(email, req.ip);
     await db.query('UPDATE users SET ranking_excluded = $1 WHERE id = $2', [excluded ? 1 : 0, uid]);
+    dashboardStatsCache = null;
+    lastDashboardFetch = 0;
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7205,6 +7320,11 @@ app.post('/api/verify-recovery-wallet', async (req, res) => {
 
     res.json({ ok: true, resetToken });
 
+    // Enviar e-mail de recuperação de forma assíncrona
+    sendResetEmail(email, resetToken).catch(err => {
+      console.error('[Mailer Error] Falha ao enviar e-mail:', err.message);
+    });
+
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Erro interno.' });
@@ -7235,6 +7355,21 @@ app.post('/api/reset-password-secure', async (req, res) => {
     console.error(e);
     res.status(500).json({ error: 'Erro ao redefinir senha.' });
   }
+});
+
+// Bloqueia sondagens a ficheiros sensíveis antes do static/SPA (404 genérico, sem corpo de segredos).
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  const p = (req.path || '').toLowerCase();
+  if (p.startsWith('/.env')) {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(404).type('text/plain').send('Not Found');
+  }
+  if (p.startsWith('/.git') || p === '/.svn' || p === '/.hg') {
+    res.setHeader('Cache-Control', 'no-store');
+    return res.status(404).type('text/plain').send('Not Found');
+  }
+  next();
 });
 
 app.use(express.static(path.join(__dirname, '../frontend/dist')));

@@ -14,6 +14,17 @@ interface UpgradeAccountProps {
   onReloadGameState?: () => void;
 }
 
+/** Reduz XSS quando descrições ricas vêm da API (admin). Não substitui CSP no servidor. */
+function sanitizeRichHtmlFragment(html: string): string {
+  if (!html) return '';
+  let s = html.replace(/<script\b[\s\S]*?>[\s\S]*?<\/script>/gi, '');
+  s = s.replace(/<\/?(?:iframe|object|embed|link|meta|base|form|input|button)\b[^>]*>/gi, '');
+  s = s.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  s = s.replace(/javascript:\s*/gi, '');
+  s = s.replace(/data:\s*text\/html/gi, 'data:text/plain');
+  return s;
+}
+
 const RichDescription: React.FC<{ content: string; isRaw?: boolean }> = ({ content, isRaw }) => {
   if (!content) return null;
 
@@ -47,7 +58,7 @@ const RichDescription: React.FC<{ content: string; isRaw?: boolean }> = ({ conte
   while ((match = iconRegex.exec(processed)) !== null) {
     if (match.index > lastIndex) {
       const htmlPart = processed.substring(lastIndex, match.index);
-      parts.push(<span key={`text-${lastIndex}`} dangerouslySetInnerHTML={{ __html: htmlPart }} />);
+      parts.push(<span key={`text-${lastIndex}`} dangerouslySetInnerHTML={{ __html: sanitizeRichHtmlFragment(htmlPart) }} />);
     }
     const iconName = match[1];
     const propsStr = match[2];
@@ -64,7 +75,7 @@ const RichDescription: React.FC<{ content: string; isRaw?: boolean }> = ({ conte
 
   if (lastIndex < processed.length) {
     const htmlPart = processed.substring(lastIndex);
-    parts.push(<span key={`text-${lastIndex}`} dangerouslySetInnerHTML={{ __html: htmlPart }} />);
+    parts.push(<span key={`text-${lastIndex}`} dangerouslySetInnerHTML={{ __html: sanitizeRichHtmlFragment(htmlPart) }} />);
   }
 
   return (

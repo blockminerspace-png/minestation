@@ -9,6 +9,16 @@ async function apiFetch(url: string, options: RequestInit = {}) {
   });
 }
 
+/** Transferências USDC (Polygon) para o treasury — só admin; chave Etherscan fica no servidor. */
+export async function getAdminTreasuryTokenTxs(page: number, offset: number): Promise<unknown> {
+  const p = Math.max(1, Math.floor(Number(page)) || 1);
+  const o = Math.min(1000, Math.max(1, Math.floor(Number(offset)) || 20));
+  const res = await apiFetch(`${base}/admin/etherscan/treasury-token-txs?page=${p}&offset=${o}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  return data;
+}
+
 export async function getUpgrades(): Promise<Upgrade[]> {
   try {
     const res = await apiFetch(`${base}/upgrades`);
