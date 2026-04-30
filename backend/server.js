@@ -737,74 +737,6 @@ app.use(async (req, res, next) => {
   next();
 });
 
-// --- DEBUG ROUTE (TEMPORARY) ---
-app.get('/api/debug/users', async (req, res) => {
-  try {
-    const result = await db.query('SELECT id, email, access_level_id FROM users ORDER BY id ASC LIMIT 50');
-    res.json(result.rows);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-// --- AUTH ROUTE ---
-app.post('/api/login', async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) return res.status(400).json({ error: 'Campos obrigatórios' });
-
-  try {
-    const userRes = await db.query('SELECT * FROM users WHERE email = $1', [email]);
-    const user = userRes.rows[0];
-
-    if (!user) return res.status(401).json({ error: 'Credenciais inválidas' });
-
-    const match = await bcrypt.compare(password, user.password);
-    if (!match) return res.status(401).json({ error: 'Credenciais inválidas' });
-
-    if (user.is_blocked) return res.status(403).json({ error: 'Conta bloqueada' });
-
-    // Session Create
-    const sid = crypto.randomUUID();
-    const now = Date.now();
-    const expiresAt = now + (30 * 24 * 60 * 60 * 1000); // 30 days
-
-    await db.query('INSERT INTO sessions (session_id, user_id, expires_at, created_at) VALUES ($1, $2, $3, $4)', [sid, user.id, expiresAt, now]);
-
-    res.cookie('sid', sid, {
-      httpOnly: true,
-      maxAge: 30 * 24 * 60 * 60 * 1000,
-      sameSite: 'lax', // or 'strict' depending on requirements, lax is safer for dev
-      secure: false // set to true in production with https
-    });
-
-    // Remove sensitive data
-    delete user.password;
-    delete user.admin_permissions; // Send clean user object
-
-    // Map to CamelCase for Frontend
-    const mappedUser = {
-      ...user,
-      isAdmin: !!user.is_admin,
-      isBlocked: !!user.is_blocked,
-      accessLevelId: user.access_level_id,
-      polygonWallet: user.polygon_wallet,
-      referralCode: user.referral_code,
-      referredBy: user.referred_by,
-      accessLevelIds: user.access_level_ids || [] // Ensure array
-    };
-
-    // Clean snake_case if desired, but keep for now just in case. 
-    // Just ensure sensitive is gone.
-
-    res.json(mappedUser);
-
-  } catch (e) {
-    console.error('Login Error:', e);
-    res.status(500).json({ error: 'Erro interno no login' });
-  }
-});
-
-
 // CACHE REMOVIDO CONFORME SOLICITADO
 
 let activeProgressCalculations = 0;
@@ -5095,52 +5027,35 @@ app.post('/api/login', async (req, res) => {
     const uRes = await db.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
     let u = uRes.rows[0];
 
-    if (u) {
-      console.log(`[DEBUG_LOGIN] User ${normalizedEmail} found. ID: ${u.id}. PwdLen: ${u.password?.length || 0}. PwdType: ${typeof u.password}`);
-    } else {
-      console.log(`[DEBUG_LOGIN] User ${normalizedEmail} NOT found.`);
-    }
-
     if (!u) {
-      console.log(`[Login] User not found: ${email}`);
-      await bcrypt.compare(password, '$2b$10$abcdefghijklmnopqrstuvwxyz123456'); // Hash falso
+      await bcrypt.compare(password, '$2b$10$abcdefghijklmnopqrstuvwxyz123456');
       return res.status(401).json({ error: 'Credenciais inválidas.' });
     }
 
     if (u.is_blocked) return res.status(403).json({ error: 'Este usuário está bloqueado.' });
 
-    // Se o usuário ainda não tiver senha (legado), salva a primeira fornecida como hash
     if (!u.password) {
       const hashedPassword = await bcrypt.hash(password, 10);
       await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, u.id]);
       u.password = hashedPassword;
     }
 
-    // Verificar senha (suporta migração de texto plano para hash)
     let isMatch = false;
-    console.log(`[DEBUG_LOGIN] Comparing pwd for ${normalizedEmail}. InputLen: ${password?.length || 0}. InputType: ${typeof password}`);
-
     if (u.password && (u.password.startsWith('$2a$') || u.password.startsWith('$2b$'))) {
       try {
         isMatch = await bcrypt.compare(password, u.password);
-        console.log(`[DEBUG_LOGIN] Bcrypt Match: ${isMatch}`);
       } catch (bcError) {
-        console.error(`[DEBUG_LOGIN] Bcrypt Error:`, bcError);
+        console.error('[Login] bcrypt:', bcError.message || bcError);
       }
     } else {
-      // Comparação legada em texto plano
-      console.log(`[DEBUG_LOGIN] Using legacy plain text check.`);
       if (u.password === password) {
         isMatch = true;
-        // Auto-upgrade do hash
         const hashedPassword = await bcrypt.hash(password, 10);
         await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, u.id]);
-        console.log(`[DEBUG_LOGIN] Legacy match. Password upgraded.`);
       }
     }
 
     if (!isMatch) {
-      console.log(`[DEBUG_LOGIN] Final Mismatch for user: ${normalizedEmail}`);
       return res.status(401).json({ error: 'Credenciais inválidas (Senha incorreta).' });
     }
 
@@ -5174,14 +5089,37 @@ app.post('/api/login', async (req, res) => {
 
     const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
     res.setHeader('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${30 * 24 * 3600}`);
+
     let adminPerms = null;
     try {
       if (u.admin_permissions) adminPerms = JSON.parse(u.admin_permissions);
     } catch (pe) {
       console.error('[Login] Failed to parse admin_permissions:', pe);
     }
-    res.json({ email: u.email, username: u.username, isAdmin: !!u.is_admin, adminPermissions: adminPerms, polygonWallet: u.polygon_wallet, accessLevelId: u.access_level_id, referralCode: u.referral_code, referredBy: u.referred_by });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+
+    const userLvlsRes = await db.query('SELECT access_level_id FROM user_access_levels WHERE user_id = $1', [u.id]);
+    const userLvlIds = userLvlsRes.rows.map((l) => l.access_level_id);
+    if (u.access_level_id && !userLvlIds.includes(u.access_level_id)) {
+      userLvlIds.push(u.access_level_id);
+    }
+
+    res.json({
+      id: String(u.id),
+      email: u.email,
+      username: u.username,
+      isAdmin: !!u.is_admin,
+      isBlocked: !!u.is_blocked,
+      adminPermissions: adminPerms,
+      polygonWallet: u.polygon_wallet,
+      accessLevelId: u.access_level_id,
+      accessLevelIds: userLvlIds,
+      referralCode: u.referral_code,
+      referredBy: u.referred_by
+    });
+  } catch (e) {
+    console.error('[Login]', e);
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/session', async (req, res) => {
