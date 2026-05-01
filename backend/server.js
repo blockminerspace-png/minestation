@@ -4361,6 +4361,28 @@ app.post('/api/loot-boxes', isAdmin, async (req, res) => {
     );
     const validIncomingIds = validBoxes.map((b) => String(b.id));
 
+    const triggersWithoutItemList = new Set(['roleta_code']);
+    for (const b of validBoxes) {
+      const active = b.isActive !== false;
+      const trig = String(b.trigger || 'shop');
+      const nItems = Array.isArray(b.items) ? b.items.filter((it) => it && it.id).length : 0;
+      if (active && !triggersWithoutItemList.has(trig) && nItems === 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Caixa "${String(b.name).trim()}" (${b.id}): não pode ficar ativa sem prémios. Adicione itens ou desative a caixa. (Exceção: gatilho roleta por código.)`
+        });
+      }
+      if (active && (trig === 'shop' || trig === 'shop_once' || trig === 'special')) {
+        const p = Number(b.price);
+        if (!Number.isFinite(p) || p < 0) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: `Caixa "${String(b.name).trim()}" (${b.id}): preço USDC inválido para venda na loja (use número ≥ 0).`
+          });
+        }
+      }
+    }
+
     for (const b of validBoxes) {
       // UPSERT the Box (rows stay in DB; removals are handled via is_active below)
       await client.query(`

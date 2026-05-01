@@ -1,6 +1,33 @@
-
 import React, { useState, useEffect } from 'react';
 import { LootBox, LootBoxItem, Upgrade, PromoCode, AdminUpgrade } from '../types';
+
+/** Gatilhos em que a caixa não usa a lista de itens da definição (fluxo próprio). */
+const LOOT_TRIGGERS_WITHOUT_ITEM_LIST = new Set(['roleta_code']);
+
+const STORE_LIKE_TRIGGERS = new Set(['shop', 'shop_once', 'special']);
+
+function validateLootBoxForm(box: Partial<LootBox>): string | null {
+    const id = String(box.id || '').trim();
+    const name = typeof box.name === 'string' ? box.name.trim() : '';
+    if (!id) return 'ID da caixa é obrigatório.';
+    if (!name) return 'Nome é obrigatório.';
+    const active = box.isActive !== false;
+    const trig = String(box.trigger || 'shop');
+    const raw = Array.isArray(box.items) ? box.items : [];
+    const okItems = raw.filter(
+        (it: LootBoxItem) => it && String(it.id || '').trim() && it.type
+    );
+    if (active && !LOOT_TRIGGERS_WITHOUT_ITEM_LIST.has(trig) && okItems.length === 0) {
+        return 'Caixa ativa sem prémios: adicione pelo menos um item (tipo + ID) ou desmarque "Caixa ativa". Gatilho "Roleta (código)" é a única exceção sem lista aqui.';
+    }
+    if (active && STORE_LIKE_TRIGGERS.has(trig)) {
+        const p = Number(box.price);
+        if (!Number.isFinite(p) || p < 0) {
+            return 'Para gatilhos de loja (Loja / Loja 1x / Evento especial), defina preço USDC ≥ 0 (use 0 para caixa grátis na loja).';
+        }
+    }
+    return null;
+}
 import { PlusCircle, X, Trash2, Gift, Ticket, Plus, Users, RefreshCw, Package, ToggleLeft, ToggleRight } from 'lucide-react';
 import { getSeasonPasses, getAdminUpgrades, getLootBoxes } from '../services/api';
 
@@ -128,6 +155,11 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
 
     const handleSaveBox = () => {
         if (!onUpdateLootBoxes || !boxForm.id || !boxForm.name) return;
+        const err = validateLootBoxForm(boxForm);
+        if (err) {
+            alert(err);
+            return;
+        }
         const newBox = boxForm as LootBox;
         const existingIndex = lootBoxes.findIndex(b => b.id === newBox.id);
         const updated = [...lootBoxes];
@@ -370,7 +402,20 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                 </div>
                                 <div className="col-span-2 flex items-center gap-2 mt-1 mb-2">
                                     <input type="checkbox" id="isActiveBox" checked={boxForm.isActive !== false} onChange={e => setBoxForm({ ...boxForm, isActive: e.target.checked })} className="w-4 h-4" />
-                                    <label htmlFor="isActiveBox" className="text-sm font-bold text-white cursor-pointer">Caixa Ativa (Disponível no jogo)</label>
+                                    <label htmlFor="isActiveBox" className="text-sm font-bold text-white cursor-pointer">Caixa ativa (disponível no jogo)</label>
+                                </div>
+                                <div className="col-span-2 rounded-lg border border-slate-600 bg-slate-900/80 p-3 text-xs text-slate-300 leading-relaxed space-y-1">
+                                    <div>
+                                        {STORE_LIKE_TRIGGERS.has(String(boxForm.trigger || '')) ? (
+                                            <span className="font-bold uppercase tracking-wide text-amber-400">Aparece na loja pública (Caixas da Sorte)</span>
+                                        ) : (
+                                            <span className="font-bold uppercase tracking-wide text-slate-500">Fora da vitrine da loja de caixas</span>
+                                        )}
+                                    </div>
+                                    <p>
+                                        Gatilhos <span className="font-mono text-slate-200">Loja</span>, <span className="font-mono text-slate-200">Loja 1x</span> e <span className="font-mono text-slate-200">Evento especial</span> mostram a caixa aos jogadores na aba Caixas da Sorte.
+                                        Caixa <span className="text-white font-bold">ativa</span> exige pelo menos um prémio configurado (exceção: <span className="font-mono text-slate-200">Roleta (código)</span>).
+                                    </p>
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 block mb-1">Gatilho (Onde aparece)</label>
