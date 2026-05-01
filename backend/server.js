@@ -4191,7 +4191,7 @@ app.post('/api/loot-boxes/buy', async (req, res) => {
     );
     const box = boxRes.rows[0];
     if (!box) return res.status(404).json({ error: 'Box not found' });
-    if (box.trigger !== 'shop' && box.trigger !== 'shop_once') {
+    if (box.trigger !== 'shop' && box.trigger !== 'shop_once' && box.trigger !== 'special') {
       return res.status(400).json({ error: 'Box not for sale' });
     }
 

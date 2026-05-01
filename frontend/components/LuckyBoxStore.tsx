@@ -34,7 +34,9 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
     };
 
     const shopBoxes = lootBoxes.filter(b => {
+        if (b.isActive === false) return false;
         if (b.trigger === 'shop') return true;
+        if (b.trigger === 'special') return true;
         if (b.trigger === 'shop_once') {
             return !(gameState.claimedBoxes || []).includes(b.id);
         }
@@ -52,7 +54,9 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                 name: def?.name || 'Caixa',
                 description: def?.description || 'Recompensa obtida.',
                 icon: def?.icon || '🎁',
-                items: def?.items || []
+                items: def?.items || [],
+                /** Caixa retirada do catálogo público; inventário e abertura continuam válidos. */
+                isRetiredCatalog: def?.isActive === false
             };
         });
 
@@ -165,6 +169,11 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                                     {renderIcon(box.icon, "text-3xl", "w-10 h-10")}
                                 </div>
                                 <div className="font-bold text-slate-800 dark:text-white relative z-10">{box.name}</div>
+                                {box.isRetiredCatalog && (
+                                    <div className="text-[10px] font-bold uppercase tracking-wide text-amber-600 dark:text-amber-400 mb-1 relative z-10">
+                                        Fora da loja — pode abrir normalmente
+                                    </div>
+                                )}
                                 <div className="text-xs text-slate-500 mb-4 relative z-10">{box.description}</div>
                                 <div className="w-full text-left relative z-10">
                                     <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conteúdo</div>

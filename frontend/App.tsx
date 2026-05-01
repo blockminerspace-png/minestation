@@ -187,8 +187,6 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
   return state;
 };
 
-
-
 type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'oficina' | 'arcade' | 'calculator' | 'ranking';
 type GlobalView = 'home' | 'docs' | 'auth' | 'game' | 'admin';
 type Theme = 'light' | 'dark';
@@ -334,11 +332,12 @@ export default function App() {
   const updateLootBoxes = async (newBoxes: LootBox[]) => {
     try {
       setLootBoxDefs(newBoxes);
-      await apiSetLootBoxes(newBoxes);
+      await apiSetLootBoxes(newBoxes, { replaceCatalog: true });
+      const fresh = await getLootBoxes();
+      setLootBoxDefs(fresh);
     } catch (e: any) {
       console.error('Failed to save loot boxes:', e);
       alert('Erro ao salvar as caixas: ' + (e.message || 'Erro desconhecido'));
-      // Recarrega do servidor para reverter as mudanças locais que falharam
       const fresh = await getLootBoxes();
       setLootBoxDefs(fresh);
     }
@@ -1773,8 +1772,7 @@ export default function App() {
 
   const handleOpenBox = async (boxId: string) => {
     if (!user?.email) return null;
-    const box = lootBoxDefs.find(b => b.id === boxId);
-    if (!box) return null;
+    // Não exigir definição no catálogo ativo: inventário pode ter caixas retiradas da loja.
 
     // Call API
     const res = await openLootBox(user.email, boxId);
