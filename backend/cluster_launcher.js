@@ -86,6 +86,15 @@ if (cluster.isPrimary) {
   const statsFilePath = join(__dirname, '../admin/public/cluster_stats.json');
 
   cluster.on('message', (worker, msg) => {
+    if (msg && msg.type === 'market_ws_broadcast') {
+      for (const id in cluster.workers) {
+        const w = cluster.workers[id];
+        if (w && w.id !== worker.id) {
+          try { w.send(msg); } catch (_) { /* ignore */ }
+        }
+      }
+      return;
+    }
     if (msg.type === 'stats') {
       const pid = worker.process.pid;
       const now = Date.now();

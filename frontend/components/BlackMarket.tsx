@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { GameState, MarketListing, Upgrade } from '../types';
 import { Skull, DollarSign, PlusCircle, Package, Tag, Trash2, ArrowRight, Lock, ShieldCheck } from 'lucide-react';
 import { getMarketListings, reserveMarketListing, cancelMarketReservation, buyMarketListing, claimMarketFunds, getCustodyListings, claimCustodyItem } from '../services/api';
@@ -23,6 +23,8 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
 
 
   const [mode, setMode] = useState<'buy' | 'sell' | 'vault'>('buy');
+  const modeRef = useRef(mode);
+  useEffect(() => { modeRef.current = mode; }, [mode]);
   const [marketListings, setMarketListings] = useState<MarketListing[]>([]);
   const [custodyListings, setCustodyListings] = useState<MarketListing[]>([]);
   const [confirmListing, setConfirmListing] = useState<MarketListing | null>(null);
@@ -85,6 +87,35 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
       }
     })();
   }, [mode, refreshTrigger]);
+
+  useEffect(() => {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${window.location.host}/ws/market`;
+    let ws: WebSocket | null = null;
+    let stopped = false;
+    const refresh = async () => {
+      const list = await getMarketListings();
+      setMarketListings(list);
+      if (modeRef.current === 'vault') {
+        const custody = await getCustodyListings();
+        setCustodyListings(custody);
+      }
+    };
+    const open = () => {
+      if (stopped) return;
+      ws = new WebSocket(url);
+      ws.onmessage = () => { void refresh(); };
+      ws.onclose = () => {
+        if (!stopped) window.setTimeout(open, 3000);
+      };
+      ws.onerror = () => { try { ws?.close(); } catch { /* ignore */ } };
+    };
+    open();
+    return () => {
+      stopped = true;
+      try { ws?.close(); } catch { /* ignore */ }
+    };
+  }, []);
 
   const handleSellSubmit = () => {
     console.log('[BlackMarket] handleSellSubmit called with:', { sellItemId, sellPrice, sellQty });

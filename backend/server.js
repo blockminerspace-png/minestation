@@ -1,4 +1,7 @@
 import express from 'express'; // Reload Trigger 2026-01-29
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import cluster from 'node:cluster';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
@@ -23,6 +26,14 @@ const __dirname = path.dirname(__filename);
 import db from './db.js';
 import { initDb } from './db.pg.js';
 import { sendResetEmail } from './utils/mailer.js';
+import {
+  getJwtAuthConfig,
+  createResolveAuthMiddleware,
+  issueJwtAuthCookies,
+  handleJwtRefresh,
+  revokeJwtRefreshForUser,
+  clearAuthCookies
+} from './src/auth/index.js';
 
 // Helper to find pg_restore
 const getPgRestorePath = () => {
@@ -433,6 +444,15 @@ const parseCookies = (req) => {
   return header.split(';').map(v => v.trim()).filter(Boolean).reduce((acc, cur) => { const i = cur.indexOf('='); if (i > 0) acc[cur.slice(0, i)] = cur.slice(i + 1); return acc; }, {});
 };
 
+try {
+  getJwtAuthConfig();
+} catch (e) {
+  console.error('[JWT]', e.message);
+  if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    process.exit(1);
+  }
+}
+
 const getClientIp = (req) => {
   const cf = req.headers['cf-connecting-ip'];
   if (cf && typeof cf === 'string') return cf.split(',')[0].trim();
@@ -460,25 +480,7 @@ const isIpFromUser = async (ip) => {
 
 const authenticateToken = (req, res, next) => {
   if (req.userId) return next();
-
-  const sid = parseCookies(req).sid;
-  if (!sid) {
-    return res.status(401).json({ error: 'Não autenticado' });
-  }
-
-  db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid])
-    .then(sRes => {
-      const s = sRes.rows[0];
-      if (!s || Number(s.expires_at) < Date.now()) {
-        return res.status(401).json({ error: 'Sessão inválida ou expirada' });
-      }
-      req.userId = s.user_id;
-      next();
-    })
-    .catch(e => {
-      console.error('[authenticateToken] Error:', e);
-      res.status(500).json({ error: 'Erro interno de autenticação' });
-    });
+  return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
 };
 
 const checkIsAdmin = async (uid) => {
@@ -516,6 +518,59 @@ function buildCorsOriginSet() {
 }
 const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
 
+/** Eventos de jogo para auditoria no admin (não falha o fluxo principal). */
+async function appendGameActivityLog(q, userId, action, meta) {
+  if (!userId || !action) return;
+  const safeAction = String(action).slice(0, 120);
+  let metaJson = '{}';
+  try {
+    metaJson = JSON.stringify(meta == null ? {} : meta);
+  } catch {
+    metaJson = '{}';
+  }
+  const ts = Date.now();
+  try {
+    await q.query(
+      `INSERT INTO game_activity_logs (user_id, action, meta, created_at) VALUES ($1, $2, $3::jsonb, $4)`,
+      [userId, safeAction, metaJson, ts]
+    );
+  } catch (e) {
+    console.warn('[GameActivityLog]', e.message);
+  }
+}
+
+/** WebSocket: atualizações do mercado P2P (clientes ligam em /ws/market). */
+let marketWss = null;
+function marketWsBroadcastLocal(payload) {
+  if (!marketWss) return;
+  const msg = JSON.stringify(payload);
+  for (const c of marketWss.clients) {
+    if (c.readyState === 1) c.send(msg);
+  }
+}
+function emitMarketWs(payload) {
+  marketWsBroadcastLocal(payload);
+  if (cluster.isWorker && typeof process.send === 'function') {
+    try {
+      process.send({ type: 'market_ws_broadcast', payload });
+    } catch (_) { /* ignore */ }
+  }
+}
+
+async function isP2PMarketEnabled(q) {
+  try {
+    const r = await q.query('SELECT black_market_enabled FROM economy_settings WHERE id = 1');
+    if (r.rows[0]) return Number(r.rows[0].black_market_enabled) !== 0;
+  } catch (_) { /* ignore */ }
+  try {
+    const s = await q.query("SELECT value FROM settings WHERE key = 'black_market_enabled'");
+    if (!s.rows[0]) return true;
+    return s.rows[0].value === '1';
+  } catch (_) {
+    return true;
+  }
+}
+
 const isAdmin = async (req, res, next) => {
   const ip = getClientIp(req);
   if (!req.originalUrl.includes('/api/admin/dashboard-stats') && !req.originalUrl.includes('/api/system/time')) {
@@ -538,8 +593,13 @@ const isAdmin = async (req, res, next) => {
   };
 
   if (req.userId) {
-    if (await checkIsAdmin(req.userId)) return next();
+    if (await checkIsAdmin(req.userId)) {
+      const uRes = await db.query('SELECT admin_permissions FROM users WHERE id = $1', [req.userId]);
+      req.adminPermissions = uRes.rows[0]?.admin_permissions ? JSON.parse(uRes.rows[0].admin_permissions) : null;
+      return next();
+    }
     await logAccess(`User ID ${req.userId} attempted admin access without permissions`);
+    return res.status(403).json({ error: 'Acesso negado' });
   }
 
   const sid = parseCookies(req).sid;
@@ -621,17 +681,17 @@ const desiredPort = parseInt(process.env.API_PORT || process.env.PORT || '3001',
 
 app.use(helmet({
   contentSecurityPolicy: {
-    useDefaults: false,
+    useDefaults: true,
     directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.applixir.com"],
-      connectSrc: ["'self'", "https://cdn.applixir.com", "https://*.googleapis.com", "https://api.etherscan.io"],
-      imgSrc: ["'self'", "data:", "https:"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com"],
-      frameSrc: ["'self'", "https://cdn.applixir.com"],
-      objectSrc: ["'none'"],
-      upgradeInsecureRequests: [],
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.applixir.com"],
+      "connect-src": ["'self'", "https://cdn.applixir.com", "https://*.googleapis.com", "https://api.etherscan.io"],
+      "img-src": ["'self'", "data:", "https:", "http:"],
+      "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      "font-src": ["'self'", "https://fonts.gstatic.com"],
+      "frame-src": ["'self'", "https://cdn.applixir.com"],
+      "object-src": ["'none'"],
+      "upgrade-insecure-requests": null,
     },
   },
   crossOriginResourcePolicy: { policy: "cross-origin" },
@@ -725,6 +785,11 @@ app.use('/api/login', authLimiter);
 app.use(express.json({ limit: '5mb' })); // Reduzido o limite para 5MB por segurança
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
+const jwtAllowLegacySession =
+  process.env.JWT_ALLOW_LEGACY_SESSION !== '0' &&
+  process.env.JWT_ALLOW_LEGACY_SID !== '0';
+app.use(createResolveAuthMiddleware({ db, parseCookies, allowLegacySession: jwtAllowLegacySession }));
+
 app.use((req, res, next) => {
   const url = req.url || '';
   if (/\/cgi-bin\b/i.test(url)) {
@@ -740,29 +805,27 @@ app.use('/img', express.static(IMG_DIR));
 
 // --- Moved utilities below ---
 
-// Activity tracking middleware
+// Activity tracking (utilizador já resolvido por JWT ou sessão legacy)
 app.use(async (req, res, next) => {
-  const sid = parseCookies(req).sid;
-  if (sid) {
-    try {
-      const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
-      const s = sRes.rows[0];
-      if (s && Number(s.expires_at) > Date.now()) {
-        req.userId = s.user_id;
-        const now = Date.now();
-        const ip = getClientIp(req);
-
-        await db.query('UPDATE users SET last_active_at = $1 WHERE id = $2', [now, s.user_id]);
-
-        // Rastreamento Robusto: Registrar IP em cada atividade
-        await db.query(`
-          INSERT INTO user_history_ips (user_id, ip, last_used_at) 
-          VALUES ($1, $2, $3) 
-          ON CONFLICT (user_id, ip) DO UPDATE SET last_used_at = $3
-        `, [s.user_id, ip, now]);
-      }
-    } catch (e) { /* ignore */ }
-  }
+  if (!req.userId) return next();
+  try {
+    const now = Date.now();
+    const ip = getClientIp(req);
+    await db.query('UPDATE users SET last_active_at = $1 WHERE id = $2', [now, req.userId]);
+    const sid = parseCookies(req).sid;
+    if (sid) {
+      const seenThrottle = now - 45000;
+      await db.query(
+        'UPDATE sessions SET last_seen_at = $1 WHERE session_id = $2 AND (last_seen_at < $3 OR last_seen_at = 0)',
+        [now, sid, seenThrottle]
+      );
+    }
+    await db.query(`
+      INSERT INTO user_history_ips (user_id, ip, last_used_at) 
+      VALUES ($1, $2, $3) 
+      ON CONFLICT (user_id, ip) DO UPDATE SET last_used_at = $3
+    `, [req.userId, ip, now]);
+  } catch (e) { /* ignore */ }
   next();
 });
 
@@ -1978,11 +2041,12 @@ const RESTORE_ALLOWED_TABLES = new Set([
   'loot_boxes', 'loot_box_items', 'system_news', 'season_passes', 'season_purchases',
   'game_states', 'settings', 'stock', 'unopened_boxes', 'stored_batteries', 'placed_racks',
   'rack_slots', 'rack_multiplier_slots', 'player_listings', 'nft_items', 'sessions',
+  'jwt_refresh_tokens',
   'coin_balances', 'coin_withdrawals', 'admin_upgrades', 'admin_upgrade_items',
   'admin_upgrade_boxes', 'admin_upgrade_passes', 'admin_upgrade_coins', 'admin_upgrade_purchases',
   'player_news_submissions', 'rig_rooms', 'user_rig_rooms', 'workshop_slots',
   'player_claimed_boxes', 'daily_actions', 'promo_codes', 'promo_code_redemptions',
-  'economy_settings', 'withdrawal_requests'
+  'economy_settings', 'withdrawal_requests', 'game_activity_logs'
 ]);
 
 const isSafeSqlIdentifier = (name) => typeof name === 'string' && /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name);
@@ -2730,6 +2794,11 @@ app.post('/api/upgrades/buy', async (req, res) => {
       newUsdc.toFixed(6),
       JSON.stringify(itemsToBuy.map((i) => ({ id: i.id, qty: i.qty, name: i.name })))
     );
+    await appendGameActivityLog(db, uid, 'hardware_buy', {
+      totalUsdc: Number(totalCost.toFixed(6)),
+      newUsdc: Number(newUsdc.toFixed(6)),
+      lines: itemsToBuy.map((i) => ({ id: i.id, qty: i.qty, name: i.name }))
+    });
 
     res.json({ ok: true, newUsdc });
   } catch (e) {
@@ -3300,6 +3369,13 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
     const newBalRes = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
     console.log('[DepositCredit] userId=%s network=%s amountUsdc=%s tx=%s newUsdc=%s',
       uid, net, Number(amountUsdc).toFixed(8), String(txHash).slice(0, 18) + '…', newBalRes.rows[0].usdc);
+    if (amountUsdc > 0) {
+      await appendGameActivityLog(db, uid, 'deposit_credit', {
+        network: net,
+        amountUsdc: Number(Number(amountUsdc).toFixed(8)),
+        txPrefix: String(txHash).slice(0, 22)
+      });
+    }
     return { ok: true, amount: amountUsdc, newUsdc: newBalRes.rows[0].usdc };
   } catch (dbErr) {
     await client.query('ROLLBACK');
@@ -3482,11 +3558,17 @@ app.post('/api/web3-settings', isAdmin, async (req, res) => {
 // --- ECONOMY ---
 app.get('/api/economy-settings', async (req, res) => {
   try {
+    const rowRes = await db.query('SELECT black_market_enabled, hardware_market_enabled, market_tax_percent FROM economy_settings WHERE id = 1');
+    const row = rowRes.rows[0];
     const hwRes = await db.query("SELECT value FROM settings WHERE key = 'hardware_market_enabled'");
     const bkRes = await db.query("SELECT value FROM settings WHERE key = 'black_market_enabled'");
+    const hw = row ? Number(row.hardware_market_enabled) !== 0 : (hwRes.rows[0] ? hwRes.rows[0].value === '1' : true);
+    const bk = row ? Number(row.black_market_enabled) !== 0 : (bkRes.rows[0] ? bkRes.rows[0].value === '1' : true);
+    const tax = row ? Number(row.market_tax_percent || 0) : 0;
     res.json({
-      hardwareMarketEnabled: hwRes.rows[0] ? hwRes.rows[0].value === '1' : true,
-      blackMarketEnabled: bkRes.rows[0] ? bkRes.rows[0].value === '1' : true
+      hardwareMarketEnabled: hw,
+      blackMarketEnabled: bk,
+      marketTaxPercent: tax
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3494,13 +3576,23 @@ app.get('/api/economy-settings', async (req, res) => {
 });
 
 app.post('/api/economy-settings', isAdmin, async (req, res) => {
-  const { hardwareMarketEnabled, blackMarketEnabled } = req.body || {};
+  const { hardwareMarketEnabled, blackMarketEnabled, marketTaxPercent } = req.body || {};
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     const stmt = 'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value';
     await client.query(stmt, ['hardware_market_enabled', hardwareMarketEnabled ? '1' : '0']);
     await client.query(stmt, ['black_market_enabled', blackMarketEnabled ? '1' : '0']);
+    const tax = Math.min(100, Math.max(0, Number(marketTaxPercent) || 0));
+    await client.query(`
+      INSERT INTO economy_settings (id, black_market_enabled, hardware_market_enabled, market_tax_percent)
+      VALUES (1, $1, $2, $3)
+      ON CONFLICT (id) DO UPDATE SET
+        black_market_enabled = EXCLUDED.black_market_enabled,
+        hardware_market_enabled = EXCLUDED.hardware_market_enabled,
+        market_tax_percent = EXCLUDED.market_tax_percent`,
+      [blackMarketEnabled ? 1 : 0, hardwareMarketEnabled ? 1 : 0, tax]
+    );
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (e) {
@@ -3542,20 +3634,308 @@ app.get('/api/nfts', async (req, res) => {
   }
 });
 
-// --- PLAYER MARKET ---
+// --- PLAYER MARKET (P2P / mercado negro) ---
+const MARKET_RESERVE_MS = 3 * 60 * 1000;
+const MARKET_LISTING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
 app.get('/api/market/listings', async (req, res) => {
   try {
-    const rowsRes = await db.query(`
-        SELECT l.*, u.username, u.email 
-        FROM player_listings l 
-        JOIN users u ON l.user_id = u.id 
-        WHERE l.status = 'active' AND l.expires_at > $1`, [Date.now()]);
+    if (!(await isP2PMarketEnabled(db))) return res.json([]);
+    const now = Date.now();
+    await db.query(
+      `UPDATE player_listings SET reserved_by = NULL, reserved_until = NULL
+       WHERE status = 'active' AND reserved_until IS NOT NULL AND reserved_until < $1`,
+      [now]
+    );
+    const rowsRes = await db.query(
+      `SELECT l.*, u.username, u.email, ru.username AS reserver_username
+       FROM player_listings l
+       JOIN users u ON l.user_id = u.id
+       LEFT JOIN users ru ON ru.id = l.reserved_by
+       WHERE l.status = 'active' AND l.expires_at > $1`,
+      [now]
+    );
+    res.json(rowsRes.rows.map((l) => {
+      let reservedBy;
+      if (l.reserved_until && Number(l.reserved_until) > now && l.reserver_username) {
+        reservedBy = l.reserver_username;
+      }
+      return {
+        id: l.id,
+        sellerName: l.username || l.email,
+        itemId: l.item_id,
+        price: Number(l.price),
+        qty: l.qty || 1,
+        expiresAt: Number(l.expires_at),
+        reservedBy,
+        reservedUntil: l.reserved_until && Number(l.reserved_until) > now ? Number(l.reserved_until) : undefined
+      };
+    }));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-    res.json(rowsRes.rows.map(l => ({
+app.post('/api/market/sell', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const { itemId: rawItemId, price: rawPrice, qty: rawQty } = req.body || {};
+  const itemId = typeof rawItemId === 'string' ? rawItemId.trim().slice(0, 200) : '';
+  const price = Number(rawPrice);
+  const qty = parseInt(String(rawQty || '1'), 10);
+  if (!itemId || !/^[a-zA-Z0-9_.-]+$/.test(itemId)) return res.status(400).json({ error: 'Item inválido.' });
+  if (!Number.isFinite(price) || price <= 0 || price > 1e12) return res.status(400).json({ error: 'Preço inválido.' });
+  if (!Number.isFinite(qty) || qty < 1 || qty > 9999) return res.status(400).json({ error: 'Quantidade inválida.' });
+
+  if (!(await isP2PMarketEnabled(db))) return res.status(403).json({ error: 'Mercado negro desativado.' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const upRes = await client.query(
+      'SELECT id, sell_in_black_market FROM upgrades WHERE id = $1 AND COALESCE(is_active, 1) = 1',
+      [itemId]
+    );
+    const up = upRes.rows[0];
+    if (!up || Number(up.sell_in_black_market) === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Este item não pode ser vendido no mercado paralelo.' });
+    }
+    const decRes = await client.query(
+      'UPDATE stock SET qty = qty - $1 WHERE user_id = $2 AND item_id = $3 AND qty >= $1 RETURNING qty',
+      [qty, req.userId, itemId]
+    );
+    if (decRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Stock insuficiente para listar.' });
+    }
+    const lid = typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}_${req.userId}_${Math.random().toString(36).slice(2, 12)}`;
+    const expiresAt = Date.now() + MARKET_LISTING_TTL_MS;
+    await client.query(
+      `INSERT INTO player_listings (id, user_id, item_id, price, expires_at, is_player, qty, status)
+       VALUES ($1, $2, $3, $4, $5, 1, $6, 'active')`,
+      [lid, req.userId, itemId, price, expiresAt, qty]
+    );
+    await client.query('COMMIT');
+    emitMarketWs({ type: 'market', event: 'listing_created', listingId: lid });
+    res.json({ ok: true, listingId: lid });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    res.status(500).json({ error: e.message || 'Erro ao criar anúncio.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/market/cancel', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const listingId = typeof req.body?.listingId === 'string' ? req.body.listingId.trim() : '';
+  if (!listingId) return res.status(400).json({ error: 'listingId obrigatório' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const lr = await client.query('SELECT * FROM player_listings WHERE id = $1 FOR UPDATE', [listingId]);
+    const l = lr.rows[0];
+    if (!l || Number(l.user_id) !== Number(req.userId)) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Anúncio não encontrado.' });
+    }
+    if (l.status !== 'active') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Este anúncio já não pode ser cancelado.' });
+    }
+    const q = l.qty || 1;
+    await client.query(
+      `INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty`,
+      [req.userId, l.item_id, q]
+    );
+    await client.query('DELETE FROM player_listings WHERE id = $1', [listingId]);
+    await client.query('COMMIT');
+    emitMarketWs({ type: 'market', event: 'listing_cancelled', listingId });
+    res.json({ ok: true });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/market/reserve', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const listingId = typeof req.body?.listingId === 'string' ? req.body.listingId.trim() : '';
+  if (!listingId) return res.status(400).json({ error: 'listingId obrigatório' });
+  if (!(await isP2PMarketEnabled(db))) return res.status(403).json({ ok: false, error: 'Mercado desativado.' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const now = Date.now();
+    const up = await client.query(
+      `UPDATE player_listings
+       SET reserved_by = $2, reserved_until = $3
+       WHERE id = $1 AND status = 'active' AND expires_at > $4
+         AND user_id <> $2
+         AND (reserved_until IS NULL OR reserved_until < $4 OR reserved_by = $2)
+       RETURNING id`,
+      [listingId, req.userId, now + MARKET_RESERVE_MS, now]
+    );
+    if (up.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.json({ ok: false, error: 'Anúncio indisponível ou já reservado.' });
+    }
+    await client.query('COMMIT');
+    emitMarketWs({ type: 'market', event: 'listing_reserved', listingId });
+    res.json({ ok: true, reservedUntil: now + MARKET_RESERVE_MS });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/market/cancel-reserve', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const listingId = typeof req.body?.listingId === 'string' ? req.body.listingId.trim() : '';
+  if (!listingId) return res.status(400).json({ error: 'listingId obrigatório' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query(
+      `UPDATE player_listings SET reserved_by = NULL, reserved_until = NULL
+       WHERE id = $1 AND status = 'active' AND reserved_by = $2
+       RETURNING id`,
+      [listingId, req.userId]
+    );
+    await client.query('COMMIT');
+    if (r.rowCount > 0) emitMarketWs({ type: 'market', event: 'listing_unreserved', listingId });
+    res.json({ ok: true });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/market/buy', async (req, res) => {
+  const { listingId: rawLid } = req.body || {};
+  const listingId = typeof rawLid === 'string' ? rawLid.trim() : '';
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  if (!listingId) return res.status(400).json({ error: 'Listing ID required' });
+
+  if (!(await isP2PMarketEnabled(db))) return res.status(403).json({ error: 'Mercado negro desativado.' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const listingRes = await client.query('SELECT * FROM player_listings WHERE id = $1 FOR UPDATE', [listingId]);
+    const listing = listingRes.rows[0];
+    const now = Date.now();
+    if (!listing) throw new Error('Anúncio não encontrado.');
+    if (listing.status !== 'active') throw new Error('Anúncio não está mais disponível.');
+    if (Number(listing.expires_at) < now) throw new Error('Anúncio expirado.');
+    if (Number(listing.user_id) === Number(req.userId)) throw new Error('Você não pode comprar seu próprio item.');
+
+    const rid = listing.reserved_by != null ? Number(listing.reserved_by) : null;
+    const rt = listing.reserved_until != null ? Number(listing.reserved_until) : 0;
+    if (rid != null && rt > now && rid !== Number(req.userId)) {
+      throw new Error('Anúncio reservado por outro operador.');
+    }
+
+    const buyerId = req.userId;
+    const sellerId = listing.user_id;
+    const ids = [buyerId, sellerId].sort((a, b) => a - b);
+    await client.query('SELECT * FROM game_states WHERE user_id = $1 FOR UPDATE', [ids[0]]);
+    await client.query('SELECT * FROM game_states WHERE user_id = $1 FOR UPDATE', [ids[1]]);
+
+    const buyerRow = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [buyerId]);
+    const price = Number(listing.price);
+    const buyerUsdc = Number(buyerRow.rows[0]?.usdc || 0);
+    if (buyerUsdc < price) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient USDC', missing: price - buyerUsdc });
+    }
+
+    const settingsRes = await client.query('SELECT market_tax_percent FROM economy_settings WHERE id = 1');
+    const taxPercent = Number(settingsRes.rows[0]?.market_tax_percent || 0);
+    const taxAmount = (price * taxPercent) / 100;
+    const sellerReceive = price - taxAmount;
+
+    const payRes = await client.query(
+      'UPDATE game_states SET usdc = usdc - $1, last_updated_at = $2, server_updated_at = $2 WHERE user_id = $3 AND usdc >= $1 RETURNING usdc',
+      [price, now, buyerId]
+    );
+    if (payRes.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Insufficient USDC', missing: Math.max(0, price - buyerUsdc) });
+    }
+
+    await client.query(
+      'UPDATE game_states SET black_market_balance = COALESCE(black_market_balance, 0) + $1, last_updated_at = $2, server_updated_at = $2 WHERE user_id = $3',
+      [sellerReceive, now, sellerId]
+    );
+
+    const stUp = await client.query(
+      `UPDATE player_listings
+       SET status = 'awaiting_pickup', reserved_by = $1, reserved_until = NULL
+       WHERE id = $2 AND status = 'active'`,
+      [buyerId, listingId]
+    );
+    if (stUp.rowCount === 0) throw new Error('Anúncio já foi vendido ou não está disponível.');
+    await processReferralCommission(client, buyerId, price, 'black_market');
+    await client.query('COMMIT');
+    emitMarketWs({ type: 'market', event: 'listing_sold', listingId });
+    res.json({ ok: true, message: 'Compra realizada. Retire o item no cofre (P2P).' });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    res.status(400).json({ error: e.message || 'Erro na compra.' });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/market/claim', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const gs = await client.query('SELECT black_market_balance FROM game_states WHERE user_id = $1 FOR UPDATE', [req.userId]);
+    const bal = Number(gs.rows[0]?.black_market_balance || 0);
+    if (bal <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Sem proventos para liquidar.' });
+    }
+    const now = Date.now();
+    await client.query(
+      'UPDATE game_states SET black_market_balance = 0, usdc = COALESCE(usdc, 0) + $1, last_updated_at = $2, server_updated_at = $2 WHERE user_id = $3',
+      [bal, now, req.userId]
+    );
+    await client.query('COMMIT');
+    res.json({ ok: true, claimed: bal });
+  } catch (e) {
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.get('/api/market/custody', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  try {
+    const rows = await db.query(
+      `SELECT l.*, u.username, u.email
+       FROM player_listings l
+       JOIN users u ON l.user_id = u.id
+       WHERE l.status = 'awaiting_pickup' AND l.reserved_by = $1`,
+      [req.userId]
+    );
+    res.json(rows.rows.map((l) => ({
       id: l.id,
       sellerName: l.username || l.email,
       itemId: l.item_id,
-      price: l.price,
+      price: Number(l.price),
       qty: l.qty || 1,
       expiresAt: Number(l.expires_at)
     })));
@@ -3564,67 +3944,35 @@ app.get('/api/market/listings', async (req, res) => {
   }
 });
 
-app.post('/api/market/buy', async (req, res) => {
-  const { listingId } = req.body;
+app.post('/api/market/claim-item', async (req, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-  if (!listingId) return res.status(400).json({ error: 'Listing ID required' });
-
+  const listingId = typeof req.body?.listingId === 'string' ? req.body.listingId.trim() : '';
+  if (!listingId) return res.status(400).json({ error: 'listingId obrigatório' });
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-
-    // 1. Lock and Validate Listing
-    const listingRes = await client.query('SELECT * FROM player_listings WHERE id = $1 FOR UPDATE', [listingId]);
-    const listing = listingRes.rows[0];
-
-    if (!listing) throw new Error('Anúncio não encontrado.');
-    if (listing.status !== 'active') throw new Error('Anúncio não está mais disponível.');
-    if (Number(listing.expires_at) < Date.now()) throw new Error('Anúncio expirado.');
-    if (listing.user_id === req.userId) throw new Error('Você não pode comprar seu próprio item.');
-
-    // 2. Check Buyer Balance
-    const buyerRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [req.userId]);
-    const buyerUsdc = Number(buyerRes.rows[0]?.usdc || 0);
-    const price = Number(listing.price);
-
-    if (buyerUsdc < price) throw new Error('Saldo USDC insuficiente.');
-
-    // 3. Get Tax Settings
-    const settingsRes = await client.query('SELECT market_tax_percent FROM economy_settings LIMIT 1');
-    const taxPercent = Number(settingsRes.rows[0]?.market_tax_percent || 0);
-
-    // 4. Calculate Amounts
-    const taxAmount = (price * taxPercent) / 100;
-    const sellerReceive = price - taxAmount;
-
-    // 5. Execute Transfers
-    // Deduct from Buyer
-    await client.query('UPDATE game_states SET usdc = usdc - $1 WHERE user_id = $2', [price, req.userId]);
-
-    // Credit Seller
-    await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [sellerReceive, listing.user_id]);
-
-    // Update Listing Status
-    // Using reserved_by to store buyer_id for record keeping if needed, though status='sold' is main flag.
-    await client.query('UPDATE player_listings SET status = $1, reserved_by = $2, reserved_until = $3 WHERE id = $4',
-      ['sold', req.userId, Date.now(), listingId]);
-
-    // 6. Transfer Item to Buyer
-    await client.query(`
-      INSERT INTO stock (user_id, item_id, qty)
-      VALUES ($1, $2, $3)
-      ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + $3
-    `, [req.userId, listing.item_id, listing.qty || 1]);
-
-    // 7. Process Referral Commission
-    await processReferralCommission(client, req.userId, price, 'black_market');
-
+    const lr = await client.query(
+      'SELECT * FROM player_listings WHERE id = $1 AND status = $2 AND reserved_by = $3 FOR UPDATE',
+      [listingId, 'awaiting_pickup', req.userId]
+    );
+    const l = lr.rows[0];
+    if (!l) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Item não encontrado ou já recolhido.' });
+    }
+    const q = l.qty || 1;
+    await client.query(
+      `INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty`,
+      [req.userId, l.item_id, q]
+    );
+    await client.query('DELETE FROM player_listings WHERE id = $1', [listingId]);
     await client.query('COMMIT');
-    res.json({ ok: true, message: 'Compra realizada com sucesso!' });
-
+    emitMarketWs({ type: 'market', event: 'custody_claimed', listingId });
+    res.json({ ok: true });
   } catch (e) {
-    await client.query('ROLLBACK');
-    res.status(400).json({ error: e.message });
+    try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
+    res.status(500).json({ error: e.message });
   } finally {
     client.release();
   }
@@ -3958,8 +4306,13 @@ app.post('/api/rig-rooms/purchase-slot', async (req, res) => {
 // --- LOOT BOXES ---
 app.get('/api/loot-boxes', async (req, res) => {
   try {
-    const boxesRes = await db.query('SELECT * FROM loot_boxes');
-    const itemsRes = await db.query('SELECT * FROM loot_box_items');
+    const boxesRes = await db.query(
+      'SELECT * FROM loot_boxes ORDER BY COALESCE(is_active, 1) DESC, trigger ASC, name ASC, id ASC'
+    );
+    const boxIds = boxesRes.rows.map((r) => r.id);
+    const itemsRes = boxIds.length
+      ? await db.query('SELECT * FROM loot_box_items WHERE box_id = ANY($1::text[])', [boxIds])
+      : { rows: [] };
     const itemMap = itemsRes.rows.reduce((acc, it) => {
       acc[it.box_id] = acc[it.box_id] || [];
       acc[it.box_id].push({ id: it.item_id, type: it.item_type, minQty: it.min_qty, maxQty: it.max_qty, probability: it.probability });
@@ -3971,22 +4324,30 @@ app.get('/api/loot-boxes', async (req, res) => {
 });
 
 app.post('/api/loot-boxes', isAdmin, async (req, res) => {
-  const boxes = req.body;
-  if (!Array.isArray(boxes)) return res.status(400).json({ error: 'Body must be an array of boxes' });
+  let boxes;
+  let replaceCatalog = false;
+  if (Array.isArray(req.body)) {
+    // Legado: array sozinho = upsert sem desativar o resto (evita apagar catálogo por saves parciais).
+    boxes = req.body;
+    replaceCatalog = false;
+  } else if (req.body && typeof req.body === 'object' && Array.isArray(req.body.boxes)) {
+    boxes = req.body.boxes;
+    replaceCatalog = req.body.replaceCatalog === true;
+  } else {
+    return res.status(400).json({ error: 'Body inválido: use { boxes: [], replaceCatalog?: boolean } ou um array (legado).' });
+  }
 
   const client = await db.connect();
   try {
     await client.query('BEGIN');
 
-    // 1. Get existing box IDs to avoid deleting everything if body is accidentally empty or malformed
-    const existingRes = await client.query('SELECT id FROM loot_boxes');
-    const existingIds = existingRes.rows.map(r => r.id);
-    const incomingIds = boxes.map(b => b.id);
+    const validBoxes = boxes.filter(
+      (b) => b && b.id && typeof b.name === 'string' && String(b.name).trim()
+    );
+    const validIncomingIds = validBoxes.map((b) => String(b.id));
 
-    for (const b of boxes) {
-      if (!b.id || !b.name) continue; // Basic validation
-
-      // 2. UPSERT the Box
+    for (const b of validBoxes) {
+      // UPSERT the Box (rows stay in DB; removals are handled via is_active below)
       await client.query(`
         INSERT INTO loot_boxes (id, name, description, price, trigger, icon, is_active)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -3997,9 +4358,8 @@ app.post('/api/loot-boxes', isAdmin, async (req, res) => {
           trigger = EXCLUDED.trigger,
           icon = EXCLUDED.icon,
           is_active = EXCLUDED.is_active
-      `, [b.id, b.name, b.description || '', b.price || 0, b.trigger || 'shop', b.icon || '🎁', b.isActive === false ? 0 : 1]);
+      `, [b.id, b.name.trim(), b.description || '', b.price || 0, b.trigger || 'shop', b.icon || '🎁', b.isActive === false ? 0 : 1]);
 
-      // 3. Update Box Items - SURGICAL DELETE/INSERT
       await client.query('DELETE FROM loot_box_items WHERE box_id = $1', [b.id]);
 
       if (Array.isArray(b.items)) {
@@ -4013,12 +4373,17 @@ app.post('/api/loot-boxes', isAdmin, async (req, res) => {
       }
     }
 
-    // 4. Inactivate boxes NOT in the incoming list (instead of deleting)
-    // This perfectly matches the "don't delete" requirement while allowing them to be removed from active UI
-    // If a box is truly removed from the list, we mark its trigger as 'disabled' or similar, 
-    // but here, the frontend controls the list, so we just keep them in DB.
-    // Given the user's CRITICAL rule: "garantindo que nem uma caixa seja apagada"
-    // I will NOT run a DELETE query for missing boxes.
+    // Só alinha “removidas da lista” no painel principal quando replaceCatalog=true (salvar catálogo completo).
+    if (replaceCatalog) {
+      if (boxes.length === 0) {
+        await client.query('UPDATE loot_boxes SET is_active = 0');
+      } else if (validIncomingIds.length > 0) {
+        await client.query(
+          'UPDATE loot_boxes SET is_active = 0 WHERE NOT (id = ANY($1::text[]))',
+          [validIncomingIds]
+        );
+      }
+    }
 
     await client.query('COMMIT');
     res.json({ ok: true });
@@ -4060,10 +4425,8 @@ app.post('/api/loot-boxes/open', async (req, res) => {
       return res.status(400).json({ error: 'No boxes available' });
     }
 
-    const boxDefRes = await client.query(
-      'SELECT * FROM loot_boxes WHERE id = $1 AND COALESCE(is_active, 1) = 1',
-      [boxId]
-    );
+    // Inventário já provado acima: permitir abrir mesmo com caixa fora do catálogo (is_active = 0).
+    const boxDefRes = await client.query('SELECT * FROM loot_boxes WHERE id = $1', [boxId]);
     const boxDef = boxDefRes.rows[0];
     if (!boxDef) {
       await client.query('ROLLBACK');
@@ -4155,6 +4518,13 @@ app.post('/api/loot-boxes/open', async (req, res) => {
       JSON.stringify(rewards),
       gainedUsdc
     );
+    await appendGameActivityLog(db, uid, 'loot_box_open', {
+      boxId,
+      boxName: boxDef.name,
+      rewardCount: rewards.length,
+      gainedUsdc,
+      rewardsPreview: rewards.slice(0, 12)
+    });
 
     res.json({ ok: true, rewards });
   } catch (err) {
@@ -4255,6 +4625,13 @@ app.post('/api/loot-boxes/buy', async (req, res) => {
       Number(newUsdc).toFixed(6),
       box.trigger
     );
+    await appendGameActivityLog(db, uid, 'loot_box_buy', {
+      boxId,
+      boxName: box.name,
+      priceUsdc: Number(price.toFixed(6)),
+      newUsdc: Number(Number(newUsdc).toFixed(6)),
+      trigger: box.trigger
+    });
 
     res.json({ ok: true, newUsdc });
   } catch (err) {
@@ -4883,8 +5260,16 @@ app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
 
   try {
     const totalUsersRes = await db.query('SELECT COUNT(*) FROM users WHERE is_admin = 0');
-    const onlineCutoff = Date.now() - 60000;
-    const onlineUsersRes = await db.query('SELECT COUNT(*) FROM users WHERE is_admin = 0 AND last_active_at > $1', [onlineCutoff]);
+    const nowMs = Date.now();
+    const onlineCutoff = nowMs - 4 * 60 * 1000;
+    const onlineUsersRes = await db.query(`
+      SELECT COUNT(DISTINCT s.user_id) AS count
+      FROM sessions s
+      JOIN users u ON u.id = s.user_id
+      WHERE u.is_admin = 0
+        AND s.expires_at > $1
+        AND COALESCE(NULLIF(s.last_seen_at, 0), s.created_at) > $2
+    `, [nowMs, onlineCutoff]);
 
     const depositsRes = await db.query(`
       SELECT SUM(gs.total_usdc_deposited) as total 
@@ -5412,7 +5797,12 @@ app.post('/api/login', async (req, res) => {
     await db.query('INSERT INTO sessions (session_id,user_id,created_at,expires_at) VALUES ($1,$2,$3,$4)', [sid, u.id, Date.now(), expiresAt]);
 
     const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
-    res.setHeader('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${30 * 24 * 3600}`);
+    res.append('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${30 * 24 * 3600}`);
+    try {
+      await issueJwtAuthCookies(db, res, u.id, req);
+    } catch (jwtErr) {
+      console.error('[Login] JWT cookies:', jwtErr);
+    }
 
     let adminPerms = null;
     try {
@@ -5449,19 +5839,25 @@ app.post('/api/login', async (req, res) => {
 app.get('/api/session', async (req, res) => {
   const cookies = parseCookies(req);
   const sid = cookies.sid;
-  if (!sid) return res.status(401).json({ error: 'No session' });
+  let isImpersonating = false;
+  let targetUserId = req.userId;
   try {
-    const sRes = await db.query('SELECT * FROM sessions WHERE session_id = $1', [sid]);
-    const s = sRes.rows[0];
-    if (!s || Number(s.expires_at) < Date.now()) return res.status(401).json({ error: 'Session expired' });
-    const uRes = await db.query('SELECT * FROM users WHERE id = $1', [s.user_id]);
+    if (sid) {
+      const sRes = await db.query('SELECT user_id, expires_at, original_user_id FROM sessions WHERE session_id = $1', [sid]);
+      const s = sRes.rows[0];
+      if (s && Number(s.expires_at) >= Date.now()) {
+        isImpersonating = !!s.original_user_id;
+        if (!targetUserId) targetUserId = s.user_id;
+      }
+    }
+    if (!targetUserId) return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
+
+    const uRes = await db.query('SELECT * FROM users WHERE id = $1', [targetUserId]);
     const u = uRes.rows[0];
     if (!u) return res.status(404).json({ error: 'User not found' });
 
-    // Get all user's access levels
     const userLvlsRes = await db.query('SELECT access_level_id FROM user_access_levels WHERE user_id = $1', [u.id]);
     const userLvlIds = userLvlsRes.rows.map(l => l.access_level_id);
-    // Include current level for safety
     if (u.access_level_id && !userLvlIds.includes(u.access_level_id)) {
       userLvlIds.push(u.access_level_id);
     }
@@ -5471,28 +5867,61 @@ app.get('/api/session', async (req, res) => {
     } catch (pe) {
       console.error('[Session] Failed to parse admin_permissions:', pe);
     }
-    res.json({ id: u.id, username: u.username, email: u.email, isAdmin: !!u.is_admin, adminPermissions: adminPerms, isBlocked: !!u.is_blocked, polygonWallet: u.polygon_wallet, accessLevelId: u.access_level_id, accessLevelIds: userLvlIds, referralCode: u.referral_code, referredBy: u.referred_by, isImpersonating: !!s.original_user_id });
+    res.json({
+      id: u.id,
+      username: u.username,
+      email: u.email,
+      isAdmin: !!u.is_admin,
+      adminPermissions: adminPerms,
+      isBlocked: !!u.is_blocked,
+      polygonWallet: u.polygon_wallet,
+      accessLevelId: u.access_level_id,
+      accessLevelIds: userLvlIds,
+      referralCode: u.referral_code,
+      referredBy: u.referred_by,
+      isImpersonating
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-app.post('/api/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'sid=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0');
+app.post('/api/auth/refresh', async (req, res) => handleJwtRefresh(req, res, db, parseCookies));
+
+app.post('/api/logout', async (req, res) => {
+  const sid = parseCookies(req).sid;
+  let uid = req.userId;
+  try {
+    if (!uid && sid) {
+      const r = await db.query('SELECT user_id FROM sessions WHERE session_id = $1', [sid]);
+      uid = r.rows[0]?.user_id;
+    }
+    if (uid) await revokeJwtRefreshForUser(db, uid);
+    if (sid) await db.query('DELETE FROM sessions WHERE session_id = $1', [sid]);
+  } catch (e) {
+    console.error('[Logout]', e.message);
+  }
+  clearAuthCookies(res);
+  const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+  res.append('Set-Cookie', `sid=; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=0`);
   res.json({ ok: true });
 });
 
 app.post('/api/session', async (req, res) => {
   const cookies = parseCookies(req);
   const sid = cookies.sid;
-  if (!sid) return res.status(401).json({ error: 'No session' });
+  let uid = req.userId;
   try {
-    const sRes = await db.query('SELECT * FROM sessions WHERE session_id = $1', [sid]);
-    const s = sRes.rows[0];
-    if (!s?.user_id) return res.status(401).json({ error: 'No session' });
+    if (!uid && sid) {
+      const sRes = await db.query('SELECT * FROM sessions WHERE session_id = $1', [sid]);
+      const s = sRes.rows[0];
+      if (!s || Number(s.expires_at) < Date.now()) return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
+      uid = s.user_id;
+    }
+    if (!uid) return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
     const { polygonWallet, accessLevelId } = req.body;
-    if (polygonWallet !== undefined) await db.query('UPDATE users SET polygon_wallet = $1 WHERE id = $2', [polygonWallet, s.user_id]);
+    if (polygonWallet !== undefined) await db.query('UPDATE users SET polygon_wallet = $1 WHERE id = $2', [polygonWallet, uid]);
     if (accessLevelId !== undefined) {
-      await db.query('UPDATE users SET access_level_id = $1 WHERE id = $2', [accessLevelId, s.user_id]);
-      await db.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [s.user_id, accessLevelId, Date.now()]);
+      await db.query('UPDATE users SET access_level_id = $1 WHERE id = $2', [accessLevelId, uid]);
+      await db.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [uid, accessLevelId, Date.now()]);
     }
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -6164,6 +6593,7 @@ app.post('/api/save-game', async (req, res) => {
   const client = await db.connect();
   try {
     let uid = req.userId;
+    const saveActivityLogs = [];
 
     // Security: Only allow adminOverride if user is actually admin
     let effectiveAdminOverride = false;
@@ -6320,11 +6750,16 @@ app.post('/api/save-game', async (req, res) => {
             multipliers: multis.rows.filter((m) => m.multiplier_item_id).map((m) => ({ slot: m.slot_index, id: m.multiplier_item_id }))
           };
           console.log(`[RackDismantle] ts=${ts} userId=${uid} rackId=${row.id} parts=${JSON.stringify(dismantledParts)}`);
+          saveActivityLogs.push({ action: 'rack_dismantle', meta: { rackId: row.id, parts: dismantledParts } });
         }
       }
       for (const r of changes.placedRacks) {
         if (!prevMap.has(r.id)) {
           console.log(`[RackPlace] ts=${ts} userId=${uid} rackId=${r.id} itemId=${r.itemId} room=${r.roomId ?? ''} slotIndex=${r.slotIndex ?? 0}`);
+          saveActivityLogs.push({
+            action: 'rack_place',
+            meta: { rackId: r.id, itemId: r.itemId, room: r.roomId ?? '', slotIndex: r.slotIndex ?? 0 }
+          });
         }
       }
 
@@ -6440,6 +6875,7 @@ app.post('/api/save-game', async (req, res) => {
 
           if (!existing || !existing.item_id || existing.item_id !== w.itemId) {
             console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
+            saveActivityLogs.push({ action: 'workshop_place', meta: { slotIndex: i, itemId: w.itemId } });
           }
 
           if (existing && existing.item_id === w.itemId) {
@@ -6476,6 +6912,7 @@ app.post('/api/save-game', async (req, res) => {
         } else {
           if (existing && existing.item_id) {
             console.log(`[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`);
+            saveActivityLogs.push({ action: 'workshop_dismantle', meta: { slotIndex: i, itemId: existing.item_id } });
             const itemDef = workshopUpgradesMap.get(existing.item_id);
             if (itemDef && itemDef.type === 'charger') {
               if (existing.current_charge > 0.001) throw new Error("Não é possível remover um carregador com carga.");
@@ -6519,6 +6956,9 @@ app.post('/api/save-game', async (req, res) => {
       }
     }
     await client.query('COMMIT');
+    for (const ev of saveActivityLogs) {
+      await appendGameActivityLog(db, uid, ev.action, ev.meta);
+    }
     res.json({ ok: true, serverUpdatedAt: finalServerUpdatedAt });
   } catch (e) {
     await client.query('ROLLBACK');
@@ -6572,11 +7012,12 @@ app.post('/api/admin/backup', isAdmin, async (req, res) => {
       'loot_boxes', 'loot_box_items', 'system_news', 'season_passes', 'season_purchases',
       'game_states', 'settings', 'stock', 'unopened_boxes', 'stored_batteries', 'placed_racks',
       'rack_slots', 'rack_multiplier_slots', 'player_listings', 'nft_items', 'sessions',
+      'jwt_refresh_tokens',
       'coin_balances', 'coin_withdrawals', 'admin_upgrades', 'admin_upgrade_items',
       'admin_upgrade_boxes', 'admin_upgrade_passes', 'admin_upgrade_coins', 'admin_upgrade_purchases',
       'player_news_submissions', 'rig_rooms', 'user_rig_rooms', 'workshop_slots',
       'player_claimed_boxes', 'daily_actions', 'promo_codes', 'promo_code_redemptions',
-      'economy_settings', 'withdrawal_requests'
+      'economy_settings', 'withdrawal_requests', 'game_activity_logs'
     ];
     const backupData = {};
     for (const table of tables) {
@@ -6646,11 +7087,12 @@ const performAutoBackup = async () => {
       'loot_boxes', 'loot_box_items', 'system_news', 'season_passes', 'season_purchases',
       'game_states', 'settings', 'stock', 'unopened_boxes', 'stored_batteries', 'placed_racks',
       'rack_slots', 'rack_multiplier_slots', 'player_listings', 'nft_items', 'sessions',
+      'jwt_refresh_tokens',
       'coin_balances', 'coin_withdrawals', 'admin_upgrades', 'admin_upgrade_items',
       'admin_upgrade_boxes', 'admin_upgrade_passes', 'admin_upgrade_coins', 'admin_upgrade_purchases',
       'player_news_submissions', 'rig_rooms', 'user_rig_rooms', 'workshop_slots',
       'player_claimed_boxes', 'daily_actions', 'promo_codes', 'promo_code_redemptions',
-      'economy_settings', 'withdrawal_requests'
+      'economy_settings', 'withdrawal_requests', 'game_activity_logs'
     ];
 
     const CHUNK_SIZE = 2500;
@@ -6936,11 +7378,12 @@ app.post('/api/admin/restore', isAdmin, async (req, res) => {
       'loot_boxes', 'loot_box_items', 'system_news', 'season_passes', 'season_purchases',
       'game_states', 'settings', 'stock', 'unopened_boxes', 'stored_batteries', 'placed_racks',
       'rack_slots', 'rack_multiplier_slots', 'player_listings', 'nft_items', 'sessions',
+      'jwt_refresh_tokens',
       'coin_balances', 'coin_withdrawals', 'admin_upgrades', 'admin_upgrade_items',
       'admin_upgrade_boxes', 'admin_upgrade_passes', 'admin_upgrade_coins', 'admin_upgrade_purchases',
       'player_news_submissions', 'rig_rooms', 'user_rig_rooms', 'workshop_slots',
       'player_claimed_boxes', 'daily_actions', 'promo_codes', 'promo_code_redemptions',
-      'economy_settings', 'withdrawal_requests'
+      'economy_settings', 'withdrawal_requests', 'game_activity_logs'
     ];
 
     if (filename.endsWith('.db') || filename.endsWith('.sqlite')) {
@@ -7169,12 +7612,15 @@ app.post('/api/admin/impersonate', isAdmin, async (req, res) => {
   const { targetEmail } = req.body;
   const cookies = parseCookies(req);
   const sid = cookies.sid;
+  const adminId = req.userId;
+  if (!sid || !adminId) return res.status(400).json({ error: 'Sessão necessária para personificação' });
   try {
     const sRes = await db.query('SELECT user_id FROM sessions WHERE session_id = $1', [sid]);
-    const adminId = sRes.rows[0]?.user_id;
+    if (!sRes.rows[0]) return res.status(400).json({ error: 'Sessão inválida' });
     const targetId = await getUserIdByEmail(targetEmail, req.ip, { allowAnyDomain: true });
     if (!targetId || targetId === adminId) return res.status(400).json({ error: 'Invalid target' });
     await db.query('UPDATE sessions SET user_id = $1, original_user_id = $2 WHERE session_id = $3', [targetId, adminId, sid]);
+    clearAuthCookies(res);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7187,6 +7633,7 @@ app.post('/api/admin/stop-impersonate', async (req, res) => {
     const originalUid = sRes.rows[0]?.original_user_id;
     if (!originalUid) return res.status(400).json({ error: 'Not impersonating' });
     await db.query('UPDATE sessions SET user_id = $1, original_user_id = NULL WHERE session_id = $2', [originalUid, sid]);
+    await issueJwtAuthCookies(db, res, originalUid, req);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7309,27 +7756,41 @@ app.delete('/api/admin/security/blacklist/:ip', isAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-
-// --- ECONOMY ---
-app.get('/api/economy-settings', isAdmin, async (req, res) => {
+app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
   try {
-    const rowRes = await db.query('SELECT black_market_enabled, hardware_market_enabled, market_tax_percent FROM economy_settings LIMIT 1');
-    const row = rowRes.rows[0];
-    res.json({ blackMarketEnabled: row?.black_market_enabled !== 0, hardwareMarketEnabled: row?.hardware_market_enabled !== 0, marketTaxPercent: row?.market_tax_percent || 0 });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    const email = String(req.query.email || '').trim().toLowerCase();
+    const uidParsed = parseInt(String(req.query.userId || ''), 10);
+    const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || '80'), 10) || 80));
+
+    let uid = null;
+    if (email) {
+      const u = await db.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [email]);
+      if (!u.rows[0]) return res.status(404).json({ error: 'Utilizador não encontrado' });
+      uid = u.rows[0].id;
+    } else if (Number.isFinite(uidParsed) && uidParsed > 0) {
+      uid = uidParsed;
+    } else {
+      return res.status(400).json({ error: 'Indique email ou userId válido' });
+    }
+
+    const rows = await db.query(
+      `SELECT id, action, meta, created_at FROM game_activity_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`,
+      [uid, limit]
+    );
+    res.json({
+      logs: rows.rows.map((r) => ({
+        id: Number(r.id),
+        action: r.action,
+        meta: r.meta,
+        createdAt: Number(r.created_at)
+      }))
+    });
+  } catch (e) {
+    console.error('[AdminUserActivity]', e);
+    res.status(500).json({ error: 'Falha ao carregar atividade' });
+  }
 });
 
-app.post('/api/economy-settings', isAdmin, async (req, res) => {
-  const { blackMarketEnabled, hardwareMarketEnabled, marketTaxPercent } = req.body || {};
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    await client.query('DELETE FROM economy_settings');
-    await client.query('INSERT INTO economy_settings (id, black_market_enabled, hardware_market_enabled, market_tax_percent) VALUES (1, $1, $2, $3)', [blackMarketEnabled ? 1 : 0, hardwareMarketEnabled ? 1 : 0, Number(marketTaxPercent) || 0]);
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (e) { await client.query('ROLLBACK'); res.status(500).json({ error: e.message }); } finally { client.release(); }
-});
 
 // --- ADMIN MARKET ---
 app.get('/api/admin/market/listings', isAdmin, async (req, res) => {
@@ -7940,6 +8401,13 @@ app.post('/api/exchange/sell', async (req, res) => {
 
     console.log('[ExchangeSell] userId=%s coinId=%s coinName=%s pct=%s soldAmount=%s grossUsdc=%s feeUsdc=%s netUsdc=%s',
       uid, cid, coinDef.name, String(pct), sellAmount, grossUsdc.toFixed(8), feeAmount.toFixed(8), netUsdc.toFixed(8));
+    await appendGameActivityLog(db, uid, 'exchange_sell', {
+      coinId: cid,
+      coinName: coinDef.name,
+      pct: Number(pct),
+      soldAmount: Number(sellAmount),
+      netUsdc: Number(netUsdc.toFixed(8))
+    });
 
     res.json({
       ok: true,
@@ -8363,15 +8831,57 @@ const startServer = async () => {
     res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
   });
 
-  app.listen(desiredPort, '0.0.0.0', () => {
-    console.log(`Server running on port ${desiredPort} `);
+  const httpServer = http.createServer(app);
+  const wss = new WebSocketServer({ noServer: true });
+  marketWss = wss;
+  httpServer.on('upgrade', (req, socket, head) => {
+    try {
+      const pathOnly = (req.url || '').split('?')[0];
+      if (pathOnly === '/ws/market') {
+        wss.handleUpgrade(req, socket, head, (ws) => {
+          ws.isAlive = true;
+          ws.on('pong', () => { ws.isAlive = true; });
+          ws.send(JSON.stringify({ type: 'market', event: 'hello' }));
+        });
+      } else {
+        socket.destroy();
+      }
+    } catch (e) {
+      try { socket.destroy(); } catch (_) { /* ignore */ }
+    }
+  });
+
+  const wsPingMs = 45000;
+  setInterval(() => {
+    if (!marketWss) return;
+    for (const c of marketWss.clients) {
+      if (!c.isAlive) {
+        try { c.terminate(); } catch (_) { /* ignore */ }
+        continue;
+      }
+      c.isAlive = false;
+      try { c.ping(); } catch (_) { /* ignore */ }
+    }
+  }, wsPingMs);
+
+  httpServer.listen(desiredPort, '0.0.0.0', () => {
+    console.log(`Server running on port ${desiredPort} (HTTP + /ws/market)`);
     setInterval(async () => {
       try {
         const activeRes = await db.query('SELECT COUNT(DISTINCT user_id) as count FROM sessions WHERE expires_at > $1', [Date.now()]);
         const totalRes = await db.query('SELECT COUNT(*) as count FROM users');
         // console.log(`[Stats] Online: ${ activeRes.rows[0]?.count || 0 } | Total: ${ totalRes.rows[0]?.count || 0 } `);
-      } catch (e) { }
+      } catch (e) { /* ignore */ }
     }, 60000);
   });
 };
+
+if (cluster.isWorker) {
+  process.on('message', (msg) => {
+    if (msg && msg.type === 'market_ws_broadcast' && msg.payload) {
+      marketWsBroadcastLocal(msg.payload);
+    }
+  });
+}
+
 startServer();

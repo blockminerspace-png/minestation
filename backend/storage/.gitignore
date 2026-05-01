@@ -1,0 +1,2 @@
+# Metadados JWT (sem segredos em texto claro); não versionar snapshots locais se preferires.
+jwt_refresh_index.json

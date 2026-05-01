@@ -1,14 +1,28 @@
 import React, { useState, useEffect } from 'react';
-import { SecurityStats } from '../types';
-import { getSecurityStats, addToBlacklist, removeFromBlacklist } from '../services/api';
-import { Shield, AlertTriangle, Users, Globe, RefreshCw, Lock, Terminal, Ban, CheckCircle, Trash2 } from 'lucide-react';
+import { SecurityStats, GameUserActivityEntry } from '../types';
+import { getSecurityStats, addToBlacklist, removeFromBlacklist, getAdminUserActivity } from '../services/api';
+import { Shield, AlertTriangle, Users, Globe, RefreshCw, Lock, Terminal, Ban, CheckCircle, Gamepad2 } from 'lucide-react';
+
+function formatActivityMeta(meta: GameUserActivityEntry['meta']): string {
+    if (meta == null || typeof meta !== 'object') return '—';
+    try {
+        const s = JSON.stringify(meta);
+        return s.length > 420 ? `${s.slice(0, 420)}…` : s;
+    } catch {
+        return '—';
+    }
+}
 
 export const AdminSecurity: React.FC = () => {
     const [stats, setStats] = useState<SecurityStats | null>(null);
     const [loading, setLoading] = useState(true);
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
-    const [activeTab, setActiveTab] = useState<'multi' | 'logs' | 'blacklist'>('multi');
+    const [activeTab, setActiveTab] = useState<'multi' | 'logs' | 'blacklist' | 'activity'>('multi');
     const [banningIp, setBanningIp] = useState<string | null>(null);
+    const [activityEmail, setActivityEmail] = useState('');
+    const [activityLogs, setActivityLogs] = useState<GameUserActivityEntry[]>([]);
+    const [activityLoading, setActivityLoading] = useState(false);
+    const [activityError, setActivityError] = useState<string | null>(null);
 
     const loadData = async () => {
         setLoading(true);
@@ -45,6 +59,19 @@ export const AdminSecurity: React.FC = () => {
         } else {
             alert('Erro ao remover IP: ' + res.error);
         }
+    };
+
+    const loadUserActivity = async () => {
+        setActivityLoading(true);
+        setActivityError(null);
+        const { logs, error } = await getAdminUserActivity(activityEmail, { limit: 100 });
+        setActivityLoading(false);
+        if (error) {
+            setActivityLogs([]);
+            setActivityError(error);
+            return;
+        }
+        setActivityLogs(logs);
     };
 
     if (loading && !stats) {
@@ -98,6 +125,12 @@ export const AdminSecurity: React.FC = () => {
                     className={`px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${activeTab === 'blacklist' ? 'bg-red-600 text-white shadow-lg shadow-red-900/40' : 'text-slate-500 hover:text-slate-300'}`}
                 >
                     <Lock size={14} /> LISTA NEGRA
+                </button>
+                <button
+                    onClick={() => setActiveTab('activity')}
+                    className={`px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-2 ${activeTab === 'activity' ? 'bg-red-600 text-white shadow-lg shadow-red-900/40' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                    <Gamepad2 size={14} /> ATIVIDADE JOGO
                 </button>
             </div>
 
@@ -318,6 +351,75 @@ export const AdminSecurity: React.FC = () => {
                                     ) : (
                                         <tr>
                                             <td colSpan={5} className="px-4 py-8 text-center text-slate-600 italic font-bold tracking-widest">SISTEMA INTACTO. NENHUMA TENTATIVA SUSPEITA REGISTRADA.</td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {activeTab === 'activity' && (
+                <div className="animate-in fade-in duration-300 space-y-4">
+                    <div className="bg-slate-900/50 border border-slate-800 rounded-xl p-4 flex flex-wrap items-end gap-3">
+                        <div className="flex-1 min-w-[200px]">
+                            <label className="block text-[10px] uppercase tracking-widest text-slate-500 font-bold mb-1">Email do jogador</label>
+                            <input
+                                type="email"
+                                value={activityEmail}
+                                onChange={(e) => setActivityEmail(e.target.value)}
+                                placeholder="nome@dominio.com"
+                                className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white placeholder:text-slate-600 focus:border-red-600 focus:outline-none"
+                            />
+                        </div>
+                        <button
+                            type="button"
+                            onClick={loadUserActivity}
+                            disabled={activityLoading}
+                            className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-xs font-bold uppercase disabled:opacity-50"
+                        >
+                            {activityLoading ? 'A carregar…' : 'Carregar'}
+                        </button>
+                    </div>
+                    {activityError && (
+                        <p className="text-sm text-amber-500 font-medium">{activityError}</p>
+                    )}
+                    <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden shadow-2xl">
+                        <div className="bg-slate-950 p-4 border-b border-slate-800 flex items-center gap-3">
+                            <Gamepad2 className="text-emerald-500" size={20} />
+                            <div>
+                                <h3 className="text-lg font-bold text-white italic">Registo de ações no jogo</h3>
+                                <p className="text-[10px] text-slate-500 uppercase tracking-tighter">Depósitos, loja, caixas, câmbio, rigs e oficina (após atualização do servidor)</p>
+                            </div>
+                        </div>
+                        <div className="overflow-x-auto">
+                            <table className="w-full text-left text-sm">
+                                <thead className="bg-slate-950 text-slate-500 uppercase text-[10px] tracking-widest font-bold">
+                                    <tr>
+                                        <th className="px-4 py-3">Data / Hora</th>
+                                        <th className="px-4 py-3">Ação</th>
+                                        <th className="px-4 py-3">Detalhes</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-800/50">
+                                    {activityLogs.length > 0 ? (
+                                        activityLogs.map((row) => (
+                                            <tr key={row.id} className="hover:bg-slate-800/40">
+                                                <td className="px-4 py-3 text-[10px] text-slate-400 font-mono whitespace-nowrap">
+                                                    {new Date(row.createdAt).toLocaleString()}
+                                                </td>
+                                                <td className="px-4 py-3 font-mono text-xs text-emerald-400">{row.action}</td>
+                                                <td className="px-4 py-3 text-[10px] text-slate-400 font-mono break-all max-w-xl" title={formatActivityMeta(row.meta)}>
+                                                    {formatActivityMeta(row.meta)}
+                                                </td>
+                                            </tr>
+                                        ))
+                                    ) : (
+                                        <tr>
+                                            <td colSpan={3} className="px-4 py-10 text-center text-slate-600 italic">
+                                                {activityError ? '—' : 'Introduza um email e carregue para ver eventos gravados na base de dados.'}
+                                            </td>
                                         </tr>
                                     )}
                                 </tbody>

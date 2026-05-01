@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { AdminMarketListing, EconomySettings, Upgrade } from '../types';
 import { getAdminMarketListings, getEconomySettings, setEconomySettings as saveEconomySettings } from '../services/api';
 import { Search, Save, AlertCircle, RefreshCw } from 'lucide-react';
@@ -14,11 +14,7 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
     const [searchTerm, setSearchTerm] = useState('');
     const [newTax, setNewTax] = useState<string>('');
 
-    useEffect(() => {
-        loadData();
-    }, []);
-
-    const loadData = async () => {
+    const loadData = useCallback(async () => {
         setLoading(true);
         const [l, s] = await Promise.all([
             getAdminMarketListings(),
@@ -26,9 +22,34 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
         ]);
         setListings(l);
         setSettings(s);
-        setNewTax((s.marketTaxPercent || 0).toString());
+        setNewTax((s?.marketTaxPercent || 0).toString());
         setLoading(false);
-    };
+    }, []);
+
+    useEffect(() => {
+        void loadData();
+    }, [loadData]);
+
+    useEffect(() => {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const url = `${proto}//${window.location.host}/ws/market`;
+        let ws: WebSocket | null = null;
+        let stopped = false;
+        const open = () => {
+            if (stopped) return;
+            ws = new WebSocket(url);
+            ws.onmessage = () => { void loadData(); };
+            ws.onclose = () => {
+                if (!stopped) window.setTimeout(open, 3000);
+            };
+            ws.onerror = () => { try { ws?.close(); } catch { /* ignore */ } };
+        };
+        open();
+        return () => {
+            stopped = true;
+            try { ws?.close(); } catch { /* ignore */ }
+        };
+    }, [loadData]);
 
     const handleSaveTax = async () => {
         if (!settings) return;
@@ -161,10 +182,11 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
                                     </td>
                                     <td className="p-4 text-center">
                                         <span className={`px-2 py-1 rounded text-[10px] font-bold uppercase ${l.status === 'active' ? 'bg-green-900/30 text-green-400 border border-green-900' :
+                                            l.status === 'awaiting_pickup' ? 'bg-blue-900/30 text-blue-300 border border-blue-900' :
                                             l.status === 'sold' ? 'bg-amber-900/30 text-amber-400 border border-amber-900' :
                                                 'bg-slate-900 text-slate-500 border border-slate-700'
                                             }`}>
-                                            {l.status === 'active' ? 'Ativo' : l.status === 'sold' ? 'Custódia' : l.status}
+                                            {l.status === 'active' ? 'Ativo' : l.status === 'awaiting_pickup' ? 'Aguarda retirada' : l.status === 'sold' ? 'Vendido' : l.status}
                                         </span>
                                     </td>
                                     <td className="p-4 text-xs text-slate-500">

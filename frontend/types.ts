@@ -343,7 +343,7 @@ export interface AdminMarketListing {
   itemId: string;
   price: number;
   qty: number;
-  status: 'active' | 'sold';
+  status: 'active' | 'sold' | 'awaiting_pickup';
   expiresAt: number;
   reservedBy?: number;
   reservedUntil?: number;
@@ -427,6 +427,14 @@ export interface SecurityStats {
   suspectedAutoReferrals: SuspectedAutoReferral[];
   accessLogs: AccessLog[];
   blacklist: BlacklistEntry[];
+}
+
+/** Linha de `game_activity_logs` (ações de jogo do jogador). */
+export interface GameUserActivityEntry {
+  id: number;
+  action: string;
+  meta: Record<string, unknown> | null;
+  createdAt: number;
 }
 
 export interface ReferralModel {

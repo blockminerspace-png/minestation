@@ -169,9 +169,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                     <Users className="absolute right-4 top-4 text-slate-700" size={64} />
                     <h3 className="text-slate-400 text-xs uppercase tracking-widest font-bold">Usuários Cadastrados</h3>
                     <div className="text-4xl font-bold text-white mt-2">{stats.totalUsers}</div>
-                    <div className="text-xs text-green-500 mt-2 flex items-center gap-1">
+                    <div className="text-xs text-green-500 mt-2 flex items-center gap-1" title="Sessão válida + atividade na API nos últimos 4 min (atualização da sessão no máximo a cada ~45 s).">
                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                        {stats.onlineUsers} Online Agora
+                        {stats.onlineUsers} com sessão ativa
                     </div>
                 </div>
 

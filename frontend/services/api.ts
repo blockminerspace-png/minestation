@@ -1,12 +1,46 @@
-import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel } from '../types';
+import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry } from '../types';
 
 const base = '/api';
 
-async function apiFetch(url: string, options: RequestInit = {}) {
-  return fetch(url, {
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function tryRefreshSessionOnce(): Promise<boolean> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = (async () => {
+    try {
+      const res = await fetch(`${base}/auth/refresh`, { method: 'POST', credentials: 'include' });
+      return res.ok;
+    } catch {
+      return false;
+    } finally {
+      refreshInFlight = null;
+    }
+  })();
+  return refreshInFlight;
+}
+
+function shouldSkipAuthRefreshRetry(url: string): boolean {
+  const u = url.replace(/^https?:\/\/[^/]+/i, '');
+  return (
+    u.includes('/auth/refresh') ||
+    u.includes('/login') ||
+    u.includes('/logout') ||
+    u.includes('/password-reset')
+  );
+}
+
+async function apiFetch(url: string, options: RequestInit = {}, allowRefreshRetry = true): Promise<Response> {
+  const res = await fetch(url, {
     ...options,
     credentials: 'include'
   });
+  if (res.status === 401 && allowRefreshRetry && !shouldSkipAuthRefreshRetry(url)) {
+    const refreshed = await tryRefreshSessionOnce();
+    if (refreshed) {
+      return fetch(url, { ...options, credentials: 'include' });
+    }
+  }
+  return res;
 }
 
 /** Transferências USDC (Polygon) para o treasury — só admin; chave Etherscan fica no servidor. */
@@ -75,8 +109,17 @@ export async function getLootBoxes(): Promise<LootBox[]> {
   }
 }
 
-export async function setLootBoxes(boxes: LootBox[]): Promise<void> {
-  const res = await apiFetch(`${base}/loot-boxes`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(boxes) });
+/** `replaceCatalog: true` = lista completa do painel de caixas; desativa no DB as que sumiram da lista. */
+export async function setLootBoxes(
+  boxes: LootBox[],
+  options?: { replaceCatalog?: boolean }
+): Promise<void> {
+  const replaceCatalog = options?.replaceCatalog === true;
+  const res = await apiFetch(`${base}/loot-boxes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ boxes, replaceCatalog })
+  });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `Erro ao salvar caixas: ${res.status}`);
@@ -385,7 +428,6 @@ export async function cancelMarketListing(listingId: string): Promise<{ ok: bool
     if (!res.ok) {
       try { return await res.json(); } catch { return { ok: false, error: 'Cancel failed' }; }
     }
-    try { return await res.json(); } catch { return { ok: true }; }
     try { return await res.json(); } catch { return { ok: true }; }
   } catch { return { ok: false, error: 'Network error' }; }
 }
@@ -740,6 +782,33 @@ export async function removeFromBlacklist(ip: string): Promise<{ ok: boolean; er
     });
     return await res.json();
   } catch { return { ok: false, error: 'Network error' }; }
+}
+
+export async function getAdminUserActivity(
+  email: string,
+  opts?: { userId?: number; limit?: number }
+): Promise<{ logs: GameUserActivityEntry[]; error?: string }> {
+  const q = new URLSearchParams();
+  const em = email.trim().toLowerCase();
+  if (em) q.set('email', em);
+  else if (opts?.userId != null && opts.userId > 0) q.set('userId', String(opts.userId));
+  else return { logs: [], error: 'Indique o email do jogador.' };
+  if (opts?.limit != null && opts.limit > 0) q.set('limit', String(Math.min(200, opts.limit)));
+  try {
+    const res = await apiFetch(`${base}/admin/user-activity?${q.toString()}`);
+    if (!res.ok) {
+      let msg = `Erro ${res.status}`;
+      try {
+        const j = await res.json();
+        if (j.error) msg = j.error;
+      } catch { /* ignore */ }
+      return { logs: [], error: msg };
+    }
+    const data = await res.json();
+    return { logs: Array.isArray(data.logs) ? data.logs : [] };
+  } catch {
+    return { logs: [], error: 'Erro de rede.' };
+  }
 }
 
 export async function setMonetizationSettings(settings: MonetizationSettings): Promise<void> {

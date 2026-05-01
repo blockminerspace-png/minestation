@@ -28,6 +28,7 @@ services:
     volumes:
       # Pasta na raiz do repositório (relativo a deployment/): sobrevive a docker compose build.
       - ../backups:/app/backups
+      - ../backend/img:/app/backend/img
     depends_on:
       db:
         condition: service_healthy

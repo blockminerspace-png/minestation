@@ -19,8 +19,10 @@
         "express": "*",
         "express-rate-limit": "*",
         "helmet": "*",
+        "jsonwebtoken": "^9.0.3",
         "multer": "^2.0.2",
         "nodemailer": "^6.9.0",
-        "pg": "^8.20.0"
+        "pg": "^8.20.0",
+        "ws": "^8.20.0"
     }
 }

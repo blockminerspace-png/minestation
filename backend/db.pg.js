@@ -245,7 +245,8 @@ export const initDb = async () => {
         user_id INTEGER NOT NULL REFERENCES users(id),
         created_at BIGINT NOT NULL,
         expires_at BIGINT NOT NULL,
-        original_user_id INTEGER DEFAULT NULL
+        original_user_id INTEGER DEFAULT NULL,
+        last_seen_at BIGINT NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS coin_balances (
@@ -585,6 +586,38 @@ export const initDb = async () => {
       );
       CREATE INDEX IF NOT EXISTS idx_admin_access_logs_ip ON admin_access_logs(ip);
       CREATE INDEX IF NOT EXISTS idx_admin_access_logs_created_at ON admin_access_logs(created_at);
+
+      CREATE TABLE IF NOT EXISTS game_activity_logs (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        meta JSONB,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_game_activity_logs_user_created ON game_activity_logs(user_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS jwt_refresh_tokens (
+        id BIGSERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT NOT NULL,
+        family_id TEXT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        created_at BIGINT NOT NULL,
+        revoked_at BIGINT,
+        user_agent TEXT,
+        ip TEXT,
+        UNIQUE(token_hash)
+      );
+      CREATE INDEX IF NOT EXISTS idx_jwt_refresh_user ON jwt_refresh_tokens(user_id);
+      CREATE INDEX IF NOT EXISTS idx_jwt_refresh_family ON jwt_refresh_tokens(family_id);
+    `);
+
+    await client.query(`
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_seen_at BIGINT NOT NULL DEFAULT 0;
+      UPDATE sessions SET last_seen_at = created_at WHERE last_seen_at = 0;
+      INSERT INTO economy_settings (id, black_market_enabled, hardware_market_enabled, market_tax_percent)
+      VALUES (1, 1, 1, 0)
+      ON CONFLICT (id) DO NOTHING;
     `);
 
     await client.query('COMMIT');
