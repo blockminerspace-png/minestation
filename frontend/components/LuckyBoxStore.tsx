@@ -35,15 +35,29 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
         return <span className={sizeClass}>{icon}</span>;
     };
 
-    const shopBoxes = lootBoxes.filter(b => {
-        if (b.isActive === false) return false;
-        if (b.trigger === 'shop') return true;
-        if (b.trigger === 'special') return true;
-        if (b.trigger === 'shop_once') {
-            return !(gameState.claimedBoxes || []).includes(b.id);
+    const getBoxAvailability = (box: LootBox) => {
+        const trigger = String(box.trigger || '').trim();
+        if (trigger === 'shop' || trigger === 'special') {
+            return { canBuy: true, label: box.price <= 0 ? 'GRATIS' : null };
         }
-        return false;
-    });
+        if (trigger === 'shop_once') {
+            const alreadyClaimed = (gameState.claimedBoxes || []).includes(box.id);
+            return alreadyClaimed
+                ? { canBuy: false, label: 'JA RESGATADA' }
+                : { canBuy: true, label: box.price <= 0 ? 'GRATIS' : null };
+        }
+        if (trigger === 'promo_code') return { canBuy: false, label: 'CODIGO' };
+        if (trigger === 'registration') return { canBuy: false, label: 'CADASTRO' };
+        if (trigger === 'referral_sender') return { canBuy: false, label: 'INDICADOR' };
+        if (trigger === 'referral_receiver') return { canBuy: false, label: 'INDICADO' };
+        if (trigger === 'roleta_code') return { canBuy: false, label: 'ROLETA' };
+        if (trigger === 'roleta_reward') return { canBuy: false, label: 'PREMIO ROLETA' };
+        if (trigger.startsWith('season:')) return { canBuy: false, label: `TEMP ${trigger.split(':')[1] || ''}`.trim() };
+        if (trigger === 'upgrade') return { canBuy: false, label: 'BONUS UPGRADE' };
+        return { canBuy: false, label: trigger ? trigger.toUpperCase() : 'INDISPONIVEL' };
+    };
+
+    const shopBoxes = lootBoxes.filter(b => b.isActive !== false);
 
     // Get boxes the player owns (from any source)
     const ownedBoxes = (Object.entries(gameState.unopenedBoxes) as [string, number][])
@@ -223,13 +237,20 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                     <DollarSign size={16} /> Loja de Caixas
                 </h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {shopBoxes.map(box => (
+                    {shopBoxes.map(box => {
+                        const availability = getBoxAvailability(box);
+                        const canAfford = gameState.usdc >= box.price;
+                        const canBuyNow = availability.canBuy && canAfford;
+                        return (
                         <div key={box.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 rounded-xl p-4 flex flex-col items-center text-center shadow-sm transition-all relative overflow-hidden group">
                             <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner group-hover:scale-110 transition-transform overflow-hidden">
                                 {renderIcon(box.icon || '📦', "text-3xl", "w-10 h-10")}
                             </div>
                             <div className="font-bold text-slate-800 dark:text-white">{box.name}</div>
                             <div className="text-xs text-slate-500 mb-3 h-8 line-clamp-2">{box.description}</div>
+                            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-3">
+                                Gatilho: {box.trigger || 'sem gatilho'}
+                            </div>
                             <div className="w-full text-left mb-3">
                                 <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conteúdo</div>
                                 <div className="space-y-1">
@@ -255,16 +276,22 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
 
                             <div className="mt-auto w-full">
                                 <button
-                                    onClick={() => onBuyBox(box.id)}
-                                    disabled={gameState.usdc < box.price}
+                                    onClick={() => {
+                                        if (availability.canBuy) onBuyBox(box.id);
+                                    }}
+                                    disabled={!canBuyNow}
                                     className={`
                                 w-full py-2 rounded-lg font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-1
-                                ${gameState.usdc >= box.price
+                                ${canBuyNow
                                             ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-500/20'
                                             : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}
                             `}
                                 >
-                                    {box.price <= 0 ? (
+                                    {availability.label ? (
+                                        <span className="flex items-center gap-1 uppercase tracking-wider">
+                                            <Gift size={14} /> {availability.label}
+                                        </span>
+                                    ) : box.price <= 0 ? (
                                         <span className="flex items-center gap-1 uppercase tracking-wider">
                                             <Gift size={14} /> GRÁTIS
                                         </span>
@@ -276,7 +303,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                                 </button>
                             </div>
                         </div>
-                    ))}
+                    )})}
                     {shopBoxes.length === 0 && (
                         <div className="col-span-full text-center py-12 text-slate-500 italic border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                             Nenhuma caixa disponível para compra no momento.
