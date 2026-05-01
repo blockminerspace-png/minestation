@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { GameState, LootBox, Upgrade } from '../types';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import { Gift, Package, Sparkles, DollarSign, Box, CheckCircle2, X, Ticket } from 'lucide-react';
 import GameView from './roleta/GameView';
 
@@ -28,7 +29,8 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
             icon.endsWith('.gif') || icon.endsWith('.ico') || icon.endsWith('.webp');
 
         if (isImage) {
-            return <img src={icon} alt="icon" className={`object-contain ${imgClass}`} style={{ width: '1em', height: '1em', fontSize: 'inherit' }} />;
+            const src = normalizePublicAssetUrl(icon) || icon;
+            return <img src={src} alt="icon" className={`object-contain ${imgClass}`} style={{ width: '1em', height: '1em', fontSize: 'inherit' }} />;
         }
         return <span className={sizeClass}>{icon}</span>;
     };

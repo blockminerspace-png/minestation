@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { PlacedRack, StoredBattery, Upgrade, RigRoom } from '../types';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import { getMyRigRooms, purchaseRoomSlot } from '../services/api';
 import { Server, XCircle, Zap, Power, Plus, Cog, X, Box, Save, Activity, Terminal, Calculator } from 'lucide-react';
 
@@ -59,7 +60,7 @@ const AnimatedMiner = ({ src, isOperational, className, style, item }: { src: st
 
     const finalStyle = {
         ...style,
-        backgroundImage: (item && src) ? `url(${!isOperational && staticImage ? staticImage : src})` : 'none',
+        backgroundImage: (item && src) ? `url(${JSON.stringify(!isOperational && staticImage ? staticImage : src)})` : 'none',
         backgroundSize: '100% 100%',
         backgroundRepeat: 'no-repeat'
     };
@@ -398,7 +399,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
                     // RACK EXISTE NO SLOT
                     const rackDef = upgrades.find(u => u.id === rack.itemId);
-                    const rackSkin = rackDef?.image;
+                    const rackSkin = normalizePublicAssetUrl(rackDef?.image);
 
                     const totalWatts = calculateRackConsumption(rack, upgrades);
                     const finalProd = calculateProduction([rack], upgrades);
@@ -429,7 +430,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                 `}
                                 style={{
                                     ...(rackSkin ? {
-                                        backgroundImage: `url(${rackSkin})`,
+                                        backgroundImage: `url(${JSON.stringify(rackSkin)})`,
                                         backgroundSize: '100% 100%',
                                         backgroundRepeat: 'no-repeat',
                                         border: 'none',
@@ -468,7 +469,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     slot.type === 'battery' ? rack.batteryId : null;
 
                                                         const item = slotContent ? upgrades.find(u => u.id === slotContent) : null;
-                                                        const itemImg = item?.image;
+                                                        const itemImg = normalizePublicAssetUrl(item?.image);
 
                                                         const handleClick = () => {
                                                             if (slot.type === 'machine') handleSlotClick(rack.id, idx, slotContent);
@@ -701,6 +702,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                             {getAvailableStoredBatteries().map(stored => {
                                                 const def = upgrades.find(u => u.id === stored.itemId);
                                                 if (!def) return null;
+                                                const defImg = normalizePublicAssetUrl(def.image);
                                                 const isInfiniteStored = def.powerCapacity === -1;
                                                 const chargePct = isInfiniteStored ? 100 : (stored.currentCharge / (def.powerCapacity || 1)) * 100;
 
@@ -711,8 +713,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         className="w-full flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 hover:bg-white dark:hover:bg-slate-800 hover:border-yellow-500/30 transition-all text-left group mb-2"
                                                     >
                                                         <div className="text-xl bg-white dark:bg-slate-900 w-10 h-10 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 text-yellow-600 dark:text-yellow-500 overflow-hidden">
-                                                            {def.image ? (
-                                                                <img src={def.image} alt={def.name} className="w-full h-full object-cover" />
+                                                            {defImg ? (
+                                                                <img src={defImg} alt={def.name} className="w-full h-full object-cover" />
                                                             ) : (
                                                                 def.icon
                                                             )}
@@ -747,15 +749,17 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                             <p className="text-xs mt-1">Compre mais no Mercado.</p>
                                         </div>
                                     ) : (
-                                        getAvailableItems().map(item => (
+                                        getAvailableItems().map(item => {
+                                            const listImg = normalizePublicAssetUrl(item.image);
+                                            return (
                                             <button
                                                 key={item.id}
                                                 onClick={() => handleItemSelect(item.id)}
                                                 className="flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-750 hover:border-amber-500/50 transition-all text-left group"
                                             >
                                                 <div className="text-2xl bg-white dark:bg-slate-900 w-12 h-12 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 group-hover:border-amber-500/30 overflow-hidden">
-                                                    {item.image ? (
-                                                        <img src={item.image} className="w-full h-full object-cover" />
+                                                    {listImg ? (
+                                                        <img src={listImg} className="w-full h-full object-cover" />
                                                     ) : item.icon}
                                                 </div>
                                                 <div className="flex-1 min-w-0">
@@ -782,7 +786,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                     x{stock[item.id]}
                                                 </div>
                                             </button>
-                                        ))
+                                        );
+                                        })
                                     )}
                                 </div>
                             </div>
@@ -890,7 +895,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
             }
 
             {
-                detailContext && (
+                detailContext && (() => {
+                    const detailImg = normalizePublicAssetUrl(detailContext.item.image);
+                    return (
                     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm">
                         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
                             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
@@ -904,8 +911,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             <div className="p-4 space-y-3">
                                 <div className="flex items-center gap-3">
                                     <div className="w-14 h-14 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center text-2xl">
-                                        {detailContext.item.image ? (
-                                            <img src={detailContext.item.image} className="w-full h-full object-cover" />
+                                        {detailImg ? (
+                                            <img src={detailImg} className="w-full h-full object-cover" />
                                         ) : (
                                             detailContext.item.icon
                                         )}
@@ -966,8 +973,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                         </div>
                     </div>
-                )
-            }
+                    );
+                })()}
         </div >
     );
 };

@@ -1,6 +1,6 @@
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Upgrade, RigLayout, SlotLayout } from '../types';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import { Move, Plus, Trash2, Cpu, Battery, Plug, Zap, Save, AlertCircle, Power, Cog, Coins, Activity, BarChart3, Terminal, RefreshCw, PlayCircle } from 'lucide-react';
 
 interface AdminRigLayoutEditorProps {
@@ -21,42 +21,45 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
     const racks = gameUpgrades.filter(u => u.type === 'infrastructure' || u.type === 'charger');
     const selectedRack = racks.find(r => r.id === selectedRackId);
 
-    // Initialize layout when rack changes
+    // Skin: re-sincroniza quando o catálogo (gameUpgrades) ganha `image` depois do primeiro render.
     useEffect(() => {
-        if (selectedRack) {
-            setTempImage(selectedRack.image || null);
-            if (selectedRack.layout) {
-                setLayout({
-                    ...selectedRack.layout,
-                    canvasWidth: selectedRack.layout.canvasWidth || 500,
-                    canvasHeight: selectedRack.layout.canvasHeight || 800
+        if (!selectedRack) return;
+        const url = normalizePublicAssetUrl(selectedRack.image);
+        setTempImage(url ?? null);
+    }, [selectedRackId, selectedRack?.image]);
+
+    // Layout: só quando troca a rig selecionada (evita apagar edição ao atualizar só a imagem).
+    useEffect(() => {
+        if (!selectedRack) return;
+        if (selectedRack.layout) {
+            setLayout({
+                ...selectedRack.layout,
+                canvasWidth: selectedRack.layout.canvasWidth || 500,
+                canvasHeight: selectedRack.layout.canvasHeight || 800
+            });
+        } else {
+            const newSlots: SlotLayout[] = [];
+            const cols = 3;
+            for (let i = 0; i < (selectedRack.slotsCapacity || 0); i++) {
+                const row = Math.floor(i / cols);
+                const col = i % cols;
+                newSlots.push({
+                    id: `slot_${i}`,
+                    type: 'machine',
+                    x: 10 + col * 25,
+                    y: 10 + row * 25,
+                    w: 20,
+                    h: 20
                 });
-            } else {
-                // Default grid-based layout for new racks
-                const newSlots: SlotLayout[] = [];
-                const cols = 3;
-                for (let i = 0; i < (selectedRack.slotsCapacity || 0); i++) {
-                    const row = Math.floor(i / cols);
-                    const col = i % cols;
-                    newSlots.push({
-                        id: `slot_${i}`,
-                        type: 'machine',
-                        x: 10 + col * 25,
-                        y: 10 + row * 25,
-                        w: 20,
-                        h: 20
-                    });
-                }
-                // Add default aux slots
-                newSlots.push({ id: 'wiring', type: 'wiring', x: 85, y: 10, w: 10, h: 20 });
-                newSlots.push({ id: 'battery', type: 'battery', x: 85, y: 35, w: 10, h: 20 });
-                for (let i = 0; i < (selectedRack.aiSlotsCapacity || 0); i++) {
-                    newSlots.push({ id: `ai_${i}`, type: 'multiplier', x: 85, y: 60 + i * 15, w: 10, h: 10 });
-                }
-                setLayout({ slots: newSlots });
             }
+            newSlots.push({ id: 'wiring', type: 'wiring', x: 85, y: 10, w: 10, h: 20 });
+            newSlots.push({ id: 'battery', type: 'battery', x: 85, y: 35, w: 10, h: 20 });
+            for (let i = 0; i < (selectedRack.aiSlotsCapacity || 0); i++) {
+                newSlots.push({ id: `ai_${i}`, type: 'multiplier', x: 85, y: 60 + i * 15, w: 10, h: 10 });
+            }
+            setLayout({ slots: newSlots });
         }
-    }, [selectedRackId]);
+    }, [selectedRackId, gameUpgrades.length]);
 
     const handleMouseDown = (idx: number, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -473,7 +476,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 }}
                                 className={`bg-slate-950 rounded-lg shadow-2xl border-2 relative transition-all ${isResizingCanvas ? 'border-amber-500 ring-4 ring-amber-500/20' : 'border-slate-700/50 hover:border-slate-500'}`}
                                 style={{
-                                    backgroundImage: tempImage ? `url(${tempImage})` : 'none',
+                                    backgroundImage: tempImage ? `url(${JSON.stringify(tempImage)})` : 'none',
                                     backgroundSize: '100% 100%',
                                     backgroundRepeat: 'no-repeat',
                                     width: layout.canvasWidth ? `${layout.canvasWidth}px` : '100%',

@@ -2534,6 +2534,21 @@ app.post('/api/admin-upgrades/purchase', async (req, res) => {
   } finally { client.release(); }
 });
 
+/** Caminhos de imagem relativos sem `/` inicial quebram no SPA; normaliza na API. */
+function normalizePublicAssetUrl(u) {
+  if (u == null || typeof u !== 'string') return u;
+  const s = u.trim();
+  if (!s) return undefined;
+  if (/^data:/i.test(s)) return s;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith('//')) return s;
+  if (s.startsWith('/')) return s;
+  if (/[.](png|jpe?g|gif|webp|ico|svg)(\?|$)/i.test(s) || /^img\//i.test(s)) {
+    return `/${s.replace(/^\/+/, '')}`;
+  }
+  return s;
+}
+
 // --- UPGRADES ---
 app.get('/api/upgrades', async (req, res) => {
   try {
@@ -2574,7 +2589,7 @@ app.get('/api/upgrades', async (req, res) => {
       nftTokenId: r.nft_token_id ?? undefined,
       maxGlobalStock: r.max_global_stock ?? undefined,
       totalSold: r.total_sold ?? 0,
-      image: r.image ?? undefined,
+      image: normalizePublicAssetUrl(r.image) ?? undefined,
       layout: r.layout ? (() => { try { return JSON.parse(r.layout); } catch { return undefined; } })() : undefined,
       compatibleRacks: compatMap[r.id] || [],
       rewardWh: r.reward_wh ?? 0,
