@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { AccessLevel, User } from '../types';
 import { getUsers, updateUser, login, requestPasswordReset, resetPasswordSecure } from '../services/api';
+import { collectDeviceFingerprint } from '../utils/deviceFingerprint';
 import { Lock, Mail, User as UserIcon, ArrowRight, AlertCircle, CreditCard, Wallet, Share2, ShieldCheck, Key } from 'lucide-react';
 
 interface AuthPageProps {
@@ -107,6 +108,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
         e.preventDefault();
         setError(null);
 
+        let deviceFingerprint: Awaited<ReturnType<typeof collectDeviceFingerprint>> | undefined;
+        try {
+            deviceFingerprint = await collectDeviceFingerprint();
+        } catch {
+            deviceFingerprint = undefined;
+        }
+
         if (activeTab === 'register' || activeTab === 'special') {
             // 1. VALIDATION
             if (!email || !password || !username) {
@@ -173,7 +181,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                 referrals: []
             };
 
-            const result = await updateUser({ ...newUser, newReferralFor: username });
+            const result = await updateUser({ ...newUser, newReferralFor: username, ...(deviceFingerprint ? { deviceFingerprint } : {}) });
 
             if (!result.ok) {
                 if (result.code === 'IP_LIMIT_REACHED') {
@@ -186,12 +194,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
             }
 
             // Auto login
-            const logged = await login(email, password);
+            const logged = await login(email, password, deviceFingerprint);
             onLogin({ ...(logged || newUser), isNewRegistration: true } as User);
 
         } else {
             // LOGIN LOGIC
-            const sessionUser = await login(email, password);
+            const sessionUser = await login(email, password, deviceFingerprint);
             if (sessionUser && !sessionUser.error) {
                 if (sessionUser.isBlocked) {
                     setError("Esta conta foi bloqueada pela administração.");

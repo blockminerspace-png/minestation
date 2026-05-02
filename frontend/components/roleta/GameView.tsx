@@ -19,8 +19,14 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
   // Fetch config if redeeming
   React.useEffect(() => {
     if (redeemCode) {
-      fetch('/api/admin/wheel/config')
-        .then(r => r.json())
+      fetch('/api/wheel/config')
+        .then(async (r) => {
+          if (!r.ok) {
+            const text = await r.text().catch(() => '');
+            throw new Error(text || `HTTP ${r.status}`);
+          }
+          return r.json();
+        })
         .then((data: WheelItem[]) => {
           console.log('[GameView] Fetched items:', data);
           if (Array.isArray(data) && data.length > 0) {
@@ -100,6 +106,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       const res = await fetch('/api/roleta/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           // We need email... but we don't have it in props easily unless passed.
           // Actually server needs email to get UID.
@@ -132,62 +139,77 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
   };
 
   return (
-    <div className="w-full flex flex-col items-center animate-fade-in relative z-50">
-      <div className="mb-8">
-        {!redeemCode && (
+    <div
+      className={`relative z-50 flex w-full flex-col items-center font-sans animate-fade-in px-1 sm:px-2 ${redeemCode ? 'gap-4' : 'gap-8'}`}
+    >
+      {!redeemCode && (
+        <div className="w-full">
           <button
+            type="button"
             onClick={onBack}
-            className="px-6 py-2 rounded-full border border-slate-700 text-slate-400 hover:text-white hover:border-slate-500 transition-colors flex items-center gap-2"
+            className="flex items-center gap-2 rounded-full border border-slate-600 px-5 py-2 text-sm text-slate-400 transition-colors hover:border-slate-500 hover:text-white"
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
-            Configurar Chances
+            Configurar chances
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <div className="relative group mb-12">
-        <div className={`absolute -inset-1 bg-gradient-to-r from-amber-500 to-yellow-600 rounded-full blur transition duration-1000 ${isSpinning ? 'opacity-60 animate-pulse' : 'opacity-20'}`}></div>
-        <Wheel
-          items={visualItems}
-          mustSpin={isSpinning}
-          targetWinner={targetWinner}
-          onStopSpinning={handleStopSpinning}
+      {redeemCode && (
+        <div className="w-full text-center">
+          <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-500/90">Roleta de prémios</p>
+          <h2 className="mt-1 font-black tracking-tight text-slate-100 text-xl sm:text-2xl">Giro da sorte</h2>
+          <p className="mt-2 max-w-sm mx-auto text-xs leading-relaxed text-slate-500">
+            Um giro por código. O resultado é definido no servidor.
+          </p>
+        </div>
+      )}
+
+      <div className="relative w-full flex flex-col items-center">
+        <div
+          className={`pointer-events-none absolute inset-0 -m-3 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-600/25 blur-2xl transition duration-1000 ${isSpinning ? 'opacity-70' : 'opacity-30'}`}
+          aria-hidden
         />
+        <Wheel items={visualItems} mustSpin={isSpinning} targetWinner={targetWinner} onStopSpinning={handleStopSpinning} />
       </div>
 
       {!isSpinning && !showResult && (
         <button
+          type="button"
           onClick={handleStartSpin}
-          className="px-12 py-4 bg-amber-500 hover:bg-amber-400 text-slate-900 font-black text-2xl rounded-2xl shadow-2xl transition-all transform hover:scale-110 active:scale-95 animate-bounce"
+          disabled={items.length === 0}
+          className="w-full max-w-xs rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 px-8 py-4 text-base font-black uppercase tracking-widest text-white shadow-lg shadow-orange-900/40 transition hover:from-orange-500 hover:to-amber-500 hover:shadow-orange-500/25 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 sm:text-lg"
         >
-          {redeemCode ? 'GIRO DA SORTE!' : 'GIRAR ROLETA!'}
+          {redeemCode ? 'Girar agora' : 'Girar roleta'}
         </button>
       )}
 
       {showResult && targetWinner && (
-        <div className="text-center animate-fade-in w-full max-w-lg mt-4">
-          <div className="bg-slate-800 p-6 rounded-3xl border-2 border-amber-500 shadow-2xl transition-all">
-            <h3 className="text-slate-400 text-xs font-bold uppercase tracking-widest mb-1">Resultado:</h3>
-            <p className="text-2xl font-black text-white mb-4" style={{ color: targetWinner.color }}>
+        <div className="mt-2 w-full max-w-md animate-fade-in text-center">
+          <div className="rounded-2xl border border-orange-500/35 bg-slate-800/90 p-6 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+            <h3 className="mb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">Resultado</h3>
+            <p className="mb-5 text-xl font-black text-white sm:text-2xl" style={{ color: targetWinner.color }}>
               {targetWinner.label}
             </p>
 
             {redeemCode ? (
               <button
+                type="button"
                 onClick={handleClaim}
                 disabled={claiming}
-                className="mt-4 w-full py-3 bg-green-500 hover:bg-green-400 text-white font-black text-lg rounded-xl transition-colors shadow-lg shadow-green-500/20 animate-pulse"
+                className="w-full rounded-xl bg-emerald-600 py-3.5 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-50"
               >
-                {claiming ? 'RESGATANDO...' : 'RESGATAR PRÊMIO'}
+                {claiming ? 'A resgatar…' : 'Resgatar prémio'}
               </button>
             ) : (
               <button
+                type="button"
                 onClick={handleStartSpin}
-                className="mt-4 w-full py-2 bg-slate-700 hover:bg-slate-600 text-white font-bold rounded-xl transition-colors"
+                className="w-full rounded-xl bg-slate-700 py-3 text-sm font-bold text-white transition hover:bg-slate-600"
               >
-                Girar Novamente
+                Girar novamente
               </button>
             )}
           </div>

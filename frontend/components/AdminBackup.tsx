@@ -7,100 +7,6 @@ interface BackupFile {
     createdAt: number;
 }
 
-const AutoBackupConfig: React.FC = () => {
-    const [enabled, setEnabled] = useState(false);
-    const [interval, setIntervalVal] = useState(60);
-    const [loading, setLoading] = useState(false);
-    const [saving, setSaving] = useState(false);
-
-    useEffect(() => {
-        setLoading(true);
-        fetch('/api/admin/backup-settings')
-            .then(r => r.json())
-            .then(data => {
-                setEnabled(data.enabled);
-                setIntervalVal(data.intervalMinutes);
-            })
-            .catch(e => console.error(e))
-            .finally(() => setLoading(false));
-    }, []);
-
-    const handleSave = async () => {
-        setSaving(true);
-        try {
-            const res = await fetch('/api/admin/backup-settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled, intervalMinutes: interval })
-            });
-            if (res.ok) {
-                // Optional: show toast
-            }
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setSaving(false);
-        }
-    };
-
-    if (loading) return <div className="p-4 bg-slate-800/50 rounded-xl border border-slate-700 animate-pulse h-24"></div>;
-
-    return (
-        <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 flex flex-col md:flex-row items-center justify-between gap-6">
-            <div className="flex items-center gap-4">
-                <div className={`p-3 rounded-full ${enabled ? 'bg-green-500/10 text-green-500' : 'bg-slate-700/50 text-slate-500'}`}>
-                    <RotateCcw size={24} className={enabled ? 'animate-spin-slow' : ''} />
-                </div>
-                <div>
-                    <h3 className="text-lg font-bold text-white">Backup Automático</h3>
-                    <p className="text-sm text-slate-400">
-                        {enabled
-                            ? `Ativo: Rodando a cada ${interval} minutos.`
-                            : 'O sistema de backup automático está desligado.'}
-                    </p>
-                </div>
-            </div>
-
-            <div className="flex items-center gap-4 bg-slate-900/50 p-4 rounded-lg border border-slate-700">
-                <div className="flex items-center gap-2">
-                    <label className="text-sm font-bold text-slate-400">Status:</label>
-                    <button
-                        onClick={() => setEnabled(!enabled)}
-                        className={`relative w-12 h-6 rounded-full transition-colors ${enabled ? 'bg-green-600' : 'bg-slate-700'}`}
-                    >
-                        <div className={`absolute top-1 left-1 bg-white w-4 h-4 rounded-full transition-transform ${enabled ? 'translate-x-6' : ''}`} />
-                    </button>
-                    <span className={`text-xs font-bold ${enabled ? 'text-green-500' : 'text-slate-500'}`}>
-                        {enabled ? 'LIGADO' : 'DESLIGADO'}
-                    </span>
-                </div>
-
-                <div className="w-px h-8 bg-slate-700 mx-2" />
-
-                <div className="flex items-center gap-2">
-                    <label className="text-sm font-bold text-slate-400">Intervalo (min):</label>
-                    <input
-                        type="number"
-                        min="5"
-                        max="10080"
-                        value={interval}
-                        onChange={(e) => setIntervalVal(parseInt(e.target.value) || 60)}
-                        className="w-20 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-white text-sm font-mono text-center focus:border-amber-500 outline-none"
-                    />
-                </div>
-
-                <button
-                    onClick={handleSave}
-                    disabled={saving}
-                    className="ml-4 bg-amber-600 hover:bg-amber-500 text-white px-4 py-2 rounded font-bold text-sm transition-all shadow-lg shadow-amber-600/20 disabled:opacity-50"
-                >
-                    {saving ? <Loader2 size={16} className="animate-spin" /> : 'Salvar Config'}
-                </button>
-            </div>
-        </div>
-    );
-};
-
 export const AdminBackup: React.FC = () => {
     const [backups, setBackups] = useState<BackupFile[]>([]);
     const [loading, setLoading] = useState(false);
@@ -141,11 +47,25 @@ export const AdminBackup: React.FC = () => {
                 body: JSON.stringify({ name: backupName || 'manual_backup' })
             });
             if (resp.ok) {
-                setMessage({ text: 'Backup criado com sucesso!', type: 'success' });
+                let extra = '';
+                try {
+                    const j = await resp.json();
+                    if (j.bytes != null) extra = ` (${(j.bytes / (1024 * 1024)).toFixed(2)} MiB, SQL/pg_dump)`;
+                } catch {
+                    extra = ' (SQL/pg_dump)';
+                }
+                setMessage({ text: `Backup SQL criado com sucesso!${extra}`, type: 'success' });
                 setBackupName('');
                 loadBackups();
             } else {
-                setMessage({ text: 'Falha ao criar backup.', type: 'error' });
+                let errText = 'Falha ao criar backup.';
+                try {
+                    const j = await resp.json();
+                    if (j.error) errText = j.error;
+                } catch {
+                    /* ignore */
+                }
+                setMessage({ text: errText, type: 'error' });
             }
         } catch (e) {
             setMessage({ text: 'Erro de conexão.', type: 'error' });
@@ -180,7 +100,14 @@ export const AdminBackup: React.FC = () => {
                 body: JSON.stringify({ filename })
             });
             if (resp.ok) {
-                setMessage({ text: 'Banco de dados restaurado com sucesso! (Merge concluído)', type: 'success' });
+                let msg = 'Operação de restauração concluída.';
+                try {
+                    const j = await resp.json();
+                    if (j.message) msg = j.message;
+                } catch {
+                    /* ignore */
+                }
+                setMessage({ text: msg, type: 'success' });
                 setShowConfirmRestore(null);
             } else {
                 const err = await resp.json();
@@ -240,6 +167,8 @@ export const AdminBackup: React.FC = () => {
         return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     };
 
+    const sortedBackups = [...backups].sort((a, b) => b.createdAt - a.createdAt);
+
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between border-b border-slate-700 pb-4">
@@ -247,13 +176,15 @@ export const AdminBackup: React.FC = () => {
                     <h2 className="text-2xl font-bold text-white flex items-center gap-2">
                         <DbIcon className="text-red-500" /> Gerenciador de Backups
                     </h2>
-                    <p className="text-slate-400 text-sm">Crie, gerencie, baixe e suba pontos de restauração.</p>
+                    <p className="text-slate-400 text-sm">
+                        Backups completos em SQL via <code className="text-slate-300">pg_dump</code> (schema, dados, constraints). O servidor também grava um dump automático a cada 24 horas (ficheiros <code className="text-slate-300">auto_pgdump_*.sql</code>).
+                    </p>
                 </div>
                 <div className="flex gap-2">
                     <label className={`cursor-pointer bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm transition-all flex items-center gap-2 ${actionLoading === 'upload' ? 'opacity-50 pointer-events-none' : ''}`}>
                         {actionLoading === 'upload' ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} className="rotate-180" />}
-                        Subir backup (.json / .db / …)
-                        <input type="file" onChange={handleUpload} className="hidden" accept=".db,.sqlite,.back,.json,.sql,.gz" />
+                        Subir backup (.sql / .dump / .json / .db …)
+                        <input type="file" onChange={handleUpload} className="hidden" accept=".db,.sqlite,.back,.json,.sql,.dump,.gz" />
                     </label>
                 </div>
             </div>
@@ -266,15 +197,15 @@ export const AdminBackup: React.FC = () => {
                 </div>
             )}
 
-            {/* AUTO BACKUP CONFIGURATION */}
-            <AutoBackupConfig />
-
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <div className="md:col-span-1 space-y-6">
                     <div className="bg-slate-800/50 p-6 rounded-xl border border-slate-700 space-y-4">
                         <h3 className="text-lg font-bold text-white flex items-center gap-2">
-                            <Plus className="text-green-500" size={18} /> Novo Backup Local
+                            <Plus className="text-green-500" size={18} /> Backup manual (SQL)
                         </h3>
+                        <p className="text-[11px] text-slate-500 leading-relaxed">
+                            Gera agora um ficheiro <span className="text-slate-400 font-mono">.sql</span> completo (pg_dump) no servidor. Na tabela ao lado, use o botão de download para gravar esse SQL no seu computador.
+                        </p>
                         <div>
                             <label className="block text-xs uppercase text-slate-500 mb-1 font-bold">Identificador (Opcional)</label>
                             <input
@@ -291,7 +222,7 @@ export const AdminBackup: React.FC = () => {
                             className="w-full bg-red-600 hover:bg-red-500 disabled:opacity-50 text-white font-bold py-2 rounded transition-all flex items-center justify-center gap-2 shadow-lg shadow-red-600/20"
                         >
                             {actionLoading === 'create' ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} />}
-                            Criar Backup Agora
+                            Gerar SQL no servidor
                         </button>
                     </div>
 
@@ -299,10 +230,13 @@ export const AdminBackup: React.FC = () => {
                         <h3 className="text-amber-500 font-bold flex items-center gap-2">
                             <AlertTriangle size={18} /> Aviso de Restauração
                         </h3>
-                        <p className="text-xs text-amber-500/80 leading-relaxed">
-                            A restauração utiliza um sistema de <strong className="text-amber-400">Mesclagem Seletiva (Merge)</strong>.
-                            Apenas tabelas e colunas presentes no arquivo de backup serão atualizadas.
-                            Novas funcionalidades e configurações da versão atual serão preservadas se não existirem no backup.
+                        <p className="text-xs text-amber-500/80 leading-relaxed space-y-2">
+                            <span className="block">
+                                Ficheiros <strong className="text-amber-400">.sql</strong> (pg_dump plain) e dumps binários <strong className="text-amber-400">.dump</strong> são aplicados com <code className="text-amber-300/90">psql</code> / <code className="text-amber-300/90">pg_restore</code> sobre a base atual — pode apagar e recriar objetos conforme o conteúdo do dump.
+                            </span>
+                            <span className="block">
+                                Backups antigos em <strong className="text-amber-400">JSON</strong> continuam a usar <strong className="text-amber-400">merge</strong> (inserção por tabela, sem reescrever o schema).
+                            </span>
                         </p>
                     </div>
                 </div>
@@ -310,7 +244,7 @@ export const AdminBackup: React.FC = () => {
                 <div className="md:col-span-2">
                     <div className="bg-slate-800/50 rounded-xl border border-slate-700 overflow-hidden">
                         <div className="p-4 border-b border-slate-700 flex items-center justify-between bg-slate-900/50">
-                            <h3 className="font-bold text-white">Backups Disponíveis no Servidor</h3>
+                            <h3 className="font-bold text-white">Backups no servidor</h3>
                             <button onClick={loadBackups} className="text-xs text-slate-400 hover:text-white flex items-center gap-1">
                                 {loading ? <Loader2 size={12} className="animate-spin" /> : <RotateCcw size={12} />} Atualizar
                             </button>
@@ -322,160 +256,82 @@ export const AdminBackup: React.FC = () => {
                                     <tr>
                                         <th className="px-6 py-3">Arquivo</th>
                                         <th className="px-6 py-3">Tamanho</th>
-                                        <th className="px-6 py-3 text-right">Ações</th>
+                                        <th className="px-6 py-3 text-right">Ações (baixar .sql)</th>
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-slate-700/50">
-                                    {backups.length === 0 ? (
+                                    {sortedBackups.length === 0 ? (
                                         <tr>
                                             <td colSpan={3} className="px-6 py-12 text-center text-slate-500 italic">
                                                 Nenhum backup encontrado no diretório.
                                             </td>
                                         </tr>
                                     ) : (
-                                        <>
-                                            {/* BACKUPS MANUAIS */}
-                                            {backups.filter(b => !b.filename.startsWith('auto_')).length > 0 && (
-                                                <>
-                                                    <tr className="bg-slate-800/80">
-                                                        <td colSpan={3} className="px-6 py-2 text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-t border-slate-700">
-                                                            Backups Manuais
-                                                        </td>
-                                                    </tr>
-                                                    {backups.filter(b => !b.filename.startsWith('auto_')).map(b => (
-                                                        <tr key={b.filename} className="hover:bg-slate-700/30 transition-colors group">
-                                                            <td className="px-6 py-4">
-                                                                <div className="flex flex-col">
-                                                                    <span className="text-white font-medium truncate max-w-xs" title={b.filename}>{b.filename}</span>
-                                                                    <span className="text-[10px] text-slate-500">{new Date(b.createdAt).toLocaleString()}</span>
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-6 py-4 text-slate-400">{formatSize(b.size)}</td>
-                                                            <td className="px-6 py-4 text-right">
-                                                                <div className="flex items-center justify-end gap-2">
-                                                                    {showConfirmRestore === b.filename ? (
-                                                                        <div className="flex items-center gap-1 bg-amber-900/30 p-1 rounded border border-amber-900/50">
-                                                                            <span className="text-[10px] text-amber-500 px-2 font-bold uppercase">Confirmar?</span>
-                                                                            <button
-                                                                                onClick={() => handleRestore(b.filename)}
-                                                                                className="bg-amber-600 hover:bg-amber-500 text-white text-[10px] px-2 py-1 rounded font-bold"
-                                                                            >
-                                                                                Sim
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => setShowConfirmRestore(null)}
-                                                                                className="text-slate-400 hover:text-white text-[10px] px-2 py-1"
-                                                                            >
-                                                                                Não
-                                                                            </button>
-                                                                        </div>
-                                                                    ) : (
-                                                                        <>
-                                                                            <button
-                                                                                onClick={() => handleDownload(b.filename)}
-                                                                                disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
-                                                                                title="Baixar arquivo para o PC"
-                                                                            >
-                                                                                <Download size={18} />
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => setShowConfirmRestore(b.filename)}
-                                                                                disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
-                                                                                title="Restaurar este backup"
-                                                                            >
-                                                                                <RotateCcw size={18} />
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => handleDeleteBackup(b.filename)}
-                                                                                disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                                                                                title="Deletar arquivo"
-                                                                            >
-                                                                                <Trash2 size={18} />
-                                                                            </button>
-                                                                        </>
-                                                                    )}
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </>
-                                            )}
-
-                                            {/* BACKUPS AUTOMÁTICOS */}
-                                            {backups.filter(b => b.filename.startsWith('auto_')).length > 0 && (
-                                                <>
-                                                    <tr className="bg-slate-800/80">
-                                                        <td colSpan={3} className="px-6 py-2 text-xs font-bold text-amber-400 uppercase tracking-widest border-b border-t border-slate-700">
-                                                            Backups Automáticos (Últimas 24h)
-                                                        </td>
-                                                    </tr>
-                                                    {backups.filter(b => b.filename.startsWith('auto_')).map(b => (
-                                                        <tr key={b.filename} className="hover:bg-slate-700/30 transition-colors group">
-                                                            <td className="px-6 py-4">
-                                                                <div className="flex flex-col">
-                                                                    <span className="text-white font-medium truncate max-w-xs" title={b.filename}>{b.filename}</span>
-                                                                    <span className="text-[10px] text-slate-500">{new Date(b.createdAt).toLocaleString()}</span>
-                                                                </div>
-                                                            </td>
-                                                            <td className="px-6 py-4 text-slate-400">{formatSize(b.size)}</td>
-                                                            <td className="px-6 py-4 text-right">
-                                                                <div className="flex items-center justify-end gap-2">
-                                                                    {showConfirmRestore === b.filename ? (
-                                                                        <div className="flex items-center gap-1 bg-amber-900/30 p-1 rounded border border-amber-900/50">
-                                                                            <span className="text-[10px] text-amber-500 px-2 font-bold uppercase">Confirmar?</span>
-                                                                            <button
-                                                                                onClick={() => handleRestore(b.filename)}
-                                                                                className="bg-amber-600 hover:bg-amber-500 text-white text-[10px] px-2 py-1 rounded font-bold"
-                                                                            >
-                                                                                Sim
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => setShowConfirmRestore(null)}
-                                                                                className="text-slate-400 hover:text-white text-[10px] px-2 py-1"
-                                                                            >
-                                                                                Não
-                                                                            </button>
-                                                                        </div>
-                                                                    ) : (
-                                                                        <>
-                                                                            <button
-                                                                                onClick={() => handleDownload(b.filename)}
-                                                                                disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
-                                                                                title="Baixar arquivo para o PC"
-                                                                            >
-                                                                                <Download size={18} />
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => setShowConfirmRestore(b.filename)}
-                                                                                disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
-                                                                                title="Restaurar este backup"
-                                                                            >
-                                                                                <RotateCcw size={18} />
-                                                                            </button>
-                                                                            <button
-                                                                                onClick={() => handleDeleteBackup(b.filename)}
-                                                                                disabled={!!actionLoading}
-                                                                                className="p-2 text-slate-400 hover:text-red-500 transition-colors"
-                                                                                title="Deletar arquivo"
-                                                                            >
-                                                                                <Trash2 size={18} />
-                                                                            </button>
-                                                                        </>
-                                                                    )}
-                                                                </div>
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </>
-                                            )}
-                                        </>
+                                        sortedBackups.map(b => (
+                                            <tr key={b.filename} className="hover:bg-slate-700/30 transition-colors group">
+                                                <td className="px-6 py-4">
+                                                    <div className="flex flex-col">
+                                                        <span className="text-white font-medium truncate max-w-xs" title={b.filename}>{b.filename}</span>
+                                                        <span className="text-[10px] text-slate-500 flex flex-wrap items-center gap-1">
+                                                            {new Date(b.createdAt).toLocaleString()}
+                                                            {b.filename.startsWith('auto_pgdump_') && (
+                                                                <span className="text-cyan-600/90 dark:text-cyan-400/90 font-bold uppercase">automático</span>
+                                                            )}
+                                                        </span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-6 py-4 text-slate-400">{formatSize(b.size)}</td>
+                                                <td className="px-6 py-4 text-right">
+                                                    <div className="flex items-center justify-end gap-2">
+                                                        {showConfirmRestore === b.filename ? (
+                                                            <div className="flex items-center gap-1 bg-amber-900/30 p-1 rounded border border-amber-900/50">
+                                                                <span className="text-[10px] text-amber-500 px-2 font-bold uppercase">Confirmar?</span>
+                                                                <button
+                                                                    onClick={() => handleRestore(b.filename)}
+                                                                    className="bg-amber-600 hover:bg-amber-500 text-white text-[10px] px-2 py-1 rounded font-bold"
+                                                                >
+                                                                    Sim
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => setShowConfirmRestore(null)}
+                                                                    className="text-slate-400 hover:text-white text-[10px] px-2 py-1"
+                                                                >
+                                                                    Não
+                                                                </button>
+                                                            </div>
+                                                        ) : (
+                                                            <>
+                                                                <button
+                                                                    onClick={() => handleDownload(b.filename)}
+                                                                    disabled={!!actionLoading}
+                                                                    className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
+                                                                    title={b.filename.toLowerCase().endsWith('.sql') ? 'Baixar ficheiro SQL para o PC' : 'Baixar ficheiro para o PC'}
+                                                                >
+                                                                    <Download size={18} />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => setShowConfirmRestore(b.filename)}
+                                                                    disabled={!!actionLoading}
+                                                                    className="p-2 text-slate-400 hover:text-amber-500 transition-colors"
+                                                                    title="Restaurar este backup"
+                                                                >
+                                                                    <RotateCcw size={18} />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDeleteBackup(b.filename)}
+                                                                    disabled={!!actionLoading}
+                                                                    className="p-2 text-slate-400 hover:text-red-500 transition-colors"
+                                                                    title="Deletar arquivo"
+                                                                >
+                                                                    <Trash2 size={18} />
+                                                                </button>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))
                                     )}
-
                                 </tbody>
                             </table>
                         </div>

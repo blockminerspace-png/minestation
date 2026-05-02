@@ -75,6 +75,7 @@ const tableOrder = [
   'promo_code_redemptions',
   'economy_settings',
   'withdrawal_requests',
+  'device_fingerprint_logs',
 ];
 
 async function ensureColumns(client, table, sampleRow) {

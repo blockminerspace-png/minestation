@@ -14,13 +14,14 @@ import { AdminRigRooms } from './AdminRigRooms';
 import { AdminRigLayoutEditor } from './AdminRigLayoutEditor';
 import { AdminBlackMarket } from './AdminBlackMarket';
 import { AdminGames } from './AdminGames';
-import { Layout, Database, Banknote, Skull, Gamepad2 } from 'lucide-react';
+import { Layout, Database, Banknote, Skull, Gamepad2, Scale } from 'lucide-react';
 import { AdminBackup } from './AdminBackup';
 
 import { AdminMonetization } from './AdminMonetization';
 import { AdminReports } from './AdminReports';
 import { AdminSecurity } from './AdminSecurity';
 import { AdminSeasonPasses } from './AdminSeasonPasses';
+import { AdminTransparency } from './AdminTransparency';
 import { BarChart as BarChartIcon } from 'lucide-react';
 import { getSeasonPasses } from '../services/api';
 
@@ -39,7 +40,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onUpdateLootBoxes, lootBoxes = [],
     user
 }) => {
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'news' | 'users' | 'editor' | 'lootboxes' | 'web3' | 'settings' | 'layout' | 'backup' | 'monetization' | 'p2p' | 'reports' | 'games' | 'security' | 'shops'>(() => {
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'news' | 'users' | 'editor' | 'lootboxes' | 'web3' | 'settings' | 'layout' | 'backup' | 'monetization' | 'p2p' | 'reports' | 'games' | 'security' | 'shops' | 'transparency'>(() => {
         try {
             return (localStorage.getItem('adminActiveTab') as any) || 'dashboard';
         } catch { return 'dashboard'; }
@@ -164,6 +165,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         { id: 'web3', icon: <Wallet size={18} />, label: 'Web3' },
                         { id: 'settings', icon: <Cog size={18} />, label: 'Configurações' },
                         { id: 'reports', icon: <BarChartIcon size={18} />, label: 'Relatórios' },
+                        { id: 'transparency', icon: <Scale size={18} />, label: 'Transparência' },
                         { id: 'games', icon: <Gamepad2 size={18} />, label: 'Games' },
                         { id: 'security', icon: <Shield size={18} />, label: 'Segurança' },
                         { id: 'backup', icon: <Database size={18} />, label: 'Backup' },
@@ -365,6 +367,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 )}
                                 {activeTab === 'reports' && isAllowed('reports') && (
                                     <AdminReports users={userMap as any} />
+                                )}
+                                {activeTab === 'transparency' && isAllowed('transparency') && (
+                                    <AdminTransparency />
                                 )}
                                 {activeTab === 'games' && isAllowed('games') && (
                                     <AdminGames gameUpgrades={gameUpgrades} />

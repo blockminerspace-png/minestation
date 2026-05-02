@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo } from 'react';
 import { PlacedRack, StoredBattery, Upgrade, RigRoom } from '../types';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import { getMyRigRooms, purchaseRoomSlot } from '../services/api';
-import { Server, XCircle, Zap, Power, Plus, Cog, X, Box, Save, Activity, Terminal, Calculator } from 'lucide-react';
+import { Server, XCircle, Zap, Power, Plus, Cog, X, Box, Save, Activity, Terminal, Calculator, Coins, Battery } from 'lucide-react';
 
 interface ServerRoomProps {
     stock: Record<string, number>;
@@ -19,6 +19,10 @@ interface ServerRoomProps {
     upgrades: Upgrade[];
     miningCoins?: { id: string; name: string; isActive: boolean }[];
     onSetRackCoin?: (rackId: string, coinId: string) => void;
+    /** Define a mesma moeda (ou limpa) em todas as rigs da sala de uma vez. */
+    onSetRoomRacksCoin?: (roomId: string, coinId: string) => void;
+    /** Equipa a mesma bateria do estoque em todas as rigs compatíveis da sala, ou remove todas (string vazia). */
+    onSetRoomRacksBattery?: (roomId: string, batteryUpgradeId: string) => void;
     userEmail?: string;
     onRoomPurchase?: (newUsdc: number) => void;
     onOpenCalculator?: () => void;
@@ -83,6 +87,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     upgrades,
     miningCoins = [],
     onSetRackCoin,
+    onSetRoomRacksCoin,
+    onSetRoomRacksBattery,
     userEmail,
     onRoomPurchase,
     onOpenCalculator
@@ -94,6 +100,12 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     const [roomsLoading, setRoomsLoading] = useState(false);
     const [purchaseBusyId, setPurchaseBusyId] = useState<string | null>(null);
     const [roomIndex, setRoomIndex] = useState(0);
+    const [bulkRoomCoinId, setBulkRoomCoinId] = useState('');
+    const [bulkRoomBatteryId, setBulkRoomBatteryId] = useState('');
+    const [roomBulkCoinModal, setRoomBulkCoinModal] = useState<RigRoom | null>(null);
+    const [roomBulkCoinSelect, setRoomBulkCoinSelect] = useState('');
+    const [roomBulkBatteryModal, setRoomBulkBatteryModal] = useState<RigRoom | null>(null);
+    const [roomBulkBatterySelect, setRoomBulkBatterySelect] = useState('');
 
     const rackLayoutSignature = useMemo(
         () => placedRacks.map((r) => `${r.id}:${r.roomId ?? ''}:${r.slotIndex ?? 0}`).sort().join('|'),
@@ -124,6 +136,11 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     }, [myRooms]);
 
     const currentRoom = myRooms.length > 0 ? myRooms[Math.min(roomIndex, myRooms.length - 1)] : null;
+
+    useEffect(() => {
+        setBulkRoomCoinId('');
+        setBulkRoomBatteryId('');
+    }, [currentRoom?.id]);
 
     const calculateRackConsumption = (rack: PlacedRack, upgrades: Upgrade[]) => {
         const slotsWatts = (rack.slots || []).reduce((acc, sid) => {
@@ -181,12 +198,29 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     }, [currentRoomRacks, upgrades]);
 
     const roomPlacedCount = currentRoomRacks.length;
+    const bulkBatteryCompatibleCount = useMemo(() => {
+        if (!currentRoom || !bulkRoomBatteryId) return 0;
+        const def = upgrades.find(u => u.id === bulkRoomBatteryId && u.type === 'battery');
+        if (!def) return 0;
+        return currentRoomRacks.filter(rack =>
+            !def.compatibleRacks?.length || (def.compatibleRacks || []).includes(rack.itemId)
+        ).length;
+    }, [currentRoom, bulkRoomBatteryId, currentRoomRacks, upgrades]);
+    const bulkBatteryApplyInvalid = bulkRoomBatteryId !== '' && (stock[bulkRoomBatteryId] || 0) < bulkBatteryCompatibleCount;
+
     const roomCapacity = currentRoom ? (currentRoom.initialCapacity + (currentRoom.unlockedSlots || 0)) : 0;
-    const nextSlotPrice = currentRoom ? currentRoom.baseSlotPrice * Math.pow(1 + currentRoom.slotPriceIncreasePercent / 100, currentRoom.unlockedSlots || 0) : 0;
 
     const handlePurchaseSlot = async (roomId: string) => {
         if (!userEmail) return;
         if (purchaseBusyId) return;
+        const room = myRooms.find(r => r.id === roomId);
+        if (!room) return;
+        const nextPrice = room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
+        const priceStr = nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        const ok = window.confirm(
+            `Comprar mais 1 slot na sala «${room.name}»?\n\nCusto: USDC ${priceStr}\n\nO valor será debitado do seu saldo.`
+        );
+        if (!ok) return;
         setPurchaseBusyId(roomId);
         const resp = await purchaseRoomSlot(userEmail, roomId);
         if (!resp.ok) {
@@ -292,7 +326,35 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         if (val === 0) return "0";
         if (val < 0.0001) return val.toFixed(8);
         return Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 1 }).format(val);
-    }
+    };
+
+    const openRoomBulkCoinModal = (room: RigRoom) => {
+        if (!onSetRoomRacksCoin) return;
+        const racksHere = placedRacks.filter(r => r.roomId === room.id);
+        if (racksHere.length === 0) return;
+        const firstSet = racksHere.find(r => r.selectedCoinId)?.selectedCoinId ?? '';
+        setRoomBulkCoinSelect(firstSet);
+        setRoomBulkCoinModal(room);
+    };
+
+    const closeRoomBulkCoinModal = () => {
+        setRoomBulkCoinModal(null);
+        setRoomBulkCoinSelect('');
+    };
+
+    const openRoomBulkBatteryModal = (room: RigRoom) => {
+        if (!onSetRoomRacksBattery) return;
+        const racksHere = placedRacks.filter(r => r.roomId === room.id);
+        if (racksHere.length === 0) return;
+        const firstBatt = racksHere.find(r => r.batteryId)?.batteryId ?? '';
+        setRoomBulkBatterySelect(firstBatt);
+        setRoomBulkBatteryModal(room);
+    };
+
+    const closeRoomBulkBatteryModal = () => {
+        setRoomBulkBatteryModal(null);
+        setRoomBulkBatterySelect('');
+    };
 
     return (
         <div className="flex flex-col gap-6 relative">
@@ -321,6 +383,67 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                 </div>
             </div>
 
+            {currentRoom && onSetRoomRacksCoin && currentRoomRacks.length > 0 && (
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                    <div className="flex-1 min-w-[200px]">
+                        <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Moeda para todas as rigs desta sala</label>
+                        <select
+                            value={bulkRoomCoinId}
+                            onChange={e => setBulkRoomCoinId(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
+                        >
+                            <option value="">Nenhuma (desliga rigs sem moeda)</option>
+                            {(miningCoins || []).map(c => (
+                                <option key={c.id} value={c.id} disabled={!c.isActive}>{c.name}{!c.isActive ? ' (indisponível)' : ''}</option>
+                            ))}
+                        </select>
+                    </div>
+                    <button
+                        type="button"
+                        onClick={() => onSetRoomRacksCoin(currentRoom.id, bulkRoomCoinId)}
+                        className="shrink-0 px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide bg-amber-600 text-white hover:bg-amber-500 border border-amber-500/50 transition-colors"
+                    >
+                        Aplicar a todas ({currentRoomRacks.length})
+                    </button>
+                </div>
+            )}
+
+            {currentRoom && onSetRoomRacksBattery && currentRoomRacks.length > 0 && (
+                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
+                    <div className="flex-1 min-w-[200px]">
+                        <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Bateria para todas as rigs compatíveis desta sala</label>
+                        <select
+                            value={bulkRoomBatteryId}
+                            onChange={e => setBulkRoomBatteryId(e.target.value)}
+                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
+                        >
+                            <option value="">Remover bateria de todas as rigs</option>
+                            {upgrades.filter(u => u.type === 'battery' && (stock[u.id] || 0) > 0).map(u => {
+                                const need = currentRoomRacks.filter(rack =>
+                                    !u.compatibleRacks?.length || (u.compatibleRacks || []).includes(rack.itemId)
+                                ).length;
+                                const have = stock[u.id] || 0;
+                                const ok = need === 0 || have >= need;
+                                return (
+                                    <option key={u.id} value={u.id} disabled={need === 0 || !ok}>
+                                        {u.name}{need > 0 ? ` — precisa ${need}, tem ${have}` : ' — sem rigs compatíveis'}
+                                    </option>
+                                );
+                            })}
+                        </select>
+                    </div>
+                    <button
+                        type="button"
+                        disabled={bulkBatteryApplyInvalid}
+                        title={bulkBatteryApplyInvalid ? 'Estoque insuficiente para equipar em todas as rigs compatíveis.' : undefined}
+                        onClick={() => onSetRoomRacksBattery(currentRoom.id, bulkRoomBatteryId)}
+                        className={`shrink-0 px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide border transition-colors ${bulkBatteryApplyInvalid ? 'bg-slate-600 text-slate-400 border-slate-600 cursor-not-allowed' : 'bg-yellow-700 text-white hover:bg-yellow-600 border-yellow-600/50'}`}
+                    >
+                        Aplicar bateria ({bulkRoomBatteryId ? `${bulkBatteryCompatibleCount} rig(s)` : `${currentRoomRacks.length} rig(s)`})
+                    </button>
+                </div>
+            )}
+
             {
                 userEmail && (
                     <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3">
@@ -339,12 +462,43 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                 {myRooms.map((room, idx) => {
                                     const cap = room.initialCapacity + (room.unlockedSlots || 0);
                                     const nextPrice = room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
+                                    const rigsInRoom = placedRacks.filter(r => r.roomId === room.id).length;
                                     return (
                                         <div key={room.id} className={`p-3 rounded border ${roomIndex === idx ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'border-slate-800 bg-slate-900/40'}`}>
                                             <div className="flex justify-between items-center">
                                                 <button onClick={() => setRoomIndex(idx)} className="font-bold text-slate-200 text-sm text-left hover:text-amber-400 transition-colors uppercase tracking-wider">{room.name}</button>
                                             </div>
                                             <div className="text-[10px] text-slate-500 mt-1 font-mono uppercase">Slots: {cap} / {room.maxCapacity}</div>
+                                            {(onSetRoomRacksCoin || onSetRoomRacksBattery) && (
+                                                <div className="mt-2 flex flex-col gap-1.5">
+                                                    {onSetRoomRacksCoin && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); openRoomBulkCoinModal(room); }}
+                                                            disabled={rigsInRoom === 0}
+                                                            title={rigsInRoom === 0 ? 'Instale ao menos uma rig nesta sala.' : 'Define a mesma moeda em todas as rigs desta sala.'}
+                                                            className={`w-full flex items-center justify-center gap-1.5 text-[9px] font-bold uppercase tracking-wide px-2 py-1.5 rounded border transition-colors ${rigsInRoom === 0 ? 'border-slate-700 text-slate-600 cursor-not-allowed bg-slate-900/30' : 'border-amber-500/40 text-amber-400 bg-amber-500/10 hover:bg-amber-500/25 hover:border-amber-500/60'}`}
+                                                        >
+                                                            <Coins size={12} className="shrink-0" />
+                                                            Moeda em todas as rigs
+                                                            {rigsInRoom > 0 && <span className="font-mono opacity-80">({rigsInRoom})</span>}
+                                                        </button>
+                                                    )}
+                                                    {onSetRoomRacksBattery && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={(e) => { e.stopPropagation(); openRoomBulkBatteryModal(room); }}
+                                                            disabled={rigsInRoom === 0}
+                                                            title={rigsInRoom === 0 ? 'Instale ao menos uma rig nesta sala.' : 'Define a mesma bateria (estoque) em todas as rigs compatíveis desta sala.'}
+                                                            className={`w-full flex items-center justify-center gap-1.5 text-[9px] font-bold uppercase tracking-wide px-2 py-1.5 rounded border transition-colors ${rigsInRoom === 0 ? 'border-slate-700 text-slate-600 cursor-not-allowed bg-slate-900/30' : 'border-yellow-600/40 text-yellow-500 bg-yellow-600/10 hover:bg-yellow-600/20 hover:border-yellow-600/60'}`}
+                                                        >
+                                                            <Battery size={12} className="shrink-0" />
+                                                            Bateria em todas as rigs
+                                                            {rigsInRoom > 0 && <span className="font-mono opacity-80">({rigsInRoom})</span>}
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            )}
                                             {cap < room.maxCapacity && (
                                                 <div className="mt-3 flex justify-between items-center pt-2 border-t border-white/5">
                                                     <div className="text-[10px] text-amber-400 font-bold">USDC {nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
@@ -973,8 +1127,138 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                         </div>
                     </div>
+<<<<<<< Updated upstream
                     );
                 })()}
+=======
+                )
+            }
+
+            {roomBulkCoinModal && onSetRoomRacksCoin && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
+                            <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 text-sm uppercase">
+                                <Coins size={18} className="text-amber-600 dark:text-amber-400 shrink-0" />
+                                Moeda da sala
+                            </h3>
+                            <button type="button" onClick={closeRoomBulkCoinModal} className="text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors" aria-label="Fechar">
+                                <X size={20} />
+                            </button>
+                        </div>
+                        <div className="p-4 space-y-3">
+                            <p className="text-xs text-slate-600 dark:text-slate-400">
+                                <span className="font-bold text-slate-800 dark:text-slate-200">{roomBulkCoinModal.name}</span>
+                                {' — '}aplica a todas as rigs desta sala de uma vez.
+                            </p>
+                            <div>
+                                <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Criptomoeda</label>
+                                <select
+                                    value={roomBulkCoinSelect}
+                                    onChange={e => setRoomBulkCoinSelect(e.target.value)}
+                                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
+                                >
+                                    <option value="">Nenhuma (desliga rigs sem moeda)</option>
+                                    {(miningCoins || []).map(c => (
+                                        <option key={c.id} value={c.id} disabled={!c.isActive}>{c.name}{!c.isActive ? ' (indisponível)' : ''}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </div>
+                        <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex gap-2 justify-end bg-slate-50 dark:bg-slate-950">
+                            <button type="button" onClick={closeRoomBulkCoinModal} className="px-4 py-2 rounded-md text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    onSetRoomRacksCoin(roomBulkCoinModal.id, roomBulkCoinSelect);
+                                    closeRoomBulkCoinModal();
+                                }}
+                                className="px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide bg-amber-600 text-white hover:bg-amber-500 border border-amber-500/50 transition-colors"
+                            >
+                                Aplicar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {roomBulkBatteryModal && onSetRoomRacksBattery && (() => {
+                const racksHere = placedRacks.filter(r => r.roomId === roomBulkBatteryModal.id);
+                const needForSelect = roomBulkBatterySelect
+                    ? (() => {
+                        const def = upgrades.find(u => u.id === roomBulkBatterySelect && u.type === 'battery');
+                        if (!def) return 0;
+                        return racksHere.filter(rack =>
+                            !def.compatibleRacks?.length || (def.compatibleRacks || []).includes(rack.itemId)
+                        ).length;
+                    })()
+                    : 0;
+                const stockForSelect = roomBulkBatterySelect ? (stock[roomBulkBatterySelect] || 0) : 0;
+                const batteryApplyInvalid = roomBulkBatterySelect !== '' && stockForSelect < needForSelect;
+                return (
+                    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+                            <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
+                                <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 text-sm uppercase">
+                                    <Battery size={18} className="text-yellow-600 dark:text-yellow-400 shrink-0" />
+                                    Bateria da sala
+                                </h3>
+                                <button type="button" onClick={closeRoomBulkBatteryModal} className="text-slate-500 hover:text-slate-800 dark:hover:text-white transition-colors" aria-label="Fechar">
+                                    <X size={20} />
+                                </button>
+                            </div>
+                            <div className="p-4 space-y-3">
+                                <p className="text-xs text-slate-600 dark:text-slate-400">
+                                    <span className="font-bold text-slate-800 dark:text-slate-200">{roomBulkBatteryModal.name}</span>
+                                    {' — '}Coloque uma bateria do estoque (cheia) em todas as rigs compatíveis, ou remova todas.
+                                </p>
+                                <div>
+                                    <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Bateria</label>
+                                    <select
+                                        value={roomBulkBatterySelect}
+                                        onChange={e => setRoomBulkBatterySelect(e.target.value)}
+                                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
+                                    >
+                                        <option value="">Remover bateria de todas as rigs</option>
+                                        {upgrades.filter(u => u.type === 'battery' && (stock[u.id] || 0) > 0).map(u => {
+                                            const need = racksHere.filter(rack =>
+                                                !u.compatibleRacks?.length || (u.compatibleRacks || []).includes(rack.itemId)
+                                            ).length;
+                                            const have = stock[u.id] || 0;
+                                            const ok = need === 0 || have >= need;
+                                            return (
+                                                <option key={u.id} value={u.id} disabled={need === 0 || !ok}>
+                                                    {u.name}{need > 0 ? ` — precisa ${need}, tem ${have}` : ' — sem rigs compatíveis'}
+                                                </option>
+                                            );
+                                        })}
+                                    </select>
+                                </div>
+                            </div>
+                            <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex gap-2 justify-end bg-slate-50 dark:bg-slate-950">
+                                <button type="button" onClick={closeRoomBulkBatteryModal} className="px-4 py-2 rounded-md text-sm font-bold text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={batteryApplyInvalid}
+                                    title={batteryApplyInvalid ? 'Estoque insuficiente.' : undefined}
+                                    onClick={() => {
+                                        onSetRoomRacksBattery(roomBulkBatteryModal.id, roomBulkBatterySelect);
+                                        closeRoomBulkBatteryModal();
+                                    }}
+                                    className={`px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide border transition-colors ${batteryApplyInvalid ? 'bg-slate-600 text-slate-400 border-slate-600 cursor-not-allowed' : 'bg-yellow-700 text-white hover:bg-yellow-600 border-yellow-600/50'}`}
+                                >
+                                    Aplicar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                );
+            })()}
+>>>>>>> Stashed changes
         </div >
     );
 };

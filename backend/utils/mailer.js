@@ -13,7 +13,7 @@ const transporter = nodemailer.createTransport({
 export const sendResetEmail = async (email, resetToken, opts = {}) => {
   const validityMinutes = typeof opts.validityMinutes === 'number' && opts.validityMinutes > 0 ? opts.validityMinutes : 60;
   const enc = encodeURIComponent(resetToken);
-  const resetLink = `${process.env.FRONTEND_URL || 'https://minestation.tech'}/redefinir-senha?token=${enc}`;
+  const resetLink = `${process.env.FRONTEND_URL || 'https://genesisdao.tech'}/redefinir-senha?token=${enc}`;
 
   const mailOptions = {
     from: process.env.MAIL_FROM || '"Genesis Miner" <no-reply@minestation.tech>',

@@ -14,21 +14,55 @@ interface WalletActionsProps {
   prefillAmount?: number;
   depositStatus?: 'awaiting' | 'success' | 'queued' | 'cancelled' | 'failed';
   depositAmount?: number;
+  /** Detalhe quando depositStatus === 'failed' (ex.: mensagem do /api/deposit/verify). */
+  depositFailureMessage?: string;
   onCloseDepositStatus?: () => void;
   minDepositUsdc?: number;
   depositPolygonDisabled?: boolean;
   depositBnbDisabled?: boolean;
   depositBaseDisabled?: boolean;
+  /** Sessão: permite validar um hash colado (ex. envio feito só na carteira). */
+  userEmail?: string | null;
+  onVerifyDepositByHash?: (
+    txHash: string,
+    network: 'polygon' | 'bnb' | 'base'
+  ) => Promise<{ ok: boolean; pending?: boolean; error?: string }>;
+  /** Re-tentar POST /api/deposit/verify para o último depósito em fila. */
+  onSyncQueuedDeposit?: () => Promise<void>;
 }
 
 const MAX_USDC_DEPOSIT_UI = 50_000_000;
 
-export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStartDeposit, hasWallet = false, coinBalances, miningCoins, coinRates = {}, onWithdrawCoin, prefillAmount, withdrawTokens, depositStatus, depositAmount, onCloseDepositStatus, minDepositUsdc, depositPolygonDisabled, depositBnbDisabled, depositBaseDisabled }) => {
+export const WalletActions: React.FC<WalletActionsProps> = ({
+  onAddUSDC,
+  onStartDeposit,
+  hasWallet = false,
+  coinBalances,
+  miningCoins,
+  coinRates = {},
+  onWithdrawCoin,
+  prefillAmount,
+  withdrawTokens,
+  depositStatus,
+  depositAmount,
+  depositFailureMessage,
+  onCloseDepositStatus,
+  minDepositUsdc,
+  depositPolygonDisabled,
+  depositBnbDisabled,
+  depositBaseDisabled,
+  userEmail,
+  onVerifyDepositByHash,
+  onSyncQueuedDeposit
+}) => {
   const [usdcAmount, setUsdcAmount] = useState<string>('');
   const [selectedNetwork, setSelectedNetwork] = useState<'polygon' | 'bnb' | 'base'>('polygon');
   const [selectedCoinId, setSelectedCoinId] = useState<string>(miningCoins[0]?.id || '');
   const [coinAmount, setCoinAmount] = useState<string>('');
   const [depositFieldError, setDepositFieldError] = useState<string>('');
+  const [manualTxHash, setManualTxHash] = useState('');
+  const [manualVerifyBusy, setManualVerifyBusy] = useState(false);
+  const [syncQueuedBusy, setSyncQueuedBusy] = useState(false);
 
   React.useEffect(() => {
     if (miningCoins.length > 0 && !miningCoins.some(c => c.id === selectedCoinId)) {
@@ -138,8 +172,27 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
           {depositStatus === 'queued' && (
             <div className="flex flex-col items-center gap-2">
               <div className="text-[12px] font-bold">Confirmação na fila do servidor</div>
-              <div className="text-[11px] opacity-90">Os USDC serão creditados após a rede confirmar — pode fechar o site. Atualize o saldo mais tarde ou reabra a carteira.</div>
-              <button onClick={onCloseDepositStatus} className="text-[12px] bg-sky-700 hover:bg-sky-600 text-white px-3 py-1 rounded">Entendi</button>
+              <div className="text-[11px] opacity-90 text-center px-1">
+                Os USDC serão creditados após a rede confirmar. O site tenta sincronizar automaticamente; também pode forçar abaixo.
+              </div>
+              {onSyncQueuedDeposit && (
+                <button
+                  type="button"
+                  disabled={syncQueuedBusy}
+                  onClick={async () => {
+                    setSyncQueuedBusy(true);
+                    try {
+                      await onSyncQueuedDeposit();
+                    } finally {
+                      setSyncQueuedBusy(false);
+                    }
+                  }}
+                  className="text-[12px] bg-sky-600 hover:bg-sky-500 disabled:opacity-50 text-white px-3 py-1 rounded"
+                >
+                  {syncQueuedBusy ? 'A sincronizar…' : 'Sincronizar agora'}
+                </button>
+              )}
+              <button type="button" onClick={onCloseDepositStatus} className="text-[12px] bg-slate-600 hover:bg-slate-500 text-white px-3 py-1 rounded">Entendi</button>
             </div>
           )}
           {depositStatus === 'cancelled' && (
@@ -149,8 +202,13 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
             </div>
           )}
           {depositStatus === 'failed' && (
-            <div className="flex flex-col items-center gap-2">
-              <div className="text-[12px] font-bold">Falha ao confirmar. Tente novamente.</div>
+            <div className="flex flex-col items-center gap-2 px-1">
+              <div className="text-[12px] font-bold text-center">Não foi possível confirmar o depósito</div>
+              {depositFailureMessage ? (
+                <div className="text-[11px] text-center leading-snug opacity-95 max-w-md">{depositFailureMessage}</div>
+              ) : (
+                <div className="text-[11px] text-center opacity-90">Tente novamente ou valide o hash no explorer.</div>
+              )}
               <button onClick={onCloseDepositStatus} className="text-[12px] bg-slate-800 hover:bg-slate-700 text-white px-3 py-1 rounded">Fechar</button>
             </div>
           )}
@@ -224,6 +282,54 @@ export const WalletActions: React.FC<WalletActionsProps> = ({ onAddUSDC, onStart
         <p className="text-[10px] text-slate-500 dark:text-slate-600 mt-2 italic flex items-center gap-2">
           <Shield size={10} className="text-green-500" /> Liquidação automática via contrato inteligente.
         </p>
+
+        {hasWallet && userEmail && onVerifyDepositByHash && (
+          <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 space-y-2">
+            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold uppercase tracking-wide">
+              Já enviou USDC e o saldo não atualizou?
+            </span>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <input
+                type="text"
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="Cole o hash 0x… (64 hex)"
+                value={manualTxHash}
+                onChange={(e) => setManualTxHash(e.target.value)}
+                className="w-full flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded px-2 py-1.5 text-[11px] font-mono text-slate-900 dark:text-white"
+              />
+              <button
+                type="button"
+                disabled={manualVerifyBusy || !manualTxHash}
+                onClick={async () => {
+                  if (!onVerifyDepositByHash) return;
+                  setManualVerifyBusy(true);
+                  try {
+                    const r = await onVerifyDepositByHash(manualTxHash.trim(), selectedNetwork);
+                    if (r.ok) {
+                      setManualTxHash('');
+                      alert('Saldo atualizado com sucesso.');
+                    } else if (r.pending) {
+                      alert(
+                        'O servidor ainda não obteve o recibo da rede (RPC). Se o explorer já mostra «sucesso», espera ~30 s e volta a validar; confirma também a «Rede da entrada» certa (Polygon / BNB / Base).'
+                      );
+                    } else {
+                      alert(r.error || 'Não foi possível validar.');
+                    }
+                  } finally {
+                    setManualVerifyBusy(false);
+                  }
+                }}
+                className="shrink-0 text-[11px] font-bold bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-100 px-3 py-1.5 rounded disabled:opacity-40"
+              >
+                {manualVerifyBusy ? '…' : 'Validar hash'}
+              </button>
+            </div>
+            <p className="text-[9px] text-slate-500 dark:text-slate-500">
+              Usa a rede selecionada em «Rede da entrada». O envio tem de ser da carteira ligada no perfil para o endereço de depósito do jogo.
+            </p>
+          </div>
+        )}
       </div>
 
       <div className="bg-slate-50 dark:bg-slate-950/50 p-3 rounded border border-slate-200 dark:border-slate-800">

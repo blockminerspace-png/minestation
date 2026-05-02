@@ -46,7 +46,9 @@ if (cluster.isPrimary) {
 
   const spawnWorker = (index, roleOverride = null) => {
     const env = { ...process.env };
-    const role = roleOverride || (index === 0 && numCPUs > 1 ? 'BACKGROUND' : 'API');
+    // Com 1 worker só, precisa de API + tarefas agendadas (ex.: sweep de depósitos USDC).
+    // Com 2+ workers, o worker 0 fica só em BACKGROUND e os restantes servem HTTP.
+    const role = roleOverride || (numCPUs === 1 ? 'ALL' : (index === 0 ? 'BACKGROUND' : 'API'));
     env.WORKER_ROLE = role;
 
     const worker = cluster.fork(env);

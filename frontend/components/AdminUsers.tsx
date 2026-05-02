@@ -2009,6 +2009,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                             { id: 'settings:news', label: '└─ Sistema de News', isSub: true },
                                             { id: 'settings:monetization', label: '└─ Monetização', isSub: true },
                                             { id: 'reports', label: 'Relatórios Financeiros' },
+                                            { id: 'transparency', label: 'Transparência (pools / gastos)' },
                                             { id: 'games', label: 'Mini-Games' },
                                             { id: 'backup', label: 'Backups e Database' },
                                         ].map((p: any) => (

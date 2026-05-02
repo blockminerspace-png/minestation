@@ -14,12 +14,21 @@ import 'dotenv/config';
 import { GoogleGenAI } from "@google/genai";
 import bcrypt from 'bcryptjs';
 import multer from 'multer';
-import { spawn } from 'child_process';
+import db from './db.js';
+import { initDb } from './db.pg.js';
+import { sendResetEmail } from './utils/mailer.js';
+import { registerBackupRoutes, startScheduledSqlBackups } from './controllers/backupController.js';
+import { registerAuthRoutes } from './dist/controllers/authController.js';
+import { registerUserRoutes } from './dist/controllers/userRegistrationController.js';
+import { registerDeviceFingerprintAdminRoutes } from './dist/controllers/deviceFingerprintAdminController.js';
+import { getUserIdByEmail as getUserIdByEmailModel } from './dist/models/userModel.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const getUserIdByEmail = (email, ip = null, opts = {}) => getUserIdByEmailModel(db, email, ip, opts);
 
+<<<<<<< Updated upstream
 
 
 
@@ -55,6 +64,15 @@ const getPgRestorePath = () => {
   return 'pg_restore'; // Fallback to system PATH
 };
 
+=======
+/** HMAC dos tokens de reset de senha — mesmo critério que `src/auth/config.js`: sem segredo forte em produção, não assinar. */
+function getPasswordResetHmacSecret() {
+  const s = String(process.env.JWT_SECRET || '').trim();
+  if (s) return s;
+  if (process.env.NODE_ENV === 'production') return null;
+  return 'dev-only-jwt-secret-do-not-use-in-production-min-32-chars!';
+}
+>>>>>>> Stashed changes
 
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
@@ -513,6 +531,10 @@ function buildCorsOriginSet() {
     'http://minestation.tech',
     'https://www.minestation.tech',
     'http://www.minestation.tech',
+    'https://genesisdao.tech',
+    'http://genesisdao.tech',
+    'https://www.genesisdao.tech',
+    'http://www.genesisdao.tech',
   ].forEach(add);
   return s;
 }
@@ -785,10 +807,41 @@ app.use('/api/login', authLimiter);
 app.use(express.json({ limit: '5mb' })); // Reduzido o limite para 5MB por segurança
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
+<<<<<<< Updated upstream
 const jwtAllowLegacySession =
   process.env.JWT_ALLOW_LEGACY_SESSION !== '0' &&
   process.env.JWT_ALLOW_LEGACY_SID !== '0';
 app.use(createResolveAuthMiddleware({ db, parseCookies, allowLegacySession: jwtAllowLegacySession }));
+=======
+// Sessão e atividade antes de rotas de auth/registo — `req.userId` disponível em PUT /api/user, etc.
+app.use(async (req, res, next) => {
+  const sid = parseCookies(req).sid;
+  if (sid) {
+    try {
+      const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
+      const s = sRes.rows[0];
+      if (s && Number(s.expires_at) > Date.now()) {
+        req.userId = s.user_id;
+        const now = Date.now();
+        const ip = getClientIp(req);
+
+        await db.query('UPDATE users SET last_active_at = $1 WHERE id = $2', [now, s.user_id]);
+
+        await db.query(`
+          INSERT INTO user_history_ips (user_id, ip, last_used_at)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (user_id, ip) DO UPDATE SET last_used_at = $3
+        `, [s.user_id, ip, now]);
+      }
+    } catch (e) { /* ignore */ }
+  }
+  next();
+});
+
+registerAuthRoutes(app, { pool: db, bcrypt, parseCookies, getClientIp });
+registerUserRoutes(app, { pool: db, bcrypt, getClientIp });
+registerDeviceFingerprintAdminRoutes(app, { pool: db, isAdmin });
+>>>>>>> Stashed changes
 
 app.use((req, res, next) => {
   const url = req.url || '';
@@ -805,6 +858,7 @@ app.use('/img', express.static(IMG_DIR));
 
 // --- Moved utilities below ---
 
+<<<<<<< Updated upstream
 // Activity tracking (utilizador já resolvido por JWT ou sessão legacy)
 app.use(async (req, res, next) => {
   if (!req.userId) return next();
@@ -829,6 +883,8 @@ app.use(async (req, res, next) => {
   next();
 });
 
+=======
+>>>>>>> Stashed changes
 // CACHE REMOVIDO CONFORME SOLICITADO
 
 let activeProgressCalculations = 0;
@@ -1390,9 +1446,9 @@ app.post('/api/wheel/roll', authenticateToken, async (req, res) => {
 
     await client.query('BEGIN');
 
-    // 1. Validate if user has this code redeemed but not granted
+    // 1. Bloquear linha para evitar dois giros em paralelo com dois sorteios diferentes
     const redRes = await client.query(
-      'SELECT reward_granted, won_item_id FROM promo_code_redemptions WHERE code = $1 AND user_id = $2',
+      'SELECT reward_granted, won_item_id FROM promo_code_redemptions WHERE code = $1 AND user_id = $2 FOR UPDATE',
       [normalizedCode, uid]
     );
 
@@ -1401,7 +1457,7 @@ app.post('/api/wheel/roll', authenticateToken, async (req, res) => {
     }
 
     const redemption = redRes.rows[0];
-    if (redemption.reward_granted === 1) {
+    if (Number(redemption.reward_granted) === 1) {
       throw new Error('Este código já foi totalmente utilizado.');
     }
 
@@ -1433,11 +1489,14 @@ app.post('/api/wheel/roll', authenticateToken, async (req, res) => {
       random -= p.weight;
     }
 
-    // 4. Store result
-    await client.query(
-      'UPDATE promo_code_redemptions SET won_item_id = $1 WHERE code = $2 AND user_id = $3',
+    // 4. Store result (falha se code/user não bater com a linha bloqueada)
+    const updRoll = await client.query(
+      'UPDATE promo_code_redemptions SET won_item_id = $1 WHERE code = $2 AND user_id = $3 RETURNING code',
       [selected.item_id, normalizedCode, uid]
     );
+    if (updRoll.rowCount === 0) {
+      throw new Error('Não foi possível registrar o sorteio. Tente resgatar o código novamente.');
+    }
 
     await client.query('COMMIT');
     res.json({ ok: true, wonItemId: selected.item_id, item: selected });
@@ -1471,7 +1530,7 @@ app.post('/api/roleta/claim', authenticateToken, async (req, res) => {
     if (redRes.rowCount === 0) throw new Error('Código não resgatado.');
     const redemption = redRes.rows[0];
 
-    if (redemption.reward_granted === 1) throw new Error('Recompensa já reivindicada.');
+    if (Number(redemption.reward_granted) === 1) throw new Error('Recompensa já reivindicada.');
     if (!redemption.won_item_id) throw new Error('Você precisa girar a roleta primeiro.');
 
     // SECURITY CHECK: The item claimed MUST match the item rolled on server
@@ -1480,10 +1539,18 @@ app.post('/api/roleta/claim', authenticateToken, async (req, res) => {
       throw new Error('Integridade do sorteio violada. O item reivindicado não corresponde ao sorteado.');
     }
 
-    // 2. Validate Promo Code Type
-    const codeRes = await client.query('SELECT type FROM promo_codes WHERE code = $1', [normalizedCode]);
+    // 2. Validate Promo (tipo roleta_ ou código legado ligado à caixa modelo roleta_code)
+    const codeRes = await client.query('SELECT type, loot_box_id FROM promo_codes WHERE code = $1', [normalizedCode]);
     const promo = codeRes.rows[0];
-    if (!promo || !promo.type.startsWith('roleta_')) throw new Error('Tipo de código inválido.');
+    let okRoletaPromo = !!(promo && String(promo.type || '').startsWith('roleta_'));
+    if (!okRoletaPromo && promo?.loot_box_id) {
+      const lbRes = await client.query(
+        'SELECT trigger FROM loot_boxes WHERE id = $1 AND COALESCE(is_active, 1) = 1',
+        [promo.loot_box_id]
+      );
+      if (lbRes.rows[0] && String(lbRes.rows[0].trigger) === 'roleta_code') okRoletaPromo = true;
+    }
+    if (!okRoletaPromo) throw new Error('Tipo de código inválido.');
 
     // 4. Award Prize Box
     // Find or create a box that gives this item 100%
@@ -1536,8 +1603,14 @@ app.post('/api/roleta/claim', authenticateToken, async (req, res) => {
         ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1
     `, [uid, prizeBoxId]);
 
-    // Track claim (Update reward_granted)
-    await client.query('UPDATE promo_code_redemptions SET reward_granted = 1 WHERE code = $1 AND user_id = $2', [promo.code, uid]);
+    // Track claim (mesmo code usado no SELECT FOR UPDATE — evita UPDATE 0 rows se casing divergir)
+    const updClaim = await client.query(
+      'UPDATE promo_code_redemptions SET reward_granted = 1 WHERE code = $1 AND user_id = $2 RETURNING code',
+      [normalizedCode, uid]
+    );
+    if (updClaim.rowCount === 0) {
+      throw new Error('Não foi possível finalizar o resgate. Contate o suporte se o problema persistir.');
+    }
 
     await client.query('COMMIT');
 
@@ -2014,6 +2087,7 @@ app.post('/api/wallet-labels', isAdmin, async (req, res) => {
   }
 });
 
+<<<<<<< Updated upstream
 /** Diretório de backups: em Docker monte um volume aqui (ex.: /app/backups). BACKUP_DIR no .env = caminho absoluto. */
 const BACKUP_DIR = (() => {
   const raw = process.env.BACKUP_DIR && String(process.env.BACKUP_DIR).trim();
@@ -2189,6 +2263,8 @@ const getUserIdByEmail = async (email, ip = null, opts = {}) => {
   }
 };
 
+=======
+>>>>>>> Stashed changes
 // --- ADMIN UPGRADES (BUNDLES) ---
 
 /**
@@ -2836,12 +2912,20 @@ app.post('/api/upload-image', (req, res) => {
   }
   const mime = match[1];
   const b64 = match[2];
+  const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+  if (b64.length > Math.ceil(MAX_IMAGE_BYTES * 1.37)) {
+    return res.status(413).json({ error: 'Imagem demasiado grande' });
+  }
+  const imageBuf = Buffer.from(b64, 'base64');
+  if (imageBuf.length > MAX_IMAGE_BYTES) {
+    return res.status(413).json({ error: 'Imagem demasiado grande' });
+  }
   const ext = mime === 'image/png' ? '.png' : (mime === 'image/gif' ? '.gif' : '.jpg');
   const safeBase = (originalName || 'image').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'image';
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeBase}${ext}`;
   const filePath = path.join(IMG_DIR, filename);
   try {
-    fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
+    fs.writeFileSync(filePath, imageBuf);
   } catch (e) {
     return res.status(500).json({ error: 'Failed to write file' });
   }
@@ -3196,6 +3280,19 @@ app.post('/api/reward-ad', async (req, res) => {
 });
 
 // --- WEB3 DEPOSIT VERIFICATION (RPC + Polygonscan/Bscscan/Basescan + fila app_cache) ---
+/** Sempre minúsculas: evita chaves duplicadas tx_0xAbc vs tx_0xabc e falhas ao revalidar. */
+function normalizeDepositTxHash(txHash) {
+  const t = String(txHash || '').trim().toLowerCase();
+  return /^0x[a-f0-9]{64}$/.test(t) ? t : String(txHash || '').trim();
+}
+
+/** Últimos 40 hex de um topic indexado de endereço (Transfer from/to). */
+function addressHexFromTopic(topic) {
+  if (!topic || typeof topic !== 'string') return '';
+  const h = topic.replace(/^0x/i, '').toLowerCase();
+  return h.length >= 40 ? h.slice(-40) : '';
+}
+
 const depositExplorerApi = (net) => {
   const n = (net || 'polygon').toLowerCase();
   if (n === 'polygon') return 'https://api.polygonscan.com/api';
@@ -3204,17 +3301,81 @@ const depositExplorerApi = (net) => {
   return null;
 };
 
+/** Lista de RPCs a tentar (o primeiro é o do .env / default). Ajuda quando um nó público não devolve recibo. */
+function depositRpcUrlCandidates(net, primaryUrl) {
+  const p = String(primaryUrl || '').trim();
+  const out = [];
+  const add = (u) => {
+    const x = String(u || '').trim();
+    if (x && !out.includes(x)) out.push(x);
+  };
+  add(p);
+  const n = (net || '').toLowerCase();
+  if (n === 'polygon') {
+    add('https://polygon-bor.publicnode.com');
+    add('https://1rpc.io/matic');
+    add('https://polygon.drpc.org');
+    add('https://polygon-rpc.com');
+  } else if (n === 'bnb' || n === 'bsc') {
+    add('https://bsc-dataseed1.binance.org');
+    add('https://bsc-dataseed2.binance.org');
+    add('https://bsc-dataseed1.defibit.io');
+  } else if (n === 'base') {
+    add('https://mainnet.base.org');
+  }
+  return out;
+}
+
+function isValidReceiptPayload(result) {
+  return result && typeof result === 'object' && (result.blockHash || result.transactionHash || result.status !== undefined);
+}
+
+function jsonRpcFetchOptions(body) {
+  const opts = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body
+  };
+  if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+    opts.signal = AbortSignal.timeout(14000);
+  }
+  return opts;
+}
+
 async function fetchDepositReceiptRpc(rpcUrl, txHash) {
   try {
-    const rpcRes = await fetch(rpcUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_getTransactionReceipt', params: [txHash], id: 1 })
-    });
+    const rpcRes = await fetch(
+      rpcUrl,
+      jsonRpcFetchOptions(JSON.stringify({ jsonrpc: '2.0', method: 'eth_getTransactionReceipt', params: [txHash], id: 1 }))
+    );
     const j = await rpcRes.json();
-    if (j && j.result) return j;
+    if (j && j.result && isValidReceiptPayload(j.result)) return j;
   } catch (e) {
-    console.warn('[DepositVerify] RPC receipt:', e.message);
+    console.warn('[DepositVerify] RPC receipt', String(rpcUrl).slice(0, 40), e.message);
+  }
+  return null;
+}
+
+async function fetchRpcTransactionByHash(rpcUrl, txHash) {
+  try {
+    const rpcRes = await fetch(
+      rpcUrl,
+      jsonRpcFetchOptions(JSON.stringify({ jsonrpc: '2.0', method: 'eth_getTransactionByHash', params: [txHash], id: 1 }))
+    );
+    const j = await rpcRes.json();
+    if (j && j.result && typeof j.result === 'object' && (j.result.hash || j.result.from)) return j.result;
+  } catch (e) {
+    console.warn('[DepositVerify] eth_getTransactionByHash', String(rpcUrl).slice(0, 40), e.message);
+  }
+  return null;
+}
+
+/** Vê se algum RPC conhece a transação (hash correcto nesta rede). */
+async function fetchTxSeenOnNetwork(net, primaryRpcUrl, txHash) {
+  const urls = depositRpcUrlCandidates(net, primaryRpcUrl);
+  for (const url of urls) {
+    const tx = await fetchRpcTransactionByHash(url, txHash);
+    if (tx) return tx;
   }
   return null;
 }
@@ -3236,7 +3397,7 @@ async function fetchDepositReceiptExplorer(net, txHash) {
         result = null;
       }
     }
-    if (!result) return null;
+    if (!result || !isValidReceiptPayload(result)) return null;
     return { result };
   } catch (e) {
     console.warn('[DepositVerify] Explorer receipt:', e.message);
@@ -3244,12 +3405,129 @@ async function fetchDepositReceiptExplorer(net, txHash) {
   }
 }
 
-async function fetchDepositReceiptUnified(net, rpcUrl, txHash) {
-  const a = await fetchDepositReceiptRpc(rpcUrl, txHash);
-  if (a && a.result) return a;
-  const b = await fetchDepositReceiptExplorer(net, txHash);
-  if (b && b.result) return b;
-  return a || b;
+/** Na Polygon existem dois USDC comuns (nativo Circle e USDC.e); o jogo aceita transferências para o endereço de depósito em qualquer um. */
+function depositUsdcContractAllowlist(net, primaryRaw) {
+  const primary = (primaryRaw || '').toLowerCase().trim();
+  const out = [];
+  const add = (c) => {
+    const x = (c || '').toLowerCase().trim();
+    if (x.startsWith('0x') && x.length === 42 && !out.includes(x)) out.push(x);
+  };
+  add(primary);
+  const n = (net || '').toLowerCase();
+  if (n === 'polygon') {
+    add('0x3c499c542cef5e3811e1192ce70d8cc03d5c3359');
+    add('0x2791bca1f2de4661ed88a30c99a7a9449aa84174');
+  }
+  return out;
+}
+
+async function fetchDepositReceiptUnified(net, primaryRpcUrl, txHash) {
+  const urls = depositRpcUrlCandidates(net, primaryRpcUrl);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 280 + attempt * 130));
+    for (const url of urls) {
+      const a = await fetchDepositReceiptRpc(url, txHash);
+      if (a && a.result) return a;
+    }
+    const b = await fetchDepositReceiptExplorer(net, txHash);
+    if (b && b.result && isValidReceiptPayload(b.result)) return b;
+  }
+  return null;
+}
+
+function decodeAbiErrorStringRevert(data) {
+  if (!data || typeof data !== 'string') return null;
+  const hex = data.startsWith('0x') ? data.slice(2).toLowerCase() : data.toLowerCase();
+  if (!hex.startsWith('08c379a0')) return null;
+  try {
+    const params = hex.slice(8);
+    const len = parseInt(params.slice(64, 128), 16);
+    if (!Number.isFinite(len) || len <= 0 || len > 2048) return null;
+    const strHex = params.slice(128, 128 + len * 2);
+    if (strHex.length < len * 2) return null;
+    return Buffer.from(strHex, 'hex').toString('utf8');
+  } catch {
+    return null;
+  }
+}
+
+function extractRevertHintFromProviderError(errObj) {
+  if (!errObj || typeof errObj !== 'object') return null;
+  const dataStr = typeof errObj.data === 'string' ? errObj.data : null;
+  if (dataStr) {
+    const fromData = decodeAbiErrorStringRevert(dataStr);
+    if (fromData) return fromData;
+  }
+  const msg = typeof errObj.message === 'string' ? errObj.message : '';
+  if (msg) {
+    const m = msg.match(/execution reverted:?\s*(.+)$/i);
+    if (m && m[1]) return m[1].trim();
+    const m2 = msg.match(/revert(?:ed)?:?\s*(.+)$/i);
+    if (m2 && m2[1]) return m2[1].trim();
+  }
+  return null;
+}
+
+/** Tenta reproduzir a chamada no bloco pai para obter a mensagem de revert (ex.: ERC-20). */
+async function tryReplayFailedTransferRevertHint(rpcUrl, txHash) {
+  try {
+    const txRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_getTransactionByHash', params: [txHash], id: 1 })
+    });
+    const txJ = await txRes.json();
+    const tx = txJ.result;
+    if (!tx || !tx.to || !tx.from) return null;
+    const recRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_getTransactionReceipt', params: [txHash], id: 2 })
+    });
+    const recJ = await recRes.json();
+    const st = recJ.result?.status;
+    if (st === '0x1' || st === 1) return null;
+    const bnHex = recJ.result?.blockNumber || tx.blockNumber;
+    if (!bnHex) return null;
+    const bn = BigInt(bnHex);
+    const parentBn = bn > 0n ? bn - 1n : 0n;
+    const parentHex = '0x' + parentBn.toString(16);
+    const input = typeof tx.input === 'string' && tx.input.startsWith('0x') ? tx.input : '0x';
+    const callObj = { from: tx.from, to: tx.to, data: input };
+    const callRes = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ jsonrpc: '2.0', method: 'eth_call', params: [callObj, parentHex], id: 3 })
+    });
+    const callJ = await callRes.json();
+    if (callJ.error) {
+      return extractRevertHintFromProviderError(callJ.error) || decodeAbiErrorStringRevert(callJ.error?.data);
+    }
+    return null;
+  } catch (e) {
+    console.warn('[DepositVerify] revert replay:', e.message);
+    return null;
+  }
+}
+
+function humanizeDepositFailureReason(onchainHint, net) {
+  const n = (net || '').toLowerCase();
+  const netLabel = n === 'polygon' ? 'Polygon' : (n === 'bnb' || n === 'bsc') ? 'BNB Chain' : n === 'base' ? 'Base' : String(net || 'rede');
+  const h = (onchainHint || '').toLowerCase();
+  if (h.includes('transfer amount exceeds balance') || (h.includes('exceeds balance') && h.includes('transfer'))) {
+    return `Esta transação falhou na ${netLabel}: não havia saldo suficiente desse token na carteira (por exemplo USDC nativo vs USDC.e, ou valor acima do disponível). Confirme no explorer e envie de novo.`;
+  }
+  if (h.includes('transfer amount exceeds allowance') || h.includes('insufficient allowance')) {
+    return `Esta transação falhou na ${netLabel}: falta aprovar o gasto do token (allowance) na carteira antes de enviar.`;
+  }
+  if (h.includes('insufficient funds') || h.includes('insufficient balance for')) {
+    return 'Esta transação falhou: saldo insuficiente para taxas (gas) ou para o envio pretendido.';
+  }
+  if (onchainHint && String(onchainHint).length < 220) {
+    return `Esta transação falhou na ${netLabel}: ${String(onchainHint).trim()}`;
+  }
+  return `Esta transação não foi concluída na ${netLabel} (revertida). Não há USDC a creditar — confira o estado e o motivo no explorer.`;
 }
 
 async function loadDepositSettings() {
@@ -3286,7 +3564,7 @@ function resolveDepositNetwork(settings, network) {
 }
 
 async function queueDepositPending(txHash, payload) {
-  const key = `deposit_pending:${txHash}`;
+  const key = `deposit_pending:${normalizeDepositTxHash(txHash)}`;
   await db.query(
     `INSERT INTO app_cache (key, value, updated_at) VALUES ($1, $2::jsonb, NOW())
      ON CONFLICT (key) DO UPDATE SET value = $2::jsonb, updated_at = NOW()`,
@@ -3296,6 +3574,7 @@ async function queueDepositPending(txHash, payload) {
 
 /** Credita USDC a partir de um receipt já obtido (idempotente via daily_actions.tx_*). */
 async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) {
+  const txKey = normalizeDepositTxHash(txHash);
   const resolved = resolveDepositNetwork(settings, net);
   if (resolved.error) return { ok: false, error: resolved.error };
   const { targetWallet, usdcContract, rpcUrl } = resolved;
@@ -3305,20 +3584,47 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
   }
 
   if (receipt.result.status !== '0x1' && receipt.result.status !== 1) {
-    return { ok: false, error: 'Transação falhou na blockchain ' + net };
+    let hint = null;
+    try {
+      hint = await tryReplayFailedTransferRevertHint(rpcUrl, txKey);
+    } catch (e) {
+      console.warn('[DepositVerify] revert hint failed:', e.message);
+    }
+    return { ok: false, error: humanizeDepositFailureReason(hint, net) };
   }
 
   const transferTopic = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef';
   const targetTopic2 = targetWallet.replace(/^0x/, '').padStart(64, '0').toLowerCase();
+  const contractAllow = depositUsdcContractAllowlist(net, usdcContract);
   const log = (receipt.result.logs || []).find((l) => {
-    const addrMatch = l.address.toLowerCase() === usdcContract;
-    const topicMatch = l.topics && l.topics[0] === transferTopic;
+    const addr = (l.address || '').toLowerCase();
+    const addrMatch = contractAllow.includes(addr);
+    const t0 = (l.topics && l.topics[0]) ? String(l.topics[0]).toLowerCase() : '';
+    const topicMatch = t0 === transferTopic;
     const destMatch = l.topics && l.topics[2] && l.topics[2].toLowerCase().includes(targetTopic2);
     return addrMatch && topicMatch && destMatch;
   });
 
   if (!log) {
-    return { ok: false, error: 'Transação inválida: contrato ou destino incorretos na rede ' + net };
+    return {
+      ok: false,
+      error:
+        'Não foi encontrado um envio de USDC desta rede para o endereço de depósito do jogo (verifique se usou a rede certa em «Rede da entrada», o token USDC nativo ou USDC.e na Polygon, e o endereço de depósito actual).'
+    };
+  }
+
+  const userWalRes = await db.query('SELECT polygon_wallet FROM users WHERE id = $1', [uid]);
+  const linkedRaw = (userWalRes.rows[0]?.polygon_wallet || '').trim();
+  if (linkedRaw) {
+    const linked40 = linkedRaw.toLowerCase().replace(/^0x/, '').replace(/\s/g, '');
+    const from40 = addressHexFromTopic(log.topics[1]);
+    if (linked40.length === 40 && from40 && from40 !== linked40) {
+      return {
+        ok: false,
+        error:
+          'Este envio não partiu da carteira ligada ao teu perfil. O crédito só é feito quando o USDC é enviado da mesma carteira que está no perfil.'
+      };
+    }
   }
 
   let decimals = (net === 'bnb' || net === 'bsc') ? 18 : 6;
@@ -3357,9 +3663,12 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
     await client.query('BEGIN');
     await client.query('SELECT pg_advisory_xact_lock(hashtext($1::text), hashtext($2::text))', [
       'ms_deposit_credit',
-      String(txHash).toLowerCase()
+      txKey
     ]);
-    const dup = await client.query('SELECT user_id FROM daily_actions WHERE action_key = $1', [`tx_${txHash}`]);
+    const dup = await client.query(
+      'SELECT user_id FROM daily_actions WHERE lower(action_key) = lower($1)',
+      [`tx_${txKey}`]
+    );
     if (dup.rowCount > 0) {
       const owner = dup.rows[0].user_id;
       if (Number(owner) !== Number(uid)) {
@@ -3368,21 +3677,34 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
       }
       await client.query('ROLLBACK');
       const bal = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-      await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
+      await db.query('DELETE FROM app_cache WHERE lower(key) = lower($1)', [`deposit_pending:${txKey}`]);
       return { ok: true, amount: 0, newUsdc: bal.rows[0]?.usdc, already: true };
     }
     const now = Date.now();
     await client.query(
+      `INSERT INTO game_states (user_id, usdc, start_time, last_updated_at, claimed_referrals, referral_bonus_claimed, black_market_balance)
+       VALUES ($1, 0, $2, $2, 0, 0, 0)
+       ON CONFLICT (user_id) DO NOTHING`,
+      [uid, now]
+    );
+    const upRes = await client.query(
       `UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1,
         total_usdc_deposited = COALESCE(total_usdc_deposited, 0) + $1,
-        server_updated_at = $2, last_updated_at = $2 WHERE user_id = $3`,
+        server_updated_at = $2, last_updated_at = $2 WHERE user_id = $3
+        RETURNING usdc`,
       [amountUsdc, now, uid]
     );
-    await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3)', [uid, `tx_${txHash}`, now]);
+    if (!upRes.rowCount) {
+      await client.query('ROLLBACK');
+      console.error('[DepositCredit] UPDATE game_states afetou 0 linhas userId=%s tx=%s', uid, txKey.slice(0, 18));
+      return { ok: false, error: 'Estado de jogo em falta para este utilizador. Contacta o suporte.' };
+    }
+    await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3)', [uid, `tx_${txKey}`, now]);
     await client.query('COMMIT');
-    await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
-    const newBalRes = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
+    await db.query('DELETE FROM app_cache WHERE lower(key) = lower($1)', [`deposit_pending:${txKey}`]);
+    const newUsdc = upRes.rows[0].usdc;
     console.log('[DepositCredit] userId=%s network=%s amountUsdc=%s tx=%s newUsdc=%s',
+<<<<<<< Updated upstream
       uid, net, Number(amountUsdc).toFixed(8), String(txHash).slice(0, 18) + '…', newBalRes.rows[0].usdc);
     if (amountUsdc > 0) {
       await appendGameActivityLog(db, uid, 'deposit_credit', {
@@ -3392,6 +3714,10 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
       });
     }
     return { ok: true, amount: amountUsdc, newUsdc: newBalRes.rows[0].usdc };
+=======
+      uid, net, Number(amountUsdc).toFixed(8), txKey.slice(0, 18) + '…', newUsdc);
+    return { ok: true, amount: amountUsdc, newUsdc };
+>>>>>>> Stashed changes
   } catch (dbErr) {
     await client.query('ROLLBACK');
     throw dbErr;
@@ -3400,14 +3726,14 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
   }
 }
 
-async function sweepPendingDepositsOnce() {
-  if (WORKER_ROLE !== 'BACKGROUND' && WORKER_ROLE !== 'ALL') return;
+/** Processa fila deposit_pending (idempotente). Pode correr em qualquer worker — ex. durante POST /api/deposit/verify. */
+async function sweepPendingDepositsCore() {
   try {
     const rows = await db.query("SELECT key, value FROM app_cache WHERE key LIKE 'deposit_pending:%' LIMIT 40");
     if (!rows.rowCount) return;
     const settings = await loadDepositSettings();
     for (const row of rows.rows) {
-      const txHash = String(row.key).replace(/^deposit_pending:/, '');
+      const txHash = normalizeDepositTxHash(String(row.key).replace(/^deposit_pending:/, ''));
       const meta = row.value && typeof row.value === 'object' ? row.value : (typeof row.value === 'string' ? JSON.parse(row.value) : {});
       const { userId, network } = meta;
       if (!userId || !network || !/^0x[a-fA-F0-9]{64}$/.test(txHash)) {
@@ -3433,6 +3759,11 @@ async function sweepPendingDepositsOnce() {
   }
 }
 
+async function sweepPendingDepositsOnce() {
+  if (WORKER_ROLE !== 'BACKGROUND' && WORKER_ROLE !== 'ALL') return;
+  await sweepPendingDepositsCore();
+}
+
 app.post('/api/deposit/verify', async (req, res) => {
   const { email, txHash, network } = req.body || {};
 
@@ -3440,10 +3771,11 @@ app.post('/api/deposit/verify', async (req, res) => {
   const uid = req.userId;
   if (!uid) return res.status(401).json({ error: 'Sessão necessária para verificar depósito.' });
 
-  const txNorm = String(txHash).trim();
-  if (!/^0x[a-fA-F0-9]{64}$/.test(txNorm)) {
+  const rawHash = String(txHash || '').trim();
+  if (!/^0x[a-fA-F0-9]{64}$/i.test(rawHash)) {
     return res.status(400).json({ error: 'Hash de transação inválido.' });
   }
+  const txNorm = rawHash.toLowerCase();
 
   const who = await db.query('SELECT lower(trim(email::text)) AS em FROM users WHERE id = $1', [uid]);
   if (!who.rows[0]) return res.status(401).json({ error: 'Utilizador inválido.' });
@@ -3453,14 +3785,19 @@ app.post('/api/deposit/verify', async (req, res) => {
 
   console.log('[DepositVerify] userId=%s network=%s tx=%s', uid, network, txNorm.slice(0, 14) + '…');
 
-  const checkTx = await db.query('SELECT user_id FROM daily_actions WHERE action_key = $1', [`tx_${txNorm}`]);
+  await sweepPendingDepositsCore();
+
+  const checkTx = await db.query(
+    'SELECT user_id FROM daily_actions WHERE lower(action_key) = lower($1)',
+    [`tx_${txNorm}`]
+  );
   if (checkTx.rowCount > 0) {
     const owner = checkTx.rows[0].user_id;
     if (Number(owner) !== Number(uid)) {
       return res.status(400).json({ error: 'Esta transação já foi utilizada por outra conta.' });
     }
     const bal = await db.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-    await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txNorm}`]);
+    await db.query('DELETE FROM app_cache WHERE lower(key) = lower($1)', [`deposit_pending:${txNorm}`]);
     return res.json({ ok: true, amount: 0, newUsdc: bal.rows[0]?.usdc, already: true });
   }
 
@@ -3474,11 +3811,28 @@ app.post('/api/deposit/verify', async (req, res) => {
 
     const receipt = await fetchDepositReceiptUnified(net, rpcUrl, txNorm);
     if (!receipt || !receipt.result) {
+      const txSeen = await fetchTxSeenOnNetwork(net, rpcUrl, txNorm);
+      const netLabel = net === 'polygon' ? 'Polygon' : (net === 'bnb' || net === 'bsc') ? 'BNB Chain' : net === 'base' ? 'Base' : net;
+      if (!txSeen) {
+        return res.status(400).json({
+          error:
+            `Não encontrámos esta transação na ${netLabel}. Abre o explorer certo (ex.: polygonscan.com para Polygon), copia o hash completo (0x + 64 hex, sem espaços) e confirma que «Rede da entrada» é a mesma rede onde enviaste — um só carácter diferente invalida o hash.`
+        });
+      }
+      if (!txSeen.blockNumber) {
+        await queueDepositPending(txNorm, { userId: uid, network: net, createdAt: Date.now() });
+        return res.json({
+          ok: false,
+          pending: true,
+          message: 'A transação ainda não entrou num bloco (mempool). Espera ~1 min e valida de novo.'
+        });
+      }
       await queueDepositPending(txNorm, { userId: uid, network: net, createdAt: Date.now() });
       return res.json({
         ok: false,
         pending: true,
-        message: 'Transação ainda na mempool ou RPC indisponível. Os USDC serão creditados automaticamente quando a rede confirmar — pode fechar esta página.'
+        message:
+          'Os nós já têm a transação confirmada, mas o recibo ainda não chegou. Tenta «Validar hash» outra vez em 30–60 s. No servidor: define ETHERSCAN_API_KEY (Polygonscan) e um POLYGON_RPC fiável no .env para evitar isto.'
       });
     }
 
@@ -3573,6 +3927,7 @@ app.post('/api/web3-settings', isAdmin, async (req, res) => {
 // --- ECONOMY ---
 app.get('/api/economy-settings', async (req, res) => {
   try {
+<<<<<<< Updated upstream
     const rowRes = await db.query('SELECT black_market_enabled, hardware_market_enabled, market_tax_percent FROM economy_settings WHERE id = 1');
     const row = rowRes.rows[0];
     const hwRes = await db.query("SELECT value FROM settings WHERE key = 'hardware_market_enabled'");
@@ -3584,6 +3939,21 @@ app.get('/api/economy-settings', async (req, res) => {
       hardwareMarketEnabled: hw,
       blackMarketEnabled: bk,
       marketTaxPercent: tax
+=======
+    const [hwRes, bkRes, econRes] = await Promise.all([
+      db.query("SELECT value FROM settings WHERE key = 'hardware_market_enabled'"),
+      db.query("SELECT value FROM settings WHERE key = 'black_market_enabled'"),
+      db.query('SELECT market_tax_percent, black_market_price_band_percent FROM economy_settings WHERE id = 1 LIMIT 1')
+    ]);
+    const er = econRes.rows[0];
+    const bandRaw = Number(er?.black_market_price_band_percent);
+    const band = Number.isFinite(bandRaw) && bandRaw >= 1 ? Math.min(90, bandRaw) : 20;
+    res.json({
+      hardwareMarketEnabled: hwRes.rows[0] ? hwRes.rows[0].value === '1' : true,
+      blackMarketEnabled: bkRes.rows[0] ? bkRes.rows[0].value === '1' : true,
+      marketTaxPercent: Number(er?.market_tax_percent ?? 0),
+      blackMarketPriceBandPercent: band
+>>>>>>> Stashed changes
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3591,11 +3961,24 @@ app.get('/api/economy-settings', async (req, res) => {
 });
 
 app.post('/api/economy-settings', isAdmin, async (req, res) => {
+<<<<<<< Updated upstream
   const { hardwareMarketEnabled, blackMarketEnabled, marketTaxPercent } = req.body || {};
+=======
+  const body = req.body || {};
+  const {
+    hardwareMarketEnabled,
+    blackMarketEnabled,
+    marketTaxPercent,
+    blackMarketPriceBandPercent
+  } = body;
+  const hasTax = marketTaxPercent !== undefined && marketTaxPercent !== null;
+  const hasBand = blackMarketPriceBandPercent !== undefined && blackMarketPriceBandPercent !== null;
+>>>>>>> Stashed changes
   const client = await db.connect();
   try {
     await client.query('BEGIN');
     const stmt = 'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value';
+<<<<<<< Updated upstream
     await client.query(stmt, ['hardware_market_enabled', hardwareMarketEnabled ? '1' : '0']);
     await client.query(stmt, ['black_market_enabled', blackMarketEnabled ? '1' : '0']);
     const tax = Math.min(100, Math.max(0, Number(marketTaxPercent) || 0));
@@ -3608,6 +3991,35 @@ app.post('/api/economy-settings', isAdmin, async (req, res) => {
         market_tax_percent = EXCLUDED.market_tax_percent`,
       [blackMarketEnabled ? 1 : 0, hardwareMarketEnabled ? 1 : 0, tax]
     );
+=======
+    if (hardwareMarketEnabled !== undefined && hardwareMarketEnabled !== null) {
+      await client.query(stmt, ['hardware_market_enabled', hardwareMarketEnabled ? '1' : '0']);
+    }
+    if (blackMarketEnabled !== undefined && blackMarketEnabled !== null) {
+      await client.query(stmt, ['black_market_enabled', blackMarketEnabled ? '1' : '0']);
+    }
+    if (hasTax || hasBand) {
+      const existingRes = await client.query('SELECT market_tax_percent, black_market_price_band_percent FROM economy_settings WHERE id = 1');
+      const ex = existingRes.rows[0];
+      const newTax = hasTax ? Number(marketTaxPercent) : Number(ex?.market_tax_percent ?? 0);
+      let newBand = hasBand ? Number(blackMarketPriceBandPercent) : Number(ex?.black_market_price_band_percent);
+      if (!Number.isFinite(newBand) || newBand < 1) newBand = 20;
+      newBand = Math.min(90, newBand);
+      if (!Number.isFinite(newTax) || newTax < 0 || newTax > 100) throw new Error('Taxa inválida (0–100%).');
+      if (ex) {
+        await client.query(
+          'UPDATE economy_settings SET market_tax_percent = $1, black_market_price_band_percent = $2 WHERE id = 1',
+          [newTax, newBand]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO economy_settings (id, black_market_enabled, hardware_market_enabled, market_tax_percent, black_market_price_band_percent)
+           VALUES (1, 1, 1, $1, $2)`,
+          [newTax, newBand]
+        );
+      }
+    }
+>>>>>>> Stashed changes
     await client.query('COMMIT');
     res.json({ ok: true });
   } catch (e) {
@@ -3988,6 +4400,115 @@ app.post('/api/market/claim-item', async (req, res) => {
   } catch (e) {
     try { await client.query('ROLLBACK'); } catch (_) { /* ignore */ }
     res.status(500).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+const MARKET_ITEM_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
+
+async function getBlackMarketPriceBandPercentDb(q) {
+  const r = await q.query('SELECT black_market_price_band_percent FROM economy_settings WHERE id = 1 LIMIT 1');
+  const v = Number(r.rows[0]?.black_market_price_band_percent);
+  if (!Number.isFinite(v) || v < 1) return 20;
+  return Math.min(90, v);
+}
+
+app.post('/api/market/sell', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const { itemId, price, qty } = req.body || {};
+  if (!itemId || typeof itemId !== 'string' || !MARKET_ITEM_ID_RE.test(itemId)) {
+    return res.status(400).json({ error: 'Item inválido.' });
+  }
+  const priceN = Number(price);
+  const qtyN = Math.floor(Number(qty));
+  if (!Number.isFinite(priceN) || priceN <= 0) return res.status(400).json({ error: 'Preço inválido.' });
+  if (!Number.isInteger(qtyN) || qtyN < 1 || qtyN > 9999) return res.status(400).json({ error: 'Quantidade inválida.' });
+
+  const bkRes = await db.query("SELECT value FROM settings WHERE key = 'black_market_enabled'");
+  const bmOn = !bkRes.rows[0] || bkRes.rows[0].value === '1';
+  if (!bmOn) return res.status(403).json({ error: 'Mercado P2P desativado.' });
+
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const band = await getBlackMarketPriceBandPercentDb(client);
+    const upRes = await client.query(
+      'SELECT base_cost, sell_in_black_market FROM upgrades WHERE id = $1',
+      [itemId]
+    );
+    const up = upRes.rows[0];
+    if (!up || Number(up.sell_in_black_market) === 0) {
+      throw new Error('Este item não pode ser vendido no mercado P2P.');
+    }
+    const baseCost = Number(up.base_cost) || 0;
+    const refRow = await client.query(
+      `SELECT price FROM player_listings
+       WHERE item_id = $1 AND status = 'active' AND expires_at > $2
+       ORDER BY expires_at DESC LIMIT 1`,
+      [itemId, Date.now()]
+    );
+    const ref = refRow.rows[0] != null ? Number(refRow.rows[0].price) : baseCost;
+    if (!Number.isFinite(ref) || ref <= 0) throw new Error('Referência de preço inválida.');
+    const minP = ref * (1 - band / 100);
+    const maxP = ref * (1 + band / 100);
+    if (priceN < minP - 1e-9 || priceN > maxP + 1e-9) {
+      throw new Error(`Preço fora da faixa permitida (±${band}% da referência).`);
+    }
+    const stockRes = await client.query(
+      'SELECT qty FROM stock WHERE user_id = $1 AND item_id = $2 FOR UPDATE',
+      [req.userId, itemId]
+    );
+    const have = Number(stockRes.rows[0]?.qty || 0);
+    if (have < qtyN) throw new Error('Quantidade em estoque insuficiente.');
+    const listingId = `pl_${Date.now()}_${crypto.randomBytes(8).toString('hex')}`;
+    const expiresAt = Date.now() + 90 * 86400000;
+    await client.query(
+      `INSERT INTO player_listings (id, user_id, item_id, price, expires_at, is_player, qty, status)
+       VALUES ($1, $2, $3, $4, $5, 1, $6, 'active')`,
+      [listingId, req.userId, itemId, priceN, expiresAt, qtyN]
+    );
+    const upd = await client.query(
+      'UPDATE stock SET qty = qty - $1 WHERE user_id = $2 AND item_id = $3 AND qty >= $1 RETURNING qty',
+      [qtyN, req.userId, itemId]
+    );
+    if (upd.rowCount === 0) throw new Error('Estoque insuficiente.');
+    await client.query('COMMIT');
+    res.json({ ok: true, listingId });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+app.post('/api/market/cancel', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const { listingId } = req.body || {};
+  if (!listingId || typeof listingId !== 'string' || listingId.length > 220) {
+    return res.status(400).json({ error: 'Listagem inválida.' });
+  }
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    const lRes = await client.query('SELECT * FROM player_listings WHERE id = $1 FOR UPDATE', [listingId]);
+    const row = lRes.rows[0];
+    if (!row) throw new Error('Listagem não encontrada.');
+    if (Number(row.user_id) !== Number(req.userId)) throw new Error('Não autorizado.');
+    if (row.status !== 'active') throw new Error('Esta listagem não está ativa.');
+    const q = Number(row.qty) || 1;
+    await client.query(
+      `INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + $3`,
+      [req.userId, row.item_id, q]
+    );
+    await client.query('DELETE FROM player_listings WHERE id = $1', [listingId]);
+    await client.query('COMMIT');
+    res.json({ ok: true });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    res.status(400).json({ error: e.message });
   } finally {
     client.release();
   }
@@ -4470,6 +4991,14 @@ app.post('/api/loot-boxes/open', async (req, res) => {
       return res.status(404).json({ error: 'Box definition not found' });
     }
 
+    if (String(boxDef.trigger || '') === 'roleta_code') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error:
+          'Esta entrada não se abre como caixa: é o modelo da roleta. Resgate o código no campo "Código de Resgate" acima, gire a roleta e receba a caixa de prémio depois.'
+      });
+    }
+
     const itemsRes = await client.query('SELECT * FROM loot_box_items WHERE box_id = $1', [boxId]);
     const items = itemsRes.rows;
 
@@ -4755,6 +5284,134 @@ app.post('/api/news-expire-days', isAdmin, async (req, res) => {
     await db.query('INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = $2', ['news_post_expire_days', String(val)]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+const TRANSPARENCY_CATEGORIES = new Set(['pool', 'expense', 'investment', 'other']);
+
+function normalizeTransparencyLinkUrl(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().slice(0, 2048);
+  if (!s) return null;
+  if (!/^https?:\/\//i.test(s)) return null;
+  return s;
+}
+
+function mapTransparencyRow(r) {
+  return {
+    id: r.id,
+    category: r.category,
+    title: r.title,
+    body: r.body ?? undefined,
+    amountUsdc: r.amount_usdc != null ? Number(r.amount_usdc) : undefined,
+    linkUrl: r.link_url ?? undefined,
+    sortOrder: Number(r.sort_order) || 0,
+    createdAt: Number(r.created_at),
+    updatedAt: Number(r.updated_at)
+  };
+}
+
+// --- TRANSPARENCY (leitura: jogadores autenticados; escrita: só admin) ---
+app.get('/api/transparency', authenticateToken, async (req, res) => {
+  try {
+    const r = await db.query(
+      'SELECT id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at FROM transparency_entries ORDER BY sort_order ASC, id ASC'
+    );
+    res.json(r.rows.map(mapTransparencyRow));
+  } catch (e) {
+    console.error('[GET /api/transparency]', e);
+    res.status(500).json({ error: 'Erro ao carregar dados de transparência.' });
+  }
+});
+
+app.post('/api/admin/transparency', isAdmin, async (req, res) => {
+  const { category, title, body, amountUsdc, linkUrl, sortOrder } = req.body || {};
+  if (!TRANSPARENCY_CATEGORIES.has(String(category))) {
+    return res.status(400).json({ error: 'Categoria inválida.' });
+  }
+  const titleStr = String(title || '').trim();
+  if (!titleStr || titleStr.length > 300) {
+    return res.status(400).json({ error: 'Título obrigatório (máx. 300 caracteres).' });
+  }
+  const bodyStr = body != null ? String(body).trim().slice(0, 8000) : '';
+  const linkNorm = normalizeTransparencyLinkUrl(linkUrl);
+  let amount = null;
+  if (amountUsdc !== undefined && amountUsdc !== null && amountUsdc !== '') {
+    const n = Number(amountUsdc);
+    if (!Number.isFinite(n)) return res.status(400).json({ error: 'Valor USDC inválido.' });
+    amount = n;
+  }
+  const sort = Number.isFinite(Number(sortOrder)) ? Math.floor(Number(sortOrder)) : 0;
+  const now = Date.now();
+  try {
+    const ins = await db.query(
+      `INSERT INTO transparency_entries (category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at`,
+      [String(category), titleStr, bodyStr || null, amount, linkNorm, sort, now, now]
+    );
+    res.json(mapTransparencyRow(ins.rows[0]));
+  } catch (e) {
+    console.error('[POST /api/admin/transparency]', e);
+    res.status(500).json({ error: 'Erro ao criar registo.' });
+  }
+});
+
+app.put('/api/admin/transparency/:id', isAdmin, async (req, res) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'ID inválido.' });
+  const { category, title, body, amountUsdc, linkUrl, sortOrder } = req.body || {};
+  if (category != null && !TRANSPARENCY_CATEGORIES.has(String(category))) {
+    return res.status(400).json({ error: 'Categoria inválida.' });
+  }
+  const titleStr = title != null ? String(title).trim() : null;
+  if (titleStr !== null && (!titleStr || titleStr.length > 300)) {
+    return res.status(400).json({ error: 'Título inválido (máx. 300 caracteres).' });
+  }
+  const bodyStr = body !== undefined ? String(body ?? '').trim().slice(0, 8000) : undefined;
+  const linkNorm = linkUrl !== undefined ? normalizeTransparencyLinkUrl(linkUrl) : undefined;
+  let amount = undefined;
+  if (amountUsdc !== undefined) {
+    if (amountUsdc === null || amountUsdc === '') amount = null;
+    else {
+      const n = Number(amountUsdc);
+      if (!Number.isFinite(n)) return res.status(400).json({ error: 'Valor USDC inválido.' });
+      amount = n;
+    }
+  }
+  const sort = sortOrder !== undefined && Number.isFinite(Number(sortOrder)) ? Math.floor(Number(sortOrder)) : undefined;
+  const now = Date.now();
+  try {
+    const cur = await db.query('SELECT * FROM transparency_entries WHERE id = $1', [id]);
+    if (!cur.rows[0]) return res.status(404).json({ error: 'Não encontrado.' });
+    const row = cur.rows[0];
+    const nextCat = category != null ? String(category) : row.category;
+    const nextTitle = titleStr != null ? titleStr : row.title;
+    const nextBody = bodyStr !== undefined ? (bodyStr || null) : row.body;
+    const nextAmount = amount !== undefined ? amount : row.amount_usdc;
+    const nextLink = linkNorm !== undefined ? linkNorm : row.link_url;
+    const nextSort = sort !== undefined ? sort : row.sort_order;
+    const upd = await db.query(
+      `UPDATE transparency_entries SET category = $1, title = $2, body = $3, amount_usdc = $4, link_url = $5, sort_order = $6, updated_at = $7
+       WHERE id = $8 RETURNING id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at`,
+      [nextCat, nextTitle, nextBody, nextAmount, nextLink, nextSort, now, id]
+    );
+    res.json(mapTransparencyRow(upd.rows[0]));
+  } catch (e) {
+    console.error('[PUT /api/admin/transparency]', e);
+    res.status(500).json({ error: 'Erro ao atualizar registo.' });
+  }
+});
+
+app.delete('/api/admin/transparency/:id', isAdmin, async (req, res) => {
+  const id = parseInt(String(req.params.id), 10);
+  if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'ID inválido.' });
+  try {
+    const del = await db.query('DELETE FROM transparency_entries WHERE id = $1 RETURNING id', [id]);
+    if (del.rowCount === 0) return res.status(404).json({ error: 'Não encontrado.' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[DELETE /api/admin/transparency]', e);
+    res.status(500).json({ error: 'Erro ao remover registo.' });
+  }
 });
 
 // AD IMAGE UPLOAD
@@ -5765,6 +6422,7 @@ app.post('/api/mining-coins', isAdmin, async (req, res) => {
   }
 });
 
+<<<<<<< Updated upstream
 app.post('/api/login', async (req, res) => {
   const { email, password } = req.body || {};
   if (!email || !password) return res.status(400).json({ error: 'Missing credentials' });
@@ -5964,6 +6622,8 @@ app.post('/api/session', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+=======
+>>>>>>> Stashed changes
 app.get('/api/load-game', async (req, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Sessão inválida' });
 
@@ -6037,6 +6697,9 @@ app.get('/api/load-game', async (req, res) => {
     const dailyActions = {};
     dailyRes.rows.forEach(r => { dailyActions[r.action_key] = Number(r.last_performed_at); });
 
+    const userRowRes = await db.query('SELECT username, referred_by FROM users WHERE id = $1', [uid]);
+    const u = userRowRes.rows[0];
+
     res.json({
       gameState: {
         usdc: gs.usdc,
@@ -6091,179 +6754,6 @@ app.put('/api/users/block', isAdmin, async (req, res) => {
     await db.query('UPDATE users SET is_blocked = $1 WHERE email = $2', [blocked ? 1 : 0, email]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
-});
-
-app.put('/api/user', async (req, res) => {
-  const u = req.body;
-  const normalizedEmail = (u.email || '').toLowerCase();
-  console.log(`[UserUpdate] Payload received for email: ${normalizedEmail}, userId: ${req.userId}`);
-  const client = await db.connect();
-  try {
-    let uid;
-    if (req.userId) {
-      // Check if admin
-      const uAdminRes = await db.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
-      const isAdmin = uAdminRes.rows[0]?.is_admin;
-
-      if (isAdmin && (u.id || u.email)) {
-        if (u.id) {
-          uid = u.id;
-        } else {
-          uid = await getUserIdByEmail(normalizedEmail, req.ip, { allowAnyDomain: true });
-        }
-      } else {
-        uid = req.userId;
-      }
-    } else {
-      // Se não estiver logado, permitimos apenas se for uma "finalização de cadastro"
-      // ou seja, o usuário existe no DB (pré-criado) mas não tem senha ainda.
-      if (!u.email) {
-        return res.status(400).json({ error: 'Email é obrigatório para o registro.' });
-      }
-      const existingRes = await db.query('SELECT password FROM users WHERE email = $1', [normalizedEmail]);
-      const existing = existingRes.rows[0];
-      if (existing && existing.password) {
-        return res.status(403).json({ error: 'Este email já está cadastrado. Por favor, faça login.' });
-      }
-      if (!existing) {
-        const ev = assertPublicSignupEmailAllowed(normalizedEmail);
-        if (!ev.ok) {
-          return res.status(400).json({ ok: false, error: ev.error });
-        }
-      }
-      uid = await getUserIdByEmail(normalizedEmail, req.ip);
-    }
-
-    await client.query('BEGIN');
-
-    // Update User
-    const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
-    if (hasPassword) {
-      const hashedPassword = await bcrypt.hash(u.password, 10);
-      await client.query('UPDATE users SET username=$1, email=$2, password=$3, polygon_wallet=$4, access_level_id=$5, referred_by=$6 WHERE id = $7',
-        [u.username, normalizedEmail, hashedPassword, u.polygonWallet ?? null, u.accessLevelId ?? null, u.referredBy ?? null, uid]);
-    } else {
-      await client.query('UPDATE users SET username=$1, email=$2, polygon_wallet=$3, access_level_id=$4, referred_by=$5 WHERE id = $6',
-        [u.username, normalizedEmail, u.polygonWallet ?? null, u.accessLevelId ?? null, u.referredBy ?? null, uid]);
-    }
-
-    if (u.accessLevelId) {
-      await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [uid, u.accessLevelId, Date.now()]);
-    }
-
-    if (Array.isArray(u.accessLevelIds)) {
-      // Sincronizar múltiplos níveis
-      await client.query('DELETE FROM user_access_levels WHERE user_id = $1', [uid]);
-      for (const alid of u.accessLevelIds) {
-        await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [uid, alid, Date.now()]);
-      }
-      // Garantir que o nível primário esteja incluído se definido
-      if (u.accessLevelId) {
-        await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [uid, u.accessLevelId, Date.now()]);
-      }
-    }
-
-    // Handle Referral
-    if (u.referredBy) {
-      // Find referrer (Case insensitive)
-      const refRes = await client.query('SELECT id, access_level_id FROM users WHERE LOWER(referral_code) = LOWER($1)', [u.referredBy]);
-      const ref = refRes.rows[0];
-
-      if (ref && u.username) {
-        // PREVENÇÃO DE AUTO-INDICAÇÃO: Verificar IP de registro e histórico
-        const referrerRes = await client.query('SELECT registration_ip FROM users WHERE id = $1', [ref.id]);
-        const referrerRegIp = referrerRes.rows[0]?.registration_ip;
-
-        // Verificar se o IP atual já foi usado pelo indicador no histórico
-        const historyCheck = await client.query('SELECT 1 FROM user_history_ips WHERE user_id = $1 AND ip = $2', [ref.id, req.ip]);
-
-        if ((referrerRegIp && referrerRegIp === req.ip) || historyCheck.rowCount > 0) {
-          console.warn(`[Referral] Bloqueada tentativa de auto-indicação. IP ${req.ip} vinculado ao indicador ID: ${ref.id}`);
-          throw new Error('Auto-indicação não permitida. Você não pode usar seu próprio código de indicação em contas do mesmo IP.');
-        } else {
-          // Link referral (Idempotent)
-          const refInsert = await client.query('INSERT INTO referrals (user_id, referred_username) VALUES ($1, $2) ON CONFLICT (user_id, referred_username) DO NOTHING', [ref.id, u.username]);
-
-          if (refInsert.rowCount > 0) {
-            // Check for Advanced Referral Model
-            const alId = ref.access_level_id || 'normal';
-            const modelRes = await client.query(`
-              SELECT m.* 
-              FROM referral_models m
-              JOIN access_level_referral_models a ON m.id = a.referral_model_id
-              WHERE a.access_level_id = $1 AND m.is_active = 1
-            `, [alId]);
-            const model = modelRes.rows[0];
-
-            if (model) {
-              console.log(`[Referral] Using Advanced Model: ${model.name} for Access Level: ${alId}`);
-
-              // Grant Referrer Rewards
-              if (model.sender_reward_usdc > 0) {
-                await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [model.sender_reward_usdc, ref.id]);
-              }
-              if (model.sender_loot_box_id) {
-                await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [ref.id, model.sender_loot_box_id]);
-              }
-
-              // Grant Referee Rewards
-              if (model.receiver_reward_usdc > 0) {
-                await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [model.receiver_reward_usdc, uid]);
-              }
-              if (model.receiver_loot_box_id) {
-                await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, model.receiver_loot_box_id]);
-                await client.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [uid, model.receiver_loot_box_id, Date.now()]);
-              }
-
-              await client.query('UPDATE game_states SET claimed_referrals = claimed_referrals + 1 WHERE user_id = $1', [ref.id]);
-              await client.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
-
-            } else {
-              // FALLBACK: Grant Referrer Reward (Sender) - Using triggers
-              const senderBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_sender'");
-              for (const box of senderBoxes.rows) {
-                await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [ref.id, box.id]);
-              }
-              await client.query('UPDATE game_states SET claimed_referrals = claimed_referrals + 1 WHERE user_id = $1', [ref.id]);
-
-              // FALLBACK: Grant Referee Reward (Receiver) - Using triggers
-              const gsRes = await client.query('SELECT referral_bonus_claimed FROM game_states WHERE user_id = $1', [uid]);
-              if (gsRes.rows[0] && !gsRes.rows[0].referral_bonus_claimed) {
-                const receiverBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_receiver'");
-                const now = Date.now();
-                for (const box of receiverBoxes.rows) {
-                  await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, box.id]);
-                  await client.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [uid, box.id, now]);
-                }
-                await client.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
-              }
-            }
-          }
-        }
-      }
-    }
-
-    await client.query('COMMIT');
-    console.log(`[UserUpdate] Success for uid: ${uid}`);
-    res.json({ ok: true });
-  } catch (e) {
-    if (client) await client.query('ROLLBACK');
-    console.error('[UserUpdate] Error:', e);
-    if (e.existingAccounts) {
-      return res.status(403).json({
-        error: e.message,
-        code: 'IP_LIMIT_REACHED',
-        accounts: e.existingAccounts
-      });
-    }
-    if (e.code === 'EMAIL_POLICY') {
-      return res.status(400).json({ ok: false, error: e.message });
-    }
-    const errorMessage = e.message || 'Erro interno no servidor durante o registro.';
-    res.status(500).json({ error: errorMessage, stack: process.env.NODE_ENV === 'development' ? e.stack : undefined });
-  } finally {
-    if (client) client.release();
-  }
 });
 
 async function deleteUserByEmail(email, client) {
@@ -7004,39 +7494,9 @@ app.post('/api/save-game', async (req, res) => {
   } finally { client.release(); }
 });
 
-// --- ADMIN BACKUP & RESTORE ---
-app.get('/api/admin/backups', isAdmin, async (req, res) => {
-  try {
-    if (!fs.existsSync(BACKUP_DIR)) fs.mkdirSync(BACKUP_DIR, { recursive: true });
-    const isBackupFilename = (name) => {
-      const lower = String(name).toLowerCase();
-      return (
-        lower.endsWith('.db') ||
-        lower.endsWith('.sqlite') ||
-        lower.endsWith('.back') ||
-        lower.endsWith('.sql') ||
-        lower.endsWith('.json') ||
-        lower.endsWith('.json.gz') ||
-        lower.endsWith('.dump')
-      );
-    };
-    const list = [];
-    for (const ent of fs.readdirSync(BACKUP_DIR, { withFileTypes: true })) {
-      if (!ent.isFile() || !isBackupFilename(ent.name)) continue;
-      try {
-        const stats = fs.statSync(path.join(BACKUP_DIR, ent.name));
-        list.push({ filename: ent.name, size: stats.size, createdAt: stats.mtimeMs });
-      } catch (statErr) {
-        console.warn('[Backups] Ignorando ficheiro ao listar:', ent.name, statErr.message);
-      }
-    }
-    res.json(list.sort((a, b) => b.createdAt - a.createdAt));
-  } catch (e) {
-    console.error('[Backups] Listagem:', e);
-    res.status(500).json({ error: 'Falha ao listar backups' });
-  }
-});
+registerBackupRoutes(app, { isAdmin });
 
+<<<<<<< Updated upstream
 app.post('/api/admin/backup', isAdmin, async (req, res) => {
   const { name } = req.body || {};
   const safeBase = path.basename(String(name || 'backup')).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 80) || 'backup';
@@ -7281,13 +7741,14 @@ app.post('/api/admin/backup-settings', isAdmin, async (req, res) => {
 });
 
 // Start scheduler (give DB a moment to be ready if needed, though db.query usually handles pool)
+=======
+>>>>>>> Stashed changes
 setTimeout(async () => {
-  // Only run background tasks on the designated worker
   if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
-    await initAutoBackupScheduler();
     await ensureAdminPermissionsColumn();
     await ensureSystemNewsAdColumns();
   }
+<<<<<<< Updated upstream
 }, 5000); // 5s startup delay
 
 app.post('/api/admin/backups/upload', isAdmin, async (req, res) => {
@@ -7511,6 +7972,9 @@ app.post('/api/admin/restore', isAdmin, async (req, res) => {
     client.release();
   }
 });
+=======
+}, 5000);
+>>>>>>> Stashed changes
 
 app.get('/api/admin/recall-scan', isAdmin, async (req, res) => {
   const client = await db.connect();
@@ -7793,6 +8257,7 @@ app.delete('/api/admin/security/blacklist/:ip', isAdmin, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+<<<<<<< Updated upstream
 app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
   try {
     const email = String(req.query.email || '').trim().toLowerCase();
@@ -7829,6 +8294,8 @@ app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
 });
 
 
+=======
+>>>>>>> Stashed changes
 // --- ADMIN MARKET ---
 app.get('/api/admin/market/listings', isAdmin, async (req, res) => {
   try {
@@ -7888,10 +8355,16 @@ app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) 
 
 app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
   const { code, lootBoxId, upgradeId, adminUpgradeId, type } = req.body || {};
-  if (!code || (!lootBoxId && !upgradeId && !adminUpgradeId)) return res.status(400).json({ error: 'Faltam campos (é necessário uma caixa, um upgrade ou um pacote)' });
+  const promoType = type || 'per_player';
+  const isRoleta = String(promoType).startsWith('roleta_');
+  if (!code) return res.status(400).json({ error: 'Código ausente' });
+  if (!isRoleta && !lootBoxId && !upgradeId && !adminUpgradeId) {
+    return res.status(400).json({ error: 'Faltam campos (é necessário uma caixa, um upgrade ou um pacote)' });
+  }
+  const lb = isRoleta ? null : (lootBoxId || null);
   try {
     await db.query('INSERT INTO promo_codes (code, loot_box_id, upgrade_id, admin_upgrade_id, type, is_active, created_at) VALUES ($1,$2,$3,$4,$5,1,$6) ON CONFLICT (code) DO UPDATE SET loot_box_id = $2, upgrade_id = $3, admin_upgrade_id = $4, type = $5',
-      [code, lootBoxId || null, upgradeId || null, adminUpgradeId || null, type || 'per_player', Date.now()]);
+      [code, lb, upgradeId || null, adminUpgradeId || null, promoType, Date.now()]);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -7942,15 +8415,26 @@ app.post('/api/redeem-code', async (req, res) => {
       return res.status(400).json({ error: 'Código desativado' });
     }
 
-    // Check Global Cap - Re-lock if needed
-    if (promo.type === 'global_once' || promo.type === 'roleta_global_1x' || promo.type === 'roleta_player_1x') {
+    /** Códigos antigos: type per_player/global mas loot_box_id = caixa modelo roleta_code → mesmo fluxo da roleta (sem dar a caixa modelo). */
+    let treatAsRoleta = String(promo.type || '').startsWith('roleta_');
+    if (!treatAsRoleta && promo.loot_box_id) {
+      const lbRes = await client.query(
+        'SELECT trigger FROM loot_boxes WHERE id = $1 AND COALESCE(is_active, 1) = 1',
+        [promo.loot_box_id]
+      );
+      if (lbRes.rows[0] && String(lbRes.rows[0].trigger) === 'roleta_code') {
+        treatAsRoleta = true;
+      }
+    }
+
+    // Apenas códigos globalmente únicos (não incluir roleta_player_1x: cada jogador pode 1x, vários jogadores podem usar o mesmo código)
+    if (promo.type === 'global_once' || promo.type === 'roleta_global_1x') {
       codeRows = await client.query('SELECT * FROM promo_codes WHERE code = $1 FOR UPDATE', [normalizedCode]);
       promo = codeRows.rows[0];
       if (!promo.is_active) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Expirado.' }); }
     }
 
-    // Check Global Cap
-    if (promo.type === 'global_once' || promo.type === 'roleta_global_1x' || promo.type === 'roleta_player_1x') {
+    if (promo.type === 'global_once' || promo.type === 'roleta_global_1x') {
       const globalCheck = await client.query('SELECT 1 FROM promo_code_redemptions WHERE code = $1 LIMIT 1', [promo.code]);
       if (globalCheck.rowCount > 0) {
         await client.query('ROLLBACK');
@@ -7958,26 +8442,81 @@ app.post('/api/redeem-code', async (req, res) => {
       }
     }
 
-    // Check User Cap
-    const userCheck = await client.query('SELECT reward_granted FROM promo_code_redemptions WHERE code = $1 AND user_id = $2', [promo.code, uid]);
+    // 1x por jogador+código: per_player, roleta_player_1x, ou legado (caixa roleta_code). PK (code,user_id) + FOR UPDATE + ON CONFLICT abaixo.
+    const userCheck = await client.query(
+      'SELECT reward_granted, won_item_id FROM promo_code_redemptions WHERE code = $1 AND user_id = $2 FOR UPDATE',
+      [promo.code, uid]
+    );
     if (userCheck.rowCount > 0) {
-      if (promo.type.startsWith('roleta_') && userCheck.rows[0].reward_granted === 0) {
-        // Allow re-entry if redeemed but reward not granted
+      const ur = userCheck.rows[0];
+      if (treatAsRoleta && Number(ur.reward_granted) === 0) {
         await client.query('ROLLBACK');
         return res.json({ ok: true, type: 'roleta', code: promo.code });
+      }
+      // Legado: tipo não-roleta_* mas com loot_box_id da caixa modelo roleta_code e resgate errado (reward_granted=1 sem giro)
+      const legacyMislinked = treatAsRoleta && promo.loot_box_id && !String(promo.type || '').startsWith('roleta_');
+      if (
+        legacyMislinked &&
+        Number(ur.reward_granted) === 1 &&
+        (ur.won_item_id == null || String(ur.won_item_id).trim() === '')
+      ) {
+        await client.query(
+          'UPDATE promo_code_redemptions SET reward_granted = 0 WHERE code = $1 AND user_id = $2',
+          [promo.code, uid]
+        );
+        await client.query(
+          'UPDATE unopened_boxes SET qty = GREATEST(0, qty - 1) WHERE user_id = $1 AND box_id = $2',
+          [uid, promo.loot_box_id]
+        );
+        await client.query('DELETE FROM unopened_boxes WHERE user_id = $1 AND box_id = $2 AND qty <= 0', [uid, promo.loot_box_id]);
+        await client.query('COMMIT');
+        return res.json({ ok: true, type: 'roleta', code: promo.code });
+      }
+      if (treatAsRoleta && Number(ur.reward_granted) === 1) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Você já utilizou este código de roleta por completo.' });
       }
       await client.query('ROLLBACK');
       return res.status(400).json({ error: 'Você já resgatou este código.' });
     }
 
-    // If Roleta Code, we mark as redeemed (reward_granted=0) immediately.
-    if (promo.type.startsWith('roleta_')) {
-      await client.query('INSERT INTO promo_code_redemptions (code, user_id, redeemed_at, reward_granted) VALUES ($1,$2,$3,0)', [promo.code, uid, Date.now()]);
+    // Roleta: marca resgate (uma linha por jogador+código). ON CONFLICT evita corrida em dois pedidos ao mesmo tempo.
+    if (treatAsRoleta) {
+      const ins = await client.query(
+        `INSERT INTO promo_code_redemptions (code, user_id, redeemed_at, reward_granted) VALUES ($1,$2,$3,0)
+         ON CONFLICT (code, user_id) DO NOTHING RETURNING code`,
+        [promo.code, uid, Date.now()]
+      );
+      if (ins.rowCount === 0) {
+        const urRace = await client.query(
+          'SELECT reward_granted, won_item_id FROM promo_code_redemptions WHERE code = $1 AND user_id = $2 FOR UPDATE',
+          [promo.code, uid]
+        );
+        const rr = urRace.rows[0];
+        if (rr && Number(rr.reward_granted) === 0) {
+          await client.query('ROLLBACK');
+          return res.json({ ok: true, type: 'roleta', code: promo.code });
+        }
+        if (rr && Number(rr.reward_granted) === 1) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: 'Você já utilizou este código de roleta por completo.' });
+        }
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Você já resgatou este código.' });
+      }
       await client.query('COMMIT');
       return res.json({ ok: true, type: 'roleta', code: promo.code });
     }
 
-    await client.query('INSERT INTO promo_code_redemptions (code, user_id, redeemed_at) VALUES ($1,$2,$3)', [promo.code, uid, Date.now()]);
+    const insBox = await client.query(
+      `INSERT INTO promo_code_redemptions (code, user_id, redeemed_at, reward_granted) VALUES ($1,$2,$3,1)
+       ON CONFLICT (code, user_id) DO NOTHING RETURNING code`,
+      [promo.code, uid, Date.now()]
+    );
+    if (insBox.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Você já resgatou este código.' });
+    }
 
     // Grant Reward (Box, Individual Upgrade, or Bundle/AdminUpgrade)
     if (promo.loot_box_id) {
@@ -8201,9 +8740,14 @@ app.post('/api/request-password-reset', passwordResetRequestLimiter, async (req,
       return res.json(genericOk);
     }
     const email = r.rows[0].email;
+    const hmacSecret = getPasswordResetHmacSecret();
+    if (!hmacSecret) {
+      console.error('[request-password-reset] JWT_SECRET em falta em produção; e-mail não enviado.');
+      return res.json(genericOk);
+    }
     const timestamp = Date.now();
     const resetPayload = JSON.stringify({ email, expiry: timestamp + 60 * 60 * 1000 });
-    const signature = crypto.createHmac('sha256', process.env.JWT_SECRET || 'secret').update(resetPayload).digest('hex');
+    const signature = crypto.createHmac('sha256', hmacSecret).update(resetPayload).digest('hex');
     const resetToken = Buffer.from(resetPayload).toString('base64') + '.' + signature;
 
     await sendResetEmail(email, resetToken, { validityMinutes: 60 });
@@ -8235,10 +8779,15 @@ app.post('/api/verify-recovery-wallet', async (req, res) => {
       return res.status(403).json({ error: 'A carteira informada não corresponde à carteira vinculada a esta conta.' });
     }
 
+    const hmacSecret = getPasswordResetHmacSecret();
+    if (!hmacSecret) {
+      console.error('[verify-recovery-wallet] JWT_SECRET em falta em produção.');
+      return res.status(503).json({ error: 'Serviço temporariamente indisponível.' });
+    }
     // Success - Generate simple temporary token
     const timestamp = Date.now();
     const resetPayload = JSON.stringify({ email, walletAddress, expiry: timestamp + 600000 }); // 10 mins
-    const signature = crypto.createHmac('sha256', process.env.JWT_SECRET || 'secret').update(resetPayload).digest('hex');
+    const signature = crypto.createHmac('sha256', hmacSecret).update(resetPayload).digest('hex');
     const resetToken = Buffer.from(resetPayload).toString('base64') + '.' + signature;
 
     res.json({ ok: true, resetToken });
@@ -8262,7 +8811,12 @@ app.post('/api/reset-password-secure', async (req, res) => {
     const [payloadB64, signature] = resetToken.split('.');
     if (!payloadB64 || !signature) return res.status(400).json({ error: 'Token inválido' });
 
-    const expectedSig = crypto.createHmac('sha256', process.env.JWT_SECRET || 'secret').update(Buffer.from(payloadB64, 'base64').toString()).digest('hex');
+    const hmacSecret = getPasswordResetHmacSecret();
+    if (!hmacSecret) {
+      console.error('[reset-password-secure] JWT_SECRET em falta em produção.');
+      return res.status(503).json({ error: 'Serviço temporariamente indisponível.' });
+    }
+    const expectedSig = crypto.createHmac('sha256', hmacSecret).update(Buffer.from(payloadB64, 'base64').toString()).digest('hex');
     if (signature !== expectedSig) return res.status(403).json({ error: 'Token manipulado ou inválido' });
 
     const payload = JSON.parse(Buffer.from(payloadB64, 'base64').toString());
@@ -8781,6 +9335,7 @@ if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
   setTimeout(calculateHashratesAndRanking, 5000);
   setInterval(sweepPendingDepositsOnce, 90000);
   setTimeout(sweepPendingDepositsOnce, 8000);
+  startScheduledSqlBackups();
 }
 
 // Admin Ranking Endpoint

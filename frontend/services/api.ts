@@ -1,4 +1,8 @@
+<<<<<<< Updated upstream
 import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry } from '../types';
+=======
+import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog } from '../types';
+>>>>>>> Stashed changes
 
 const base = '/api';
 
@@ -604,9 +608,11 @@ export async function sendNft(payload: { contract: string; tokenId: string; from
   await apiFetch(`${base}/nfts/send`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
 }
 
-export async function login(email: string, password: string): Promise<any> {
+export async function login(email: string, password: string, deviceFingerprint?: DeviceFingerprintPayload): Promise<any> {
   try {
-    const res = await apiFetch(`${base}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, password }) });
+    const body: Record<string, unknown> = { email, password };
+    if (deviceFingerprint) body.deviceFingerprint = deviceFingerprint;
+    const res = await apiFetch(`${base}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json();
     if (!res.ok) return { error: data.error || 'Erro desconhecido' };
     return data;
@@ -762,6 +768,28 @@ export async function getSecurityStats(): Promise<SecurityStats | null> {
     if (!res.ok) return null;
     return await res.json();
   } catch { return null; }
+}
+
+export async function getAdminDeviceFingerprints(opts?: {
+  limit?: number;
+  offset?: number;
+  eventType?: 'login' | 'register' | '';
+  userId?: number;
+  q?: string;
+}): Promise<{ rows: AdminDeviceFingerprintLog[]; total: number; limit: number; offset: number } | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (opts?.limit != null) qs.set('limit', String(opts.limit));
+    if (opts?.offset != null) qs.set('offset', String(opts.offset));
+    if (opts?.eventType) qs.set('eventType', opts.eventType);
+    if (opts?.userId != null && Number.isFinite(opts.userId)) qs.set('userId', String(opts.userId));
+    if (opts?.q && opts.q.trim()) qs.set('q', opts.q.trim());
+    const res = await apiFetch(`${base}/admin/device-fingerprints?${qs.toString()}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
 }
 
 export async function addToBlacklist(ip: string, reason?: string): Promise<{ ok: boolean; error?: string }> {
@@ -1257,6 +1285,75 @@ export async function updateWithdrawalStatus(requestId: string, status: 'complet
     return await res.json();
   } catch {
     return { ok: false, error: 'Erro de rede' };
+  }
+}
+
+export async function getTransparency(): Promise<TransparencyEntry[]> {
+  try {
+    const res = await apiFetch(`${base}/transparency`);
+    if (!res.ok) return [];
+    const data = await res.json().catch(() => []);
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function adminCreateTransparencyEntry(payload: {
+  category: TransparencyCategory;
+  title: string;
+  body?: string;
+  amountUsdc?: number | null;
+  linkUrl?: string;
+  sortOrder?: number;
+}): Promise<{ ok: true; entry: TransparencyEntry } | { ok: false; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/admin/transparency`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: (data as { error?: string }).error || `HTTP ${res.status}` };
+    return { ok: true, entry: data as TransparencyEntry };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Erro de rede' };
+  }
+}
+
+export async function adminUpdateTransparencyEntry(
+  id: number,
+  payload: Partial<{
+    category: TransparencyCategory;
+    title: string;
+    body: string | null;
+    amountUsdc: number | null;
+    linkUrl: string | null;
+    sortOrder: number;
+  }>
+): Promise<{ ok: true; entry: TransparencyEntry } | { ok: false; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/admin/transparency/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: (data as { error?: string }).error || `HTTP ${res.status}` };
+    return { ok: true, entry: data as TransparencyEntry };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Erro de rede' };
+  }
+}
+
+export async function adminDeleteTransparencyEntry(id: number): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/admin/transparency/${id}`, { method: 'DELETE' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return { ok: false, error: (data as { error?: string }).error || `HTTP ${res.status}` };
+    return { ok: true };
+  } catch (e: any) {
+    return { ok: false, error: e?.message || 'Erro de rede' };
   }
 }
 

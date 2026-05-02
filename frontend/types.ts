@@ -209,6 +209,26 @@ export interface GameState {
   dailyActions?: Record<string, number>;
 }
 
+/** Payload opcional enviado em login/registo para auditoria de dispositivo. */
+export type DeviceFingerprintPayload = {
+  visitorId: string;
+  components: Record<string, string | number | boolean>;
+};
+
+/** Linha devolvida por GET /api/admin/device-fingerprints. */
+export interface AdminDeviceFingerprintLog {
+  id: string;
+  userId: number;
+  email: string | null;
+  username: string | null;
+  eventType: string;
+  fingerprintHash: string;
+  payloadJson: string | null;
+  ip: string | null;
+  userAgent: string | null;
+  createdAt: number;
+}
+
 export interface User {
   username: string;
   email: string;
@@ -230,6 +250,8 @@ export interface User {
   isImpersonating?: boolean;
   id?: string;
   adminPermissions?: string[];
+  /** Não persistido no utilizador; só enviado no body de login/registo. */
+  deviceFingerprint?: DeviceFingerprintPayload;
 }
 
 export interface Web3Settings {
@@ -331,6 +353,8 @@ export interface EconomySettings {
   blackMarketEnabled?: boolean;
   hardwareMarketEnabled?: boolean;
   marketTaxPercent?: number;
+  /** ±% em relação ao preço de referência (última oferta ativa do item ou preço base da loja). Ex.: 30 → pode vender entre 70% e 130% desse valor. */
+  blackMarketPriceBandPercent?: number;
   realActiveMiners?: number;
   realNetworkHashrates?: Record<string, number>;
   activeMinersByCoin?: Record<string, number>;
@@ -429,12 +453,27 @@ export interface SecurityStats {
   blacklist: BlacklistEntry[];
 }
 
+<<<<<<< Updated upstream
 /** Linha de `game_activity_logs` (ações de jogo do jogador). */
 export interface GameUserActivityEntry {
   id: number;
   action: string;
   meta: Record<string, unknown> | null;
   createdAt: number;
+=======
+export type TransparencyCategory = 'pool' | 'expense' | 'investment' | 'other';
+
+export interface TransparencyEntry {
+  id: number;
+  category: TransparencyCategory;
+  title: string;
+  body?: string;
+  amountUsdc?: number;
+  linkUrl?: string;
+  sortOrder: number;
+  createdAt: number;
+  updatedAt: number;
+>>>>>>> Stashed changes
 }
 
 export interface ReferralModel {

@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, SeasonPass, SeasonPurchase, AccessLevel, LootBox, GameState } from '../types';
-import { User as UserIcon, Lock, Mail, Save, AlertCircle, CheckCircle2, Wallet, ShieldCheck, Share2, Copy, Newspaper } from 'lucide-react';
-import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState } from '../services/api';
+import { User, SeasonPass, SeasonPurchase, AccessLevel, LootBox, GameState } from '@/types';
+import { User as UserIcon, Lock, Mail, Save, AlertCircle, CheckCircle2, Wallet, ShieldCheck, Share2, Copy, Newspaper, Unplug } from 'lucide-react';
+import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState } from '@/services/api';
 
 interface ProfilePageProps {
   user: User;
@@ -68,6 +68,20 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
     } catch {
       setMessage({ type: 'error', text: 'Autenticação cancelada ou falhou.' });
     }
+  };
+
+  const handleRemoveConnectedWallet = () => {
+    if (!polygonWallet) return;
+    if (
+      !confirm(
+        'Remover o endereço de saque do perfil? Depósitos e levantamentos em cripto ficarão indisponíveis até conectar outra carteira.'
+      )
+    ) {
+      return;
+    }
+    setPolygonWallet('');
+    onUpdateProfile({ ...user, polygonWallet: undefined });
+    setMessage({ type: 'success', text: 'Carteira removida do perfil.' });
   };
 
   const handleUpdateBasicInfo = (e: React.FormEvent) => {
@@ -439,12 +453,22 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
             <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4 flex items-center gap-2 relative z-10">
               <Wallet size={18} className="text-orange-500" /> Carteira de Saque (Polygon)
             </h3>
-            <div className="flex items-center gap-2 mb-4 relative z-10">
+            <div className="flex flex-wrap items-center gap-2 mb-4 relative z-10">
               <button onClick={handleConnectWallet} disabled={!!polygonWallet} className="bg-orange-100 dark:bg-orange-900/30 hover:bg-orange-200 dark:hover:bg-orange-900/50 border border-orange-300 dark:border-orange-800 text-orange-700 dark:text-orange-400 text-xs font-bold px-4 py-2 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 Conectar carteira do navegador
               </button>
+              {polygonWallet ? (
+                <button
+                  type="button"
+                  onClick={handleRemoveConnectedWallet}
+                  className="bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 text-xs font-bold px-4 py-2 rounded transition-colors flex items-center gap-1.5"
+                >
+                  <Unplug size={14} className="shrink-0 opacity-80" />
+                  Remover carteira conectada
+                </button>
+              ) : null}
               {polygonWallet && (
-                <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 truncate">
+                <span className="text-[10px] font-mono text-slate-600 dark:text-slate-400 truncate max-w-full sm:max-w-[min(100%,18rem)]">
                   {polygonWallet}
                 </span>
               )}

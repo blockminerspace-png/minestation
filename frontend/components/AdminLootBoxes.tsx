@@ -223,12 +223,15 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
             }
             payload.upgradeId = selectedUpgradeId;
         } else {
-            // Default to box
-            if (!boxForm.id) {
-                alert("ID da caixa ausente!");
-                return;
+            if (String(promoType).startsWith('roleta_')) {
+                // Códigos de roleta não devem gravar loot_box_id (evita caixa modelo no inventário).
+            } else {
+                if (!boxForm.id) {
+                    alert("ID da caixa ausente!");
+                    return;
+                }
+                payload.lootBoxId = boxForm.id;
             }
-            payload.lootBoxId = boxForm.id;
         }
 
         setGeneratingCode(true);
@@ -614,7 +617,15 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                     <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
                                                         <span className={`font-mono font-bold text-sm tracking-widest ${!c.isActive ? 'text-slate-500' : 'text-orange-400'}`}>{c.code}</span>
                                                         <span className={`px-2 py-0.5 rounded text-[9px] font-bold uppercase ${c.type === 'per_player' ? 'bg-amber-900/40 text-amber-400 border border-amber-900/50' : 'bg-amber-900/40 text-amber-400 border border-amber-900/50'}`}>
-                                                            {c.type === 'per_player' ? 'Multi-uso' : 'Global 1x'}
+                                                            {c.type === 'per_player'
+                                                                ? 'Multi-uso'
+                                                                : c.type === 'roleta_player_1x'
+                                                                  ? 'Roleta 1x/jogador'
+                                                                  : c.type === 'roleta_global_1x'
+                                                                    ? 'Roleta global 1x'
+                                                                    : c.type === 'global_once'
+                                                                      ? 'Global 1x'
+                                                                      : c.type || '—'}
                                                         </span>
                                                         <span className="px-2 py-0.5 rounded text-[9px] font-bold uppercase bg-slate-800 text-slate-300 border border-slate-700">
                                                             {c.adminUpgradeId ? (

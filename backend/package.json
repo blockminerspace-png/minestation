@@ -4,9 +4,11 @@
     "type": "module",
     "main": "server.js",
     "scripts": {
+        "build:ts": "tsc -p tsconfig.json",
+        "prestart": "npm run build:ts",
         "start": "node server.js",
-        "start:cluster": "node cluster_launcher.js",
-        "dev": "set NODE_OPTIONS=--max-old-space-size=8192 && node --watch server.js",
+        "start:cluster": "npm run build:ts && node cluster_launcher.js",
+        "dev": "npm run build:ts && NODE_OPTIONS=--max-old-space-size=8192 node --watch server.js",
         "fix-db": "node fix_schema.js",
         "import:dump": "bash import_pg_dump.sh",
         "import:json": "DATABASE_URL=postgresql://postgres:postgrespassword@127.0.0.1:5432/minestation node --max-old-space-size=8192 import_production.js"
@@ -22,7 +24,17 @@
         "jsonwebtoken": "^9.0.3",
         "multer": "^2.0.2",
         "nodemailer": "^6.9.0",
+<<<<<<< Updated upstream
         "pg": "^8.20.0",
         "ws": "^8.20.0"
+=======
+        "pg": "^8.20.0"
+    },
+    "devDependencies": {
+        "@types/express": "^4.17.21",
+        "@types/node": "^22.10.0",
+        "@types/pg": "^8.11.10",
+        "typescript": "^5.6.3"
+>>>>>>> Stashed changes
     }
 }

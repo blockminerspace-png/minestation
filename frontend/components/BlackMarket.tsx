@@ -15,9 +15,14 @@ interface BlackMarketProps {
   isEnabled?: boolean;
   onClaimSuccess?: () => void;
   refreshTrigger?: number;
+  /** Desvio máximo permitido vs preço de referência (última oferta ativa ou preço base). Ex.: 30 → entre 70% e 130% da referência. */
+  priceBandPercent?: number;
 }
 
-export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListing, onCreateListing, onCancelListing, upgrades, currentUserName, currentUserEmail, isEnabled = true, onClaimSuccess, refreshTrigger = 0 }) => {
+export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListing, onCreateListing, onCancelListing, upgrades, currentUserName, currentUserEmail, isEnabled = true, onClaimSuccess, refreshTrigger = 0, priceBandPercent: priceBandProp = 20 }) => {
+  const band = Math.min(90, Math.max(1, Number(priceBandProp) || 20));
+  const minFactor = 1 - band / 100;
+  const maxFactor = 1 + band / 100;
   if (!upgrades || upgrades.length === 0) return <div className="p-8 text-center text-slate-500 animate-pulse">Sincronizando ofertas P2P…</div>;
 
 
@@ -147,8 +152,8 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
   const selectedSellItem = upgrades.find(u => u.id === sellItemId);
   const marketPrice = selectedSellItem ? getMarketPrice(selectedSellItem.id) : 0;
   const refPrice = (getGlobalLastOfferPrice(sellItemId) ?? marketPrice);
-  const minAllowed = refPrice * 0.8;
-  const maxAllowed = refPrice * 1.2;
+  const minAllowed = refPrice * minFactor;
+  const maxAllowed = refPrice * maxFactor;
   const parsedSellPrice = parseFloat(sellPrice);
   const parsedSellQty = parseInt(sellQty);
   const publishDisabled = (!sellableItems.length || !sellPrice || !sellQty || isNaN(parsedSellPrice) || parsedSellPrice <= 0 || isNaN(parsedSellQty) || parsedSellQty <= 0 || parsedSellPrice < minAllowed || parsedSellPrice > maxAllowed);
@@ -377,8 +382,8 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                         const v = parseFloat(e.target.value);
                         const mp = selectedSellItem ? getMarketPrice(selectedSellItem.id) : 0;
                         const ref = getGlobalLastOfferPrice(sellItemId) ?? mp;
-                        const min = ref * 0.8;
-                        const max = ref * 1.2;
+                        const min = ref * minFactor;
+                        const max = ref * maxFactor;
                         if (isNaN(v)) {
                           setSellPrice(e.target.value);
                         } else {
@@ -420,7 +425,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
 
             {selectedSellItem && (
               <div className="mt-2 text-[10px] text-slate-400">
-                Dica: preços muito acima do book demoram a fechar. Limite: ±20% da última oferta deste item ou ±20% da referência oficial se não houver histórico.
+                {`Dica: preços muito acima do book demoram a fechar. Limite: ±${band}% da última oferta ativa deste item ou ±${band}% do preço base da loja se não houver ofertas.`}
               </div>
             )}
 

@@ -5,6 +5,18 @@ export default {
   ],
   theme: {
     extend: {
+      fontFamily: {
+        mono: [
+          'ui-monospace',
+          'SFMono-Regular',
+          'Menlo',
+          'Monaco',
+          'Consolas',
+          '"Liberation Mono"',
+          '"Courier New"',
+          'monospace'
+        ]
+      },
       colors: {
         neon: {
           gold: '#fbbf24',

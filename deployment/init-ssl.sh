@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configurações
-DOMAIN="minestation.tech"
+DOMAIN="genesisdao.tech"
 EMAIL="blockminer.space@gmail.com" # Ajuste se necessário
 
 echo "### Iniciando solicitação de certificado SSL para $DOMAIN..."
@@ -27,7 +27,7 @@ echo "### Solicitando certificado real para $DOMAIN..."
 docker compose run --rm --entrypoint \
   "certbot certonly --webroot -w /var/www/certbot \
     --email $EMAIL --agree-tos --no-eff-email \
-    -d $DOMAIN" certbot
+    -d $DOMAIN -d www.$DOMAIN" certbot
 
 echo "### Recarregando Nginx..."
 docker compose exec nginx nginx -s reload

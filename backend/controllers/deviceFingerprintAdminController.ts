@@ -1,0 +1,38 @@
+import type { Express, Request, Response, RequestHandler } from 'express';
+import type { Pool } from 'pg';
+import { listDeviceFingerprintLogs } from '../models/deviceFingerprintModel.js';
+
+export type DeviceFingerprintAdminDeps = {
+  pool: Pool;
+  isAdmin: RequestHandler;
+};
+
+export function registerDeviceFingerprintAdminRoutes(app: Express, deps: DeviceFingerprintAdminDeps): void {
+  const { pool, isAdmin } = deps;
+
+  app.get('/api/admin/device-fingerprints', isAdmin, async (req: Request, res: Response) => {
+    try {
+      const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit ?? '50'), 10) || 50));
+      const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);
+      const et = req.query.eventType;
+      const eventType = et === 'login' || et === 'register' ? et : null;
+      const uidRaw = req.query.userId;
+      const userIdParsed =
+        uidRaw != null && String(uidRaw).trim() !== '' ? Math.floor(Number(uidRaw)) : NaN;
+      const userId = Number.isFinite(userIdParsed) && userIdParsed > 0 ? userIdParsed : null;
+      const q = typeof req.query.q === 'string' ? req.query.q : undefined;
+
+      const { rows, total } = await listDeviceFingerprintLogs(pool, {
+        limit,
+        offset,
+        eventType,
+        userId,
+        q
+      });
+      res.json({ rows, total, limit, offset });
+    } catch (e: unknown) {
+      console.error('[admin/device-fingerprints]', e);
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Erro ao listar fingerprints.' });
+    }
+  });
+}

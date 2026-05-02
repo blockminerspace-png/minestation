@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, lazy, Suspense } from 'react';
 import {
   getGameState as apiGetGameState,
   updateUser as apiUpdateUser,
@@ -36,27 +36,38 @@ import {
   logout as apiLogout
 } from './services/api';
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId } from './types';
-import { UpgradeShop } from './components/UpgradeShop';
-import { BlackMarket } from './components/BlackMarket';
 import { MarketNews } from './components/MarketNews';
-import { Exchange } from './components/Exchange';
-import { WalletActions } from './components/WalletActions';
-// WalletNFTs removed
-import { ServerRoom } from './components/ServerRoom';
-import { PlayerCalculator } from './components/PlayerCalculator';
-import { InventoryView } from './components/InventoryView';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
-import { DocsPage } from './components/DocsPage';
-import { AuthPage } from './components/AuthPage';
-import { AdminPanel } from './components/AdminPanel';
-import { ProfilePage } from './components/ProfilePage';
-import { UpgradeAccount } from './components/UpgradeAccount';
-import { LuckyBoxStore } from './components/LuckyBoxStore';
-import { WorkshopRoom } from './components/WorkshopRoom';
-import { RewardLoadingScreen } from './components/RewardLoadingScreen';
-import { AdminRanking } from './components/AdminRanking';
-import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy } from 'lucide-react';
+import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale } from 'lucide-react';
+
+const DocsPage = lazy(() => import('./components/DocsPage').then((m) => ({ default: m.DocsPage })));
+const AuthPage = lazy(() => import('./components/AuthPage').then((m) => ({ default: m.AuthPage })));
+const AdminPanel = lazy(() => import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })));
+const ProfilePage = lazy(() => import('./components/ProfilePage').then((m) => ({ default: m.ProfilePage })));
+const TransparencyPage = lazy(() => import('./components/TransparencyPage').then((m) => ({ default: m.TransparencyPage })));
+const ServerRoom = lazy(() => import('./components/ServerRoom').then((m) => ({ default: m.ServerRoom })));
+const PlayerCalculator = lazy(() => import('./components/PlayerCalculator').then((m) => ({ default: m.PlayerCalculator })));
+const WorkshopRoom = lazy(() => import('./components/WorkshopRoom').then((m) => ({ default: m.WorkshopRoom })));
+const InventoryView = lazy(() => import('./components/InventoryView').then((m) => ({ default: m.InventoryView })));
+const UpgradeShop = lazy(() => import('./components/UpgradeShop').then((m) => ({ default: m.UpgradeShop })));
+const LuckyBoxStore = lazy(() => import('./components/LuckyBoxStore').then((m) => ({ default: m.LuckyBoxStore })));
+const BlackMarket = lazy(() => import('./components/BlackMarket').then((m) => ({ default: m.BlackMarket })));
+const Exchange = lazy(() => import('./components/Exchange').then((m) => ({ default: m.Exchange })));
+const WalletActions = lazy(() => import('./components/WalletActions').then((m) => ({ default: m.WalletActions })));
+const UpgradeAccount = lazy(() => import('./components/UpgradeAccount').then((m) => ({ default: m.UpgradeAccount })));
+const AdminRanking = lazy(() => import('./components/AdminRanking').then((m) => ({ default: m.AdminRanking })));
+const RewardLoadingScreen = lazy(() =>
+  import('./components/RewardLoadingScreen').then((m) => ({ default: m.RewardLoadingScreen }))
+);
+
+function LazyRouteFallback() {
+  return (
+    <div className="flex min-h-[32vh] w-full items-center justify-center text-amber-500/90" aria-busy="true" aria-label="A carregar">
+      <RefreshCw className="animate-spin" size={28} />
+    </div>
+  );
+}
 
 const TelegramIcon = ({ size = 18 }: { size?: number }) => (
   <svg viewBox="0 0 24 24" fill="currentColor" width={size} height={size} aria-hidden>
@@ -187,7 +198,13 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
   return state;
 };
 
+<<<<<<< Updated upstream
 type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'oficina' | 'arcade' | 'calculator' | 'ranking';
+=======
+
+
+type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency';
+>>>>>>> Stashed changes
 type GlobalView = 'home' | 'docs' | 'auth' | 'game' | 'admin';
 type Theme = 'light' | 'dark';
 
@@ -239,7 +256,12 @@ export default function App() {
   const [highlightedCoinId, setHighlightedCoinId] = useState<string | null>(null);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [gameMenuOpen, setGameMenuOpen] = useState(false);
-  const [economySettings, setEconomySettings] = useState<EconomySettings>({ hardwareMarketEnabled: true, blackMarketEnabled: true });
+  const [economySettings, setEconomySettings] = useState<EconomySettings>({
+    hardwareMarketEnabled: true,
+    blackMarketEnabled: true,
+    marketTaxPercent: 0,
+    blackMarketPriceBandPercent: 20
+  });
   const [showRewardModal, setShowRewardModal] = useState(false);
   const [offlineStats, setOfflineStats] = useState<Record<string, number>>({});
   const [pendingRewardSummary, setPendingRewardSummary] = useState<{ id: string, name: string, count: number }[]>([]);
@@ -295,7 +317,7 @@ export default function App() {
     const userLvls = user?.accessLevelIds || (user?.accessLevelId ? [user.accessLevelId] : []);
     if (userLvls.length === 0) {
       const defaultLvl = accessLevels.find(l => l.id === (user?.accessLevelId || ''));
-      return defaultLvl?.allowedPages || ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile'];
+      return defaultLvl?.allowedPages || ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency'];
     }
 
     const allAllowed = new Set<string>();
@@ -306,7 +328,7 @@ export default function App() {
       }
     });
 
-    return allAllowed.size > 0 ? Array.from(allAllowed) : ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile'];
+    return allAllowed.size > 0 ? Array.from(allAllowed) : ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency'];
   };
 
   const updateGameUpgrades = async (newUpgrades: Upgrade[]) => {
@@ -357,10 +379,15 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      const sess = await getSession();
       const path = (window.location.pathname || '').toLowerCase().replace(/\/+$/, '');
       const resetTokenParam = new URLSearchParams(window.location.search).get('token');
       const isPasswordResetUrl = Boolean(resetTokenParam && path.includes('redefinir-senha'));
+
+      const [sess, ms, { serverTime }] = await Promise.all([
+        getSession(),
+        getMonetizationSettings(),
+        getServerTime()
+      ]);
 
       if (sess) {
         setUser(sess);
@@ -371,10 +398,7 @@ export default function App() {
         if (isPasswordResetUrl) setGlobalView('auth');
         else setGlobalView('home');
       }
-      const ms = await getMonetizationSettings();
       if (ms) setMonetizationSettings(ms);
-
-      const { serverTime } = await getServerTime();
       setTimeOffset(serverTime - Date.now());
     })();
   }, []);
@@ -383,13 +407,14 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [up, lv, lb, mc, econ, web3] = await Promise.all([
+        const [up, lv, lb, mc, econ, web3, news] = await Promise.all([
           getUpgrades(),
           getAccessLevels(),
           getLootBoxes(),
           getMiningCoins(),
           getEconomySettings(),
-          getWeb3Settings()
+          getWeb3Settings(),
+          getSystemNews()
         ]);
         console.log('[Init] Loaded:', { up: up.length, lv: lv.length, lb: lb.length, mc: mc.length });
         setGameUpgrades(up);
@@ -398,15 +423,10 @@ export default function App() {
         setMiningCoins(mc);
         if (econ) setEconomySettings(econ);
         if (web3) setWeb3SettingsState(web3);
+        setVerticalAds(news.filter(n => n.adType === 'vertical' && n.active));
       } catch (e) {
         console.error('[Init] Fatal Error loading initial data:', e);
       }
-
-      // Load vertical ads
-      try {
-        const news = await getSystemNews();
-        setVerticalAds(news.filter(n => n.adType === 'vertical' && n.active));
-      } catch (e) { console.error("Ads Load Failed", e); }
     })();
   }, []);
 
@@ -914,53 +934,114 @@ export default function App() {
     }
   }, [getWeb3Settings, user]);
 
-  const [depositFlow, setDepositFlow] = useState<{ pending: boolean; status?: 'awaiting' | 'success' | 'queued' | 'cancelled' | 'failed'; amount?: number; txHash?: string }>({ pending: false });
+  const [depositFlow, setDepositFlow] = useState<{
+    pending: boolean;
+    status?: 'awaiting' | 'success' | 'queued' | 'cancelled' | 'failed';
+    amount?: number;
+    txHash?: string;
+    network?: string;
+    /** Mensagem do servidor / rede quando o depósito falha (ex.: saldo insuficiente on-chain). */
+    failureReason?: string;
+  }>({ pending: false });
+
+  const verifyDepositWithServer = useCallback(
+    async (txHash: string, network: string): Promise<{ ok: boolean; pending?: boolean; error?: string }> => {
+      if (!user?.email) return { ok: false, error: 'Sessão inválida.' };
+      const txNorm = String(txHash || '').trim().toLowerCase();
+      const verifyRes = await fetch('/api/deposit/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ email: user.email, txHash: txNorm, network })
+      });
+      let verifyData: { ok?: boolean; pending?: boolean; newUsdc?: number; error?: string; message?: string };
+      try {
+        verifyData = await verifyRes.json();
+      } catch {
+        return { ok: false, error: 'Resposta inválida do servidor.' };
+      }
+      if (verifyRes.ok && verifyData.ok) {
+        setGameState((p) => ({ ...p, usdc: verifyData.newUsdc ?? p.usdc }));
+        return { ok: true };
+      }
+      if (verifyData.pending) return { ok: false, pending: true };
+      return {
+        ok: false,
+        error: verifyData.error || (!verifyRes.ok ? 'Pedido rejeitado pelo servidor.' : 'Falha na validação.')
+      };
+    },
+    [user?.email]
+  );
+
+  useEffect(() => {
+    if (depositFlow.status !== 'queued' || !depositFlow.txHash || !user?.email) return;
+    const network = depositFlow.network || 'polygon';
+    const txHash = depositFlow.txHash;
+    let cancelled = false;
+    let attempts = 0;
+    const maxAttempts = 24;
+    const tick = async () => {
+      if (cancelled || attempts++ >= maxAttempts) return;
+      const out = await verifyDepositWithServer(txHash, network);
+      if (cancelled) return;
+      if (out.ok) {
+        setDepositFlow((f) => ({ ...f, status: 'success' }));
+      }
+    };
+    const id = setInterval(tick, 15000);
+    void tick();
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [depositFlow.status, depositFlow.txHash, depositFlow.network, user?.email, verifyDepositWithServer]);
+
   const handleStartDeposit = useCallback(async (amt: number, network: string = 'polygon') => {
     const minDep = web3SettingsState?.minDepositUsdc ?? 0.001;
     if (!amt || amt < minDep || !user?.polygonWallet || !user?.email) return;
 
-    setDepositFlow({ pending: true, status: 'awaiting', amount: amt });
+    setDepositFlow({ pending: true, status: 'awaiting', amount: amt, network });
     const res = await handleAddUSDC(amt, network);
 
     if (res && res.ok && res.tx) {
       // VALIDAÇÃO NO BACKEND: Em vez de creditar localmente, pedimos ao servidor para validar o hash
       try {
-        const verifyRes = await fetch('/api/deposit/verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({ email: user.email, txHash: res.tx, network })
-        });
-        
-        let verifyData;
-        try {
-          verifyData = await verifyRes.json();
-        } catch (e) {
-          throw new Error('Servidor retornou resposta inválida.');
-        }
-
-        if (verifyData.ok) {
-          setGameState(p => ({ ...p, usdc: verifyData.newUsdc }));
-          setDepositFlow({ pending: false, status: 'success', amount: amt, txHash: res.tx });
-        } else if (verifyData.pending) {
-          setDepositFlow({ pending: false, status: 'queued', amount: amt, txHash: res.tx });
-          alert(verifyData.message || 'Transação enviada. Os USDC serão creditados quando a rede confirmar — pode fechar a página.');
+        const verifyDataResult = await verifyDepositWithServer(res.tx, network);
+        if (verifyDataResult.ok) {
+          setDepositFlow({ pending: false, status: 'success', amount: amt, txHash: res.tx, network });
+        } else if (verifyDataResult.pending) {
+          setDepositFlow({ pending: false, status: 'queued', amount: amt, txHash: res.tx, network });
+          alert(
+            'Transação enviada. Os USDC serão creditados quando a rede confirmar — esta página tenta sincronizar sozinha a cada 15 s; também pode usar «Sincronizar agora» na carteira. Na Polygon, USDC nativo (Circle) e USDC.e contam, desde que o destino seja o endereço de depósito do jogo.'
+          );
         } else {
-          setDepositFlow({ pending: false, status: 'failed', amount: amt, txHash: res.tx });
-          console.error('[DepositVerify] Failed:', verifyData.error);
-          alert('Erro na validação do depósito: ' + (verifyData.error || 'Erro desconhecido'));
+          setDepositFlow({
+            pending: false,
+            status: 'failed',
+            amount: amt,
+            txHash: res.tx,
+            network,
+            failureReason: verifyDataResult.error || 'Não foi possível validar o depósito.'
+          });
+          console.error('[DepositVerify] Failed:', verifyDataResult.error);
         }
       } catch (e: any) {
         console.error('[DepositVerify] Connection Error:', e);
-        setDepositFlow({ pending: false, status: 'failed', amount: amt, txHash: res.tx });
-        alert('Erro ao conectar com o servidor para validar depósito: ' + e.message);
+        setDepositFlow({
+          pending: false,
+          status: 'failed',
+          amount: amt,
+          txHash: res.tx,
+          network,
+          failureReason: e?.message ? `Erro ao falar com o servidor: ${e.message}` : 'Erro de rede ao validar o depósito.'
+        });
       }
     } else if (res && res.cancelled) {
-      setDepositFlow({ pending: false, status: 'cancelled', amount: amt, txHash: res.tx });
+      setDepositFlow({ pending: false, status: 'cancelled', amount: amt, network });
     } else {
-      setDepositFlow({ pending: false, status: 'failed', amount: amt, txHash: res?.tx });
+      setDepositFlow({ pending: false, status: 'failed', amount: amt, txHash: res?.tx, network });
     }
-  }, [handleAddUSDC, user, web3SettingsState]);
+  }, [handleAddUSDC, user, web3SettingsState, verifyDepositWithServer]);
 
   /* Custom Exchange Handler */
   const handleSellCoin = useCallback(async (coinId: string, percentage: number) => {
@@ -1155,6 +1236,91 @@ export default function App() {
     });
     requestSave();
   }, [miningCoins, requestSave]);
+
+  const handleSetRoomRacksCoin = useCallback((roomId: string, coinId: string) => {
+    setGameState(prev => {
+      const coin = coinId ? miningCoins.find(c => c.id === coinId) : null;
+      if (coinId && coin && !coin.isActive) return prev;
+      const selected = coinId && coin ? coinId : undefined;
+      const ur = prev.placedRacks.map(r => {
+        if (r.roomId !== roomId) return r;
+        return { ...r, selectedCoinId: selected, isOn: selected ? r.isOn : false };
+      });
+      return { ...prev, placedRacks: ur };
+    });
+    requestSave();
+  }, [miningCoins, requestSave]);
+
+  /** Equipa a mesma bateria (do estoque, cheia) em todas as rigs compatíveis da sala, ou remove bateria de todas (`batteryUpgradeId` vazio). */
+  const handleSetRoomRacksBattery = useCallback((roomId: string, batteryUpgradeId: string) => {
+    const prev = gameStateRef.current;
+    const racksInRoomIdx = prev.placedRacks.map((r, i) => (r.roomId === roomId ? i : -1)).filter(i => i >= 0);
+
+    if (!batteryUpgradeId) {
+      setGameState(p => {
+        let ns = { ...p.stock };
+        const nb = [...p.storedBatteries];
+        const out = [...p.placedRacks];
+        for (const i of racksInRoomIdx) {
+          const rack = out[i];
+          if (!rack.batteryId) continue;
+          const id = rack.batteryId;
+          const upg = gameUpgrades.find(u => u.id === id);
+          const capacity = upg?.powerCapacity ?? 100;
+          const isInf = capacity === -1;
+          const isFull = isInf || rack.currentCharge >= (capacity * 0.999);
+          if (isFull) ns[id] = (ns[id] || 0) + 1;
+          else nb.push({ id: crypto.randomUUID(), itemId: id, currentCharge: rack.currentCharge });
+          out[i] = { ...rack, batteryId: null, currentCharge: 0, isOn: false };
+        }
+        return { ...p, stock: ns, storedBatteries: nb, placedRacks: out };
+      });
+      requestSave();
+      return;
+    }
+
+    const batDef = gameUpgrades.find(u => u.id === batteryUpgradeId && u.type === 'battery');
+    if (!batDef) return;
+
+    const compatibleIdx = racksInRoomIdx.filter(i => {
+      const rack = prev.placedRacks[i];
+      if (!batDef.compatibleRacks || batDef.compatibleRacks.length === 0) return true;
+      return batDef.compatibleRacks.includes(rack.itemId);
+    });
+    if (compatibleIdx.length === 0) {
+      alert('Nenhuma rig nesta sala é compatível com este tipo de bateria.');
+      return;
+    }
+    const stockAvail = prev.stock[batteryUpgradeId] || 0;
+    if (stockAvail < compatibleIdx.length) {
+      alert(`Estoque insuficiente: são precisas ${compatibleIdx.length} unidades de "${batDef.name}" nesta sala (em stock: ${stockAvail}).`);
+      return;
+    }
+
+    setGameState(p => {
+      let ns = { ...p.stock };
+      const nb = [...p.storedBatteries];
+      const out = [...p.placedRacks];
+      for (const i of compatibleIdx) {
+        const rack = { ...out[i] };
+        if (rack.batteryId) {
+          const oid = rack.batteryId;
+          const upg = gameUpgrades.find(u => u.id === oid);
+          const capacity = upg?.powerCapacity ?? 100;
+          const isInf = capacity === -1;
+          const isFull = isInf || rack.currentCharge >= (capacity * 0.999);
+          if (isFull) ns[oid] = (ns[oid] || 0) + 1;
+          else nb.push({ id: crypto.randomUUID(), itemId: oid, currentCharge: rack.currentCharge });
+        }
+        const capRaw = batDef.powerCapacity;
+        const initCharge = capRaw === -1 ? -1 : (capRaw ?? 0);
+        ns[batteryUpgradeId] = (ns[batteryUpgradeId] || 0) - 1;
+        out[i] = { ...rack, batteryId: batteryUpgradeId, currentCharge: initCharge, isOn: true };
+      }
+      return { ...p, stock: ns, storedBatteries: nb, placedRacks: out };
+    });
+    requestSave();
+  }, [gameUpgrades, requestSave]);
 
   const handleEquipWorkshop = useCallback((idx: number, mid: string) => {
     setGameState(p => {
@@ -2000,18 +2166,38 @@ export default function App() {
       {/* CONTENT AREA */}
       <div className="flex-1 overflow-hidden relative flex flex-col">
         {globalView === 'home' && <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col"><div className="flex-1"><HomePage onNavigate={setGlobalView} /></div><Footer /></div>}
-        {globalView === 'docs' && <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col"><div className="flex-1"><DocsPage /></div><Footer /></div>}
-        {globalView === 'auth' && <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-950 flex flex-col"><div className="flex-1"><AuthPage onLogin={handleLogin} accessLevels={accessLevels} /></div><Footer /></div>}
+        {globalView === 'docs' && (
+          <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
+            <div className="flex-1">
+              <Suspense fallback={<LazyRouteFallback />}>
+                <DocsPage />
+              </Suspense>
+            </div>
+            <Footer />
+          </div>
+        )}
+        {globalView === 'auth' && (
+          <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-950 flex flex-col">
+            <div className="flex-1">
+              <Suspense fallback={<LazyRouteFallback />}>
+                <AuthPage onLogin={handleLogin} accessLevels={accessLevels} />
+              </Suspense>
+            </div>
+            <Footer />
+          </div>
+        )}
 
         {globalView === 'admin' && user?.isAdmin && (
           <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
             <div className="flex-1">
-              <AdminPanel
-                user={user}
-                onUpdateGameUpgrades={updateGameUpgrades} gameUpgrades={gameUpgrades}
-                onUpdateAccessLevels={updateAccessLevels} accessLevels={accessLevels}
-                onUpdateLootBoxes={updateLootBoxes} lootBoxes={lootBoxDefs}
-              />
+              <Suspense fallback={<LazyRouteFallback />}>
+                <AdminPanel
+                  user={user}
+                  onUpdateGameUpgrades={updateGameUpgrades} gameUpgrades={gameUpgrades}
+                  onUpdateAccessLevels={updateAccessLevels} accessLevels={accessLevels}
+                  onUpdateLootBoxes={updateLootBoxes} lootBoxes={lootBoxDefs}
+                />
+              </Suspense>
             </div>
             <Footer />
           </div>
@@ -2037,6 +2223,7 @@ export default function App() {
                   {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
                   {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'ranking' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Trophy size={16} /> Ranking</button>)}
                   {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Crown size={16} /> UPGRADE</button>)}
+                  {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Scale size={16} /> Transparência</button>)}
                 </div>
               )}
               <div className="max-w-7xl mx-auto hidden md:flex justify-center md:justify-start overflow-x-auto">
@@ -2050,6 +2237,7 @@ export default function App() {
                 {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
                 {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'ranking' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Trophy size={16} /> Ranking</button>)}
                 {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Crown size={16} /> UPGRADE</button>)}
+                {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Scale size={16} /> Transparência</button>)}
               </div>
             </nav>
 
@@ -2082,14 +2270,16 @@ export default function App() {
                 <div className="flex-1 overflow-y-auto custom-scrollbar relative min-h-0 flex flex-col font-mono">
                   {!saveLoaded && (
                     <div className="flex min-h-[40vh] w-full items-center justify-center bg-slate-900/80 text-amber-500 font-mono rounded-xl border border-amber-900/20">
-                      <div className="text-xl animate-pulse tracking-widest">A carregar estado…</div>
+                      <div className="text-xl animate-pulse tracking-widest">Carregando estado…</div>
                     </div>
                   )}
 
                   {saveLoaded && currentView === 'servers' && (
                     <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
                       <div className="flex-1 flex flex-col">
-                        <ServerRoom {...gameState} onPlaceRack={handlePlaceRack} onRemoveRack={handleRemoveRack} onEquipMiner={handleEquipMiner} onUnequipMiner={handleUnequipMiner} onEquipAux={handleEquipAux} onUnequipAux={handleUnequipAux} onTogglePower={handleTogglePower} onRecharge={handleRecharge} upgrades={gameUpgrades} miningCoins={miningCoins} onSetRackCoin={handleSetRackCoin} userEmail={user?.email} onRoomPurchase={() => handleReloadGameState()} onOpenCalculator={() => setCurrentView('calculator')} />
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <ServerRoom {...gameState} onPlaceRack={handlePlaceRack} onRemoveRack={handleRemoveRack} onEquipMiner={handleEquipMiner} onUnequipMiner={handleUnequipMiner} onEquipAux={handleEquipAux} onUnequipAux={handleUnequipAux} onTogglePower={handleTogglePower} onRecharge={handleRecharge} upgrades={gameUpgrades} miningCoins={miningCoins} onSetRackCoin={handleSetRackCoin} onSetRoomRacksCoin={handleSetRoomRacksCoin} onSetRoomRacksBattery={handleSetRoomRacksBattery} userEmail={user?.email} onRoomPurchase={() => handleReloadGameState()} onOpenCalculator={() => setCurrentView('calculator')} />
+                        </Suspense>
                       </div>
                       <Footer />
                     </div>
@@ -2097,7 +2287,9 @@ export default function App() {
 
                   {saveLoaded && currentView === 'calculator' && (
                     <div className="flex-1 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300">
-                      <PlayerCalculator gameState={gameState} upgrades={gameUpgrades} miningCoins={miningCoins} onBack={() => setCurrentView('servers')} userEmail={user?.email} isAdmin={user?.isAdmin} />
+                      <Suspense fallback={<LazyRouteFallback />}>
+                        <PlayerCalculator gameState={gameState} upgrades={gameUpgrades} miningCoins={miningCoins} onBack={() => setCurrentView('servers')} userEmail={user?.email} isAdmin={user?.isAdmin} />
+                      </Suspense>
                     </div>
                   )}
 
@@ -2105,7 +2297,9 @@ export default function App() {
                   {saveLoaded && currentView === 'oficina' && (
                     <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
                       <div className="flex-1">
-                        <WorkshopRoom slots={gameState.workshopSlots || [null, null, null]} stock={gameState.stock} upgrades={gameUpgrades} onEquip={handleEquipWorkshop} onUnequip={handleUnequipWorkshop} onEquipComponent={handleEquipWorkshopComponent} onUnequipComponent={handleUnequipWorkshopComponent} storedBatteries={gameState.storedBatteries} onInstantRecharge={handleWorkshopInstantRecharge} onRewardedAd={handleRewardedAd} onDailyBoost={handleDailyBoost} timeOffset={timeOffset} dailyActions={gameState.dailyActions} />
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <WorkshopRoom slots={gameState.workshopSlots || [null, null, null]} stock={gameState.stock} upgrades={gameUpgrades} onEquip={handleEquipWorkshop} onUnequip={handleUnequipWorkshop} onEquipComponent={handleEquipWorkshopComponent} onUnequipComponent={handleUnequipWorkshopComponent} storedBatteries={gameState.storedBatteries} onInstantRecharge={handleWorkshopInstantRecharge} onRewardedAd={handleRewardedAd} onDailyBoost={handleDailyBoost} timeOffset={timeOffset} dailyActions={gameState.dailyActions} />
+                        </Suspense>
                       </div>
                       <Footer />
                     </div>
@@ -2117,22 +2311,110 @@ export default function App() {
                       <p className="max-w-md text-center text-sm">Estamos montando uma zona arcade dentro do Genesis Miner. Volte em breve para novidades.</p>
                     </div>
                   )}
-                  {saveLoaded && currentView === 'inventory' && <div className="flex-1 flex flex-col"><div className="flex-1 p-6"><InventoryView stock={gameState.stock} storedBatteries={gameState.storedBatteries} upgrades={gameUpgrades} /></div><Footer /></div>}
-                  {saveLoaded && currentView === 'hardware_store' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1"><UpgradeShop gameState={gameState} user={user} onBatchBuy={handleBatchBuy} upgrades={gameUpgrades} onSuggestDeposit={handleSuggestDeposit} isEnabled={economySettings.hardwareMarketEnabled} /></div><Footer /></div>)}
-                  {saveLoaded && currentView === 'lucky_store' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1"><LuckyBoxStore gameState={gameState} lootBoxes={lootBoxDefs} upgrades={gameUpgrades} onBuyBox={handleBuyBox} onOpenBox={handleOpenBox} onRedeemSuccess={handleRedeemSuccess} /></div><Footer /></div>)}
-                  {saveLoaded && currentView === 'black_market' && (<div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300"><div className="flex-1 min-h-0" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}><BlackMarket gameState={gameState} onBuyListing={handleP2PBuy} onCreateListing={handleCreateListing} onCancelListing={handleCancelListing} upgrades={gameUpgrades} currentUserName={user?.username} currentUserEmail={user?.email} isEnabled={economySettings.blackMarketEnabled} onClaimSuccess={handleReloadGameState} refreshTrigger={marketRefreshTrigger} /></div><Footer /></div>)}
-                  {saveLoaded && currentView === 'wallet' && (<div className="flex-1 flex flex-col p-6 space-y-6 animate-in fade-in slide-in-from-left-4 duration-300"><div className="flex-1"><div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6"><Exchange coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, usdcRate: c.usdcRate, showInExchange: c.showInExchange }))} onSellCoin={handleSellCoin} /><WalletActions onAddUSDC={handleAddUSDC} onStartDeposit={handleStartDeposit} depositStatus={depositFlow.status} depositAmount={depositFlow.amount} onCloseDepositStatus={() => setDepositFlow({ pending: false })} hasWallet={!!user?.polygonWallet} coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, symbol: c.symbol, priceUSD: c.priceUSD || 0 }))} coinRates={(() => { const rates: Record<string, number> = {}; gameState.placedRacks.forEach(r => { if (!r.isOn || !r.wiringId || !r.batteryId || !r.selectedCoinId) return; let base = 0; r.slots.forEach(sid => { if (!sid) return; const up = gameUpgrades.find(u => u.id === sid); if (up) base += up.baseProduction; }); let mult = 1; r.multiplierSlots?.forEach(sid => { if (!sid) return; const mod = gameUpgrades.find(u => u.id === sid); if (mod && mod.multiplier) mult += mod.multiplier; }); const prod = base * mult; const coin = miningCoins.find(c => c.id === r.selectedCoinId); const yieldPerHash = coin ? (coin.minProportion || 0) : 0; const rate = prod * yieldPerHash; rates[r.selectedCoinId] = (rates[r.selectedCoinId] || 0) + rate; }); return rates; })()} onWithdrawCoin={handleWithdrawCoin} prefillAmount={depositPrefill} withdrawTokens={web3SettingsState?.withdrawTokens?.map(t => ({ name: t.name, contract: t.contract, minAmount: t.minAmount, minWithdrawalUsdc: t.minWithdrawalUsdc, feePercent: t.feePercent }))} minDepositUsdc={web3SettingsState?.minDepositUsdc} depositPolygonDisabled={web3SettingsState?.depositPolygonDisabled} depositBnbDisabled={web3SettingsState?.depositBnbDisabled} depositBaseDisabled={web3SettingsState?.depositBaseDisabled} /><div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between md:col-span-2 lg:col-span-2 xl:col-span-2 transition-colors"><div><h3 className="text-slate-700 dark:text-slate-300 font-bold flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-800 pb-2"><LayoutDashboard size={18} /> ESTATÍSTICAS</h3><div className="grid grid-cols-1 sm:grid-cols-3 gap-4"><div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Máquinas Ativas</span><span className="font-mono text-slate-700 dark:text-slate-200">{countActiveMachines(gameState.placedRacks)} Unidades</span></div><div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Rigs Instalados</span><span className="font-mono text-slate-700 dark:text-slate-200">{gameState.placedRacks.length} Unidades</span></div></div></div><div className="mt-8 pt-4 border-t border-slate-200 dark:border-slate-800"></div></div></div></div><Footer /></div>)}
-
-                  {saveLoaded && currentView === 'upgrade' && (<div className="flex-1 flex flex-col"><div className="flex-1"><UpgradeAccount user={user} accessLevels={accessLevels} onUpgrade={handleUpgradeAccess} usdcBalance={gameState.usdc} onSuggestDeposit={handleSuggestDeposit} onPassPurchased={handlePassPurchased} onReloadGameState={handleReloadGameState} /></div><Footer /></div>)}
-                  {saveLoaded && currentView === 'ranking' && (
-                    <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
-                      <div className="flex-1">
-                        <AdminRanking isPublic={true} />
+                  {saveLoaded && currentView === 'inventory' && (
+                    <div className="flex-1 flex flex-col">
+                      <div className="flex-1 p-6">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <InventoryView stock={gameState.stock} storedBatteries={gameState.storedBatteries} upgrades={gameUpgrades} />
+                        </Suspense>
                       </div>
                       <Footer />
                     </div>
                   )}
-                  {saveLoaded && currentView === 'profile' && user && (<div className="flex-1 flex flex-col"><div className="flex-1"><ProfilePage user={user} onUpdateProfile={handleUpdateUser} onUpdateGameState={(next) => setGameState(next)} /></div><Footer /></div>)}
+                  {saveLoaded && currentView === 'hardware_store' && (
+                    <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <UpgradeShop gameState={gameState} user={user} onBatchBuy={handleBatchBuy} upgrades={gameUpgrades} onSuggestDeposit={handleSuggestDeposit} isEnabled={economySettings.hardwareMarketEnabled} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'lucky_store' && (
+                    <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <LuckyBoxStore gameState={gameState} lootBoxes={lootBoxDefs} upgrades={gameUpgrades} onBuyBox={handleBuyBox} onOpenBox={handleOpenBox} onRedeemSuccess={handleRedeemSuccess} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'black_market' && (
+                    <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1 min-h-0" style={{ WebkitOverflowScrolling: 'touch', touchAction: 'pan-y' }}>
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <BlackMarket gameState={gameState} onBuyListing={handleP2PBuy} onCreateListing={handleCreateListing} onCancelListing={handleCancelListing} upgrades={gameUpgrades} currentUserName={user?.username} currentUserEmail={user?.email} isEnabled={economySettings.blackMarketEnabled} onClaimSuccess={handleReloadGameState} refreshTrigger={marketRefreshTrigger} priceBandPercent={economySettings.blackMarketPriceBandPercent ?? 20} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'wallet' && (
+                    <div className="flex-1 flex flex-col p-6 space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+                      <div className="flex-1">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
+                            <Exchange coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, usdcRate: c.usdcRate, showInExchange: c.showInExchange }))} onSellCoin={handleSellCoin} />
+                            <WalletActions onAddUSDC={handleAddUSDC} onStartDeposit={handleStartDeposit} depositStatus={depositFlow.status} depositAmount={depositFlow.amount} depositFailureMessage={depositFlow.failureReason} onCloseDepositStatus={() => setDepositFlow({ pending: false })} onSyncQueuedDeposit={depositFlow.status === 'queued' && depositFlow.txHash && user?.email ? async () => { const net = depositFlow.network || 'polygon'; const out = await verifyDepositWithServer(depositFlow.txHash!, net); if (out.ok) setDepositFlow((f) => ({ ...f, status: 'success' })); else if (out.pending) alert('Ainda à espera de confirmação na rede.'); else alert(out.error || 'Não foi possível sincronizar.'); } : undefined} userEmail={user?.email || null} onVerifyDepositByHash={user?.email ? async (txHash, network) => verifyDepositWithServer(txHash.trim(), network) : undefined} hasWallet={!!user?.polygonWallet} coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, symbol: c.symbol, priceUSD: c.priceUSD || 0 }))} coinRates={(() => { const rates: Record<string, number> = {}; gameState.placedRacks.forEach(r => { if (!r.isOn || !r.wiringId || !r.batteryId || !r.selectedCoinId) return; let base = 0; r.slots.forEach(sid => { if (!sid) return; const up = gameUpgrades.find(u => u.id === sid); if (up) base += up.baseProduction; }); let mult = 1; r.multiplierSlots?.forEach(sid => { if (!sid) return; const mod = gameUpgrades.find(u => u.id === sid); if (mod && mod.multiplier) mult += mod.multiplier; }); const prod = base * mult; const coin = miningCoins.find(c => c.id === r.selectedCoinId); const yieldPerHash = coin ? (coin.minProportion || 0) : 0; const rate = prod * yieldPerHash; rates[r.selectedCoinId] = (rates[r.selectedCoinId] || 0) + rate; }); return rates; })()} onWithdrawCoin={handleWithdrawCoin} prefillAmount={depositPrefill} withdrawTokens={web3SettingsState?.withdrawTokens?.map(t => ({ name: t.name, contract: t.contract, minAmount: t.minAmount, minWithdrawalUsdc: t.minWithdrawalUsdc, feePercent: t.feePercent }))} minDepositUsdc={web3SettingsState?.minDepositUsdc} depositPolygonDisabled={web3SettingsState?.depositPolygonDisabled} depositBnbDisabled={web3SettingsState?.depositBnbDisabled} depositBaseDisabled={web3SettingsState?.depositBaseDisabled} />
+                            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between md:col-span-2 lg:col-span-2 xl:col-span-2 transition-colors">
+                              <div>
+                                <h3 className="text-slate-700 dark:text-slate-300 font-bold flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-800 pb-2"><LayoutDashboard size={18} /> ESTATÍSTICAS</h3>
+                                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                                  <div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Máquinas Ativas</span><span className="font-mono text-slate-700 dark:text-slate-200">{countActiveMachines(gameState.placedRacks)} Unidades</span></div>
+                                  <div className="flex flex-col bg-slate-50 dark:bg-slate-950 p-4 rounded border border-slate-200 dark:border-slate-800"><span className="text-slate-500 text-sm">Rigs Instalados</span><span className="font-mono text-slate-700 dark:text-slate-200">{gameState.placedRacks.length} Unidades</span></div>
+                                </div>
+                              </div>
+                              <div className="mt-8 pt-4 border-t border-slate-200 dark:border-slate-800" />
+                            </div>
+                          </div>
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+
+                  {saveLoaded && currentView === 'upgrade' && (
+                    <div className="flex-1 flex flex-col">
+                      <div className="flex-1">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <UpgradeAccount user={user} accessLevels={accessLevels} onUpgrade={handleUpgradeAccess} usdcBalance={gameState.usdc} onSuggestDeposit={handleSuggestDeposit} onPassPurchased={handlePassPurchased} onReloadGameState={handleReloadGameState} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'ranking' && (
+                    <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <AdminRanking isPublic={true} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'transparency' && getAllowedPages().includes('transparency') && (
+                    <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1 overflow-y-auto custom-scrollbar">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <TransparencyPage />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'profile' && user && (
+                    <div className="flex-1 flex flex-col">
+                      <div className="flex-1">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <ProfilePage user={user} onUpdateProfile={handleUpdateUser} onUpdateGameState={(next) => setGameState(next)} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
                 </div>
               </main>
 
@@ -2210,13 +2492,15 @@ export default function App() {
           </div>
         )}
         {showRewardModal && (
-          <RewardLoadingScreen
-            rewards={pendingRewardSummary}
-            onComplete={handleRewardComplete}
-            isReturningUser={!(user as any).isNewRegistration}
-            offlineEarnings={offlineStats}
-            coinNames={Object.fromEntries(miningCoins.map(c => [c.id, c.name]))}
-          />
+          <Suspense fallback={<div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80"><RefreshCw className="animate-spin text-amber-400" size={32} /></div>}>
+            <RewardLoadingScreen
+              rewards={pendingRewardSummary}
+              onComplete={handleRewardComplete}
+              isReturningUser={!(user as any).isNewRegistration}
+              offlineEarnings={offlineStats}
+              coinNames={Object.fromEntries(miningCoins.map(c => [c.id, c.name]))}
+            />
+          </Suspense>
         )}
 
 

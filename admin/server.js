@@ -446,6 +446,46 @@ io.on('connection', (socket) => {
     // --- FILE MANAGER ---
     const PROJECT_ROOT = path.resolve(__dirname, '../');
 
+    const resolvedPathStaysUnderRoot = (absPath) => {
+        const resolved = path.resolve(absPath);
+        const root = path.resolve(PROJECT_ROOT);
+        return resolved === root || resolved.startsWith(root + path.sep);
+    };
+
+    /** Nome simples (ficheiro/pasta) — rejeita path traversal em `name`. */
+    const sanitizeEntryName = (raw) => {
+        const s = path.basename(String(raw ?? ''));
+        if (!s || s === '.' || s === '..' || s.includes('\0')) return null;
+        if (s.length > 200) return null;
+        return s;
+    };
+
+    /**
+     * Garante que o caminho lógico e o destino real (após symlinks) ficam dentro do projeto.
+     * Evita escrever/apagar fora da árvore quando um segmento é symlink para fora.
+     */
+    const realPathStaysUnderProject = (absPath) => {
+        const resolved = path.resolve(absPath);
+        if (!resolvedPathStaysUnderRoot(resolved)) return false;
+        let cur = resolved;
+        for (let depth = 0; depth < 128; depth++) {
+            if (fs.existsSync(cur)) {
+                try {
+                    const real = fs.realpathSync(cur);
+                    return resolvedPathStaysUnderRoot(real);
+                } catch {
+                    return false;
+                }
+            }
+            const parent = path.dirname(cur);
+            if (parent === cur) return resolvedPathStaysUnderRoot(resolved);
+            cur = parent;
+        }
+        return false;
+    };
+
+    const MAX_SOCKET_UPLOAD_BYTES = 20 * 1024 * 1024;
+
     socket.on('list-files', (relativePath, callback) => {
         if (!ensureSocketAuth(socket)) return;
 
@@ -455,7 +495,7 @@ io.on('connection', (socket) => {
             const targetPath = path.join(PROJECT_ROOT, cleanRelPath);
 
             // Security Check: Prevent directory traversal out of PROJECT_ROOT
-            if (!targetPath.startsWith(PROJECT_ROOT)) {
+            if (!resolvedPathStaysUnderRoot(targetPath)) {
                 return callback({ error: "Acesso negado: Caminho fora da raiz do projeto." });
             }
 
@@ -465,6 +505,10 @@ io.on('connection', (socket) => {
 
             if (!fs.statSync(targetPath).isDirectory()) {
                 return callback({ error: "O caminho não é um diretório." });
+            }
+
+            if (!realPathStaysUnderProject(targetPath)) {
+                return callback({ error: "Acesso negado: caminho resolve fora do projeto." });
             }
 
             const items = fs.readdirSync(targetPath, { withFileTypes: true });
@@ -493,12 +537,16 @@ io.on('connection', (socket) => {
             const cleanRelPath = (relativePath || '').replace(/^[/\\]+/, '');
             const targetPath = path.join(PROJECT_ROOT, cleanRelPath);
 
-            if (!targetPath.startsWith(PROJECT_ROOT)) {
+            if (!resolvedPathStaysUnderRoot(targetPath)) {
                 return callback({ error: "Acesso negado." });
             }
 
             if (!fs.existsSync(targetPath) || fs.statSync(targetPath).isDirectory()) {
                 return callback({ error: "Arquivo não encontrado ou é um diretório." });
+            }
+
+            if (!realPathStaysUnderProject(targetPath)) {
+                return callback({ error: "Acesso negado: caminho resolve fora do projeto." });
             }
 
             // Limit file size to 1MB to prevent crashing the socket
@@ -521,11 +569,15 @@ io.on('connection', (socket) => {
             const cleanRelPath = (relativePath || '').replace(/^[/\\]+/, '');
             const targetPath = path.join(PROJECT_ROOT, cleanRelPath);
 
-            if (!targetPath.startsWith(PROJECT_ROOT)) return callback({ error: "Acesso negado." });
+            if (!resolvedPathStaysUnderRoot(targetPath)) return callback({ error: "Acesso negado." });
 
             // Validate if it's not a directory
             if (fs.existsSync(targetPath) && fs.statSync(targetPath).isDirectory()) {
                 return callback({ error: "Não é possível sobrescrever um diretório." });
+            }
+
+            if (!realPathStaysUnderProject(targetPath)) {
+                return callback({ error: "Acesso negado: caminho resolve fora do projeto." });
             }
 
             fs.writeFileSync(targetPath, content, 'utf8');
@@ -542,9 +594,19 @@ io.on('connection', (socket) => {
             const cleanRelPath = (relativePath || '').replace(/^[/\\]+/, '');
             const targetPath = path.join(PROJECT_ROOT, cleanRelPath);
 
-            if (!targetPath.startsWith(PROJECT_ROOT)) return callback({ error: "Acesso negado." });
+            if (!resolvedPathStaysUnderRoot(targetPath)) return callback({ error: "Acesso negado." });
+
+            const resolvedTarget = path.resolve(targetPath);
+            const resolvedRoot = path.resolve(PROJECT_ROOT);
+            if (resolvedTarget === resolvedRoot) {
+                return callback({ error: "Não é permitido apagar a raiz do projeto." });
+            }
 
             if (!fs.existsSync(targetPath)) return callback({ error: "Arquivo/Diretório não encontrado." });
+
+            if (!realPathStaysUnderProject(targetPath)) {
+                return callback({ error: "Acesso negado: caminho resolve fora do projeto." });
+            }
 
             fs.rmSync(targetPath, { recursive: true, force: true });
             callback({ success: true });
@@ -557,20 +619,33 @@ io.on('connection', (socket) => {
         if (!ensureSocketAuth(socket)) return;
 
         try {
+            const safeName = sanitizeEntryName(name);
+            if (!safeName) return callback({ error: "Nome de ficheiro inválido." });
+
             const cleanRelPath = (relativePath || '').replace(/^[/\\]+/, '');
             const targetDir = path.join(PROJECT_ROOT, cleanRelPath);
-            const targetPath = path.join(targetDir, name);
+            const targetPath = path.join(targetDir, safeName);
 
-            if (!targetPath.startsWith(PROJECT_ROOT)) return callback({ error: "Acesso negado." });
+            if (!resolvedPathStaysUnderRoot(targetPath)) return callback({ error: "Acesso negado." });
 
             // Check if directory exists
             if (!fs.existsSync(targetDir)) return callback({ error: "Diretório de destino não existe." });
 
-            // Content comes as base64 string usually if sent from client FileReader
-            // Or Buffer if socket.io handles it. Let's assume it might be a buffer or base64.
-            // If the client sends ArrayBuffer, socket.io receives it as Buffer.
+            if (!realPathStaysUnderProject(targetDir) || !realPathStaysUnderProject(targetPath)) {
+                return callback({ error: "Acesso negado: caminho resolve fora do projeto." });
+            }
 
-            fs.writeFileSync(targetPath, content);
+            let buf;
+            if (Buffer.isBuffer(content)) buf = content;
+            else if (content instanceof ArrayBuffer) buf = Buffer.from(new Uint8Array(content));
+            else if (typeof content === 'string') buf = Buffer.from(content, 'utf8');
+            else buf = Buffer.from(String(content ?? ''));
+
+            if (buf.length > MAX_SOCKET_UPLOAD_BYTES) {
+                return callback({ error: `Ficheiro demasiado grande (máx. ${MAX_SOCKET_UPLOAD_BYTES / (1024 * 1024)} MiB).` });
+            }
+
+            fs.writeFileSync(targetPath, buf);
             callback({ success: true });
         } catch (e) {
             callback({ error: e.message });
@@ -581,11 +656,19 @@ io.on('connection', (socket) => {
         if (!ensureSocketAuth(socket)) return;
 
         try {
+            const folderName = sanitizeEntryName(name);
+            if (!folderName) return callback({ error: "Nome de pasta inválido." });
+
             const cleanRelPath = (relativePath || '').replace(/^[/\\]+/, '');
             const targetDir = path.join(PROJECT_ROOT, cleanRelPath);
-            const newFolderPath = path.join(targetDir, name);
+            const newFolderPath = path.join(targetDir, folderName);
 
-            if (!newFolderPath.startsWith(PROJECT_ROOT)) return callback({ error: "Acesso negado." });
+            if (!resolvedPathStaysUnderRoot(newFolderPath)) return callback({ error: "Acesso negado." });
+
+            if (!fs.existsSync(targetDir)) return callback({ error: "Diretório de destino não existe." });
+            if (!realPathStaysUnderProject(targetDir) || !realPathStaysUnderProject(newFolderPath)) {
+                return callback({ error: "Acesso negado: caminho resolve fora do projeto." });
+            }
 
             if (fs.existsSync(newFolderPath)) return callback({ error: "Pasta já existe." });
 

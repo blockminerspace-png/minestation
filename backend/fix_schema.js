@@ -1,24 +1,17 @@
 import pkg from 'pg';
 const { Pool } = pkg;
+import 'dotenv/config';
+import { buildPoolConfig } from './config/database.js';
 
-const poolConfig = {
-    user: 'postgres',
-    host: 'localhost',
-    database: 'minestation',
-    password: '32638621',
-    port: 5432,
-};
-
-const pool = new Pool(poolConfig);
+const pool = new Pool(buildPoolConfig());
 
 const fixSchema = async () => {
-    const client = await pool.connect();
-    try {
-        console.log('Fixing schema...');
-        await client.query('BEGIN');
+  const client = await pool.connect();
+  try {
+    console.log('Fixing schema...');
+    await client.query('BEGIN');
 
-        // Create referral_models table
-        await client.query(`
+    await client.query(`
             CREATE TABLE IF NOT EXISTS referral_models (
                 id SERIAL PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -33,26 +26,25 @@ const fixSchema = async () => {
                 is_active INTEGER DEFAULT 1
             );
         `);
-        console.log('referral_models table ensured.');
+    console.log('referral_models table ensured.');
 
-        // Create access_level_referral_models table
-        await client.query(`
+    await client.query(`
             CREATE TABLE IF NOT EXISTS access_level_referral_models (
                 access_level_id TEXT PRIMARY KEY REFERENCES access_levels(id),
                 referral_model_id INTEGER REFERENCES referral_models(id)
             );
         `);
-        console.log('access_level_referral_models table ensured.');
+    console.log('access_level_referral_models table ensured.');
 
-        await client.query('COMMIT');
-        console.log('Schema fix completed successfully.');
-    } catch (e) {
-        await client.query('ROLLBACK');
-        console.error('Schema fix failed:', e);
-    } finally {
-        client.release();
-        pool.end();
-    }
+    await client.query('COMMIT');
+    console.log('Schema fix completed successfully.');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('Schema fix failed:', e);
+  } finally {
+    client.release();
+    pool.end();
+  }
 };
 
 fixSchema();

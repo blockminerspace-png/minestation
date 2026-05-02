@@ -264,7 +264,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                                             <button
                                                 type="button"
                                                 onClick={async () => {
-                                                    if (!window.confirm(`Ocultar ${item.username} do ranking público? Podes voltar a mostrar na secção abaixo.`)) return;
+                                                    if (!window.confirm(`Ocultar ${item.username} do ranking público? Você pode voltar a mostrar na seção abaixo.`)) return;
                                                     const r = await toggleRankingExclusion(item.email, true);
                                                     if (!r.ok) {
                                                         alert(r.error || 'Falha ao atualizar');

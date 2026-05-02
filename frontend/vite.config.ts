@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       ...(isDev
         ? {
             // Nunca `true`: fora desta lista o Vite recusa o Host (evita `vite dev` aberto na Internet).
-            allowedHosts: ['localhost', '127.0.0.1', 'minestation.online', 'www.minestation.online', 'minestation.tech', 'www.minestation.tech'],
+            allowedHosts: ['localhost', '127.0.0.1', 'minestation.online', 'www.minestation.online', 'minestation.tech', 'www.minestation.tech', 'genesisdao.tech', 'www.genesisdao.tech'],
           }
         : {}),
       proxy: {
