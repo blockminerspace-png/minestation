@@ -47,14 +47,27 @@ export const AdminBackup: React.FC = () => {
                 body: JSON.stringify({ name: backupName || 'manual_backup' })
             });
             if (resp.ok) {
-                let extra = '';
                 try {
                     const j = await resp.json();
-                    if (j.bytes != null) extra = ` (${(j.bytes / (1024 * 1024)).toFixed(2)} MiB, SQL/pg_dump)`;
+                    const fn = typeof j.filename === 'string' ? j.filename : '';
+                    if (fn && !fn.toLowerCase().endsWith('.sql')) {
+                        setMessage({
+                            text: `Resposta inesperada: «${fn}». O backup manual deve ser .sql (pg_dump). Reinicie o servidor com a versão atual do código ou instale pg_dump no PATH.`,
+                            type: 'error'
+                        });
+                        loadBackups();
+                        return;
+                    }
+                    const mib = typeof j.bytes === 'number' ? (j.bytes / (1024 * 1024)).toFixed(2) : null;
+                    const extra = mib != null ? ` ${mib} MiB.` : '';
+                    const namePart = fn ? ` Ficheiro: ${fn}.` : '';
+                    setMessage({
+                        text: `Backup SQL completo (schema + dados + constraints) criado no servidor.${namePart}${extra}`,
+                        type: 'success'
+                    });
                 } catch {
-                    extra = ' (SQL/pg_dump)';
+                    setMessage({ text: 'Backup criado. Atualize a lista ao lado e confirme que o ficheiro termina em .sql.', type: 'success' });
                 }
-                setMessage({ text: `Backup SQL criado com sucesso!${extra}`, type: 'success' });
                 setBackupName('');
                 loadBackups();
             } else {
@@ -170,30 +183,60 @@ export const AdminBackup: React.FC = () => {
     const sortedBackups = [...backups].sort((a, b) => b.createdAt - a.createdAt);
 
     return (
-        <div className="space-y-6">
-            <div className="flex items-center justify-between border-b border-slate-700 pb-4">
-                <div>
-                    <h2 className="text-2xl font-bold text-white flex items-center gap-2">
-                        <DbIcon className="text-red-500" /> Gerenciador de Backups
+        <div className="space-y-6 min-w-0 max-w-full">
+            <div className="flex flex-col gap-4 border-b border-slate-700 pb-4 lg:flex-row lg:items-start lg:justify-between">
+                <div className="min-w-0 flex-1">
+                    <h2 className="text-xl font-bold text-white flex flex-wrap items-center gap-2 sm:text-2xl">
+                        <DbIcon className="text-red-500 shrink-0" /> Gerenciador de Backups
                     </h2>
-                    <p className="text-slate-400 text-sm">
-                        Backups completos em SQL via <code className="text-slate-300">pg_dump</code> (schema, dados, constraints). O servidor também grava um dump automático a cada 24 horas (ficheiros <code className="text-slate-300">auto_pgdump_*.sql</code>).
+                    <p className="text-slate-400 text-sm leading-relaxed break-words">
+                        O botão abaixo gera sempre <strong className="text-slate-200">.sql</strong> com <code className="text-slate-300">pg_dump</code> (schema, dados, constraints). Ficheiros <code className="text-slate-300">.json</code> na lista são só legado — não voltam a ser criados pelo painel atual.
+                        Dump automático: <code className="text-slate-300">auto_pgdump_*.sql</code> (worker em segundo plano).
+                    </p>
+                    <p className="mt-2 text-xs text-slate-500 break-words">
+                        Se aparecer erro com <code className="text-slate-400">ENOENT</code>: o processo Node não encontrou <code className="text-slate-400">pg_dump</code>. No deploy com Docker do repositório atual, faça <strong className="text-slate-300">rebuild da imagem</strong> do serviço <code className="text-slate-400">app</code> (o Dockerfile já inclui <code className="text-slate-400">postgresql-client</code>).
                     </p>
                 </div>
-                <div className="flex gap-2">
-                    <label className={`cursor-pointer bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded font-bold text-sm transition-all flex items-center gap-2 ${actionLoading === 'upload' ? 'opacity-50 pointer-events-none' : ''}`}>
-                        {actionLoading === 'upload' ? <Loader2 size={18} className="animate-spin" /> : <Download size={18} className="rotate-180" />}
-                        Subir backup (.sql / .dump / .json / .db …)
+                <div className="flex shrink-0 lg:justify-end">
+                    <label className={`cursor-pointer bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 sm:px-4 rounded font-bold text-xs sm:text-sm transition-all inline-flex items-center gap-2 max-w-full ${actionLoading === 'upload' ? 'opacity-50 pointer-events-none' : ''}`}>
+                        {actionLoading === 'upload' ? <Loader2 size={18} className="animate-spin shrink-0" /> : <Download size={18} className="rotate-180 shrink-0" />}
+                        <span className="min-w-0 text-left leading-snug">Subir backup (.sql / .dump / .json / .db …)</span>
                         <input type="file" onChange={handleUpload} className="hidden" accept=".db,.sqlite,.back,.json,.sql,.dump,.gz" />
                     </label>
                 </div>
             </div>
 
             {message && (
-                <div className={`p-4 rounded border flex items-center gap-3 ${message.type === 'success' ? 'bg-green-900/20 border-green-900 text-green-400' : 'bg-red-900/20 border-red-900 text-red-400'}`}>
-                    {message.type === 'success' ? <CheckCircle2 size={20} /> : <AlertTriangle size={20} />}
-                    <span className="text-sm font-bold">{message.text}</span>
-                    <button onClick={() => setMessage(null)} className="ml-auto text-xs opacity-50 hover:opacity-100">Fechar</button>
+                <div className={`p-4 rounded border flex flex-col gap-2 ${message.type === 'success' ? 'bg-green-900/20 border-green-900 text-green-400' : 'bg-red-900/20 border-red-900 text-red-400'}`}>
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:gap-3">
+                        <div className="flex shrink-0 gap-3 sm:contents">
+                            {message.type === 'success' ? <CheckCircle2 size={20} className="shrink-0 mt-0.5" /> : <AlertTriangle size={20} className="shrink-0 mt-0.5" />}
+                            <span className="text-sm font-bold break-words min-w-0 flex-1">{message.text}</span>
+                        </div>
+                        <button type="button" onClick={() => setMessage(null)} className="self-end text-xs opacity-70 hover:opacity-100 sm:ml-auto sm:self-start shrink-0">Fechar</button>
+                    </div>
+                    {message.type === 'error' && message.text.includes('ENOENT') && (
+                        <div className="rounded border border-red-800/60 bg-slate-950/40 p-3 text-xs font-normal text-red-200/90 leading-relaxed">
+                            <p className="font-bold text-red-300 mb-2">O que fazer no servidor</p>
+                            <ol className="list-decimal pl-4 space-y-2">
+                                <li>
+                                    <strong>Docker Compose</strong> (este repo): na pasta do projeto, executar{' '}
+                                    <code className="rounded bg-slate-900 px-1 py-0.5 text-[11px] text-amber-200/90">docker compose build --no-cache app &amp;&amp; docker compose up -d app</code>
+                                    {' '}para reconstruir a imagem com <code className="text-slate-300">postgresql-client</code>.
+                                </li>
+                                <li>
+                                    <strong>VM sem Docker</strong>: instalar o cliente PostgreSQL (ex.: Debian/Ubuntu:{' '}
+                                    <code className="rounded bg-slate-900 px-1 py-0.5 text-[11px] text-amber-200/90">sudo apt install postgresql-client</code>
+                                    ), depois confirmar <code className="text-slate-300">which pg_dump</code>.
+                                </li>
+                                <li>
+                                    <strong>Binário noutro caminho</strong>: no <code className="text-slate-300">.env</code> do backend,{' '}
+                                    <code className="rounded bg-slate-900 px-1 py-0.5 text-[11px] text-amber-200/90">PG_DUMP_PATH=/caminho/absoluto/pg_dump</code>
+                                    {' '}(ver <code className="text-slate-300">.env.example</code> na raiz).
+                                </li>
+                            </ol>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -274,6 +317,14 @@ export const AdminBackup: React.FC = () => {
                                                         <span className="text-white font-medium truncate max-w-xs" title={b.filename}>{b.filename}</span>
                                                         <span className="text-[10px] text-slate-500 flex flex-wrap items-center gap-1">
                                                             {new Date(b.createdAt).toLocaleString()}
+                                                            {b.filename.toLowerCase().endsWith('.sql') && (
+                                                                <span className="font-bold uppercase text-emerald-600/90 dark:text-emerald-400/90">SQL</span>
+                                                            )}
+                                                            {b.filename.toLowerCase().endsWith('.json') && (
+                                                                <span className="font-bold uppercase text-amber-600/90 dark:text-amber-400/90" title="Export antigo; use Gerar SQL para dump completo">
+                                                                    JSON legado
+                                                                </span>
+                                                            )}
                                                             {b.filename.startsWith('auto_pgdump_') && (
                                                                 <span className="text-cyan-600/90 dark:text-cyan-400/90 font-bold uppercase">automático</span>
                                                             )}

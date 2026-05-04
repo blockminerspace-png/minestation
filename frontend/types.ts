@@ -66,6 +66,36 @@ export interface Upgrade {
 /** Sala padrão do projeto (AdminRigRooms); rigs antigos vinham com room_id NULL ou "main" no servidor. */
 export const DEFAULT_RIG_ROOM_ID = 'room_initial';
 
+/** Sala "NFTs AUTO" (rig_rooms) — alinhado com `NFT_AUTO_ROOM_ID` no backend. */
+export const NFT_AUTO_ROOM_ID = 'room_1775484506874';
+/** Único chassis permitido nessa sala: Rack H1 NFT Collection. */
+export const NFT_AUTO_ALLOWED_CHASSIS_ID = 'armario_1';
+
+/** Nomes normalizados de sala com a mesma política (id pode variar na BD). */
+export const NFT_AUTO_POLICY_ROOM_NAME_KEYS = ['nfts auto', 'nft auto', 'nfts arbam'] as const;
+
+export function normalizeRigRoomPolicyNameKey(name: string | null | undefined): string {
+  return String(name || '').toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+export function isNftAutoArmario1OnlyRoom(room: { id: string; name?: string } | null | undefined): boolean {
+  if (!room?.id) return false;
+  if (normalizePlacedRackRoomId(room.id) === NFT_AUTO_ROOM_ID) return true;
+  const kn = normalizeRigRoomPolicyNameKey(room.name);
+  return (NFT_AUTO_POLICY_ROOM_NAME_KEYS as readonly string[]).includes(kn);
+}
+
+/** Colocação de rig: usa flag do servidor quando existir, senão id legado ou nome da sala. */
+export function isNftAutoArmario1OnlyRoomContext(
+  roomId: string | null | undefined,
+  roomName?: string | null,
+  serverNftFlag?: boolean
+): boolean {
+  if (serverNftFlag === true) return true;
+  if (roomId != null && normalizePlacedRackRoomId(roomId) === NFT_AUTO_ROOM_ID) return true;
+  return (NFT_AUTO_POLICY_ROOM_NAME_KEYS as readonly string[]).includes(normalizeRigRoomPolicyNameKey(roomName));
+}
+
 export function normalizePlacedRackRoomId(roomId: string | null | undefined): string {
   const s = roomId != null ? String(roomId).trim() : '';
   if (!s || s === 'main') return DEFAULT_RIG_ROOM_ID;
@@ -113,13 +143,38 @@ export interface MarketListing {
   id: string;
   sellerName: string;
   itemId: string;
+  /** USDC por unidade */
   price: number;
   qty: number; // Quantity of items in this listing
+  /** Total USDC (price × qty). Calculado no cliente se o servidor for mais antigo. */
+  lineTotal?: number;
+  /** Em custódia: USDC realmente debitado ao comprar (servidor). */
+  buyerPaidUsdc?: number;
   expiresAt: number; // For bots, it expires. For players, it might not expire or expire slowly.
   isPlayer?: boolean; // Flag to identify if it's a player listing
   reservedBy?: string;
   reservedUntil?: number;
   status?: 'active' | 'sold';
+}
+
+/** Linha de GET /api/market/history (compras ou vendas P2P). */
+export interface P2PMarketTradeHistoryEntry {
+  at: number;
+  itemId: string;
+  qty: number;
+  unitPrice: number;
+  /** Total debitado do comprador (USDC). */
+  buyerPaidUsdc: number;
+  /** Líquido creditado ao vendedor no cofre P2P (após taxa). */
+  sellerReceivedUsdc: number;
+  taxUsdc: number;
+  /** Vendedor (em compras) ou comprador (em vendas). */
+  counterpartName: string;
+}
+
+export interface P2PMarketTradeHistory {
+  purchases: P2PMarketTradeHistoryEntry[];
+  sales: P2PMarketTradeHistoryEntry[];
 }
 
 export interface SystemNews {
@@ -161,6 +216,8 @@ export interface RigRoom {
   owned?: boolean;
   unlockedSlots?: number;
   visibleToAccessLevelIds?: string[];
+  /** Definido pelo servidor (`/api/my-rig-rooms`, `/api/rig-rooms`): só chassis armario_1. */
+  nftAutoArmario1Only?: boolean;
 }
 
 // LOOT BOXES
@@ -171,7 +228,8 @@ export interface LootBoxItem {
   type: 'item' | 'currency' | 'coin' | 'bundle';
   minQty: number;
   maxQty: number;
-  probability: number; // 0-100%
+  /** Loja/outros: peso na roleta (um prémio). Cadastro (`trigger=registration`): linha entra no pacote se > 0. */
+  probability: number;
 }
 
 export interface LootBox {
@@ -365,8 +423,11 @@ export interface AdminMarketListing {
   sellerId: number;
   sellerName: string;
   itemId: string;
+  /** USDC por unidade */
   price: number;
   qty: number;
+  /** Total USDC (preço × qty) */
+  lineTotal?: number;
   status: 'active' | 'sold' | 'awaiting_pickup';
   expiresAt: number;
   reservedBy?: number;
@@ -453,14 +514,14 @@ export interface SecurityStats {
   blacklist: BlacklistEntry[];
 }
 
-<<<<<<< Updated upstream
 /** Linha de `game_activity_logs` (ações de jogo do jogador). */
 export interface GameUserActivityEntry {
   id: number;
   action: string;
   meta: Record<string, unknown> | null;
   createdAt: number;
-=======
+}
+
 export type TransparencyCategory = 'pool' | 'expense' | 'investment' | 'other';
 
 export interface TransparencyEntry {
@@ -473,7 +534,6 @@ export interface TransparencyEntry {
   sortOrder: number;
   createdAt: number;
   updatedAt: number;
->>>>>>> Stashed changes
 }
 
 export interface ReferralModel {

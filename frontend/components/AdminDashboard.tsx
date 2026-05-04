@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { User, Upgrade, PlacedRack } from '../types';
 import { Users, Zap, Database, Activity, Clock, Trophy, DollarSign, Download, EyeOff, Eye } from 'lucide-react';
 import { getGameState, getTopWithdrawalsByCoin, getMiningCoins, getAdminDashboardStats, toggleRankingExclusion, getAdminTreasuryTokenTxs } from '../services/api';
@@ -49,103 +49,164 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
     }>({ totalUsers: 0, onlineUsers: 0, totalHashrate: 0, top10: [], rankingExcluded: [], last10: [], totalDeposited: 0, topDeposits: [], totalWithdrawn: 0, topWithdrawalsByCoin: [] });
     const [selectedCoinId, setSelectedCoinId] = useState<string>('');
     const [miningCoins, setMiningCoins] = useState<{ id: string; name: string }[]>([]);
+    const [statsError, setStatsError] = useState<string | null>(null);
+    const [wsConnected, setWsConnected] = useState(false);
+    const lastEthFetchRef = useRef(0);
+
+    const applyServerDashboard = useCallback((data: any) => {
+        setStats(prev => ({
+            ...prev,
+            totalUsers: data.totalUsers,
+            onlineUsers: data.onlineUsers,
+            totalDeposited: data.totalDeposited,
+            totalWithdrawn: data.totalWithdrawn,
+            last10: data.last10,
+            topDeposits: data.topDeposits,
+            topWithdrawalsByCoin: data.topWithdrawalsByCoin,
+            totalHashrate: data.globalPower || 0,
+            top10: (data.topMiners || []).map((m: any) => ({
+                username: m.username,
+                email: m.email,
+                power: m.amount
+            })),
+            rankingExcluded: Array.isArray(data.rankingExcluded) ? data.rankingExcluded : []
+        }));
+    }, []);
+
+    const tryApplyEtherscanDeposits = useCallback(async () => {
+        const now = Date.now();
+        if (now - lastEthFetchRef.current < 60000) return;
+        try {
+            const savedStartDate = localStorage.getItem('adminReportsStartDate') || '2025-12-16';
+            const startDateTimestamp = Math.floor(new Date(savedStartDate).getTime() / 1000);
+            const TREASURY_WALLET = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
+            const apiData = (await getAdminTreasuryTokenTxs(1, 1000)) as {
+                status?: string | number;
+                result?: any[] | string;
+                message?: string;
+            };
+            const st = apiData.status != null ? String(apiData.status) : '';
+            if (st !== '1' || !Array.isArray(apiData.result)) return;
+            const validTxs = apiData.result.filter((tx: any) => {
+                return tx.to.toLowerCase() === TREASURY_WALLET.toLowerCase() &&
+                    parseInt(tx.timeStamp, 10) >= startDateTimestamp;
+            });
+            const totalRaw = validTxs.reduce((acc: number, tx: any) => acc + parseFloat(tx.value), 0);
+            const realTotalUSDC = totalRaw / 1000000;
+            lastEthFetchRef.current = now;
+            const depositMap: Record<string, number> = {};
+            validTxs.forEach((tx: any) => {
+                const from = tx.from.toLowerCase();
+                const val = parseFloat(tx.value) / 1000000;
+                depositMap[from] = (depositMap[from] || 0) + val;
+            });
+            const filteredTopDeposits = Object.entries(depositMap)
+                .map(([wallet, amount]) => {
+                    const userMatch = users.find(u => u.polygonWallet?.toLowerCase() === wallet);
+                    return {
+                        username: userMatch ? userMatch.username : (wallet.substring(0, 6) + '...' + wallet.substring(38)),
+                        email: userMatch ? userMatch.email : 'External Wallet',
+                        amount: amount as number
+                    };
+                })
+                .sort((a, b) => b.amount - a.amount)
+                .slice(0, 10);
+            setStats(prev => ({
+                ...prev,
+                totalDeposited: realTotalUSDC,
+                topDeposits: filteredTopDeposits
+            }));
+        }
+        catch (err) {
+            console.error('Dashboard USDC Fetch Error:', err);
+        }
+    }, [users]);
 
     useEffect(() => {
         let mounted = true;
-        let timer: any;
-        let lastEthFetch = 0;
 
-        const load = async () => {
+        const initialLoad = async () => {
             const data = await getAdminDashboardStats();
-            if (!data || !mounted) return;
-
+            if (!mounted) return;
+            if (!data) {
+                setStatsError('Não foi possível carregar /api/admin/dashboard-stats (resposta vazia ou erro 500). Confira os logs do servidor — por exemplo coluna em falta na tabela sessions.');
+                return;
+            }
+            setStatsError(null);
             const coins = await getMiningCoins();
             if (!mounted) return;
-
             setMiningCoins(coins.map(c => ({ id: c.id, name: c.name })));
-
-            // Sincronizar com a data definida em Relatórios
-            const savedStartDate = localStorage.getItem('adminReportsStartDate') || '2025-12-16';
-            const startDateTimestamp = Math.floor(new Date(savedStartDate).getTime() / 1000);
-
-            // Calculate Real-Time USDC from Etherscan - Only fetch every 60s to save API limits/performance
-            const now = Date.now();
-            let realTotalUSDC = data.totalDeposited;
-            let filteredTopDeposits = data.topDeposits;
-
-            if (now - lastEthFetch > 60000) {
-                try {
-                    const TREASURY_WALLET = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
-                    const apiData = (await getAdminTreasuryTokenTxs(1, 1000)) as {
-                        status?: string | number;
-                        result?: any[] | string;
-                        message?: string;
-                    };
-
-                    const st = apiData.status != null ? String(apiData.status) : '';
-                    if (st === '1' && Array.isArray(apiData.result)) {
-                        const validTxs = apiData.result.filter((tx: any) => {
-                            return tx.to.toLowerCase() === TREASURY_WALLET.toLowerCase() &&
-                                parseInt(tx.timeStamp) >= startDateTimestamp;
-                        });
-
-                        const totalRaw = validTxs.reduce((acc: number, tx: any) => acc + parseFloat(tx.value), 0);
-                        realTotalUSDC = totalRaw / 1000000;
-                        lastEthFetch = now;
-
-                        // Recalcular Top 10 Depósitos do Período
-                        const depositMap: Record<string, number> = {};
-                        validTxs.forEach((tx: any) => {
-                            const from = tx.from.toLowerCase();
-                            const val = parseFloat(tx.value) / 1000000;
-                            depositMap[from] = (depositMap[from] || 0) + val;
-                        });
-
-                        filteredTopDeposits = Object.entries(depositMap)
-                            .map(([wallet, amount]) => {
-                                const userMatch = users.find(u => u.polygonWallet?.toLowerCase() === wallet);
-                                return {
-                                    username: userMatch ? userMatch.username : (wallet.substring(0, 6) + '...' + wallet.substring(38)),
-                                    email: userMatch ? userMatch.email : 'External Wallet',
-                                    amount: amount
-                                };
-                            })
-                            .sort((a, b) => b.amount - a.amount)
-                            .slice(0, 10);
-                    }
-                } catch (err) {
-                    console.error("Dashboard USDC Fetch Error:", err);
-                }
-            } else {
-                // Reuse last value or data from DB during the 60s cooldown
-                realTotalUSDC = stats.totalDeposited || data.totalDeposited;
-                filteredTopDeposits = stats.topDeposits.length > 0 ? stats.topDeposits : data.topDeposits;
-            }
-
-            setStats(prev => ({
-                ...prev,
-                totalUsers: data.totalUsers,
-                onlineUsers: data.onlineUsers,
-                totalDeposited: realTotalUSDC,
-                totalWithdrawn: data.totalWithdrawn,
-                last10: data.last10,
-                topDeposits: filteredTopDeposits,
-                topWithdrawalsByCoin: data.topWithdrawalsByCoin,
-                totalHashrate: data.globalPower || 0,
-                top10: (data.topMiners || []).map((m: any) => ({
-                    username: m.username,
-                    email: m.email,
-                    power: m.amount
-                })),
-                rankingExcluded: Array.isArray(data.rankingExcluded) ? data.rankingExcluded : []
-            }));
-
-            if (!selectedCoinId && coins.length > 0) setSelectedCoinId(coins[0].id);
+            applyServerDashboard(data);
+            await tryApplyEtherscanDeposits();
+            if (!mounted) return;
+            setSelectedCoinId(prev => prev || (coins.length > 0 ? coins[0].id : ''));
         };
-        load();
-        timer = setInterval(load, 5000); // 5s refresh as per user request
-        return () => { mounted = false; if (timer) clearInterval(timer); };
-    }, [selectedCoinId]);
+
+        void initialLoad();
+
+        let ws: WebSocket | null = null;
+        let stopped = false;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+        const handleWsMessage = (ev: MessageEvent) => {
+            let msg: { type?: string; event?: string; data?: any };
+            try {
+                msg = JSON.parse(String(ev.data)) as typeof msg;
+            }
+            catch {
+                return;
+            }
+            if (msg.type !== 'admin_dashboard' || msg.event !== 'stats' || !msg.data || !mounted) return;
+            applyServerDashboard(msg.data);
+        };
+
+        const openWs = () => {
+            if (stopped) return;
+            const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const url = `${proto}//${window.location.host}/ws/admin-dashboard`;
+            try {
+                ws = new WebSocket(url);
+            }
+            catch {
+                reconnectTimer = setTimeout(openWs, 3500);
+                return;
+            }
+            ws.onopen = () => { if (mounted) setWsConnected(true); };
+            ws.onmessage = handleWsMessage;
+            ws.onclose = () => {
+                if (mounted) setWsConnected(false);
+                ws = null;
+                if (!stopped) {
+                    if (reconnectTimer) clearTimeout(reconnectTimer);
+                    reconnectTimer = setTimeout(openWs, 3500);
+                }
+            };
+            ws.onerror = () => {
+                try {
+                    ws?.close();
+                }
+                catch {
+                    /* ignore */
+                }
+            };
+        };
+        openWs();
+
+        const ethTimer = window.setInterval(() => { void tryApplyEtherscanDeposits(); }, 60000);
+
+        return () => {
+            mounted = false;
+            stopped = true;
+            if (reconnectTimer) clearTimeout(reconnectTimer);
+            window.clearInterval(ethTimer);
+            try {
+                ws?.close();
+            }
+            catch {
+                /* ignore */
+            }
+        };
+    }, [applyServerDashboard, tryApplyEtherscanDeposits]);
 
     const formatHash = (val: number) => {
         if (val === 0) return "0 H/s";
@@ -163,6 +224,15 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
 
     return (
         <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4">
+            {statsError && (
+                <div className="rounded-xl border border-amber-600/50 bg-amber-950/40 px-4 py-3 text-sm text-amber-100">
+                    <span className="font-bold text-amber-400">Dashboard:</span> {statsError}
+                </div>
+            )}
+            <div className="flex items-center gap-2 text-xs text-slate-500" aria-live="polite">
+                <span className={`inline-block h-2 w-2 rounded-full ${wsConnected ? 'bg-emerald-500 animate-pulse' : 'bg-amber-600'}`} title={wsConnected ? 'WebSocket ligado' : 'A ligar WebSocket…'} />
+                {wsConnected ? 'Métricas em tempo real (WebSocket)' : 'A sincronizar métricas… (HTTP + WS)'}
+            </div>
             {/* KPI Cards */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 relative overflow-hidden">

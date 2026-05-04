@@ -1,14 +1,50 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { PlacedRack, StoredBattery, Upgrade, RigRoom } from '../types';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import { PlacedRack, StoredBattery, Upgrade, RigRoom, MiningCoin, normalizePlacedRackRoomId, isNftAutoArmario1OnlyRoom, NFT_AUTO_ALLOWED_CHASSIS_ID } from '../types';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
+import { bulkBatteryWillApplyCount, totalBatteryInstances } from '../models/roomBatteryModel';
+import {
+  calculatePlacedRacksProductionHashrate,
+  calculateRackConsumptionWatts,
+  formatHashrateDisplay,
+  getDefaultRackLayout,
+  mergeBatteryWidgetsIfAbsent,
+  getRackBatteryRuntimeHint,
+  getRackBatteryRuntimeShortLabel,
+  formatRackEnergyWh,
+  listInfrastructureInStock,
+  listItemsForSelection,
+  listStoredBatteriesForSelection,
+  type ServerRoomSelectionContext
+} from '../models/serverRoomModel';
+import { runValidatedItemSelection } from '../controllers/serverRoomController';
+import {
+    cssSafeBackgroundUrl,
+    isValidRigRoomId,
+    isValidUserEmailForRoomsFetch,
+    sanitizeEmailForRoomsFetch,
+    MAX_RIG_SLOTS_PURCHASE_PER_REQUEST,
+    parseRigSlotPurchaseQuantity,
+    previewRigSlotBulkPurchase
+} from '../validation/serverRoomValidation';
 import { getMyRigRooms, purchaseRoomSlot } from '../services/api';
-import { Server, XCircle, Zap, Power, Plus, Cog, X, Box, Save, Activity, Terminal, Calculator, Coins, Battery } from 'lucide-react';
+import type { BulkRoomBatteryRunOptions } from '../controllers/roomBatteryController';
+import { MiningCoinSelect } from './MiningCoinSelect';
+import { Server, XCircle, Zap, Power, Plus, Cog, X, Box, Save, Activity, Calculator, Coins, Battery } from 'lucide-react';
+
+function sameRigRoom(a: string | null | undefined, b: string | null | undefined): boolean {
+    return normalizePlacedRackRoomId(a) === normalizePlacedRackRoomId(b);
+}
 
 interface ServerRoomProps {
     stock: Record<string, number>;
     storedBatteries: StoredBattery[];
     placedRacks: PlacedRack[];
-    onPlaceRack: (rackTypeId: string, roomId: string, slotIndex: number) => void;
+    onPlaceRack: (
+        rackTypeId: string,
+        roomId: string,
+        slotIndex: number,
+        ctx?: { roomName?: string; nftAutoArmario1Only?: boolean }
+    ) => void;
     onRemoveRack: (id: string) => void;
     onEquipMiner: (rackId: string, slotIndex: number, minerId: string) => void;
     onUnequipMiner: (rackId: string, slotIndex: number) => void;
@@ -17,22 +53,17 @@ interface ServerRoomProps {
     onTogglePower: (rackId: string) => void;
     onRecharge: (rackId: string) => void;
     upgrades: Upgrade[];
-    miningCoins?: { id: string; name: string; isActive: boolean }[];
+    miningCoins?: MiningCoin[];
     onSetRackCoin?: (rackId: string, coinId: string) => void;
     /** Define a mesma moeda (ou limpa) em todas as rigs da sala de uma vez. */
     onSetRoomRacksCoin?: (roomId: string, coinId: string) => void;
-    /** Equipa a mesma bateria do estoque em todas as rigs compatíveis da sala, ou remove todas (string vazia). */
-    onSetRoomRacksBattery?: (roomId: string, batteryUpgradeId: string) => void;
+    /** Equipa bateria em massa, remove todas (id vazio) ou preenchimento inteligente (opts.smartFill). */
+    onSetRoomRacksBattery?: (roomId: string, batteryUpgradeId: string, opts?: BulkRoomBatteryRunOptions) => void;
     userEmail?: string;
+    /** Saldo USDC (para validar compra de slots no modal). */
+    usdc?: number;
     onRoomPurchase?: (newUsdc: number) => void;
     onOpenCalculator?: () => void;
-}
-
-interface SelectionContext {
-    rackId: string | null;
-    slotIndex: number | null;
-    type: 'machine' | 'battery' | 'wiring' | 'multiplier' | 'rack';
-    roomId?: string | null;
 }
 
 const AnimatedMiner = ({ src, isOperational, className, style, item }: { src: string, isOperational: boolean, className: string, style: any, item: Upgrade | undefined }) => {
@@ -62,15 +93,62 @@ const AnimatedMiner = ({ src, isOperational, className, style, item }: { src: st
         }
     }, [isOperational, src, staticImage]);
 
+    const bgSrc = !isOperational && staticImage ? staticImage : src;
     const finalStyle = {
         ...style,
-        backgroundImage: (item && src) ? `url(${JSON.stringify(!isOperational && staticImage ? staticImage : src)})` : 'none',
+        backgroundImage: item && src ? (cssSafeBackgroundUrl(bgSrc) || 'none') : 'none',
         backgroundSize: '100% 100%',
         backgroundRepeat: 'no-repeat'
     };
 
     return <div className={className} style={finalStyle} />;
 };
+
+function BatteryOptionRow({
+    upgrade,
+    selected,
+    disabled,
+    subtitle,
+    onPick
+}: {
+    upgrade: Upgrade;
+    selected: boolean;
+    disabled: boolean;
+    subtitle: string;
+    onPick: () => void;
+}) {
+    const src = normalizePublicAssetUrl(upgrade.image);
+    const [broken, setBroken] = useState(false);
+    return (
+        <button
+            type="button"
+            disabled={disabled}
+            onClick={onPick}
+            className={`flex w-full items-center gap-3 rounded-lg border px-2 py-2 text-left text-sm transition-colors ${
+                selected
+                    ? 'border-blue-500 bg-blue-600/20 text-white ring-1 ring-blue-400/60'
+                    : 'border-slate-200 bg-white text-slate-900 hover:border-amber-500/50 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-amber-600/40'
+            } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
+        >
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 dark:bg-slate-800">
+                {src && !broken ? (
+                    <img
+                        src={src}
+                        alt=""
+                        className="h-full w-full object-contain"
+                        onError={() => setBroken(true)}
+                    />
+                ) : (
+                    <Battery className="text-amber-600 dark:text-amber-400" size={22} aria-hidden />
+                )}
+            </div>
+            <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold">{upgrade.name}</div>
+                <div className="truncate text-[11px] text-slate-500 dark:text-slate-400">{subtitle}</div>
+            </div>
+        </button>
+    );
+}
 
 export const ServerRoom: React.FC<ServerRoomProps> = ({
     stock,
@@ -90,10 +168,11 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     onSetRoomRacksCoin,
     onSetRoomRacksBattery,
     userEmail,
+    usdc = 0,
     onRoomPurchase,
     onOpenCalculator
 }) => {
-    const [selectionContext, setSelectionContext] = useState<SelectionContext | null>(null);
+    const [selectionContext, setSelectionContext] = useState<ServerRoomSelectionContext | null>(null);
     const [detailContext, setDetailContext] = useState<{ rackId: string; slotIndex: number | null; type: 'machine' | 'battery' | 'wiring' | 'multiplier'; item: Upgrade } | null>(null);
     const [configRackId, setConfigRackId] = useState<string | null>(null);
     const [myRooms, setMyRooms] = useState<RigRoom[]>([]);
@@ -101,11 +180,14 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     const [purchaseBusyId, setPurchaseBusyId] = useState<string | null>(null);
     const [roomIndex, setRoomIndex] = useState(0);
     const [bulkRoomCoinId, setBulkRoomCoinId] = useState('');
-    const [bulkRoomBatteryId, setBulkRoomBatteryId] = useState('');
     const [roomBulkCoinModal, setRoomBulkCoinModal] = useState<RigRoom | null>(null);
     const [roomBulkCoinSelect, setRoomBulkCoinSelect] = useState('');
     const [roomBulkBatteryModal, setRoomBulkBatteryModal] = useState<RigRoom | null>(null);
     const [roomBulkBatterySelect, setRoomBulkBatterySelect] = useState('');
+    const [roomBulkBatterySmartFill, setRoomBulkBatterySmartFill] = useState(false);
+    const [roomBulkBatteryRigSort, setRoomBulkBatteryRigSort] = useState<'slot_asc' | 'hashrate_desc'>('slot_asc');
+    const [slotPurchaseModal, setSlotPurchaseModal] = useState<RigRoom | null>(null);
+    const [slotPurchaseQty, setSlotPurchaseQty] = useState(1);
 
     const rackLayoutSignature = useMemo(
         () => placedRacks.map((r) => `${r.id}:${r.roomId ?? ''}:${r.slotIndex ?? 0}`).sort().join('|'),
@@ -113,12 +195,13 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     );
 
     useEffect(() => {
-        if (!userEmail) return;
+        if (!userEmail || !isValidUserEmailForRoomsFetch(userEmail)) return;
+        const emailParam = sanitizeEmailForRoomsFetch(userEmail);
         let cancelled = false;
         (async () => {
             setRoomsLoading(true);
             try {
-                const rooms = await getMyRigRooms(userEmail);
+                const rooms = await getMyRigRooms(emailParam);
                 if (!cancelled) setMyRooms(rooms);
             } finally {
                 if (!cancelled) setRoomsLoading(false);
@@ -139,132 +222,103 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
     useEffect(() => {
         setBulkRoomCoinId('');
-        setBulkRoomBatteryId('');
     }, [currentRoom?.id]);
-
-    const calculateRackConsumption = (rack: PlacedRack, upgrades: Upgrade[]) => {
-        const slotsWatts = (rack.slots || []).reduce((acc, sid) => {
-            const m = upgrades.find(u => u.id === sid);
-            return acc + (m?.powerConsumption || 0);
-        }, 0);
-        const multWatts = (rack.multiplierSlots || []).reduce((acc, sid) => {
-            const m = upgrades.find(u => u.id === sid);
-            return acc + (m?.powerConsumption || 0);
-        }, 0);
-
-        let total = slotsWatts + multWatts;
-
-        if (rack.wiringId) {
-            const wiring = upgrades.find(u => u.id === rack.wiringId);
-            if (wiring && wiring.energyConsumptionReduction) {
-                total = total * (1 - wiring.energyConsumptionReduction);
-            }
-        }
-        return total;
-    };
-
-    const calculateProduction = (racks: PlacedRack[], upgrades: Upgrade[]) => {
-        let total = 0;
-        racks.forEach(rack => {
-            const battery = upgrades.find(u => u.id === rack.batteryId);
-            const isInfinite = battery && battery.powerCapacity === -1;
-            const isOperational = rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
-
-            if (isOperational) {
-                const baseProd = rack.slots.reduce((acc, sid) => {
-                    const m = upgrades.find(u => u.id === sid);
-                    return acc + (m?.baseProduction || 0);
-                }, 0);
-                let mult = 1;
-                if (rack.multiplierSlots) {
-                    rack.multiplierSlots.forEach(sid => {
-                        const m = upgrades.find(u => u.id === sid);
-                        if (m && m.multiplier) mult += m.multiplier;
-                    });
-                }
-                total += baseProd * mult;
-            }
-        });
-        return total;
-    };
 
     const currentRoomRacks = useMemo(() => {
         if (!currentRoom) return [];
-        return placedRacks.filter(r => r.roomId === currentRoom.id);
+        return placedRacks.filter((r) => sameRigRoom(r.roomId, currentRoom.id));
     }, [placedRacks, currentRoom]);
 
     const roomTotalProduction = useMemo(() => {
-        return calculateProduction(currentRoomRacks, upgrades);
+        return calculatePlacedRacksProductionHashrate(currentRoomRacks, upgrades);
     }, [currentRoomRacks, upgrades]);
 
     const roomPlacedCount = currentRoomRacks.length;
-    const bulkBatteryCompatibleCount = useMemo(() => {
-        if (!currentRoom || !bulkRoomBatteryId) return 0;
-        const def = upgrades.find(u => u.id === bulkRoomBatteryId && u.type === 'battery');
-        if (!def) return 0;
-        return currentRoomRacks.filter(rack =>
-            !def.compatibleRacks?.length || (def.compatibleRacks || []).includes(rack.itemId)
-        ).length;
-    }, [currentRoom, bulkRoomBatteryId, currentRoomRacks, upgrades]);
-    const bulkBatteryApplyInvalid = bulkRoomBatteryId !== '' && (stock[bulkRoomBatteryId] || 0) < bulkBatteryCompatibleCount;
 
     const roomCapacity = currentRoom ? (currentRoom.initialCapacity + (currentRoom.unlockedSlots || 0)) : 0;
 
-    const handlePurchaseSlot = async (roomId: string) => {
-        if (!userEmail) return;
-        if (purchaseBusyId) return;
-        const room = myRooms.find(r => r.id === roomId);
-        if (!room) return;
-        const nextPrice = room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
-        const priceStr = nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        const ok = window.confirm(
-            `Comprar mais 1 slot na sala «${room.name}»?\n\nCusto: USDC ${priceStr}\n\nO valor será debitado do seu saldo.`
-        );
-        if (!ok) return;
+    /** Sala "NFTs AUTO": foco em moeda/bateria em massa — sem barras de carga nem painel de runtime no rack. */
+    const nftAutoRoomHideEnergyTimerUi = currentRoom != null && isNftAutoArmario1OnlyRoom(currentRoom);
+
+    const openSlotPurchaseModal = (room: RigRoom) => {
+        if (!userEmail || !isValidUserEmailForRoomsFetch(userEmail)) return;
+        if (!isValidRigRoomId(room.id)) {
+            alert('Identificador de sala inválido.');
+            return;
+        }
+        setSlotPurchaseQty(1);
+        setSlotPurchaseModal(room);
+    };
+
+    const closeSlotPurchaseModal = useCallback(() => {
+        setSlotPurchaseModal(null);
+        setSlotPurchaseQty(1);
+    }, []);
+
+    useEffect(() => {
+        if (!slotPurchaseModal) return;
+        const onEsc = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') closeSlotPurchaseModal();
+        };
+        window.addEventListener('keydown', onEsc);
+        return () => window.removeEventListener('keydown', onEsc);
+    }, [slotPurchaseModal, closeSlotPurchaseModal]);
+
+    const slotPurchasePreview = useMemo(() => {
+        if (!slotPurchaseModal) return null;
+        const q = parseRigSlotPurchaseQuantity(slotPurchaseQty) ?? 1;
+        return previewRigSlotBulkPurchase(slotPurchaseModal, q, usdc);
+    }, [slotPurchaseModal, slotPurchaseQty, usdc]);
+
+    const confirmPurchaseSlots = async () => {
+        if (!slotPurchaseModal || !userEmail || !isValidUserEmailForRoomsFetch(userEmail)) return;
+        const roomId = slotPurchaseModal.id;
+        if (!isValidRigRoomId(roomId) || purchaseBusyId) return;
+        const qtyParsed = parseRigSlotPurchaseQuantity(slotPurchaseQty) ?? 1;
+        const preview = previewRigSlotBulkPurchase(slotPurchaseModal, qtyParsed, usdc);
+        if (!preview.ok || preview.appliedQty < 1) {
+            alert(preview.message || 'Não é possível comprar esta quantidade.');
+            return;
+        }
         setPurchaseBusyId(roomId);
-        const resp = await purchaseRoomSlot(userEmail, roomId);
+        const resp = await purchaseRoomSlot(sanitizeEmailForRoomsFetch(userEmail), roomId, preview.appliedQty);
         if (!resp.ok) {
-            if (resp.error === 'Insufficient USDC') alert(`Saldo insuficiente`);
+            if (resp.error === 'Insufficient USDC') alert(`Saldo insuficiente${typeof resp.missing === 'number' ? ` (faltam ~$${resp.missing.toFixed(2)})` : ''}`);
             else if (resp.error === 'Level not allowed') alert('Seu nível não tem permissão para comprar esta sala.');
             else if (resp.error === 'Already owned') alert('Você já possui esta sala.');
-            else alert('Falha na compra');
+            else if (resp.error === 'Max capacity reached') alert('Capacidade máxima da sala.');
+            else alert(resp.error || 'Falha na compra');
             setPurchaseBusyId(null);
             return;
         }
+        closeSlotPurchaseModal();
         if (typeof resp.newUsdc === 'number' && onRoomPurchase) onRoomPurchase(resp.newUsdc);
         if (userEmail) {
-            const rooms = await getMyRigRooms(userEmail);
+            const rooms = await getMyRigRooms(sanitizeEmailForRoomsFetch(userEmail));
             setMyRooms(rooms);
         }
         setPurchaseBusyId(null);
     };
 
-    const availableRacks = upgrades.filter(u => u.type === 'infrastructure' && (stock[u.id] || 0) > 0);
-
-    const getDefaultLayout = (rackDef: Upgrade): { slots: any[], canvasWidth: number, canvasHeight: number } => {
-        const slots: any[] = [];
-        const slotCount = rackDef.slotsCapacity || 0;
-        for (let i = 0; i < slotCount; i++) {
-            const col = i % 3;
-            const row = Math.floor(i / 3);
-            slots.push({ id: `slot_${i}`, type: 'machine', x: 5 + (col * 31), y: 10 + (row * 15), w: 28, h: 12 });
+    const availableRacks = useMemo(() => {
+        const all = listInfrastructureInStock(upgrades, stock);
+        if (currentRoom && isNftAutoArmario1OnlyRoom(currentRoom)) {
+            return all.filter((u) => u.id === NFT_AUTO_ALLOWED_CHASSIS_ID);
         }
-        slots.push({ id: 'battery', type: 'battery', x: 75, y: 70, w: 20, h: 8 });
-        slots.push({ id: 'wiring', type: 'wiring', x: 75, y: 80, w: 20, h: 8 });
-        const aiCount = rackDef.aiSlotsCapacity || 0;
-        for (let i = 0; i < aiCount; i++) {
-            slots.push({ id: `slot_${i}`, type: 'multiplier', x: 75, y: 10 + (i * 10), w: 20, h: 8 });
-        }
-        slots.push({ id: 'power', type: 'power', x: 10, y: 85, w: 12, h: 10 });
-        slots.push({ id: 'config', type: 'config', x: 25, y: 85, w: 12, h: 10 });
-        slots.push({ id: 'coin_selector', type: 'coin_selector', x: 40, y: 85, w: 30, h: 10 });
-        return { slots, canvasWidth: 500, canvasHeight: 600 };
-    };
+        return all;
+    }, [upgrades, stock, currentRoom]);
 
     const handleSlotClick = (rackId: string | null, slotIndex: number, currentItemId: string | null, isRoomSlot: boolean = false) => {
         if (isRoomSlot) {
             if (!currentItemId) {
-                setSelectionContext({ rackId: null, slotIndex, type: 'rack', roomId: currentRoom?.id });
+                setSelectionContext({
+                    rackId: null,
+                    slotIndex,
+                    type: 'rack',
+                    roomId: currentRoom?.id,
+                    roomName: currentRoom?.name,
+                    nftAutoArmario1Only: currentRoom?.nftAutoArmario1Only
+                });
             }
             return;
         }
@@ -288,49 +342,31 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
     const handleItemSelect = (itemId: string, storedBatteryId?: string) => {
         if (!selectionContext) return;
-        const { rackId, slotIndex, type, roomId } = selectionContext;
-        if (type === 'rack') {
-            if (roomId && slotIndex !== null) onPlaceRack(itemId, roomId, slotIndex);
-        } else if (rackId) {
-            if (type === 'machine' && slotIndex !== null) onEquipMiner(rackId, slotIndex, itemId);
-            else onEquipAux(rackId, itemId, type as 'battery' | 'wiring' | 'multiplier', storedBatteryId, slotIndex ?? undefined);
+        const result = runValidatedItemSelection(selectionContext, itemId, storedBatteryId, {
+            onPlaceRack,
+            onEquipMiner,
+            onEquipAux
+        });
+        if (!result.ok) {
+            alert('message' in result ? result.message : 'Ação inválida.');
+            return;
         }
         setSelectionContext(null);
     };
 
     const getAvailableItems = () => {
         if (!selectionContext) return [];
-        if (selectionContext.type === 'rack') return upgrades.filter(u => u.type === 'infrastructure' && (stock[u.id] || 0) > 0);
-        let filtered = upgrades.filter(u => u.type === selectionContext.type && (stock[u.id] || 0) > 0);
-        const currentRack = placedRacks.find(r => r.id === selectionContext.rackId);
-        if (currentRack) {
-            filtered = filtered.filter(u => {
-                if (u.compatibleRacks && u.compatibleRacks.length > 0) return u.compatibleRacks.includes(currentRack.itemId);
-                return true;
-            });
-        }
-        return filtered;
+        return listItemsForSelection(selectionContext, placedRacks, upgrades, stock);
     };
 
     const getAvailableStoredBatteries = () => {
-        if (!selectionContext || selectionContext.type !== 'battery') return [];
-        const currentRack = placedRacks.find(r => r.id === selectionContext.rackId);
-        return storedBatteries.filter(sb => {
-            const def = upgrades.find(u => u.id === sb.itemId);
-            if (currentRack && def && def.compatibleRacks && def.compatibleRacks.length > 0) return def.compatibleRacks.includes(currentRack.itemId);
-            return true;
-        });
-    }
-
-    const formatProduction = (val: number) => {
-        if (val === 0) return "0";
-        if (val < 0.0001) return val.toFixed(8);
-        return Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 1 }).format(val);
+        if (!selectionContext) return [];
+        return listStoredBatteriesForSelection(selectionContext, placedRacks, storedBatteries, upgrades);
     };
 
     const openRoomBulkCoinModal = (room: RigRoom) => {
         if (!onSetRoomRacksCoin) return;
-        const racksHere = placedRacks.filter(r => r.roomId === room.id);
+        const racksHere = placedRacks.filter((r) => sameRigRoom(r.roomId, room.id));
         if (racksHere.length === 0) return;
         const firstSet = racksHere.find(r => r.selectedCoinId)?.selectedCoinId ?? '';
         setRoomBulkCoinSelect(firstSet);
@@ -344,16 +380,21 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
     const openRoomBulkBatteryModal = (room: RigRoom) => {
         if (!onSetRoomRacksBattery) return;
-        const racksHere = placedRacks.filter(r => r.roomId === room.id);
+        const racksHere = placedRacks.filter((r) => sameRigRoom(r.roomId, room.id));
         if (racksHere.length === 0) return;
-        const firstBatt = racksHere.find(r => r.batteryId)?.batteryId ?? '';
-        setRoomBulkBatterySelect(firstBatt);
+        const firstBatt = racksHere.find((r) => r.batteryId)?.batteryId ?? '';
+        const canPickManual = firstBatt && (stock[firstBatt] || 0) > 0;
+        setRoomBulkBatterySelect(canPickManual ? firstBatt : '');
+        setRoomBulkBatterySmartFill(false);
+        setRoomBulkBatteryRigSort('slot_asc');
         setRoomBulkBatteryModal(room);
     };
 
     const closeRoomBulkBatteryModal = () => {
         setRoomBulkBatteryModal(null);
         setRoomBulkBatterySelect('');
+        setRoomBulkBatterySmartFill(false);
+        setRoomBulkBatteryRigSort('slot_asc');
     };
 
     return (
@@ -366,7 +407,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                     <div className="flex items-center gap-3">
                         <div className="flex items-center gap-1.5 bg-amber-500/10 text-amber-500 px-2 py-0.5 rounded-full text-[10px] font-bold border border-amber-500/20">
                             <Activity size={10} />
-                            {formatProduction(roomTotalProduction)} H/s
+                            {formatHashrateDisplay(roomTotalProduction)} H/s
                         </div>
                         {onOpenCalculator && (
                             <button
@@ -387,16 +428,13 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                 <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
                     <div className="flex-1 min-w-[200px]">
                         <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Moeda para todas as rigs desta sala</label>
-                        <select
+                        <MiningCoinSelect
                             value={bulkRoomCoinId}
-                            onChange={e => setBulkRoomCoinId(e.target.value)}
-                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
-                        >
-                            <option value="">Nenhuma (desliga rigs sem moeda)</option>
-                            {(miningCoins || []).map(c => (
-                                <option key={c.id} value={c.id} disabled={!c.isActive}>{c.name}{!c.isActive ? ' (indisponível)' : ''}</option>
-                            ))}
-                        </select>
+                            onChange={setBulkRoomCoinId}
+                            coins={miningCoins || []}
+                            noneLabel="Nenhuma (desliga rigs sem moeda)"
+                            buttonClassName="rounded p-2"
+                        />
                     </div>
                     <button
                         type="button"
@@ -409,37 +447,22 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
             )}
 
             {currentRoom && onSetRoomRacksBattery && currentRoomRacks.length > 0 && (
-                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-                    <div className="flex-1 min-w-[200px]">
-                        <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Bateria para todas as rigs compatíveis desta sala</label>
-                        <select
-                            value={bulkRoomBatteryId}
-                            onChange={e => setBulkRoomBatteryId(e.target.value)}
-                            className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
-                        >
-                            <option value="">Remover bateria de todas as rigs</option>
-                            {upgrades.filter(u => u.type === 'battery' && (stock[u.id] || 0) > 0).map(u => {
-                                const need = currentRoomRacks.filter(rack =>
-                                    !u.compatibleRacks?.length || (u.compatibleRacks || []).includes(rack.itemId)
-                                ).length;
-                                const have = stock[u.id] || 0;
-                                const ok = need === 0 || have >= need;
-                                return (
-                                    <option key={u.id} value={u.id} disabled={need === 0 || !ok}>
-                                        {u.name}{need > 0 ? ` — precisa ${need}, tem ${have}` : ' — sem rigs compatíveis'}
-                                    </option>
-                                );
-                            })}
-                        </select>
+                <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/50 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0 flex-1">
+                        <label className="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500">
+                            Bateria nas rigs desta sala
+                        </label>
+                        <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Painel: só lista baterias com unidades no estoque (x0 não aparecem). Preenchimento inteligente usa também o armazém.
+                        </p>
                     </div>
                     <button
                         type="button"
-                        disabled={bulkBatteryApplyInvalid}
-                        title={bulkBatteryApplyInvalid ? 'Estoque insuficiente para equipar em todas as rigs compatíveis.' : undefined}
-                        onClick={() => onSetRoomRacksBattery(currentRoom.id, bulkRoomBatteryId)}
-                        className={`shrink-0 px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide border transition-colors ${bulkBatteryApplyInvalid ? 'bg-slate-600 text-slate-400 border-slate-600 cursor-not-allowed' : 'bg-yellow-700 text-white hover:bg-yellow-600 border-yellow-600/50'}`}
+                        onClick={() => openRoomBulkBatteryModal(currentRoom)}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-yellow-600/50 bg-yellow-700 px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-white transition hover:bg-yellow-600"
                     >
-                        Aplicar bateria ({bulkRoomBatteryId ? `${bulkBatteryCompatibleCount} rig(s)` : `${currentRoomRacks.length} rig(s)`})
+                        <Battery size={18} aria-hidden />
+                        Configurar baterias
                     </button>
                 </div>
             )}
@@ -462,7 +485,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                 {myRooms.map((room, idx) => {
                                     const cap = room.initialCapacity + (room.unlockedSlots || 0);
                                     const nextPrice = room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
-                                    const rigsInRoom = placedRacks.filter(r => r.roomId === room.id).length;
+                                    const rigsInRoom = placedRacks.filter((r) => sameRigRoom(r.roomId, room.id)).length;
                                     return (
                                         <div key={room.id} className={`p-3 rounded border ${roomIndex === idx ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'border-slate-800 bg-slate-900/40'}`}>
                                             <div className="flex justify-between items-center">
@@ -503,7 +526,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                 <div className="mt-3 flex justify-between items-center pt-2 border-t border-white/5">
                                                     <div className="text-[10px] text-amber-400 font-bold">USDC {nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                                                     <button
-                                                        onClick={(e) => { e.stopPropagation(); handlePurchaseSlot(room.id); }}
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); openSlotPurchaseModal(room); }}
                                                         disabled={!!purchaseBusyId}
                                                         className={`text-[9px] font-black px-2 py-1 rounded transition-all uppercase ${purchaseBusyId ? 'bg-slate-700 text-slate-500' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500 hover:text-white'}`}
                                                     >
@@ -520,6 +544,114 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                     </div>
                 )
             }
+
+            {slotPurchaseModal && slotPurchasePreview && (
+                <div
+                    className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200"
+                    onClick={closeSlotPurchaseModal}
+                    role="presentation"
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="slot-purchase-title"
+                        className="max-w-md w-full rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h2 id="slot-purchase-title" className="text-lg font-bold text-slate-900 dark:text-white uppercase tracking-wide">
+                            Confirmar compra de slots
+                        </h2>
+                        <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                            Sala: <span className="font-semibold text-slate-900 dark:text-white">{slotPurchaseModal.name}</span>
+                        </p>
+                        {(() => {
+                            const maxSelectable = Math.min(
+                                MAX_RIG_SLOTS_PURCHASE_PER_REQUEST,
+                                Math.max(
+                                    1,
+                                    slotPurchaseModal.maxCapacity -
+                                        slotPurchaseModal.initialCapacity -
+                                        (slotPurchaseModal.unlockedSlots || 0)
+                                )
+                            );
+                            return (
+                                <div className="mt-4 space-y-3">
+                                    <label className="block text-xs font-bold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                        Quantidade de slots (1 a {maxSelectable})
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min={1}
+                                        max={maxSelectable}
+                                        value={slotPurchaseQty}
+                                        onChange={(e) => {
+                                            const v = Math.floor(Number(e.target.value));
+                                            if (!Number.isFinite(v)) {
+                                                setSlotPurchaseQty(1);
+                                                return;
+                                            }
+                                            setSlotPurchaseQty(Math.min(Math.max(1, v), maxSelectable));
+                                        }}
+                                        className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-slate-900 dark:border-slate-600 dark:bg-slate-950 dark:text-white"
+                                    />
+                                    <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-sm dark:border-slate-700 dark:bg-slate-950/80">
+                                        <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                                            <span>Total a debitar</span>
+                                            <span className="font-mono font-bold text-amber-600 dark:text-amber-400">
+                                                USDC{' '}
+                                                {slotPurchasePreview.totalUsdc.toLocaleString('en-US', {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 2
+                                                })}
+                                            </span>
+                                        </div>
+                                        <div className="mt-1 flex justify-between text-slate-600 dark:text-slate-400">
+                                            <span>Slots a adicionar</span>
+                                            <span className="font-mono font-bold text-slate-900 dark:text-white">{slotPurchasePreview.appliedQty}</span>
+                                        </div>
+                                        <div className="mt-1 flex justify-between text-slate-600 dark:text-slate-400">
+                                            <span>Saldo atual</span>
+                                            <span className="font-mono">USDC {usdc.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</span>
+                                        </div>
+                                        <div className="mt-1 flex justify-between text-slate-800 dark:text-slate-200">
+                                            <span>Saldo após</span>
+                                            <span
+                                                className={`font-mono font-bold ${slotPurchasePreview.saldoApos < 0 ? 'text-red-500' : 'text-green-600 dark:text-green-400'}`}
+                                            >
+                                                USDC{' '}
+                                                {slotPurchasePreview.saldoApos.toLocaleString('en-US', {
+                                                    minimumFractionDigits: 2,
+                                                    maximumFractionDigits: 4
+                                                })}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    {!slotPurchasePreview.ok && slotPurchasePreview.message && (
+                                        <p className="text-sm text-red-600 dark:text-red-400">{slotPurchasePreview.message}</p>
+                                    )}
+                                    <div className="mt-4 flex gap-2 justify-end">
+                                        <button
+                                            type="button"
+                                            onClick={closeSlotPurchaseModal}
+                                            className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                                        >
+                                            Cancelar
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => void confirmPurchaseSlots()}
+                                            disabled={!slotPurchasePreview.ok || !!purchaseBusyId}
+                                            className="rounded-lg bg-amber-600 px-4 py-2 text-sm font-bold text-white hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-50"
+                                        >
+                                            {purchaseBusyId ? 'A processar…' : 'Confirmar compra'}
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+                    </div>
+                </div>
+            )}
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-12 justify-items-center p-4">
                 {Array.from({ length: roomCapacity }).map((_, slotIdx) => {
@@ -555,8 +687,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                     const rackDef = upgrades.find(u => u.id === rack.itemId);
                     const rackSkin = normalizePublicAssetUrl(rackDef?.image);
 
-                    const totalWatts = calculateRackConsumption(rack, upgrades);
-                    const finalProd = calculateProduction([rack], upgrades);
+                    const totalWatts = calculateRackConsumptionWatts(rack, upgrades);
+                    const finalProd = calculatePlacedRacksProductionHashrate([rack], upgrades);
 
                     const battery = upgrades.find(u => u.id === rack.batteryId);
                     const isInfinite = battery && battery.powerCapacity === -1;
@@ -565,8 +697,12 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         : (isInfinite ? 100 : 0);
 
                     const isOperational = rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
+                    const batteryRuntimeShort = getRackBatteryRuntimeShortLabel(rack, upgrades);
+                    const batteryRuntimeHint = getRackBatteryRuntimeHint(rack, upgrades);
 
-                    const layoutToUse = rackDef?.layout || (rackDef ? getDefaultLayout(rackDef) : { canvasWidth: 500, canvasHeight: 600 });
+                    const layoutToUse = mergeBatteryWidgetsIfAbsent(
+                      rackDef?.layout || (rackDef ? getDefaultRackLayout(rackDef) : { canvasWidth: 500, canvasHeight: 600, slots: [] })
+                    );
                     const canvasW = layoutToUse.canvasWidth || 500;
                     const canvasH = layoutToUse.canvasHeight || 600;
 
@@ -584,7 +720,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                 `}
                                 style={{
                                     ...(rackSkin ? {
-                                        backgroundImage: `url(${JSON.stringify(rackSkin)})`,
+                                        backgroundImage: cssSafeBackgroundUrl(rackSkin),
                                         backgroundSize: '100% 100%',
                                         backgroundRepeat: 'no-repeat',
                                         border: 'none',
@@ -600,7 +736,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             >
                                 <div className="relative w-full h-full flex-1">
                                     {(() => {
-                                        const layoutToUse = rackDef?.layout || (rackDef ? getDefaultLayout(rackDef) : null);
+                                        const layoutToUse = rackDef
+                                          ? mergeBatteryWidgetsIfAbsent(rackDef.layout || getDefaultRackLayout(rackDef))
+                                          : null;
                                         if (!layoutToUse) return null;
 
                                         return (
@@ -682,26 +820,31 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     className={`absolute z-20 bg-black/80 backdrop-blur-md border rounded-md overflow-hidden transition-all duration-300 ${!rack.selectedCoinId ? 'border-amber-500/50 animate-pulse' : 'border-white/10 hover:border-white/20'}`}
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
-                                                                    <select
-                                                                        value={rack.selectedCoinId || ''}
-                                                                        onChange={e => { e.stopPropagation(); onSetRackCoin && onSetRackCoin(rack.id, e.target.value); }}
-                                                                        className={`w-full h-full bg-transparent border-none text-[9px] appearance-none text-center outline-none cursor-pointer p-0 font-black tracking-tighter ${!rack.selectedCoinId ? 'text-amber-500' : 'text-amber-400'}`}
-                                                                    >
-                                                                        <option value="" className="bg-slate-900">SEL_COIN</option>
-                                                                        {(miningCoins || []).map(c => (
-                                                                            <option key={c.id} value={c.id} disabled={!c.isActive} className="bg-slate-900">{c.name}</option>
-                                                                        ))}
-                                                                    </select>
+                                                                    {onSetRackCoin ? (
+                                                                        <MiningCoinSelect
+                                                                            value={rack.selectedCoinId || ''}
+                                                                            onChange={(id) => {
+                                                                                onSetRackCoin(rack.id, id);
+                                                                            }}
+                                                                            coins={miningCoins || []}
+                                                                            noneLabel="Moeda"
+                                                                            compact
+                                                                            stopPointerPropagation
+                                                                            buttonClassName="h-full min-h-0 border-0 bg-transparent px-0.5 py-0 text-center font-black tracking-tighter shadow-none ring-0 focus:ring-0"
+                                                                        />
+                                                                    ) : null}
                                                                 </div>
                                                             );
                                                         }
 
                                                         if (slot.type === 'battery_bar') {
+                                                            if (nftAutoRoomHideEnergyTimerUi) return <React.Fragment key={i} />;
                                                             return (
                                                                 <div
                                                                     key={i}
-                                                                    className="absolute z-20 bg-black/40 backdrop-blur-[2px] border border-white/10 rounded-full overflow-hidden p-0.5 shadow-inner"
+                                                                    className="absolute z-30 cursor-help bg-black/40 backdrop-blur-[2px] border border-white/10 rounded-full overflow-hidden p-0.5 shadow-inner"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
+                                                                    title={batteryRuntimeHint}
                                                                 >
                                                                     <div
                                                                         className={`h-full rounded-full transition-all duration-500 ${isInfinite ? 'bg-amber-400 shadow-[0_0_10px_#f59e0b]' : (chargePercent < 20 ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.3)]')} ${isOperational && chargePercent < 99.9 ? 'animate-super-pulse' : (rack.isOn ? 'animate-pulse opacity-80' : '')}`}
@@ -712,44 +855,55 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         }
 
                                                         if (slot.type === 'stat_monitor') {
+                                                            if (nftAutoRoomHideEnergyTimerUi) return <React.Fragment key={i} />;
                                                             const selectedCoin = miningCoins?.find(c => c.id === rack.selectedCoinId);
+                                                            const powerStoredLabel = isInfinite
+                                                                ? '∞'
+                                                                : formatRackEnergyWh(rack.currentCharge);
+                                                            const powerCapLabel =
+                                                                !isInfinite && battery?.powerCapacity && battery.powerCapacity > 0
+                                                                    ? formatRackEnergyWh(battery.powerCapacity)
+                                                                    : null;
                                                             return (
                                                                 <div
                                                                     key={i}
-                                                                    className="absolute z-20 bg-black/95 backdrop-blur-xl rounded-none p-2 font-mono leading-tight flex flex-col justify-between shadow-2xl"
+                                                                    className="absolute z-30 flex h-full min-h-0 flex-col overflow-hidden rounded-md border border-emerald-500/25 bg-black/92 p-1.5 font-mono leading-tight shadow-[0_4px_28px_rgba(0,0,0,0.5)] backdrop-blur-md"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
-                                                                    <div className="flex justify-between items-center pb-1 mb-1 relative">
-                                                                        <div className="flex items-center gap-1.5">
-                                                                            <Terminal size={10} className="text-amber-400 animate-pulse" />
-                                                                            <span className="text-[7px] text-amber-400/80 uppercase tracking-[0.2em] font-black">
-                                                                                CMD PANEL
-                                                                            </span>
-                                                                        </div>
-                                                                        <div className="flex gap-1">
-                                                                            <div className={`w-1 h-1 rounded-full ${isOperational ? 'bg-green-500 shadow-[0_0_4px_#22c55e]' : 'bg-red-500'}`}></div>
-                                                                        </div>
+                                                                    <div className="flex shrink-0 items-center justify-end border-b border-white/10 pb-1">
+                                                                        <div className={`h-1.5 w-1.5 shrink-0 rounded-full ${isOperational ? 'bg-emerald-400 shadow-[0_0_6px_#34d399]' : 'bg-red-500'}`} title={isOperational ? 'Operacional' : 'Offline / incompleto'} />
                                                                     </div>
-                                                                    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-[8px]">
-                                                                        <div className="flex flex-col">
-                                                                            <span className="text-white/30 uppercase text-[5px] font-black tracking-widest">Rate</span>
-                                                                            <span className="text-amber-400 font-black truncate">{isOperational ? formatProduction(finalProd) : "0.00"}</span>
+                                                                    <div className="grid min-h-0 flex-1 grid-cols-2 gap-x-2 gap-y-0.5 overflow-hidden pt-1 text-[7px]">
+                                                                        <div className="flex min-w-0 flex-col">
+                                                                            <span className="text-white/35 uppercase text-[5px] font-black tracking-widest">Rate</span>
+                                                                            <span className="truncate font-black text-amber-400">{isOperational ? formatHashrateDisplay(finalProd) : '0'}</span>
                                                                         </div>
-                                                                        <div className="flex flex-col">
-                                                                            <span className="text-white/30 uppercase text-[5px] font-black tracking-widest">Target</span>
-                                                                            <span className={`font-black truncate ${!rack.selectedCoinId ? 'text-amber-500 animate-pulse' : 'text-amber-500'}`}>
-                                                                                {selectedCoin?.name || "NONE"}
+                                                                        <div className="flex min-w-0 flex-col">
+                                                                            <span className="text-white/35 uppercase text-[5px] font-black tracking-widest">Target</span>
+                                                                            <span className={`truncate font-black ${!rack.selectedCoinId ? 'animate-pulse text-amber-500' : 'text-amber-400'}`}>
+                                                                                {selectedCoin?.name || 'NONE'}
                                                                             </span>
                                                                         </div>
-                                                                        <div className="flex flex-col">
-                                                                            <span className="text-white/30 uppercase text-[5px] font-black tracking-widest">Power</span>
-                                                                            <span className={`font-black truncate ${isInfinite ? 'text-amber-400' : (chargePercent < 20 ? 'text-red-500' : 'text-emerald-500')}`}>
-                                                                                {isInfinite ? " ∞ | INFINITE" : `${rack.currentCharge.toFixed(0)}Wh`}
+                                                                        <div className="flex min-w-0 flex-col">
+                                                                            <span className="text-white/35 uppercase text-[5px] font-black tracking-widest">Power</span>
+                                                                            <span
+                                                                                className={`truncate font-black ${isInfinite ? 'text-amber-400' : chargePercent < 20 ? 'text-red-400' : 'text-emerald-400'}`}
+                                                                                title={powerCapLabel ? `${rack.currentCharge.toFixed(0)} Wh / ${battery?.powerCapacity} Wh máx.` : String(rack.currentCharge)}
+                                                                            >
+                                                                                {powerCapLabel ? (
+                                                                                    <>
+                                                                                        {powerStoredLabel}
+                                                                                        <span className="font-normal text-white/35"> / </span>
+                                                                                        {powerCapLabel}
+                                                                                    </>
+                                                                                ) : (
+                                                                                    powerStoredLabel
+                                                                                )}
                                                                             </span>
                                                                         </div>
-                                                                        <div className="flex flex-col">
-                                                                            <span className="text-white/30 uppercase text-[5px] font-black tracking-widest">Load</span>
-                                                                            <span className="text-red-400 font-black truncate">{totalWatts}W</span>
+                                                                        <div className="flex min-w-0 flex-col">
+                                                                            <span className="text-white/35 uppercase text-[5px] font-black tracking-widest">Load</span>
+                                                                            <span className="truncate font-black text-red-400">{totalWatts}W</span>
                                                                         </div>
                                                                     </div>
                                                                 </div>
@@ -764,7 +918,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
                                                                     <span className="text-[11px] font-mono font-black text-amber-400 tracking-tighter">
-                                                                        {isOperational ? formatProduction(finalProd) : "0.00"}
+                                                                        {isOperational ? formatHashrateDisplay(finalProd) : "0.00"}
                                                                     </span>
                                                                 </div>
                                                             );
@@ -821,6 +975,36 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                     })()}
                                 </div>
                             </div>
+                            {battery && rack.batteryId && !nftAutoRoomHideEnergyTimerUi ? (
+                                <div
+                                    className="mt-1.5 flex w-full max-w-full shrink-0 items-stretch gap-2 rounded-lg border border-emerald-600/30 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
+                                    title={batteryRuntimeHint}
+                                >
+                                    <Battery className="self-center shrink-0 text-emerald-400 opacity-90" size={15} strokeWidth={2} />
+                                    <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
+                                        <div className="h-2 rounded-full border border-white/10 bg-black/50 p-px">
+                                            <div
+                                                className={`h-full rounded-full transition-all duration-500 ${isInfinite ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)]' : chargePercent < 20 ? 'bg-red-500' : 'bg-gradient-to-r from-emerald-600 to-emerald-400'}`}
+                                                style={{ width: `${Math.min(100, chargePercent)}%` }}
+                                            />
+                                        </div>
+                                        <div className="flex items-baseline justify-between gap-2 text-[8px]">
+                                            <span className="min-w-0 truncate font-mono text-slate-400" title={batteryRuntimeHint}>
+                                                {isInfinite ? 'Ilimitada' : `${formatRackEnergyWh(rack.currentCharge)} · máx ${formatRackEnergyWh(battery.powerCapacity || 0)}`}
+                                            </span>
+                                            <span className="shrink-0 font-mono text-[9px] font-bold tabular-nums text-emerald-300">
+                                                {isInfinite ? '∞' : batteryRuntimeShort}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-col justify-center border-l border-white/10 pl-2 text-right">
+                                        <span className="text-[6px] font-bold uppercase tracking-wider text-slate-500">Carga</span>
+                                        <span className="font-mono text-sm font-black tabular-nums leading-none text-white">
+                                            {isInfinite ? '∞' : `${Math.round(Math.min(100, chargePercent))}%`}
+                                        </span>
+                                    </div>
+                                </div>
+                            ) : null}
                         </div>
                     );
                 })}
@@ -921,7 +1105,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                     <div className="flex gap-3 text-xs text-slate-500 dark:text-slate-400 mt-1">
                                                         {item.type === 'machine' && (
                                                             <>
-                                                                <span className="text-green-600 dark:text-green-400">+{formatProduction(item.baseProduction)} N/s</span>
+                                                                <span className="text-green-600 dark:text-green-400">+{formatHashrateDisplay(item.baseProduction)} N/s</span>
                                                                 <span className="text-red-500 dark:text-red-400">-{item.powerConsumption} W</span>
                                                             </>
                                                         )}
@@ -984,16 +1168,15 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                         <>
                                             <div>
                                                 <label className="text-xs uppercase font-bold text-slate-500">Criptomoeda do Rig</label>
-                                                <select
-                                                    value={rack.selectedCoinId || ''}
-                                                    onChange={e => onSetRackCoin && onSetRackCoin(rack.id, e.target.value)}
-                                                    className={`w-full bg-slate-900 border rounded p-2 text-sm transition-colors ${!rack.selectedCoinId ? 'border-amber-500 text-amber-500 font-bold' : 'border-slate-700 text-white'}`}
-                                                >
-                                                    <option value="">Nenhuma</option>
-                                                    {(miningCoins || []).map(c => (
-                                                        <option key={c.id} value={c.id} disabled={!c.isActive}>{c.name}{!c.isActive ? ' (indisponível)' : ''}</option>
-                                                    ))}
-                                                </select>
+                                                {onSetRackCoin ? (
+                                                    <MiningCoinSelect
+                                                        value={rack.selectedCoinId || ''}
+                                                        onChange={(id) => onSetRackCoin(rack.id, id)}
+                                                        coins={miningCoins || []}
+                                                        noneLabel="Nenhuma"
+                                                        buttonClassName={`rounded p-2 text-sm ${!rack.selectedCoinId ? 'border-amber-500 text-amber-500 font-bold' : 'border-slate-700 text-white'}`}
+                                                    />
+                                                ) : null}
                                                 <p className="text-[10px] text-slate-500 mt-1">Moedas inativas aparecem mas não podem ser selecionadas.</p>
                                             </div>
 
@@ -1127,12 +1310,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                         </div>
                     </div>
-<<<<<<< Updated upstream
                     );
                 })()}
-=======
-                )
-            }
 
             {roomBulkCoinModal && onSetRoomRacksCoin && (
                 <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
@@ -1153,16 +1332,13 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </p>
                             <div>
                                 <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Criptomoeda</label>
-                                <select
+                                <MiningCoinSelect
                                     value={roomBulkCoinSelect}
-                                    onChange={e => setRoomBulkCoinSelect(e.target.value)}
-                                    className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
-                                >
-                                    <option value="">Nenhuma (desliga rigs sem moeda)</option>
-                                    {(miningCoins || []).map(c => (
-                                        <option key={c.id} value={c.id} disabled={!c.isActive}>{c.name}{!c.isActive ? ' (indisponível)' : ''}</option>
-                                    ))}
-                                </select>
+                                    onChange={setRoomBulkCoinSelect}
+                                    coins={miningCoins || []}
+                                    noneLabel="Nenhuma (desliga rigs sem moeda)"
+                                    buttonClassName="rounded p-2"
+                                />
                             </div>
                         </div>
                         <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex gap-2 justify-end bg-slate-50 dark:bg-slate-950">
@@ -1185,7 +1361,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
             )}
 
             {roomBulkBatteryModal && onSetRoomRacksBattery && (() => {
-                const racksHere = placedRacks.filter(r => r.roomId === roomBulkBatteryModal.id);
+                const racksHere = placedRacks.filter((r) => sameRigRoom(r.roomId, roomBulkBatteryModal.id));
                 const needForSelect = roomBulkBatterySelect
                     ? (() => {
                         const def = upgrades.find(u => u.id === roomBulkBatterySelect && u.type === 'battery');
@@ -1195,11 +1371,28 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         ).length;
                     })()
                     : 0;
-                const stockForSelect = roomBulkBatterySelect ? (stock[roomBulkBatterySelect] || 0) : 0;
-                const batteryApplyInvalid = roomBulkBatterySelect !== '' && stockForSelect < needForSelect;
+                const availForSelect = roomBulkBatterySelect
+                    ? totalBatteryInstances(roomBulkBatterySelect, stock, storedBatteries)
+                    : 0;
+                const modalWillApply =
+                    roomBulkBatterySelect && needForSelect > 0
+                        ? bulkBatteryWillApplyCount(needForSelect, roomBulkBatterySelect, stock, storedBatteries)
+                        : 0;
+                const batteryApplyInvalid =
+                    roomBulkBatterySelect !== '' && (needForSelect === 0 || availForSelect < 1);
+                const hasSmartFillPool =
+                    racksHere.length > 0 &&
+                    upgrades.some((u) => {
+                        if (u.type !== 'battery') return false;
+                        if (totalBatteryInstances(u.id, stock, storedBatteries) < 1) return false;
+                        return racksHere.some(
+                            (rack) => !u.compatibleRacks?.length || (u.compatibleRacks || []).includes(rack.itemId)
+                        );
+                    });
+                const applyDisabled = roomBulkBatterySmartFill ? !hasSmartFillPool : batteryApplyInvalid;
                 return (
                     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+                        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl shadow-2xl w-full max-w-lg max-h-[min(92vh,36rem)] flex flex-col overflow-hidden animate-in zoom-in-95 duration-200">
                             <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-slate-50 dark:bg-slate-950">
                                 <h3 className="font-bold text-slate-800 dark:text-white flex items-center gap-2 text-sm uppercase">
                                     <Battery size={18} className="text-yellow-600 dark:text-yellow-400 shrink-0" />
@@ -1209,32 +1402,90 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                     <X size={20} />
                                 </button>
                             </div>
-                            <div className="p-4 space-y-3">
+                            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 custom-scrollbar">
                                 <p className="text-xs text-slate-600 dark:text-slate-400">
                                     <span className="font-bold text-slate-800 dark:text-slate-200">{roomBulkBatteryModal.name}</span>
-                                    {' — '}Coloque uma bateria do estoque (cheia) em todas as rigs compatíveis, ou remova todas.
+                                    {' — '}Stock ou armazém: equipa até o número de unidades que tiver (não precisa cobrir todas as rigs). Modo inteligente: retira todas as baterias da sala e redistribui priorizando <span className="font-semibold">mais energia útil (Wh)</span> em cada unidade, depois modelo de maior capacidade como desempate; rigs na ordem que escolher abaixo.
                                 </p>
-                                <div>
-                                    <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Bateria</label>
+                                <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-2 dark:border-slate-600 dark:bg-slate-950/80">
+                                    <label className="text-[10px] uppercase font-bold text-slate-500 block">Ordem das rigs ao distribuir</label>
                                     <select
-                                        value={roomBulkBatterySelect}
-                                        onChange={e => setRoomBulkBatterySelect(e.target.value)}
-                                        className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded p-2 text-sm text-slate-900 dark:text-white"
+                                        value={roomBulkBatteryRigSort}
+                                        onChange={(e) =>
+                                            setRoomBulkBatteryRigSort(e.target.value === 'hashrate_desc' ? 'hashrate_desc' : 'slot_asc')
+                                        }
+                                        className="w-full rounded border border-slate-300 bg-white p-2 text-sm text-slate-900 dark:border-slate-600 dark:bg-slate-900 dark:text-white"
                                     >
-                                        <option value="">Remover bateria de todas as rigs</option>
-                                        {upgrades.filter(u => u.type === 'battery' && (stock[u.id] || 0) > 0).map(u => {
-                                            const need = racksHere.filter(rack =>
-                                                !u.compatibleRacks?.length || (u.compatibleRacks || []).includes(rack.itemId)
-                                            ).length;
-                                            const have = stock[u.id] || 0;
-                                            const ok = need === 0 || have >= need;
-                                            return (
-                                                <option key={u.id} value={u.id} disabled={need === 0 || !ok}>
-                                                    {u.name}{need > 0 ? ` — precisa ${need}, tem ${have}` : ' — sem rigs compatíveis'}
-                                                </option>
-                                            );
-                                        })}
+                                        <option value="slot_asc">Por slot (número da posição)</option>
+                                        <option value="hashrate_desc">Por hashrate teórico (maior primeiro)</option>
                                     </select>
+                                    <label className="flex cursor-pointer items-start gap-2 text-xs text-slate-700 dark:text-slate-200">
+                                        <input
+                                            type="checkbox"
+                                            checked={roomBulkBatterySmartFill}
+                                            onChange={(e) => {
+                                                const on = e.target.checked;
+                                                setRoomBulkBatterySmartFill(on);
+                                                if (on) setRoomBulkBatterySelect('');
+                                            }}
+                                            className="mt-0.5 h-4 w-4 shrink-0 rounded border-slate-400"
+                                        />
+                                        <span>
+                                            <span className="font-semibold">Preenchimento inteligente</span>
+                                            {' — '}prioriza <span className="font-semibold">mais energia (Wh)</span> nas unidades (evita rig com bateria vazia se há outra carregada); entre unidades parecidas, modelo de maior capacidade primeiro.
+                                        </span>
+                                    </label>
+                                </div>
+                                <div className={roomBulkBatterySmartFill ? 'pointer-events-none opacity-50' : ''}>
+                                    <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Escolher ação / bateria</label>
+                                    <div className="max-h-[min(52vh,20rem)] space-y-1.5 overflow-y-auto rounded-lg border border-slate-300 bg-slate-50 p-1.5 dark:border-slate-600 dark:bg-slate-950/80 custom-scrollbar">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setRoomBulkBatterySmartFill(false);
+                                                setRoomBulkBatterySelect('');
+                                            }}
+                                            className={`flex w-full items-center gap-3 rounded-lg border px-2 py-2 text-left text-sm ${
+                                                roomBulkBatterySelect === ''
+                                                    ? 'border-blue-500 bg-blue-600/15 text-slate-900 dark:text-white'
+                                                    : 'border-transparent hover:bg-slate-200 dark:hover:bg-slate-800'
+                                            }`}
+                                        >
+                                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-slate-200 dark:bg-slate-800">
+                                                <XCircle size={20} className="text-slate-600 dark:text-slate-300" aria-hidden />
+                                            </div>
+                                            <div className="min-w-0 flex-1 font-semibold">Remover todas</div>
+                                        </button>
+                                        {/* Lista manual: só tipos com unidades no estoque (x0 some); modo inteligente ainda usa armazém. */}
+                                        {upgrades
+                                            .filter((u) => u.type === 'battery' && (stock[u.id] || 0) > 0)
+                                            .map((u) => {
+                                                const need = racksHere.filter(
+                                                    (rack) =>
+                                                        !u.compatibleRacks?.length ||
+                                                        (u.compatibleRacks || []).includes(rack.itemId)
+                                                ).length;
+                                                const have = totalBatteryInstances(u.id, stock, storedBatteries);
+                                                const will = need > 0 ? Math.min(need, have) : 0;
+                                                const subtitle =
+                                                    need > 0
+                                                        ? `Compatíveis: ${need} · disponível ${have} → até ${will} rig(s)`
+                                                        : 'Sem rigs compatíveis';
+                                                return (
+                                                    <BatteryOptionRow
+                                                        key={u.id}
+                                                        upgrade={u}
+                                                        selected={roomBulkBatterySelect === u.id}
+                                                        disabled={need === 0}
+                                                        subtitle={subtitle}
+                                                        onPick={() => {
+                                                            setRoomBulkBatterySmartFill(false);
+                                                            setRoomBulkBatterySelect(u.id);
+                                                        }}
+                                                    />
+                                                );
+                                            })}
+                                    </div>
                                 </div>
                             </div>
                             <div className="p-4 border-t border-slate-200 dark:border-slate-800 flex gap-2 justify-end bg-slate-50 dark:bg-slate-950">
@@ -1243,22 +1494,39 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                 </button>
                                 <button
                                     type="button"
-                                    disabled={batteryApplyInvalid}
-                                    title={batteryApplyInvalid ? 'Estoque insuficiente.' : undefined}
+                                    disabled={applyDisabled}
+                                    title={
+                                        applyDisabled
+                                            ? roomBulkBatterySmartFill
+                                                ? 'Sem baterias no stock ou armazém compatíveis com as rigs desta sala.'
+                                                : 'Sem rigs compatíveis ou sem unidades desta bateria.'
+                                            : undefined
+                                    }
                                     onClick={() => {
-                                        onSetRoomRacksBattery(roomBulkBatteryModal.id, roomBulkBatterySelect);
+                                        const opts: BulkRoomBatteryRunOptions = {
+                                            rigSort: roomBulkBatteryRigSort
+                                        };
+                                        if (roomBulkBatterySmartFill) opts.smartFill = true;
+                                        onSetRoomRacksBattery(
+                                            roomBulkBatteryModal.id,
+                                            roomBulkBatterySmartFill ? '' : roomBulkBatterySelect,
+                                            opts
+                                        );
                                         closeRoomBulkBatteryModal();
                                     }}
-                                    className={`px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide border transition-colors ${batteryApplyInvalid ? 'bg-slate-600 text-slate-400 border-slate-600 cursor-not-allowed' : 'bg-yellow-700 text-white hover:bg-yellow-600 border-yellow-600/50'}`}
+                                    className={`px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide border transition-colors ${applyDisabled ? 'bg-slate-600 text-slate-400 border-slate-600 cursor-not-allowed' : 'bg-yellow-700 text-white hover:bg-yellow-600 border-yellow-600/50'}`}
                                 >
-                                    Aplicar
+                                    {roomBulkBatterySmartFill
+                                        ? 'Aplicar inteligente'
+                                        : roomBulkBatterySelect
+                                          ? `Aplicar (${modalWillApply} rig(s))`
+                                          : 'Remover todas'}
                                 </button>
                             </div>
                         </div>
                     </div>
                 );
             })()}
->>>>>>> Stashed changes
         </div >
     );
 };

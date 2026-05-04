@@ -1,0 +1,5 @@
+Adicionar a UI_DISPLAY_LABEL_KEYS em backend/config/uiDisplayLabelKeys.ts:
+
+  'nav.support',
+  ...
+  'page.support',

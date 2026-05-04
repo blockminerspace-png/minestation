@@ -1,0 +1,8 @@
+Os ficheiros nesta pasta são cópias de TRECHOS de backend/server.js para consulta rápida.
+A fonte de verdade no projeto é sempre backend/server.js completo.
+
+Ordem no server.js:
+1) server-support-multer.js — após outros multers (ex.: uploadAd), antes de trust proxy
+2) server-support-routes.js — após rotas player-news, antes de SEASON PASSES
+
+Dependências: path, fs, multer, crypto, db, authenticateToken, isAdmin, appendGameActivityLog

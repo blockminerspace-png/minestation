@@ -17,19 +17,20 @@ export const AdminSettingsPageVisibility: React.FC<Props> = ({ accessLevels, onU
     setHasChanges(false);
   }, [accessLevels]);
 
-  const allPages = ['servers', 'oficina', 'arcade', 'inventory', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency'];
+  const allPages = ['servers', 'oficina', 'arcade', 'inventory', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency', 'support'];
   const pageLabels: Record<string, string> = {
     servers: 'Servidores',
     oficina: 'Oficina',
     arcade: 'Arcade',
     inventory: 'Estoque',
-    hardware_store: 'Loja Hardware',
+    hardware_store: 'Lojinha Miner',
     black_market: 'P2P (Mercado)',
     lucky_store: 'Caixas Sorte',
     wallet: 'Carteira',
     upgrade: 'Nível Acesso',
     profile: 'Perfil',
-    transparency: 'Transparência'
+    transparency: 'Transparência',
+    support: 'Suporte'
   };
 
   const toggle = (lvlId: string, page: string) => {

@@ -1,0 +1,4 @@
+Em frontend/constants/gameNavLabels.ts (e espelho backend/frontend):
+
+  Chave na lista de keys: 'support'
+  Em pageLabels ou equivalente: support: 'Suporte'

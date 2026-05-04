@@ -69,7 +69,7 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
     }, [mustSpin, targetWinner, items, onStopSpinning]);
 
     return (
-        <div className="relative mx-auto aspect-square w-[min(22rem,calc(100vw-2.5rem))] max-w-sm flex items-center justify-center font-sans transition-all">
+        <div className="relative mx-auto aspect-square w-[min(22rem,calc(100vw-1.25rem))] max-w-sm flex items-center justify-center font-sans transition-all sm:w-[min(22rem,calc(100vw-2.5rem))]">
             {/* Pointer — alinhado à paleta do site */}
             <div
                 className="absolute left-1/2 z-20 -translate-x-1/2"

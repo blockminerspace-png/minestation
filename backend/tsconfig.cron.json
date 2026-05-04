@@ -1,0 +1,16 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "declaration": false,
+    "noEmitOnError": true
+  },
+  "include": ["cron/**/*.ts", "lib/safeText.ts"],
+  "exclude": ["node_modules", "dist", "controllers", "models", "validation"]
+}

@@ -1,7 +1,8 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useRef } from 'react';
 import Wheel from '../Wheel';
 import { WheelItem, Upgrade } from '../../types';
 import { rollWheel } from '../../services/api';
+import { UiNoticeModal, type UiNotice } from '../UiNoticeModal';
 
 interface GameViewProps {
   items: WheelItem[];
@@ -15,42 +16,71 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
   const [targetWinner, setTargetWinner] = useState<WheelItem | null>(null);
   const [showResult, setShowResult] = useState(false);
   const [claiming, setClaiming] = useState(false);
+  const [configLoading, setConfigLoading] = useState(() => Boolean(redeemCode));
+  const [configError, setConfigError] = useState<string | null>(null);
+  const [configRetryKey, setConfigRetryKey] = useState(0);
+  const [notice, setNotice] = useState<UiNotice | null>(null);
+  const afterNoticeClose = useRef<(() => void) | null>(null);
 
-  // Fetch config if redeeming
+  const closeNotice = useCallback(() => {
+    setNotice(null);
+    const fn = afterNoticeClose.current;
+    afterNoticeClose.current = null;
+    fn?.();
+  }, []);
+
+  // Fetch config if redeeming (único fluxo jogador: sempre com código)
   React.useEffect(() => {
-    if (redeemCode) {
-      fetch('/api/wheel/config')
-        .then(async (r) => {
-          if (!r.ok) {
-            const text = await r.text().catch(() => '');
-            throw new Error(text || `HTTP ${r.status}`);
-          }
-          return r.json();
-        })
-        .then((data: WheelItem[]) => {
-          console.log('[GameView] Fetched items:', data);
-          if (Array.isArray(data) && data.length > 0) {
-            // Map items to include images from upgrades
-            const mapped = data.map(item => {
-              if (item.itemId && upgrades) {
-                const u = upgrades.find(up => up.id === item.itemId);
-                if (u && u.image) {
-                  return { ...item, image: u.image };
-                }
-              }
-              return item;
-            });
-            setItems(mapped);
-          } else {
-            console.warn('[GameView] No items fetched or invalid format');
-          }
-        })
-        .catch(err => console.error('[GameView] Fetch error:', err));
+    if (!redeemCode) {
+      setConfigLoading(false);
+      setConfigError(null);
+      return;
     }
-  }, [redeemCode, upgrades]);
+    let cancelled = false;
+    setConfigLoading(true);
+    setConfigError(null);
+    setItems([]);
+    fetch('/api/wheel/config')
+      .then(async (r) => {
+        if (!r.ok) {
+          const text = await r.text().catch(() => '');
+          throw new Error(text || `HTTP ${r.status}`);
+        }
+        return r.json();
+      })
+      .then((data: WheelItem[]) => {
+        if (cancelled) return;
+        if (Array.isArray(data) && data.length > 0) {
+          const mapped = data.map((item) => {
+            if (item.itemId && upgrades) {
+              const u = upgrades.find((up) => up.id === item.itemId);
+              if (u && u.image) {
+                return { ...item, image: u.image };
+              }
+            }
+            return item;
+          });
+          setItems(mapped);
+        } else {
+          setConfigError('A roleta ainda não tem prémios configurados.');
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('[GameView] Fetch error:', err);
+          setConfigError(err instanceof Error ? err.message : 'Erro ao carregar a roleta.');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setConfigLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [redeemCode, upgrades, configRetryKey]);
 
   const handleStartSpin = async () => {
-    if (isSpinning || items.length === 0) return;
+    if (isSpinning || configLoading || items.length === 0) return;
 
     let selected: WheelItem | null = null;
 
@@ -58,7 +88,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       // SERVER-SIDE ROLL FOR SECURITY
       const res = await rollWheel(redeemCode);
       if (!res.ok) {
-        alert(res.error || 'Erro ao iniciar o sorteio.');
+        setNotice({ variant: 'error', message: res.error || 'Erro ao iniciar o sorteio.' });
         return;
       }
 
@@ -103,44 +133,41 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
     if (!redeemCode || !targetWinner || claiming) return;
     setClaiming(true);
     try {
+      const wonItemId = String(targetWinner.itemId || targetWinner.id || '').trim();
+      if (!wonItemId) {
+        setNotice({ variant: 'error', message: 'Prémio inválido (sem id). Contacte o suporte.' });
+        setClaiming(false);
+        return;
+      }
       const res = await fetch('/api/roleta/claim', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
-          // We need email... but we don't have it in props easily unless passed.
-          // Actually server needs email to get UID.
-          // We can try to get it from local storage or ask user context.
-          // Assuming the parent component passes a way or we use a "me" endpoint?
-          // Wait, AdminLootBoxes handles it via context usually? No.
-          // LuckyBoxStore uses fetch('/api/redeem-code').
-          // Let's rely on standard auth if possible? No, endpoint expects email.
-          // We need to inject email prop or fetch session.
-          // Quick workaround: Retrieve session info here?
-          // Or let's assume session cookie is enough? 
-          // The endpoint handling in server.js: app.post('/api/roleta/claim', ... const { email ... }
-          // I should update server to allow just UID from session if email not provided, OR fetch email here.
-          email: localStorage.getItem('userEmail') || '', // Best guess for now
           code: redeemCode,
-          wonItemId: targetWinner.itemId || targetWinner.id // Use itemId if linked, else id (fallback)
+          wonItemId
         })
       });
       const data = await res.json();
       if (res.ok) {
-        alert(`Parabéns! Você resgatou: ${targetWinner.label}`);
-        if (onRedeemComplete) onRedeemComplete();
+        afterNoticeClose.current = () => onRedeemComplete?.();
+        setNotice({
+          variant: 'success',
+          title: 'Prémio resgatado',
+          message: `Parabéns! Você resgatou: ${targetWinner.label}`
+        });
       } else {
-        alert(data.error || 'Erro ao resgatar');
+        setNotice({ variant: 'error', message: data.error || 'Erro ao resgatar' });
       }
     } catch (e) {
-      alert('Erro de conexão');
+      setNotice({ variant: 'error', message: 'Erro de conexão' });
     }
     setClaiming(false);
   };
 
   return (
     <div
-      className={`relative z-50 flex w-full flex-col items-center font-sans animate-fade-in px-1 sm:px-2 ${redeemCode ? 'gap-4' : 'gap-8'}`}
+      className={`relative z-50 flex w-full min-w-0 max-w-full flex-col items-center font-sans animate-fade-in px-0 sm:px-2 ${redeemCode ? 'gap-3 sm:gap-4' : 'gap-6 sm:gap-8'}`}
     >
       {!redeemCode && (
         <div className="w-full">
@@ -157,7 +184,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
         </div>
       )}
 
-      {redeemCode && (
+      {redeemCode && !configLoading && !configError && (
         <div className="w-full text-center">
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-orange-500/90">Roleta de prémios</p>
           <h2 className="mt-1 font-black tracking-tight text-slate-100 text-xl sm:text-2xl">Giro da sorte</h2>
@@ -172,23 +199,43 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
           className={`pointer-events-none absolute inset-0 -m-3 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-600/25 blur-2xl transition duration-1000 ${isSpinning ? 'opacity-70' : 'opacity-30'}`}
           aria-hidden
         />
-        <Wheel items={visualItems} mustSpin={isSpinning} targetWinner={targetWinner} onStopSpinning={handleStopSpinning} />
+        {redeemCode && configLoading && (
+          <div className="flex min-h-[min(18rem,calc(100vw-1.5rem))] w-full max-w-sm flex-col items-center justify-center gap-3 rounded-full border border-slate-700/80 bg-slate-900/50 p-6 text-center sm:min-h-[min(22rem,calc(100vw-2.5rem))] sm:p-8">
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" aria-hidden />
+            <p className="text-sm font-semibold text-slate-300">A carregar prémios…</p>
+          </div>
+        )}
+        {redeemCode && configError && !configLoading && (
+          <div className="flex min-h-[12rem] w-full max-w-md flex-col items-center justify-center gap-3 rounded-2xl border border-rose-500/40 bg-rose-950/40 p-6 text-center">
+            <p className="text-sm text-rose-100">{configError}</p>
+            <button
+              type="button"
+              onClick={() => setConfigRetryKey((k) => k + 1)}
+              className="rounded-lg bg-orange-600 px-4 py-2 text-xs font-bold uppercase text-white hover:bg-orange-500"
+            >
+              Tentar outra vez
+            </button>
+          </div>
+        )}
+        {!(redeemCode && configLoading) && !(redeemCode && configError && !configLoading) && (
+          <Wheel items={visualItems} mustSpin={isSpinning} targetWinner={targetWinner} onStopSpinning={handleStopSpinning} />
+        )}
       </div>
 
       {!isSpinning && !showResult && (
         <button
           type="button"
           onClick={handleStartSpin}
-          disabled={items.length === 0}
-          className="w-full max-w-xs rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 px-8 py-4 text-base font-black uppercase tracking-widest text-white shadow-lg shadow-orange-900/40 transition hover:from-orange-500 hover:to-amber-500 hover:shadow-orange-500/25 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 sm:text-lg"
+          disabled={items.length === 0 || configLoading || Boolean(configError)}
+          className="w-full max-w-[min(20rem,calc(100vw-2rem))] rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 px-5 py-3.5 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-orange-900/40 transition hover:from-orange-500 hover:to-amber-500 hover:shadow-orange-500/25 active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 sm:max-w-xs sm:px-8 sm:py-4 sm:text-base md:text-lg"
         >
           {redeemCode ? 'Girar agora' : 'Girar roleta'}
         </button>
       )}
 
       {showResult && targetWinner && (
-        <div className="mt-2 w-full max-w-md animate-fade-in text-center">
-          <div className="rounded-2xl border border-orange-500/35 bg-slate-800/90 p-6 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-sm">
+        <div className="mt-2 w-full min-w-0 max-w-[min(24rem,calc(100vw-1.5rem))] animate-fade-in text-center sm:max-w-md">
+          <div className="rounded-2xl border border-orange-500/35 bg-slate-800/90 p-4 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-sm sm:p-6">
             <h3 className="mb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">Resultado</h3>
             <p className="mb-5 text-xl font-black text-white sm:text-2xl" style={{ color: targetWinner.color }}>
               {targetWinner.label}
@@ -199,7 +246,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
                 type="button"
                 onClick={handleClaim}
                 disabled={claiming}
-                className="w-full rounded-xl bg-emerald-600 py-3.5 text-sm font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-50"
+                className="w-full rounded-xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-50 sm:py-3.5 sm:text-sm"
               >
                 {claiming ? 'A resgatar…' : 'Resgatar prémio'}
               </button>
@@ -215,6 +262,8 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
           </div>
         </div>
       )}
+
+      <UiNoticeModal notice={notice} onClose={closeNotice} />
     </div>
   );
 };

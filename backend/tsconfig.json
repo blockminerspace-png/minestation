@@ -11,6 +11,15 @@
     "declaration": false,
     "noEmitOnError": true
   },
-  "include": ["controllers/**/*.ts", "models/**/*.ts", "types/**/*.d.ts"],
+  "include": [
+    "config/**/*.ts",
+    "controllers/**/*.ts",
+    "models/**/*.ts",
+    "validation/**/*.ts",
+    "src/auth/**/*.ts",
+    "lib/**/*.ts",
+    "utils/**/*.ts",
+    "types/**/*.d.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

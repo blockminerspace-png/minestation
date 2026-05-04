@@ -7,8 +7,10 @@ import {
   getLootBoxes,
   getSystemNews,
   getWeb3Settings,
+  web3DepositFlagDisabled,
   buyLootBox,
   openLootBox,
+  discardLootBox,
   buyUpgrades,
   impersonateUser,
   stopImpersonate,
@@ -28,18 +30,23 @@ import {
   getServerTime,
   getMiningCoins,
   getMonetizationSettings,
+  getGameNavLabels,
   performWorkshopInstantRecharge,
   saveGameState as apiSaveGameState,
+  postServerRoomBulkBatteries,
+  postServerRoomRoomCoins,
   setUpgrades as apiSetUpgrades,
   setAccessLevels as apiSetAccessLevels,
   setLootBoxes as apiSetLootBoxes,
   logout as apiLogout
 } from './services/api';
-import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId } from './types';
+import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
+import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
+import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
 import { MarketNews } from './components/MarketNews';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
-import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale } from 'lucide-react';
+import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale, Sparkles, Battery, LifeBuoy } from 'lucide-react';
 
 const DocsPage = lazy(() => import('./components/DocsPage').then((m) => ({ default: m.DocsPage })));
 const AuthPage = lazy(() => import('./components/AuthPage').then((m) => ({ default: m.AuthPage })));
@@ -52,6 +59,8 @@ const WorkshopRoom = lazy(() => import('./components/WorkshopRoom').then((m) => 
 const InventoryView = lazy(() => import('./components/InventoryView').then((m) => ({ default: m.InventoryView })));
 const UpgradeShop = lazy(() => import('./components/UpgradeShop').then((m) => ({ default: m.UpgradeShop })));
 const LuckyBoxStore = lazy(() => import('./components/LuckyBoxStore').then((m) => ({ default: m.LuckyBoxStore })));
+const RoletaPage = lazy(() => import('./components/RoletaPage').then((m) => ({ default: m.RoletaPage })));
+const SupportPage = lazy(() => import('./components/SupportPage').then((m) => ({ default: m.SupportPage })));
 const BlackMarket = lazy(() => import('./components/BlackMarket').then((m) => ({ default: m.BlackMarket })));
 const Exchange = lazy(() => import('./components/Exchange').then((m) => ({ default: m.Exchange })));
 const WalletActions = lazy(() => import('./components/WalletActions').then((m) => ({ default: m.WalletActions })));
@@ -198,13 +207,27 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
   return state;
 };
 
-<<<<<<< Updated upstream
-type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'oficina' | 'arcade' | 'calculator' | 'ranking';
-=======
+type SaveGameApiResponse = Awaited<ReturnType<typeof apiSaveGameState>>;
 
+/** Quando o servidor desmonta rigs ilegais na sala NFT AUTO, sincroniza ref + estado para não reaparecerem no próximo save. */
+function applyNftAutoSanitizedClientSync(
+  res: SaveGameApiResponse,
+  gameStateRef: React.MutableRefObject<GameState>,
+  setGameState: React.Dispatch<React.SetStateAction<GameState>>
+) {
+  if (!res || res.forceReload || res.ok === false) return;
+  if (!res.nftAutoSanitized || !Array.isArray(res.placedRacks)) return;
+  const next: GameState = {
+    ...gameStateRef.current,
+    placedRacks: res.placedRacks,
+    stock: res.stock != null ? { ...res.stock } : { ...gameStateRef.current.stock },
+    storedBatteries: Array.isArray(res.storedBatteries) ? res.storedBatteries : [...gameStateRef.current.storedBatteries]
+  };
+  gameStateRef.current = next;
+  setGameState(next);
+}
 
-type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency';
->>>>>>> Stashed changes
+type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support';
 type GlobalView = 'home' | 'docs' | 'auth' | 'game' | 'admin';
 type Theme = 'light' | 'dark';
 
@@ -249,6 +272,7 @@ export default function App() {
   const isReady = saveLoaded && gameUpgrades.length > 0;
 
   const [accessLevels, setAccessLevels] = useState<AccessLevel[]>([]);
+  const [gameNavLabels, setGameNavLabels] = useState(() => ({ ...DEFAULT_GAME_NAV_LABELS }));
 
   const [lootBoxDefs, setLootBoxDefs] = useState<LootBox[]>([]);
   const [miningCoins, setMiningCoins] = useState<MiningCoin[]>([]);
@@ -268,6 +292,20 @@ export default function App() {
   const [marketRefreshTrigger, setMarketRefreshTrigger] = useState(0);
   const [saveTrigger, setSaveTrigger] = useState(0);
   const [verticalAds, setVerticalAds] = useState<SystemNews[]>([]);
+  const [bulkBatteryNotice, setBulkBatteryNotice] = useState<{ title: string; message: string } | null>(null);
+  /** Passa código à Roleta após resgate em Caixas (consumido pelo `RoletaPage`). */
+  const [roletaBootstrap, setRoletaBootstrap] = useState<{ v: number; code: string } | null>(null);
+
+  const openRoletaWithCode = useCallback((code: string) => {
+    const t = String(code || '').trim();
+    if (!t) return;
+    setRoletaBootstrap((prev) => ({ v: (prev?.v ?? 0) + 1, code: t }));
+    setCurrentView('roleta');
+  }, []);
+
+  const clearRoletaBootstrap = useCallback(() => {
+    setRoletaBootstrap(null);
+  }, []);
 
   const requestSave = useCallback(() => {
     setSaveTrigger(prev => prev + 1);
@@ -280,10 +318,14 @@ export default function App() {
       setGameState(p => ({ ...p, unopenedBoxes: newBoxes }));
     }
 
-    const { data } = await apiGetGameState('me');
+    const [gs, freshUpgrades] = await Promise.all([apiGetGameState('me'), getUpgrades()]);
+    const { data } = gs;
     if (data) {
       const parsed = processLoadedState(data, user.email);
       setGameState(parsed);
+    }
+    if (Array.isArray(freshUpgrades)) {
+      setGameUpgrades(freshUpgrades);
     }
   }, [user]);
 
@@ -298,6 +340,8 @@ export default function App() {
         console.error('[SaveGame]', (res as { error?: string }).error);
         alert('Não foi possível guardar: ' + (res as { error?: string }).error + '\nA recarregar o estado do servidor.');
         handleReloadGameState();
+      } else {
+        applyNftAutoSanitizedClientSync(res, gameStateRef, setGameState);
       }
     }, 500); // 500ms debounce
     return () => clearTimeout(timeout);
@@ -307,7 +351,7 @@ export default function App() {
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (user?.email && !user.isAdmin && saveLoaded) {
-        apiSaveGameState(user.email, gameStateRef.current);
+        apiSaveGameState(user.email, gameStateRef.current, { keepalive: true });
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -315,21 +359,36 @@ export default function App() {
   }, [user, saveLoaded]);
   const getAllowedPages = (): string[] => {
     const userLvls = user?.accessLevelIds || (user?.accessLevelId ? [user.accessLevelId] : []);
+    let pages: string[];
     if (userLvls.length === 0) {
       const defaultLvl = accessLevels.find(l => l.id === (user?.accessLevelId || ''));
-      return defaultLvl?.allowedPages || ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency'];
+      pages =
+        defaultLvl?.allowedPages ||
+        ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency', 'support'];
+    } else {
+      const allAllowed = new Set<string>();
+      userLvls.forEach((lid) => {
+        const lvl = accessLevels.find((l) => l.id === lid);
+        if (lvl?.allowedPages) {
+          lvl.allowedPages.forEach((p) => allAllowed.add(p));
+        }
+      });
+      pages =
+        allAllowed.size > 0
+          ? Array.from(allAllowed)
+          : ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency', 'support'];
     }
-
-    const allAllowed = new Set<string>();
-    userLvls.forEach(lid => {
-      const lvl = accessLevels.find(l => l.id === lid);
-      if (lvl?.allowedPages) {
-        lvl.allowedPages.forEach(p => allAllowed.add(p));
-      }
-    });
-
-    return allAllowed.size > 0 ? Array.from(allAllowed) : ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency'];
+    // Níveis antigos podem não incluir `black_market` em allowedPages; se o P2P está ligado na economia, mostrar o separador.
+    if (economySettings.blackMarketEnabled && !pages.includes('black_market')) {
+      return [...pages, 'black_market'];
+    }
+    return pages;
   };
+
+  const gameNav = useCallback((k: GameNavLabelKey) => {
+    const t = gameNavLabels[k];
+    return typeof t === 'string' && t.trim() ? t.trim() : DEFAULT_GAME_NAV_LABELS[k];
+  }, [gameNavLabels]);
 
   const updateGameUpgrades = async (newUpgrades: Upgrade[]) => {
     try {
@@ -407,14 +466,15 @@ export default function App() {
   useEffect(() => {
     (async () => {
       try {
-        const [up, lv, lb, mc, econ, web3, news] = await Promise.all([
+        const [up, lv, lb, mc, econ, web3, news, navLab] = await Promise.all([
           getUpgrades(),
           getAccessLevels(),
           getLootBoxes(),
           getMiningCoins(),
           getEconomySettings(),
           getWeb3Settings(),
-          getSystemNews()
+          getSystemNews(),
+          getGameNavLabels()
         ]);
         console.log('[Init] Loaded:', { up: up.length, lv: lv.length, lb: lb.length, mc: mc.length });
         setGameUpgrades(up);
@@ -424,11 +484,24 @@ export default function App() {
         if (econ) setEconomySettings(econ);
         if (web3) setWeb3SettingsState(web3);
         setVerticalAds(news.filter(n => n.adType === 'vertical' && n.active));
+        setGameNavLabels({ ...DEFAULT_GAME_NAV_LABELS, ...navLab });
       } catch (e) {
         console.error('[Init] Fatal Error loading initial data:', e);
       }
     })();
   }, []);
+
+  useEffect(() => {
+    if (globalView !== 'game' || !user) return;
+    (async () => {
+      try {
+        const navLab = await getGameNavLabels();
+        setGameNavLabels({ ...DEFAULT_GAME_NAV_LABELS, ...navLab });
+      } catch {
+        /* manter rótulos */
+      }
+    })();
+  }, [globalView, user]);
 
   // POLLER: Keep Dynamic Hashrate Synced (Every 15s)
   useEffect(() => {
@@ -500,66 +573,13 @@ export default function App() {
     setProductionRate(calculateProduction(gameState.placedRacks, gameUpgrades));
   }, [gameState.placedRacks, gameUpgrades]);
 
-  // Accumulators for quantized updates
-  const coinAccumulators = useRef<Record<string, number>>({});
-
-  // Game Loop (Visual Estimator only)
+  // Game Loop (visual: bateria / oficina; saldo de moedas só no servidor)
   useEffect(() => {
     if (!user || user.isAdmin || !saveLoaded || gameUpgrades.length === 0) return;
 
     const interval = setInterval(() => {
       setGameState(prev => {
-        const nextBalances = { ...(prev.coinBalances || {}) };
         let changed = false;
-
-        // --- 1. MINING ESTIMATOR (QUANTIZED BY BLOCK TIME) ---
-        miningCoins.forEach(coin => {
-          let coinPower = 0;
-          prev.placedRacks.forEach(r => {
-            const batt = gameUpgrades.find(u => u.id === r.batteryId);
-            const isInf = batt && batt.powerCapacity === -1;
-            if (r.isOn && r.wiringId && r.batteryId && r.selectedCoinId === coin.id && (isInf || r.currentCharge > 0)) {
-              let rbase = 0;
-              r.slots.forEach(sid => {
-                const up = gameUpgrades.find(u => u.id === sid);
-                if (up) rbase += up.baseProduction;
-              });
-              let mult = 1;
-              r.multiplierSlots?.forEach(sid => {
-                const mod = gameUpgrades.find(u => u.id === sid);
-                if (mod && mod.multiplier) mult += mod.multiplier;
-              });
-              coinPower += rbase * mult;
-            }
-          });
-
-          if (coinPower > 0) {
-            // Accumulate time
-            if (!coinAccumulators.current[coin.id]) coinAccumulators.current[coin.id] = 0;
-            coinAccumulators.current[coin.id] += 0.1; // 100ms tick
-
-            const bTime = coin.blockTime || 600;
-
-            // Only update buffer if full block time passed
-            if (coinAccumulators.current[coin.id] >= bTime) {
-              const netHash = coin.networkHashrate || 1;
-              const reward = coin.blockReward || 0;
-
-              // Total reward for this block based on power share
-              // Formula (Yield Per Block for User): (UserHash / NetworkHash) * BlockReward
-              const blockRewardShare = (coinPower / netHash) * reward;
-
-              if (blockRewardShare > 0) {
-                nextBalances[coin.id] = (nextBalances[coin.id] || 0) + blockRewardShare;
-                changed = true;
-              }
-
-              // Reset accumulator (keep remainder for precision if needed, or hard reset?)
-              // Hard reset aligns with "block found" event simulation better.
-              coinAccumulators.current[coin.id] = 0;
-            }
-          }
-        });
 
         // --- 1.2 RACK DEPLETION (Real-time Battery Drain) ---
         // Battery drain remains continuous (real-time physics)
@@ -675,12 +695,12 @@ export default function App() {
         });
 
         if (!changed) return prev;
-        return { ...prev, coinBalances: nextBalances, workshopSlots: nextWorkshop, placedRacks: nextRacks };
+        return { ...prev, workshopSlots: nextWorkshop, placedRacks: nextRacks };
       });
     }, 1000); // Optimized: 1000ms (1s) instead of 100ms to save CPU
 
     return () => clearInterval(interval);
-  }, [user, gameUpgrades, miningCoins, saveLoaded]);
+  }, [user, gameUpgrades, saveLoaded]);
 
   // Auto-Save
   useEffect(() => {
@@ -693,6 +713,8 @@ export default function App() {
         } else if (res && res.ok === false && (res as { error?: string }).error) {
           console.error('[SaveGame]', (res as { error?: string }).error);
           handleReloadGameState();
+        } else {
+          applyNftAutoSanitizedClientSync(res, gameStateRef, setGameState);
         }
       }
     }, 30000); // Optimized: 30s instead of 5s to reduce network and CPU load
@@ -760,8 +782,31 @@ export default function App() {
   const handleBatchBuy = useCallback(async (cart: Record<string, number>, totalCost: number) => {
     if (!user?.email) return;
 
-    // Optimistic Check
-    if (gameState.usdc < totalCost) {
+    const tc = Number(totalCost);
+    if (!Number.isFinite(tc) || tc <= 0) {
+      alert('Valor da compra inválido.');
+      return;
+    }
+    let recomputed = 0;
+    for (const [id, rawQty] of Object.entries(cart)) {
+      const q = Math.floor(Number(rawQty));
+      if (!Number.isFinite(q) || q < 1) {
+        alert('Quantidade inválida no carrinho.');
+        return;
+      }
+      const u = gameUpgrades.find((x) => x.id === id);
+      if (!u) {
+        alert('Item desconhecido no carrinho.');
+        return;
+      }
+      recomputed += u.baseCost * q;
+    }
+    if (Math.abs(recomputed - tc) > 1e-5) {
+      alert('O total não confere com os itens. Atualize a página e tente de novo.');
+      return;
+    }
+
+    if (gameState.usdc < tc) {
       alert("Saldo insuficiente!");
       return;
     }
@@ -773,7 +818,7 @@ export default function App() {
     } else {
       alert(res.error || "Erro ao realizar compra.");
     }
-  }, [user, gameState.usdc, handleReloadGameState]);
+  }, [user, gameState.usdc, gameUpgrades, handleReloadGameState]);
 
   const handleSuggestDeposit = useCallback((amount: number) => {
     setDepositPrefill(amount);
@@ -787,7 +832,8 @@ export default function App() {
 
 
   const handleP2PBuy = useCallback(async (listing: MarketListing) => {
-    const res = await buyMarketListing(listing.id);
+    const q = Math.max(1, parseInt(String(listing.qty ?? 1), 10) || 1);
+    const res = await buyMarketListing(listing.id, q);
     if (!res.ok) {
       if (res.error === 'Insufficient USDC') alert(`Saldo insuficiente.Faltam $${res.missing?.toFixed(2) || '0.00'} `);
       if (res.error === 'Not authenticated') alert('Você precisa estar logado para comprar.');
@@ -835,6 +881,27 @@ export default function App() {
     if (!amt || amt < 0.001) return { ok: false };
     if (!user?.polygonWallet) return { ok: false };
     const s = await getWeb3Settings();
+    if (!s) {
+      alert('Não foi possível carregar as configurações de depósito. Atualiza a página e tenta novamente.');
+      return { ok: false };
+    }
+    const netKey = (network || 'polygon').toLowerCase();
+    if (netKey === 'polygon' || netKey === 'matic') {
+      if (web3DepositFlagDisabled(s.depositPolygonDisabled)) {
+        alert('Depósitos na Polygon estão desativados pelo administrador.');
+        return { ok: false };
+      }
+    } else if (netKey === 'bnb' || netKey === 'bsc') {
+      if (web3DepositFlagDisabled(s.depositBnbDisabled)) {
+        alert('Depósitos na BNB Chain estão desativados pelo administrador.');
+        return { ok: false };
+      }
+    } else if (netKey === 'base') {
+      if (web3DepositFlagDisabled(s.depositBaseDisabled)) {
+        alert('Depósitos na Base estão desativados pelo administrador.');
+        return { ok: false };
+      }
+    }
 
     let contract = '';
     let targetChainId = '0x89';
@@ -1003,8 +1070,9 @@ export default function App() {
     setDepositFlow({ pending: true, status: 'awaiting', amount: amt, network });
     const res = await handleAddUSDC(amt, network);
 
-    if (res && res.ok && res.tx) {
-      // VALIDAÇÃO NO BACKEND: Em vez de creditar localmente, pedimos ao servidor para validar o hash
+    // Com hash de tx, validar sempre no servidor — mesmo se a carteira não devolveu o recibo a tempo
+    // (timeout devolve ok:false mas tx presente; na chain a tx pode já estar confirmada).
+    if (res && res.tx && !res.cancelled) {
       try {
         const verifyDataResult = await verifyDepositWithServer(res.tx, network);
         if (verifyDataResult.ok) {
@@ -1065,19 +1133,46 @@ export default function App() {
 
   const [adSelection, setAdSelection] = useState<{ wsIdx: number } | null>(null);
   useEffect(() => { (async () => { const s = await getWeb3Settings(); setWeb3SettingsState(s); })(); }, []);
+  useEffect(() => {
+    if (!saveLoaded || currentView !== 'wallet') return;
+    let cancelled = false;
+    (async () => {
+      const s = await getWeb3Settings();
+      if (!cancelled) setWeb3SettingsState(s);
+    })();
+    return () => { cancelled = true; };
+  }, [saveLoaded, currentView]);
   const handleMintNFT = useCallback((id: string, amt: number) => { setGameState(p => ({ ...p, stock: { ...p.stock, [id]: (p.stock[id] || 0) + amt } })); requestSave(); }, [requestSave]);
   const handleBurnNFT = useCallback((id: string, amt: number) => { setGameState(p => { const cur = p.stock[id] || 0; if (cur < amt) return p; return { ...p, stock: { ...p.stock, [id]: cur - amt } }; }); requestSave(); }, [requestSave]);
 
-  const handlePlaceRack = useCallback((typeId: string, roomId: string, slotIndex: number) => {
-    setGameState(p => {
-      if ((p.stock[typeId] || 0) < 1) return p;
-      const def = gameUpgrades.find(u => u.id === typeId);
-      if (!def) return p;
-      const nr: PlacedRack = { id: crypto.randomUUID(), itemId: typeId, slots: Array(def.slotsCapacity || 10).fill(null), multiplierSlots: Array(def.aiSlotsCapacity || 0).fill(null), batteryId: null, wiringId: null, currentCharge: 0, isOn: false, roomId, slotIndex };
-      return { ...p, stock: { ...p.stock, [typeId]: p.stock[typeId] - 1 }, placedRacks: [...p.placedRacks, nr] };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
+  const handlePlaceRack = useCallback(
+    (typeId: string, roomId: string, slotIndex: number, ctx?: { roomName?: string; nftAutoArmario1Only?: boolean }) => {
+      if (isNftAutoArmario1OnlyRoomContext(roomId, ctx?.roomName, ctx?.nftAutoArmario1Only) && typeId !== NFT_AUTO_ALLOWED_CHASSIS_ID) {
+        alert('Nesta sala só é permitido o chassis Rack H1 NFT Collection.');
+        return;
+      }
+      setGameState((p) => {
+        if ((p.stock[typeId] || 0) < 1) return p;
+        const def = gameUpgrades.find((u) => u.id === typeId);
+        if (!def) return p;
+        const nr: PlacedRack = {
+          id: crypto.randomUUID(),
+          itemId: typeId,
+          slots: Array(def.slotsCapacity || 10).fill(null),
+          multiplierSlots: Array(def.aiSlotsCapacity || 0).fill(null),
+          batteryId: null,
+          wiringId: null,
+          currentCharge: 0,
+          isOn: false,
+          roomId,
+          slotIndex
+        };
+        return { ...p, stock: { ...p.stock, [typeId]: p.stock[typeId] - 1 }, placedRacks: [...p.placedRacks, nr] };
+      });
+      requestSave();
+    },
+    [gameUpgrades, requestSave]
+  );
 
   const handleRemoveRack = useCallback((rackId: string) => {
     if (!confirm('Desmontar esta rig? Todos os componentes (GPUs, fiação, bateria, multiplicadores) voltam para o estoque.')) return;
@@ -1237,90 +1332,46 @@ export default function App() {
     requestSave();
   }, [miningCoins, requestSave]);
 
-  const handleSetRoomRacksCoin = useCallback((roomId: string, coinId: string) => {
-    setGameState(prev => {
-      const coin = coinId ? miningCoins.find(c => c.id === coinId) : null;
-      if (coinId && coin && !coin.isActive) return prev;
-      const selected = coinId && coin ? coinId : undefined;
-      const ur = prev.placedRacks.map(r => {
-        if (r.roomId !== roomId) return r;
-        return { ...r, selectedCoinId: selected, isOn: selected ? r.isOn : false };
+  const handleSetRoomRacksCoin = useCallback(async (roomId: string, coinId: string) => {
+    const roomNorm = normalizePlacedRackRoomId(roomId);
+    const res = await postServerRoomRoomCoins(roomNorm, coinId);
+    if (!res.ok) {
+      setBulkBatteryNotice({ title: 'Moeda na sala', message: 'error' in res ? res.error : 'Erro desconhecido.' });
+      return;
+    }
+    setGameState((prev) => ({ ...prev, placedRacks: res.placedRacks }));
+  }, []);
+
+  /** Equipa a mesma bateria (stock + armazém) em massa na sala — regras e persistência no servidor. */
+  const handleSetRoomRacksBattery = useCallback(async (roomId: string, batteryUpgradeId: string, opts?: BulkRoomBatteryRunOptions) => {
+    const roomNorm = normalizePlacedRackRoomId(roomId);
+    const res = await postServerRoomBulkBatteries({
+      roomId: roomNorm,
+      batteryUpgradeId,
+      smartFill: opts?.smartFill,
+      rigSort: opts?.rigSort
+    });
+    if (!res.ok) {
+      setBulkBatteryNotice({ title: 'Bateria da sala', message: 'error' in res ? res.error : 'Erro desconhecido.' });
+      return;
+    }
+    const smart = !!res.smartFill;
+    const partial = res.appliedRigs < res.compatibleRigs && (!!batteryUpgradeId || smart);
+    if (partial) {
+      setBulkBatteryNotice({
+        title: smart ? 'Distribuição parcial' : 'Aplicação parcial',
+        message: smart
+          ? `Foram equipadas ${res.appliedRigs} de ${res.compatibleRigs} rigs. As restantes ficaram sem bateria por falta de unidades compatíveis no stock ou no armazém.`
+          : `Foram equipadas ${res.appliedRigs} de ${res.compatibleRigs} rigs compatíveis com esta bateria. As outras ficaram sem alteração por falta de unidades (stock + armazém).`
       });
-      return { ...prev, placedRacks: ur };
-    });
-    requestSave();
-  }, [miningCoins, requestSave]);
-
-  /** Equipa a mesma bateria (do estoque, cheia) em todas as rigs compatíveis da sala, ou remove bateria de todas (`batteryUpgradeId` vazio). */
-  const handleSetRoomRacksBattery = useCallback((roomId: string, batteryUpgradeId: string) => {
-    const prev = gameStateRef.current;
-    const racksInRoomIdx = prev.placedRacks.map((r, i) => (r.roomId === roomId ? i : -1)).filter(i => i >= 0);
-
-    if (!batteryUpgradeId) {
-      setGameState(p => {
-        let ns = { ...p.stock };
-        const nb = [...p.storedBatteries];
-        const out = [...p.placedRacks];
-        for (const i of racksInRoomIdx) {
-          const rack = out[i];
-          if (!rack.batteryId) continue;
-          const id = rack.batteryId;
-          const upg = gameUpgrades.find(u => u.id === id);
-          const capacity = upg?.powerCapacity ?? 100;
-          const isInf = capacity === -1;
-          const isFull = isInf || rack.currentCharge >= (capacity * 0.999);
-          if (isFull) ns[id] = (ns[id] || 0) + 1;
-          else nb.push({ id: crypto.randomUUID(), itemId: id, currentCharge: rack.currentCharge });
-          out[i] = { ...rack, batteryId: null, currentCharge: 0, isOn: false };
-        }
-        return { ...p, stock: ns, storedBatteries: nb, placedRacks: out };
-      });
-      requestSave();
-      return;
     }
-
-    const batDef = gameUpgrades.find(u => u.id === batteryUpgradeId && u.type === 'battery');
-    if (!batDef) return;
-
-    const compatibleIdx = racksInRoomIdx.filter(i => {
-      const rack = prev.placedRacks[i];
-      if (!batDef.compatibleRacks || batDef.compatibleRacks.length === 0) return true;
-      return batDef.compatibleRacks.includes(rack.itemId);
-    });
-    if (compatibleIdx.length === 0) {
-      alert('Nenhuma rig nesta sala é compatível com este tipo de bateria.');
-      return;
-    }
-    const stockAvail = prev.stock[batteryUpgradeId] || 0;
-    if (stockAvail < compatibleIdx.length) {
-      alert(`Estoque insuficiente: são precisas ${compatibleIdx.length} unidades de "${batDef.name}" nesta sala (em stock: ${stockAvail}).`);
-      return;
-    }
-
-    setGameState(p => {
-      let ns = { ...p.stock };
-      const nb = [...p.storedBatteries];
-      const out = [...p.placedRacks];
-      for (const i of compatibleIdx) {
-        const rack = { ...out[i] };
-        if (rack.batteryId) {
-          const oid = rack.batteryId;
-          const upg = gameUpgrades.find(u => u.id === oid);
-          const capacity = upg?.powerCapacity ?? 100;
-          const isInf = capacity === -1;
-          const isFull = isInf || rack.currentCharge >= (capacity * 0.999);
-          if (isFull) ns[oid] = (ns[oid] || 0) + 1;
-          else nb.push({ id: crypto.randomUUID(), itemId: oid, currentCharge: rack.currentCharge });
-        }
-        const capRaw = batDef.powerCapacity;
-        const initCharge = capRaw === -1 ? -1 : (capRaw ?? 0);
-        ns[batteryUpgradeId] = (ns[batteryUpgradeId] || 0) - 1;
-        out[i] = { ...rack, batteryId: batteryUpgradeId, currentCharge: initCharge, isOn: true };
-      }
-      return { ...p, stock: ns, storedBatteries: nb, placedRacks: out };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
+    setGameState((prev) => ({
+      ...prev,
+      stock: res.stock,
+      storedBatteries: res.storedBatteries,
+      placedRacks: res.placedRacks
+    }));
+  }, []);
 
   const handleEquipWorkshop = useCallback((idx: number, mid: string) => {
     setGameState(p => {
@@ -1918,11 +1969,25 @@ export default function App() {
     const box = lootBoxDefs.find(b => b.id === boxId);
     if (!box) return;
 
+    if (!Number.isFinite(box.price) || box.price <= 0) {
+      alert("Esta caixa não está à venda (preço inválido). Contacte o suporte.");
+      return;
+    }
+
     // Optimistic check
     if (gameState.usdc < box.price) {
       alert("Saldo insuficiente!");
       return;
     }
+
+    const saldoApos = gameState.usdc - box.price;
+    const ok = window.confirm(
+      `Confirmar compra da caixa «${box.name}»?\n\n` +
+        `Preço: USDC ${Number(box.price).toFixed(2)}\n` +
+        `Saldo após: USDC ${saldoApos.toFixed(2)}\n\n` +
+        `O valor será debitado no servidor.`
+    );
+    if (!ok) return;
 
     // Call API
     const res = await buyLootBox(user.email, boxId);
@@ -1984,6 +2049,22 @@ export default function App() {
     }
   };
 
+  const handleDiscardLootBox = async (boxId: string) => {
+    if (!user?.email) return { ok: false as const, error: 'Sessão inválida' };
+    const res = await discardLootBox(user.email, boxId);
+    if (res.ok && res.discardedQty != null) {
+      setGameState((prev) => {
+        const nb = { ...prev.unopenedBoxes };
+        const remaining = typeof res.remainingQty === 'number' ? res.remainingQty : 0;
+        if (remaining <= 0) delete nb[boxId];
+        else nb[boxId] = remaining;
+        return { ...prev, unopenedBoxes: nb };
+      });
+      return { ok: true as const };
+    }
+    return { ok: false as const, error: res.error || 'Erro ao descartar.' };
+  };
+
   // Refresh loot boxes after code redemption (as it may create new box types)
   const handleRedeemSuccess = useCallback(async (newBoxes?: Record<string, number>) => {
     const lb = await getLootBoxes();
@@ -2002,17 +2083,35 @@ export default function App() {
   const formatHash = (val: number) => val === 0 ? "0 H/s" : (val < 0.0001 ? val.toFixed(8) + " H/s" : Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 2 }).format(val) + " H/s");
 
   return (
-    <div className="h-screen flex flex-col bg-slate-50 dark:bg-[#0f0c08] text-slate-800 dark:text-slate-200 font-sans selection:bg-amber-500/30 overflow-hidden transition-colors duration-300">
+    <div className="h-screen min-h-0 w-full min-w-0 max-w-full flex flex-col bg-slate-50 dark:bg-[#0f0c08] text-slate-800 dark:text-slate-200 font-sans selection:bg-amber-500/30 overflow-hidden transition-colors duration-300">
+      <a
+        href="#main-content"
+        className="fixed left-4 top-0 z-[9999] -translate-y-full rounded-lg bg-amber-500 px-4 py-2 text-sm font-bold text-stone-950 shadow-lg outline-none ring-2 ring-amber-200 transition focus:translate-y-4 focus:ring-offset-2 focus:ring-offset-[#0f0c08]"
+      >
+        Saltar para o conteúdo principal
+      </a>
       {/* GLOBAL NAVIGATION HEADER */}
       <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-amber-900/30 shrink-0 backdrop-blur-md z-50 shadow-sm transition-colors duration-300">
-        <div className="max-w-7xl mx-auto px-4 py-3 flex flex-col md:flex-row justify-between items-center gap-4">
+        <div className="max-w-7xl mx-auto min-w-0 w-full px-4 py-2 md:py-2.5 flex flex-col md:flex-row justify-between items-center gap-2 md:gap-3">
           {/* Logo */}
-          <div className="flex items-center gap-3 cursor-pointer" onClick={() => setGlobalView(user ? (user.isAdmin ? 'admin' : 'game') : 'home')}>
+          <div
+            className="flex items-center gap-3 cursor-pointer"
+            role="button"
+            tabIndex={0}
+            aria-label="Ir para início — Genesis Miner"
+            onClick={() => setGlobalView(user ? (user.isAdmin ? 'admin' : 'game') : 'home')}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                setGlobalView(user ? (user.isAdmin ? 'admin' : 'game') : 'home');
+              }
+            }}
+          >
             <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 ring-2 ring-amber-500/50 shadow-lg shadow-amber-600/25 bg-slate-900">
-              <img src="/genesis-miner-logo.png" alt="Genesis Miner" className="w-full h-full object-cover" width={40} height={40} />
+              <img src="/genesis-miner-logo.png" alt="" className="w-full h-full object-cover" width={40} height={40} fetchPriority="high" aria-hidden />
             </div>
             <div>
-              <h1 className="text-xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Genesis Miner</h1>
+              <p className="text-xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Genesis Miner</p>
               <span className="text-[10px] font-semibold tracking-wider bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Ecossistema online V0.5 — Genesis DAO</span>
             </div>
           </div>
@@ -2163,12 +2262,12 @@ export default function App() {
         </div>
       </header>
 
-      {/* CONTENT AREA */}
-      <div className="flex-1 overflow-hidden relative flex flex-col">
-        {globalView === 'home' && <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col"><div className="flex-1"><HomePage onNavigate={setGlobalView} /></div><Footer /></div>}
+      {/* CONTENT AREA — um único <main> (evita landmark aninhado no jogo) */}
+      <main id="main-content" className="flex-1 min-h-0 min-w-0 overflow-hidden relative flex flex-col">
+        {globalView === 'home' && <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col"><div className="flex-1 min-w-0"><HomePage onNavigate={setGlobalView} /></div><Footer /></div>}
         {globalView === 'docs' && (
-          <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
-            <div className="flex-1">
+          <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+            <div className="flex-1 min-w-0">
               <Suspense fallback={<LazyRouteFallback />}>
                 <DocsPage />
               </Suspense>
@@ -2177,8 +2276,8 @@ export default function App() {
           </div>
         )}
         {globalView === 'auth' && (
-          <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 dark:bg-slate-950 flex flex-col">
-            <div className="flex-1">
+          <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar bg-slate-50 dark:bg-slate-950 flex flex-col">
+            <div className="flex-1 min-w-0">
               <Suspense fallback={<LazyRouteFallback />}>
                 <AuthPage onLogin={handleLogin} accessLevels={accessLevels} />
               </Suspense>
@@ -2188,8 +2287,8 @@ export default function App() {
         )}
 
         {globalView === 'admin' && user?.isAdmin && (
-          <div className="flex-1 overflow-y-auto custom-scrollbar flex flex-col">
-            <div className="flex-1">
+          <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+            <div className="flex-1 min-w-0">
               <Suspense fallback={<LazyRouteFallback />}>
                 <AdminPanel
                   user={user}
@@ -2206,43 +2305,47 @@ export default function App() {
         {globalView === 'game' && user && !user.isAdmin && (
           <>
             {/* GAME NAVIGATION */}
-            <nav className="bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 shrink-0 transition-colors duration-300">
+            <nav className="min-w-0 w-full bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 shrink-0 transition-colors duration-300">
               <div className="max-w-7xl mx-auto md:hidden px-4 py-2 flex items-center justify-between">
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Menu</div>
                 <button onClick={() => setGameMenuOpen(v => !v)} className="p-2 rounded-lg text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">{gameMenuOpen ? <X size={18} /> : <Menu size={18} />}</button>
               </div>
               {gameMenuOpen && (
                 <div className="max-w-7xl mx-auto md:hidden px-4 pb-3 grid grid-cols-1 gap-2">
-                  {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> Servidores</button>)}
-                  {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'inventory' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Package size={16} /> Estoque</button>)}
-                  {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> Oficina</button>)}
-                  {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><ShoppingCart size={16} /> Hardware</button>)}
-                  {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Skull size={16} /> P2P</button>)}
-                  {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gamepad2 size={16} /> Arcade</button>)}
-                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gift size={16} /> Caixas da Sorte</button>)}
-                  {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
-                  {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'ranking' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Trophy size={16} /> Ranking</button>)}
-                  {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Crown size={16} /> UPGRADE</button>)}
-                  {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Scale size={16} /> Transparência</button>)}
+                  {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> {gameNav('servers')}</button>)}
+                  {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'inventory' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Package size={16} /> {gameNav('inventory')}</button>)}
+                  {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> {gameNav('oficina')}</button>)}
+                  {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><ShoppingCart size={16} /> {gameNav('hardware_store')}</button>)}
+                  {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Skull size={16} /> {gameNav('black_market')}</button>)}
+                  {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gamepad2 size={16} /> {gameNav('arcade')}</button>)}
+                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gift size={16} /> {gameNav('lucky_store')}</button>)}
+                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('roleta'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'roleta' ? 'border-rose-500 text-rose-600 dark:text-rose-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Sparkles size={16} /> {gameNav('roleta')}</button>)}
+                  {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wallet size={16} /> {gameNav('wallet')}</button>)}
+                  {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'ranking' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Trophy size={16} /> {gameNav('ranking')}</button>)}
+                  {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Crown size={16} /> {gameNav('upgrade')}</button>)}
+                  {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Scale size={16} /> {gameNav('transparency')}</button>)}
+                  {getAllowedPages().includes('support') && (<button onClick={() => { setCurrentView('support'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><LifeBuoy size={16} /> {gameNav('support')}</button>)}
                 </div>
               )}
-              <div className="max-w-7xl mx-auto hidden md:flex justify-center md:justify-start overflow-x-auto">
-                {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={16} /> Servidores</button>)}
-                {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={16} /> Estoque</button>)}
-                {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={16} /> Oficina</button>)}
-                {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><ShoppingCart size={16} /> Hardware</button>)}
-                {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Skull size={16} /> P2P</button>)}
-                {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gamepad2 size={16} /> Arcade</button>)}
-                {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gift size={16} /> Caixas da Sorte</button>)}
-                {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={16} /> Carteira</button>)}
-                {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'ranking' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Trophy size={16} /> Ranking</button>)}
-                {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Crown size={16} /> UPGRADE</button>)}
-                {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); }} className={`flex items-center gap-2 px-6 py-3 text-sm font-bold uppercase tracking-wider border-b-2 transition-all duration-300 whitespace-nowrap ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Scale size={16} /> Transparência</button>)}
+              <div className="max-w-7xl mx-auto hidden md:flex w-full max-w-full min-w-0 flex-wrap justify-center gap-x-0 gap-y-0.5 px-2 sm:px-3 py-1">
+                {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={15} className="shrink-0" /> {gameNav('servers')}</button>)}
+                {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={15} className="shrink-0" /> {gameNav('inventory')}</button>)}
+                {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={15} className="shrink-0" /> {gameNav('oficina')}</button>)}
+                {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold tracking-wide normal-case border-b-2 transition-all duration-300 shrink-0 ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><ShoppingCart size={15} className="shrink-0" /> {gameNav('hardware_store')}</button>)}
+                {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Skull size={15} className="shrink-0" /> {gameNav('black_market')}</button>)}
+                {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gamepad2 size={15} className="shrink-0" /> {gameNav('arcade')}</button>)}
+                {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gift size={15} className="shrink-0" /> {gameNav('lucky_store')}</button>)}
+                {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('roleta'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'roleta' ? 'border-rose-500 text-rose-600 dark:text-rose-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Sparkles size={15} className="shrink-0" /> {gameNav('roleta')}</button>)}
+                {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={15} className="shrink-0" /> {gameNav('wallet')}</button>)}
+                {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'ranking' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Trophy size={15} className="shrink-0" /> {gameNav('ranking')}</button>)}
+                {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Crown size={15} className="shrink-0" /> {gameNav('upgrade')}</button>)}
+                {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Scale size={15} className="shrink-0" /> {gameNav('transparency')}</button>)}
+                {getAllowedPages().includes('support') && (<button onClick={() => { setCurrentView('support'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><LifeBuoy size={15} className="shrink-0" /> {gameNav('support')}</button>)}
               </div>
             </nav>
 
             {/* GAME CONTENT WRAPPER WITH SIDEBARS */}
-            <div className="flex-1 flex justify-center overflow-hidden relative w-full h-full">
+            <div className="flex-1 min-w-0 flex justify-center overflow-hidden relative w-full h-full">
 
               {/* Left Skyscraper (Dynamic) */}
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-amber-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-amber-500/40 shadow-2xl shadow-amber-500/5">
@@ -2265,9 +2368,9 @@ export default function App() {
                 )}
               </aside>
 
-              <main className="flex-1 overflow-hidden relative max-w-7xl w-full flex flex-col min-h-0">
+              <div className="flex-1 min-w-0 overflow-hidden relative max-w-7xl w-full flex flex-col min-h-0">
                 <div className="shrink-0 z-20"><MarketNews /></div>
-                <div className="flex-1 overflow-y-auto custom-scrollbar relative min-h-0 flex flex-col font-mono">
+                <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar relative min-h-0 flex flex-col font-mono">
                   {!saveLoaded && (
                     <div className="flex min-h-[40vh] w-full items-center justify-center bg-slate-900/80 text-amber-500 font-mono rounded-xl border border-amber-900/20">
                       <div className="text-xl animate-pulse tracking-widest">Carregando estado…</div>
@@ -2335,9 +2438,31 @@ export default function App() {
                     <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
                       <div className="flex-1">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <LuckyBoxStore gameState={gameState} lootBoxes={lootBoxDefs} upgrades={gameUpgrades} onBuyBox={handleBuyBox} onOpenBox={handleOpenBox} onRedeemSuccess={handleRedeemSuccess} />
+                          <LuckyBoxStore
+                            gameState={gameState}
+                            lootBoxes={lootBoxDefs}
+                            upgrades={gameUpgrades}
+                            onBuyBox={handleBuyBox}
+                            onOpenBox={handleOpenBox}
+                            onDiscardBox={handleDiscardLootBox}
+                            onRedeemSuccess={handleRedeemSuccess}
+                            onOpenRoleta={openRoletaWithCode}
+                          />
                         </Suspense>
                       </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'roleta' && getAllowedPages().includes('lucky_store') && (
+                    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden custom-scrollbar animate-in fade-in slide-in-from-right-4 duration-300">
+                      <Suspense fallback={<LazyRouteFallback />}>
+                        <RoletaPage
+                          upgrades={gameUpgrades}
+                          onRedeemSuccess={handleRedeemSuccess}
+                          bootstrap={roletaBootstrap}
+                          onBootstrapConsumed={clearRoletaBootstrap}
+                        />
+                      </Suspense>
                       <Footer />
                     </div>
                   )}
@@ -2397,9 +2522,19 @@ export default function App() {
                   )}
                   {saveLoaded && currentView === 'transparency' && getAllowedPages().includes('transparency') && (
                     <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
-                      <div className="flex-1 overflow-y-auto custom-scrollbar">
+                      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar">
                         <Suspense fallback={<LazyRouteFallback />}>
                           <TransparencyPage />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'support' && getAllowedPages().includes('support') && (
+                    <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <SupportPage userEmail={user?.email} onClose={() => setCurrentView('servers')} />
                         </Suspense>
                       </div>
                       <Footer />
@@ -2416,7 +2551,7 @@ export default function App() {
                     </div>
                   )}
                 </div>
-              </main>
+              </div>
 
               {/* Right Skyscraper (Dynamic) */}
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-orange-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-orange-500/40 shadow-2xl shadow-orange-500/5">
@@ -2503,8 +2638,38 @@ export default function App() {
           </Suspense>
         )}
 
+        {bulkBatteryNotice && (
+          <div
+            className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/60 dark:bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="bulk-battery-notice-title"
+          >
+            <div className="w-full max-w-md overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xl animate-in zoom-in-95 duration-200 dark:border-slate-700 dark:bg-slate-900">
+              <div className="flex gap-3 border-b border-amber-500/35 bg-amber-50 p-4 dark:border-amber-600/30 dark:bg-amber-950/25">
+                <Battery className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" size={22} aria-hidden />
+                <div className="min-w-0">
+                  <h3 id="bulk-battery-notice-title" className="text-sm font-black uppercase tracking-wide text-slate-900 dark:text-white">
+                    {bulkBatteryNotice.title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-relaxed text-slate-700 dark:text-slate-300">{bulkBatteryNotice.message}</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 border-t border-slate-200 bg-slate-50 p-4 dark:border-slate-800 dark:bg-slate-950">
+                <button
+                  type="button"
+                  onClick={() => setBulkBatteryNotice(null)}
+                  className="rounded-lg bg-amber-600 px-5 py-2 text-sm font-bold uppercase tracking-wide text-white shadow-md shadow-amber-600/20 transition hover:bg-amber-500 active:scale-[0.98]"
+                >
+                  OK
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
-      </div>
-    </div >
+
+      </main>
+    </div>
   );
 }

@@ -1,0 +1,12 @@
+{
+  "extends": "../../frontend/tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "../../frontend",
+    "paths": {
+      "@/*": ["./*"]
+    },
+    "noEmit": true
+  },
+  "include": ["./App.tsx", "./services/**/*.ts", "./constants/**/*.ts", "./utils/**/*.ts"],
+  "exclude": ["./components"]
+}

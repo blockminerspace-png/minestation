@@ -122,14 +122,18 @@ const MiningCalculator: React.FC = () => {
     }, [selectedCoin, hashrate, unit]);
 
     const updateCoinProperty = async (id: string, updates: Partial<CoinData>) => {
-        // Optimistic update
-        setCoins(prev => prev.map(c => c.id === id ? { ...c, ...updates } : c));
-
-        // Persist debounce or immediate? Immediate for now but handle with care
-        const coin = coins.find(c => c.id === id);
-        if (coin) {
-            const updated = { ...coin, ...updates };
-            await saveMiningCoin(updated);
+        let merged: CoinData | null = null;
+        setCoins(prev => {
+            const next = prev.map(c => {
+                if (c.id !== id) return c;
+                const m = { ...c, ...updates };
+                merged = m;
+                return m;
+            });
+            return next;
+        });
+        if (merged) {
+            await saveMiningCoin(merged);
         }
     };
 
@@ -153,24 +157,14 @@ const MiningCalculator: React.FC = () => {
         e.preventDefault();
         if (!editingCoin?.name || !editingCoin?.symbol) return;
 
-        const isNew = !editingCoin.id;
         const newCoinData = {
             ...editingCoin,
-            networkHashrate: Number(editingCoin.networkHashrate) || 1000000,
-            blockReward: Number(editingCoin.blockReward) || 1,
-            blockTime: Number(editingCoin.blockTime) || 60,
-            priceUSD: Number(editingCoin.priceUSD) || 1,
-            multiplier: Number(editingCoin.multiplier) || 1,
             difficulty: 1,
             color: editingCoin.color || '#ffffff',
             algorithm: editingCoin.algorithm || 'Unknown',
-            // defaults
             description: editingCoin.description || '',
-            minProportion: Number(editingCoin.minProportion) || 0,
             isActive: editingCoin.isActive ?? 1,
-            showInExchange: editingCoin.showInExchange ?? true,
-            usdcRate: Number(editingCoin.priceUSD) || 1,
-            targetDailyUSD: Number(editingCoin.targetDailyUSD) || 0
+            showInExchange: editingCoin.showInExchange ?? true
         };
 
         const res = await saveMiningCoin(newCoinData);
@@ -289,19 +283,10 @@ const MiningCalculator: React.FC = () => {
                                         value={selectedCoin.priceUSD}
                                         onChange={(e) => {
                                             const newPrice = Number(e.target.value);
-                                            const oldPrice = selectedCoin.priceUSD || 0;
-                                            const oldReward = selectedCoin.blockReward || 0;
-                                            const currentTotal = oldPrice * oldReward;
-
-                                            let newReward = oldReward;
-                                            // Auto-adjust reward to keep Total Daily Emission (USD) constant
-                                            if (newPrice > 0 && currentTotal > 0) {
-                                                newReward = currentTotal / newPrice;
-                                            }
-
+                                            // Não alterar blockReward aqui: mudar preço só por câmbio/exibição não pode mudar emissão on-chain
+                                            // (antes: ajuste automático fazia o reward variar e, com GET/saves concorrentes, parecia "salto" de saldo).
                                             updateCoinProperty(selectedCoin.id, {
-                                                priceUSD: newPrice,
-                                                blockReward: newReward
+                                                priceUSD: newPrice
                                             });
                                         }}
                                         className="w-full bg-slate-950 border border-slate-700 rounded-lg pl-8 pr-4 py-3 focus:ring-2 focus:ring-orange-500 outline-none font-mono text-white text-lg font-bold"
@@ -309,7 +294,7 @@ const MiningCalculator: React.FC = () => {
                                 </div>
                                 <p className="text-[10px] text-slate-400 mt-2 flex items-center gap-1">
                                     <Info size={12} />
-                                    Quanto 1 {selectedCoin.symbol} vale hoje em USDC.
+                                    Câmbio / exibição. A emissão minerada segue <span className="font-semibold">Recompensa Bloco</span> e o yield do servidor — alterar só o preço não muda o reward automaticamente.
                                 </p>
                             </div>
                         </div>
@@ -346,7 +331,21 @@ const MiningCalculator: React.FC = () => {
                         <span className="text-xs text-red-400">Opções de Ativo</span>
                         <div className="flex gap-2">
                             <button
-                                onClick={() => { setEditingCoin(selectedCoin); setIsModalOpen(true); }}
+                                type="button"
+                                onClick={() => {
+                                    const c = selectedCoin;
+                                    setEditingCoin({
+                                        ...c,
+                                        networkHashrate: String(c.networkHashrate ?? '') as unknown as number,
+                                        blockReward: String(c.blockReward ?? '') as unknown as number,
+                                        blockTime: String(c.blockTime ?? '') as unknown as number,
+                                        priceUSD: String(c.priceUSD ?? '') as unknown as number,
+                                        multiplier: String(c.multiplier ?? '') as unknown as number,
+                                        minProportion: String(c.minProportion ?? '') as unknown as number,
+                                        targetDailyUSD: String(c.targetDailyUSD ?? '0') as unknown as number
+                                    });
+                                    setIsModalOpen(true);
+                                }}
                                 className="px-3 py-1 bg-amber-900/40 text-amber-400 rounded-md hover:bg-amber-900/60 text-xs transition-colors flex items-center gap-2"
                             >
                                 <Sliders size={12} /> Editar
@@ -711,9 +710,10 @@ const MiningCalculator: React.FC = () => {
                                     <div>
                                         <label className="block text-xs text-slate-400 mb-1">Network Hashrate (H/s)</label>
                                         <input
-                                            type="number"
-                                            value={editingCoin?.networkHashrate || ''}
-                                            onChange={e => setEditingCoin({ ...editingCoin, networkHashrate: Number(e.target.value) })}
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={editingCoin?.networkHashrate === undefined || editingCoin?.networkHashrate === null ? '' : String(editingCoin.networkHashrate)}
+                                            onChange={e => setEditingCoin({ ...editingCoin, networkHashrate: e.target.value as unknown as number })}
                                             className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
@@ -732,19 +732,20 @@ const MiningCalculator: React.FC = () => {
                                     <div>
                                         <label className="block text-xs text-slate-400 mb-1">Block Reward</label>
                                         <input
-                                            type="number"
-                                            step="0.00000001"
-                                            value={editingCoin?.blockReward || ''}
-                                            onChange={e => setEditingCoin({ ...editingCoin, blockReward: Number(e.target.value) })}
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={editingCoin?.blockReward === undefined || editingCoin?.blockReward === null ? '' : String(editingCoin.blockReward)}
+                                            onChange={e => setEditingCoin({ ...editingCoin, blockReward: e.target.value as unknown as number })}
                                             className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-xs text-slate-400 mb-1">Block Time (segundos)</label>
                                         <input
-                                            type="number"
-                                            value={editingCoin?.blockTime || ''}
-                                            onChange={e => setEditingCoin({ ...editingCoin, blockTime: Number(e.target.value) })}
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={editingCoin?.blockTime === undefined || editingCoin?.blockTime === null ? '' : String(editingCoin.blockTime)}
+                                            onChange={e => setEditingCoin({ ...editingCoin, blockTime: e.target.value as unknown as number })}
                                             className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
@@ -754,30 +755,30 @@ const MiningCalculator: React.FC = () => {
                                     <div>
                                         <label className="block text-xs text-gray-400 mb-1">Meta Diária (USD)</label>
                                         <input
-                                            type="number"
-                                            step="0.01"
+                                            type="text"
+                                            inputMode="decimal"
                                             className="w-full bg-[#1a1a1a] border border-[#333] rounded p-2 text-sm"
-                                            value={editingCoin.targetDailyUSD || 0}
-                                            onChange={(e) => setEditingCoin({ ...editingCoin, targetDailyUSD: Number(e.target.value) })}
+                                            value={editingCoin?.targetDailyUSD === undefined || editingCoin?.targetDailyUSD === null ? '' : String(editingCoin.targetDailyUSD)}
+                                            onChange={(e) => setEditingCoin({ ...editingCoin, targetDailyUSD: e.target.value as unknown as number })}
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-xs text-slate-400 mb-1">Price USD ($)</label>
                                         <input
-                                            type="number"
-                                            step="0.00000001"
-                                            value={editingCoin?.priceUSD || ''}
-                                            onChange={e => setEditingCoin({ ...editingCoin, priceUSD: Number(e.target.value) })}
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={editingCoin?.priceUSD === undefined || editingCoin?.priceUSD === null ? '' : String(editingCoin.priceUSD)}
+                                            onChange={e => setEditingCoin({ ...editingCoin, priceUSD: e.target.value as unknown as number })}
                                             className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>
                                     <div>
                                         <label className="block text-xs text-slate-400 mb-1">Multiplier</label>
                                         <input
-                                            type="number"
-                                            step="0.01"
-                                            value={editingCoin?.multiplier || ''}
-                                            onChange={e => setEditingCoin({ ...editingCoin, multiplier: Number(e.target.value) })}
+                                            type="text"
+                                            inputMode="decimal"
+                                            value={editingCoin?.multiplier === undefined || editingCoin?.multiplier === null ? '' : String(editingCoin.multiplier)}
+                                            onChange={e => setEditingCoin({ ...editingCoin, multiplier: e.target.value as unknown as number })}
                                             className="w-full bg-slate-800 border border-slate-700 rounded-lg p-2 text-white outline-none focus:ring-2 focus:ring-amber-500 text-sm"
                                         />
                                     </div>

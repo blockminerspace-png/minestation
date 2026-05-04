@@ -1,10 +1,27 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { AdminUpgrade, LootBox } from '../types';
 import { getAdminUpgrades, createAdminUpgrade, deleteAdminUpgrade, getLootBoxes, setLootBoxes, getReferralModels, saveReferralModel, deleteReferralModel, getAccessLevelReferralAssignments, saveAccessLevelReferralAssignments, getSeasonPasses } from '../services/api';
 import { AdminRanking } from './AdminRanking';
 import { User, AccessLevel, GameState, Upgrade, ReferralModel, SeasonPass } from '../types';
-import { Users, Search, Edit, X, PlusCircle, Save, Package, Server, Trash2, Trophy, Gift, Cog, LogIn, ArrowUp, ArrowDown, CheckSquare, Square, Loader2, Shield } from 'lucide-react';
-import { getGameState, toggleUserBlocked, updateUser, saveGameState, getMiningCoins, deleteUser, getSession, impersonateUser, bulkDeleteUsers, bulkGiftUsers, updateAdminPermissions, getUsers } from '../services/api';
+import { Users, Search, Edit, X, PlusCircle, Save, Package, Server, Trash2, Trophy, Gift, Cog, LogIn, ArrowUp, ArrowDown, CheckSquare, Square, Loader2, Shield, History } from 'lucide-react';
+import { getGameState, toggleUserBlocked, updateUser, saveGameState, getMiningCoins, deleteUser, getSession, impersonateUser, bulkDeleteUsers, bulkGiftUsers, updateAdminPermissions, getUsers, getAdminUserActivity } from '../services/api';
+import { formatUserActivityMeta, ACTIVITY_LOG_FILTER_GROUPS, filterUserActivityLogs } from '../utils/adminUserActivityLog';
+import type { GameUserActivityEntry } from '../types';
+
+function selectedUserDbId(u: User | null): number | undefined {
+  if (!u) return undefined;
+  const raw = (u as { id?: unknown }).id;
+  if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) return Math.floor(raw);
+  const n = parseInt(String(raw ?? ''), 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export type AdminUsersJumpTarget = {
+    key: number;
+    userId: number;
+    email: string;
+    username: string;
+};
 
 interface AdminUsersProps {
     user: User | null;
@@ -12,9 +29,20 @@ interface AdminUsersProps {
     accessLevels: AccessLevel[];
     onUpdateAccessLevels?: (levels: AccessLevel[]) => void;
     gameUpgrades: Upgrade[];
+    /** Ao definir (ex.: vindo do Suporte), abre o editor deste jogador uma vez. */
+    jumpToUser?: AdminUsersJumpTarget | null;
+    onJumpToUserHandled?: () => void;
 }
 
-export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, accessLevels, onUpdateAccessLevels, gameUpgrades }) => {
+export const AdminUsers: React.FC<AdminUsersProps> = ({
+    user,
+    users: userMap,
+    accessLevels,
+    onUpdateAccessLevels,
+    gameUpgrades,
+    jumpToUser,
+    onJumpToUserHandled,
+}) => {
     const [paginatedUsers, setPaginatedUsers] = useState<User[]>([]);
     const [isLoadingUsers, setIsLoadingUsers] = useState(false);
     const [currentPage, setCurrentPage] = useState(1);
@@ -35,7 +63,12 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
     const [editProfileForm, setEditProfileForm] = useState({ username: '', email: '', password: '', wallet: '', accessLevelId: '', accessLevelIds: [] as string[] });
 
     // Save Editor State
-    const [saveTab, setSaveTab] = useState<'stock' | 'racks' | 'balances' | 'workshop' | 'boxes'>('stock');
+    const [saveTab, setSaveTab] = useState<'stock' | 'racks' | 'balances' | 'workshop' | 'boxes' | 'logs'>('stock');
+    const [userActivityLogs, setUserActivityLogs] = useState<GameUserActivityEntry[]>([]);
+    const [userActivityLoading, setUserActivityLoading] = useState(false);
+    const [userActivityError, setUserActivityError] = useState<string | null>(null);
+    const [activityLogFilterId, setActivityLogFilterId] = useState<string>('all');
+    const [activityLogSearch, setActivityLogSearch] = useState('');
     const [miningCoins, setMiningCoinsState] = useState<{ id: string; name: string }[]>([]);
     const [newItemId, setNewItemId] = useState<string>('');
     const [newItemQty, setNewItemQty] = useState<number>(1);
@@ -155,6 +188,111 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
         loadAdminData();
     }, []);
 
+    useEffect(() => {
+        if (saveTab !== 'logs' || !selectedUser) return;
+        const dbId = selectedUserDbId(selectedUser);
+        if (!selectedUser.email?.trim() && !dbId) return;
+        let cancelled = false;
+        (async () => {
+            setUserActivityLoading(true);
+            setUserActivityError(null);
+            const { logs, error } = await getAdminUserActivity(selectedUser.email || '', {
+                userId: dbId,
+                limit: 150
+            });
+            if (cancelled) return;
+            setUserActivityLoading(false);
+            if (error) {
+                setUserActivityError(error);
+                setUserActivityLogs([]);
+            } else {
+                setUserActivityLogs(logs);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [saveTab, selectedUser?.email, selectedUser?.id]);
+
+    const applyUserToEditor = useCallback(async (u: User) => {
+        setSelectedUser(u);
+        setSaveTab('stock');
+        setUserActivityLogs([]);
+        setUserActivityError(null);
+        setActivityLogFilterId('all');
+        setActivityLogSearch('');
+        setEditProfileForm({
+            username: u.username,
+            email: u.email,
+            password: '',
+            wallet: u.polygonWallet || '',
+            accessLevelId: u.accessLevelId || 'normal',
+            accessLevelIds: u.accessLevelIds || [],
+        });
+        const res = await getGameState(u.email, { adminOverride: true });
+        setSelectedUserSave(res.data);
+
+        try {
+            const boxesRes = await fetch(`/api/admin/user-boxes?email=${encodeURIComponent(u.email)}&t=${Date.now()}`);
+            const boxesData = await boxesRes.json();
+            setUserBoxes(boxesData.boxes || []);
+
+            const lootBoxesData = await getLootBoxes();
+            setLootBoxesState(lootBoxesData);
+        } catch (e) {
+            console.error('Erro ao carregar caixas:', e);
+            setUserBoxes([]);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!jumpToUser || !onJumpToUserHandled) return;
+        if (!userMap || userMap.length === 0) return;
+
+        const { userId, email, username } = jumpToUser;
+        const em = email.trim().toLowerCase();
+        const row = userMap.find((u: { id?: unknown; email?: string }) => {
+            const rawId = u.id;
+            const id = typeof rawId === 'number' ? rawId : parseInt(String(rawId ?? ''), 10);
+            if (Number.isFinite(id) && id === userId) return true;
+            if (String(u.email || '').toLowerCase() === em) return true;
+            return false;
+        });
+
+        const u: User = row
+            ? {
+                  id: String(row.id),
+                  username: row.username || username,
+                  email: String(row.email || email).toLowerCase(),
+                  polygonWallet: row.polygonWallet,
+                  accessLevelId: 'normal',
+                  accessLevelIds: [],
+              }
+            : {
+                  id: String(userId),
+                  username: username || em.split('@')[0] || 'jogador',
+                  email: em,
+                  accessLevelId: 'normal',
+                  accessLevelIds: [],
+              };
+
+        setSubTab('users');
+        let cancelled = false;
+        void (async () => {
+            try {
+                await applyUserToEditor(u);
+            } catch (e) {
+                console.error('[AdminUsers] jumpToUser failed', e);
+                alert('Não foi possível abrir o perfil deste jogador.');
+            } finally {
+                if (!cancelled) onJumpToUserHandled();
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [jumpToUser, userMap, onJumpToUserHandled, applyUserToEditor]);
+
     if (!userMap || userMap.length === 0) {
         console.log('[AdminUsers] Waiting for data...', { userMap: !!userMap, userMapLength: userMap?.length });
         return (
@@ -176,65 +314,61 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
     };
 
     // --- USER MANAGEMENT LOGIC ---
+    const filteredUserActivityLogs = useMemo(
+        () => filterUserActivityLogs(userActivityLogs, activityLogFilterId, activityLogSearch),
+        [userActivityLogs, activityLogFilterId, activityLogSearch]
+    );
+
     const handleSelectUser = async (u: User) => {
-        setSelectedUser(u);
-        setEditProfileForm({
-            username: u.username,
-            email: u.email,
-            password: '',
-            wallet: u.polygonWallet || '',
-            accessLevelId: u.accessLevelId || 'normal',
-            accessLevelIds: u.accessLevelIds || []
-        });
-        const res = await getGameState(u.email, { adminOverride: true });
-        setSelectedUserSave(res.data);
-
-        // Carregar caixas do usuário
-        try {
-            const boxesRes = await fetch(`/api/admin/user-boxes?email=${encodeURIComponent(u.email)}&t=${Date.now()}`);
-            const boxesData = await boxesRes.json();
-            setUserBoxes(boxesData.boxes || []);
-
-            // Carregar definições de loot boxes
-            const lootBoxesData = await getLootBoxes();
-            setLootBoxesState(lootBoxesData);
-        } catch (e) {
-            console.error('Erro ao carregar caixas:', e);
-            setUserBoxes([]);
-        }
+        await applyUserToEditor(u);
     };
 
     const handleUpdateUserProfile = async () => {
         if (!selectedUser) return;
-        const oldEmail = selectedUser.email;
-        const newEmail = editProfileForm.email;
+        const newEmail = editProfileForm.email.trim();
+        if (!newEmail) {
+            alert('Email não pode ficar vazio.');
+            return;
+        }
 
         const payload: User = {
-            username: editProfileForm.username,
-            email: newEmail,
-            polygonWallet: editProfileForm.wallet,
+            username: editProfileForm.username.trim(),
+            email: newEmail.toLowerCase(),
+            polygonWallet: editProfileForm.wallet.trim() || undefined,
             accessLevelId: editProfileForm.accessLevelId,
             accessLevelIds: editProfileForm.accessLevelIds
         };
+
+        const sid = selectedUser.id != null && String(selectedUser.id).trim() !== ''
+            ? parseInt(String(selectedUser.id).trim(), 10)
+            : NaN;
+        if (Number.isFinite(sid) && sid > 0) {
+            payload.id = String(sid);
+        }
 
         if (editProfileForm.password && editProfileForm.password.trim().length > 0) {
             payload.password = editProfileForm.password;
         }
-        await updateUser(payload as User);
+
+        const res = await updateUser(payload as User);
+        if (!res.ok) {
+            alert(res.error || 'Falha ao atualizar perfil.');
+            return;
+        }
+
         await loadUsers(currentPage, searchQuery);
         const nextSelected: User = {
             ...selectedUser,
-            username: editProfileForm.username,
-            email: newEmail,
-            polygonWallet: editProfileForm.wallet,
+            id: selectedUser.id,
+            username: payload.username!,
+            email: newEmail.toLowerCase(),
+            polygonWallet: payload.polygonWallet,
             accessLevelId: editProfileForm.accessLevelId,
             accessLevelIds: editProfileForm.accessLevelIds
         };
-        if (editProfileForm.password && editProfileForm.password.trim().length > 0) {
-            nextSelected.password = editProfileForm.password;
-        }
+        setEditProfileForm((f) => ({ ...f, password: '' }));
         setSelectedUser(nextSelected);
-        alert("Perfil atualizado com sucesso!");
+        alert('Perfil atualizado com sucesso.');
     };
 
     const handleToggleBlock = async () => {
@@ -714,20 +848,162 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
 
                 {/* GAME SAVE EDITOR */}
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 flex flex-col h-[500px]">
-                    <div className="flex justify-between items-center mb-4 border-b border-slate-700 pb-2">
-                        <div className="flex gap-2">
-                            <button onClick={() => setSaveTab('stock')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'stock' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Estoque</button>
-                            <button onClick={() => setSaveTab('racks')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'racks' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Rigs</button>
-                            <button onClick={() => setSaveTab('balances')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'balances' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Saldos</button>
-                            <button onClick={() => setSaveTab('workshop')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'workshop' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Oficina</button>
-                            <button onClick={() => setSaveTab('boxes')} className={`px-3 py-1 rounded text-xs font-bold ${saveTab === 'boxes' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Caixas</button>
+                    <div className="flex flex-col gap-2 mb-3 border-b border-slate-700 pb-2 sm:flex-row sm:items-center sm:justify-between">
+                        <div className="min-w-0 flex gap-2 overflow-x-auto pb-1 flex-nowrap [-ms-overflow-style:none] [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1">
+                            <button type="button" onClick={() => setSaveTab('stock')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'stock' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Estoque</button>
+                            <button type="button" onClick={() => setSaveTab('racks')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'racks' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Rigs</button>
+                            <button type="button" onClick={() => setSaveTab('balances')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'balances' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Saldos</button>
+                            <button type="button" onClick={() => setSaveTab('workshop')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'workshop' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Oficina</button>
+                            <button type="button" onClick={() => setSaveTab('boxes')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'boxes' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Caixas</button>
+                            <button
+                                type="button"
+                                onClick={() => setSaveTab('logs')}
+                                className={`shrink-0 px-3 py-1 rounded text-xs font-bold inline-flex items-center gap-1 ring-inset ${saveTab === 'logs' ? 'bg-amber-600 text-white ring-2 ring-amber-400/80' : 'bg-slate-700 text-slate-200 ring-1 ring-amber-600/40'}`}
+                                title="Eventos gravados pelo servidor: caixas, roleta, códigos, depósitos (tabela game_activity_logs)."
+                            >
+                                <History size={12} /> Atividade
+                            </button>
                         </div>
-                        <button onClick={handleSaveGameData} className="text-green-400 hover:text-green-300 text-xs font-bold flex items-center gap-1">
+                        <button
+                            type="button"
+                            onClick={handleSaveGameData}
+                            disabled={saveTab === 'logs'}
+                            title={saveTab === 'logs' ? 'A aba Atividade só leitura — não altera o save.' : 'Guardar estoque, rigs, etc.'}
+                            className={`shrink-0 text-xs font-bold flex items-center gap-1 self-end sm:self-auto ${saveTab === 'logs' ? 'text-slate-500 cursor-not-allowed' : 'text-green-400 hover:text-green-300'}`}
+                        >
                             <Save size={14} /> SALVAR DADOS
                         </button>
                     </div>
+                    {saveTab !== 'logs' && (
+                        <p className="text-[10px] text-slate-500 mb-2 -mt-1">
+                            Histórico do jogador: última aba <span className="font-bold text-amber-500/90">Atividade</span> (só leitura; «Salvar dados» desliga-se nessa aba).
+                        </p>
+                    )}
 
-                    {selectedUserSave ? (
+                    {saveTab === 'logs' ? (
+                        <div className="flex-1 overflow-y-auto custom-scrollbar">
+                            <div className="space-y-3">
+                                <p className="text-[11px] text-slate-500">
+                                    Linhas da tabela <span className="font-mono text-slate-400">game_activity_logs</span> para{' '}
+                                    <span className="font-mono text-slate-300">{selectedUser?.email}</span>
+                                    {selectedUserDbId(selectedUser) != null ? (
+                                        <span className="text-slate-500"> (user #{selectedUserDbId(selectedUser)})</span>
+                                    ) : null}
+                                    : caixas, roleta, resgate de códigos, depósitos quando o servidor regista o evento.
+                                </p>
+                                <div className="flex flex-col gap-2 rounded-lg border border-slate-700/80 bg-slate-950/50 p-2 sm:flex-row sm:flex-wrap sm:items-end">
+                                    <div className="flex min-w-0 flex-1 flex-col gap-1 sm:max-w-[14rem]">
+                                        <label className="text-[9px] font-bold uppercase tracking-wider text-slate-500" htmlFor="activity-log-filter">
+                                            Tipo de evento
+                                        </label>
+                                        <select
+                                            id="activity-log-filter"
+                                            value={activityLogFilterId}
+                                            onChange={(e) => setActivityLogFilterId(e.target.value)}
+                                            className="rounded border border-slate-600 bg-slate-900 px-2 py-1.5 text-xs text-white focus:border-amber-500 focus:outline-none"
+                                        >
+                                            {ACTIVITY_LOG_FILTER_GROUPS.map((g) => (
+                                                <option key={g.id} value={g.id}>
+                                                    {g.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="min-w-0 flex-1 flex-col gap-1 sm:min-w-[12rem] sm:flex-[2]">
+                                        <label className="text-[9px] font-bold uppercase tracking-wider text-slate-500" htmlFor="activity-log-search">
+                                            Pesquisar (ação ou JSON)
+                                        </label>
+                                        <input
+                                            id="activity-log-search"
+                                            type="search"
+                                            value={activityLogSearch}
+                                            onChange={(e) => setActivityLogSearch(e.target.value)}
+                                            placeholder="ex: deposit, rackId, mining_rack…"
+                                            className="w-full rounded border border-slate-600 bg-slate-900 px-2 py-1.5 font-mono text-[11px] text-slate-200 placeholder:text-slate-600 focus:border-amber-500 focus:outline-none"
+                                        />
+                                    </div>
+                                    <p className="w-full text-[10px] text-slate-600 sm:order-last">
+                                        {userActivityLogs.length > 0
+                                            ? `A mostrar ${filteredUserActivityLogs.length} de ${userActivityLogs.length} evento(s) carregados.`
+                                            : null}
+                                    </p>
+                                </div>
+                                {userActivityLoading && (
+                                    <div className="flex items-center justify-center gap-2 py-8 text-slate-400 text-sm">
+                                        <Loader2 className="animate-spin" size={18} /> A carregar…
+                                    </div>
+                                )}
+                                {!userActivityLoading && userActivityError && (
+                                    <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">{userActivityError}</div>
+                                )}
+                                {!userActivityLoading && !userActivityError && (
+                                    <div className="rounded-lg border border-slate-700 overflow-hidden">
+                                        <table className="w-full text-left text-xs">
+                                            <thead className="bg-slate-950 text-slate-500 uppercase text-[10px] tracking-wider font-bold">
+                                                <tr>
+                                                    <th className="px-2 py-2">Data</th>
+                                                    <th className="px-2 py-2">Ação</th>
+                                                    <th className="px-2 py-2">Detalhes</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody className="divide-y divide-slate-800">
+                                                {userActivityLogs.length > 0 ? (
+                                                    filteredUserActivityLogs.length > 0 ? (
+                                                        filteredUserActivityLogs.map((row) => (
+                                                            <tr key={row.id} className="hover:bg-slate-800/40">
+                                                                <td className="px-2 py-2 text-[10px] text-slate-400 font-mono whitespace-nowrap align-top">
+                                                                    {new Date(row.createdAt).toLocaleString()}
+                                                                </td>
+                                                                <td className="px-2 py-2 font-mono text-emerald-400 align-top">{row.action}</td>
+                                                                <td className="px-2 py-2 text-[10px] text-slate-400 font-mono break-all max-w-md align-top" title={formatUserActivityMeta(row.meta)}>
+                                                                    {formatUserActivityMeta(row.meta)}
+                                                                </td>
+                                                            </tr>
+                                                        ))
+                                                    ) : (
+                                                        <tr>
+                                                            <td colSpan={3} className="px-4 py-8 text-center text-slate-500 italic">
+                                                                Nenhum evento corresponde ao filtro ou à pesquisa. Ajuste o tipo ou limpe a pesquisa.
+                                                            </td>
+                                                        </tr>
+                                                    )
+                                                ) : (
+                                                    <tr>
+                                                        <td colSpan={3} className="px-4 py-8 text-center text-slate-500 italic">
+                                                            Nenhum evento registado para esta conta (ou a tabela de logs ainda não recebeu dados).
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                )}
+                                {!userActivityLoading && !userActivityError && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (!selectedUser) return;
+                                            const dbId = selectedUserDbId(selectedUser);
+                                            if (!selectedUser.email?.trim() && !dbId) return;
+                                            setUserActivityLoading(true);
+                                            getAdminUserActivity(selectedUser.email || '', { userId: dbId, limit: 150 }).then(({ logs, error }) => {
+                                                setUserActivityLoading(false);
+                                                if (error) {
+                                                    setUserActivityError(error);
+                                                    setUserActivityLogs([]);
+                                                } else {
+                                                    setUserActivityLogs(logs);
+                                                }
+                                            });
+                                        }}
+                                        className="text-xs font-bold text-amber-500 hover:text-amber-400 uppercase"
+                                    >
+                                        Atualizar lista
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    ) : selectedUserSave ? (
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             {saveTab === 'stock' && (
                                 <div className="space-y-2">
@@ -2011,6 +2287,8 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({ user, users: userMap, ac
                                             { id: 'reports', label: 'Relatórios Financeiros' },
                                             { id: 'transparency', label: 'Transparência (pools / gastos)' },
                                             { id: 'games', label: 'Mini-Games' },
+                                            { id: 'security', label: 'Segurança (multi-contas, IPs, atividade no jogo)' },
+                                            { id: 'support', label: 'Suporte (tickets dos jogadores)' },
                                             { id: 'backup', label: 'Backups e Database' },
                                         ].map((p: any) => (
                                             <button

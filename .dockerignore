@@ -8,6 +8,11 @@ backend/node_modules
 admin/node_modules
 **/node_modules
 backups
+backend/img
+uploads
+export-suporte
+frontend/dist
+deployment/certbot
 *.sql
 .env
 **/.env

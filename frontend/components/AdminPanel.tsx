@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { SystemNews, User, Upgrade, AccessLevel, LootBox, RigRoom } from '../types';
-import { Activity, Users, Layers, Gift, Newspaper, Shield, ChevronLeft, ChevronRight, Wallet, Cog, DollarSign, Store, ChevronDown, ChevronUp } from 'lucide-react';
+import { Activity, Users, Layers, Gift, Newspaper, Shield, ChevronLeft, ChevronRight, Wallet, Cog, DollarSign, Store, ChevronDown, ChevronUp, MessageCircle } from 'lucide-react';
 import { AdminDashboard } from './AdminDashboard';
 import { AdminUsers } from './AdminUsers';
 import { AdminEditor } from './AdminEditor';
@@ -10,12 +10,15 @@ import { AdminWeb3Menu } from './AdminWeb3Menu';
 
 import { getUsers, getSystemNews, getMiningCoins, getAdminUserMap } from '../services/api';
 import { AdminSettingsPageVisibility } from './AdminSettingsPageVisibility';
+import { AdminSettingsNavLabels } from './AdminSettingsNavLabels';
 import { AdminRigRooms } from './AdminRigRooms';
 import { AdminRigLayoutEditor } from './AdminRigLayoutEditor';
 import { AdminBlackMarket } from './AdminBlackMarket';
 import { AdminGames } from './AdminGames';
 import { Layout, Database, Banknote, Skull, Gamepad2, Scale } from 'lucide-react';
 import { AdminBackup } from './AdminBackup';
+import { AdminSupport } from './AdminSupport';
+import type { AdminUsersJumpTarget } from './AdminUsers';
 
 import { AdminMonetization } from './AdminMonetization';
 import { AdminReports } from './AdminReports';
@@ -40,7 +43,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onUpdateLootBoxes, lootBoxes = [],
     user
 }) => {
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'news' | 'users' | 'editor' | 'lootboxes' | 'web3' | 'settings' | 'layout' | 'backup' | 'monetization' | 'p2p' | 'reports' | 'games' | 'security' | 'shops' | 'transparency'>(() => {
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'news' | 'users' | 'editor' | 'lootboxes' | 'web3' | 'settings' | 'layout' | 'backup' | 'monetization' | 'p2p' | 'reports' | 'games' | 'security' | 'shops' | 'transparency' | 'support'>(() => {
         try {
             return (localStorage.getItem('adminActiveTab') as any) || 'dashboard';
         } catch { return 'dashboard'; }
@@ -73,9 +76,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
         } catch { return false; }
     });
     const [shopsSubtab, setShopsSubtab] = useState<'hardware' | 'blackmarket' | 'layout'>('hardware');
-    const [settingsSubtab, setSettingsSubtab] = useState<'pages' | 'rigrooms' | 'news' | 'monetization' | 'passes'>('pages');
+    const [settingsSubtab, setSettingsSubtab] = useState<
+        'pages' | 'navlabels' | 'rigrooms' | 'news' | 'monetization' | 'passes'
+    >('pages');
 
     const [seasonPasses, setSeasonPasses] = useState<any[]>([]);
+    const [jumpToUser, setJumpToUser] = useState<AdminUsersJumpTarget | null>(null);
+
+    const clearJumpToUser = useCallback(() => setJumpToUser(null), []);
 
     const loadPasses = async () => {
         try {
@@ -169,6 +177,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         { id: 'games', icon: <Gamepad2 size={18} />, label: 'Games' },
                         { id: 'security', icon: <Shield size={18} />, label: 'Segurança' },
                         { id: 'backup', icon: <Database size={18} />, label: 'Backup' },
+                        { id: 'support', icon: <MessageCircle size={18} />, label: 'Suporte' },
                     ].filter(item => {
                         if (!user) return false;
                         if (user.adminPermissions === null || user.adminPermissions === undefined) return true;
@@ -196,8 +205,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     }
                 </nav>
             </aside>
-            <main className="flex-1">
-                <div className="max-w-7xl mx-auto p-6">
+            <main className="min-w-0 flex-1 overflow-x-hidden">
+                <div className="max-w-7xl mx-auto min-w-0 p-4 sm:p-6">
                     {/* Security Wrapper Helper */}
                     {(() => {
                         const isAllowed = (tab: string) => {
@@ -223,6 +232,8 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                             accessLevels={accessLevels}
                                             onUpdateAccessLevels={onUpdateAccessLevels}
                                             gameUpgrades={gameUpgrades}
+                                            jumpToUser={jumpToUser}
+                                            onJumpToUserHandled={clearJumpToUser}
                                         />
                                     </>
                                 )}
@@ -306,6 +317,14 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                                     Visibilidade de Páginas por Nível
                                                 </button>
                                             )}
+                                            {isAllowed('settings:pages') && (
+                                                <button
+                                                    onClick={() => setSettingsSubtab('navlabels')}
+                                                    className={`px-3 py-2 text-xs font-bold rounded border ${settingsSubtab === 'navlabels' ? 'bg-slate-800 text-white border-slate-700' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
+                                                >
+                                                    Nomes do menu (jogador)
+                                                </button>
+                                            )}
                                             {isAllowed('settings:rigrooms') && (
                                                 <button
                                                     onClick={() => setSettingsSubtab('rigrooms')}
@@ -342,6 +361,9 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                         {settingsSubtab === 'pages' && isAllowed('settings:pages') && (
                                             <AdminSettingsPageVisibility accessLevels={accessLevels} onUpdateAccessLevels={onUpdateAccessLevels} />
                                         )}
+                                        {settingsSubtab === 'navlabels' && isAllowed('settings:pages') && (
+                                            <AdminSettingsNavLabels />
+                                        )}
                                         {settingsSubtab === 'rigrooms' && isAllowed('settings:rigrooms') && (
                                             <AdminRigRooms accessLevels={accessLevels} />
                                         )}
@@ -376,6 +398,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                 )}
                                 {activeTab === 'security' && isAllowed('security') && (
                                     <AdminSecurity />
+                                )}
+                                {activeTab === 'support' && isAllowed('support') && (
+                                    <AdminSupport
+                                        canOpenPlayerProfile={isAllowed('users')}
+                                        onOpenPlayerProfile={(p) => {
+                                            if (!isAllowed('users')) {
+                                                window.alert(
+                                                    'Para gerir o perfil deste jogador (estoque, carteira, níveis de acesso, etc.) precisa da permissão Utilizadores no painel admin.'
+                                                );
+                                                return;
+                                            }
+                                            setJumpToUser({
+                                                key: Date.now(),
+                                                userId: p.userId,
+                                                email: p.email,
+                                                username: p.username,
+                                            });
+                                            setActiveTab('users');
+                                        }}
+                                    />
                                 )}
                             </>
                         );

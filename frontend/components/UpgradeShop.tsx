@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { GameState, Upgrade, User } from '../types';
 import { ShoppingCart, DollarSign, Package, Zap, Battery, Plus, Minus, Trash2, CheckCircle2, X, Hexagon, Clock, List, Cpu, Server, Plug, Wrench, Activity } from 'lucide-react';
 
@@ -15,6 +15,7 @@ interface UpgradeShopProps {
 export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBatchBuy, upgrades, onSuggestDeposit, isEnabled = true }) => {
     const [cart, setCart] = useState<Record<string, number>>({});
     const [filterType, setFilterType] = useState<string>('machine');
+    const [confirmCheckoutOpen, setConfirmCheckoutOpen] = useState(false);
 
     // FILTERED UPGRADES: Remove Legacy/Exclusive items
     const displayUpgrades = useMemo(() => {
@@ -109,12 +110,26 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
         })
     }
 
-    const handleCheckout = () => {
-        if (gameState.usdc >= cartTotal) {
-            onBatchBuy(cart, cartTotal);
-            setCart({});
-        }
+    const handleCheckoutClick = () => {
+        if (cartTotal === 0 || gameState.usdc < cartTotal || !isEnabled) return;
+        setConfirmCheckoutOpen(true);
     };
+
+    const confirmHardwareCheckout = () => {
+        if (gameState.usdc < cartTotal) return;
+        onBatchBuy(cart, cartTotal);
+        setCart({});
+        setConfirmCheckoutOpen(false);
+    };
+
+    useEffect(() => {
+        if (!confirmCheckoutOpen) return;
+        const onEsc = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') setConfirmCheckoutOpen(false);
+        };
+        window.addEventListener('keydown', onEsc);
+        return () => window.removeEventListener('keydown', onEsc);
+    }, [confirmCheckoutOpen]);
 
     const formatProduction = (val: number) => {
         if (val < 0.0001) return val.toFixed(8);
@@ -142,7 +157,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
             {/* HEADER */}
             <div className="p-4 border-b border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 flex justify-between items-center shrink-0 z-20 shadow-md">
                 <h2 className="text-xl font-bold text-amber-600 dark:text-amber-500 flex items-center gap-2">
-                    <Package size={20} /> Genesis Supply — Hardware
+                    <Package size={20} /> Lojinha Miner
                 </h2>
                 <div className="flex flex-col items-end">
                     <span className="text-xs text-slate-500 uppercase tracking-wide">Reserva USDC</span>
@@ -419,7 +434,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                                 </button>
                             )}
                             <button
-                                onClick={handleCheckout}
+                                onClick={handleCheckoutClick}
                                 disabled={cartTotal === 0 || gameState.usdc < cartTotal || !isEnabled}
                                 className={`
                                 flex-1 py-3 rounded-lg font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all active:scale-[0.98]
@@ -435,6 +450,70 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                 </div>
 
             </div>
+
+            {confirmCheckoutOpen && (
+                <div
+                    className="fixed inset-0 z-[80] flex items-center justify-center p-4 bg-black/50 dark:bg-slate-950/80 backdrop-blur-sm"
+                    role="presentation"
+                    onClick={() => setConfirmCheckoutOpen(false)}
+                >
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="hw-checkout-title"
+                        className="max-w-lg w-full max-h-[85vh] overflow-y-auto rounded-xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <h2 id="hw-checkout-title" className="text-lg font-bold text-slate-900 dark:text-white">
+                            Confirmar compra — Lojinha Miner
+                        </h2>
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                            O total em USDC será debitado do seu saldo no servidor após confirmar.
+                        </p>
+                        <ul className="mt-4 space-y-2 border-y border-slate-200 py-3 dark:border-slate-700">
+                            {cartItemsList.map((item) => (
+                                <li key={item.id} className="flex justify-between text-sm text-slate-700 dark:text-slate-200">
+                                    <span className="truncate pr-2">
+                                        {item.name} <span className="text-slate-400">×{item.count}</span>
+                                    </span>
+                                    <span className="shrink-0 font-mono font-bold">${formatCost(item.cost)}</span>
+                                </li>
+                            ))}
+                        </ul>
+                        <div className="mt-3 flex justify-between text-sm text-slate-600 dark:text-slate-400">
+                            <span>Saldo atual</span>
+                            <span className="font-mono">${formatCost(gameState.usdc)}</span>
+                        </div>
+                        <div className="mt-1 flex justify-between text-base font-bold text-slate-900 dark:text-white">
+                            <span>Total</span>
+                            <span className="font-mono text-green-600 dark:text-green-400">${formatCost(cartTotal)}</span>
+                        </div>
+                        <div className="mt-1 flex justify-between text-sm text-slate-600 dark:text-slate-400">
+                            <span>Saldo após</span>
+                            <span className={`font-mono font-bold ${gameState.usdc - cartTotal < 0 ? 'text-red-500' : 'text-slate-800 dark:text-slate-200'}`}>
+                                ${formatCost(gameState.usdc - cartTotal)}
+                            </span>
+                        </div>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button
+                                type="button"
+                                onClick={() => setConfirmCheckoutOpen(false)}
+                                className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-bold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmHardwareCheckout}
+                                disabled={gameState.usdc < cartTotal}
+                                className="rounded-lg bg-green-600 px-4 py-2 text-sm font-bold text-white hover:bg-green-500 disabled:cursor-not-allowed disabled:opacity-50"
+                            >
+                                Confirmar compra
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

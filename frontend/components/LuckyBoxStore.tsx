@@ -1,13 +1,8 @@
-<<<<<<< Updated upstream
-import React, { useState } from 'react';
-import { GameState, LootBox, Upgrade } from '../types';
-import { normalizePublicAssetUrl } from '../utils/publicUrl';
-=======
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { GameState, LootBox, LootBoxItem, Upgrade } from '../types';
->>>>>>> Stashed changes
-import { Gift, Package, Sparkles, DollarSign, Box, CheckCircle2, X, Ticket } from 'lucide-react';
-import GameView from './roleta/GameView';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
+import { Gift, Package, Sparkles, DollarSign, Box, CheckCircle2, Ticket, Store, Trash2 } from 'lucide-react';
+import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
 
 /** Caixas criadas pelo prémio da roleta guardam o item em `description` (`reward_for_<upgradeId>`), não sempre em `items`. */
 function effectiveLootBoxItems(def: LootBox | undefined, upgradesList: Upgrade[]): LootBoxItem[] {
@@ -27,24 +22,78 @@ function displayLootBoxName(raw: string | undefined): string {
     return n.replace(/\bCorigo\b/gi, 'Código');
 }
 
+/** Caixas-gatilho `roleta_code` não se abrem aqui — o giro é só na aba Roleta. */
+function countOpenableInventoryBoxes(unopened: Record<string, number> | undefined, boxes: LootBox[]): number {
+    if (!unopened) return 0;
+    let sum = 0;
+    for (const [id, q] of Object.entries(unopened)) {
+        if (typeof q !== 'number' || q <= 0) continue;
+        const def = boxes.find((b) => b.id === id);
+        if (def?.trigger === 'roleta_code') continue;
+        sum += q;
+    }
+    return sum;
+}
+
 interface LuckyBoxStoreProps {
     gameState: GameState;
     lootBoxes: LootBox[];
     upgrades: Upgrade[];
     onBuyBox: (boxId: string) => void;
     onOpenBox: (boxId: string) => Promise<{ rewards: any[] } | null>;
+    /** Remove caixas não abertas do inventário (sem prémio). */
+    onDiscardBox?: (boxId: string) => Promise<{ ok: boolean; error?: string }>;
     onRedeemSuccess?: (unopenedBoxes: Record<string, number>) => void;
+    /** Após resgatar código de roleta (ou “girar”), leva o jogador à aba Roleta com o código. */
+    onOpenRoleta?: (code: string) => void;
 }
 
-export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBoxes, upgrades, onBuyBox, onOpenBox, onRedeemSuccess }) => {
+export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
+    gameState,
+    lootBoxes,
+    upgrades,
+    onBuyBox,
+    onOpenBox,
+    onDiscardBox,
+    onRedeemSuccess,
+    onOpenRoleta
+}) => {
     const promoInputRef = useRef<HTMLInputElement>(null);
-    const redeemSectionRef = useRef<HTMLDivElement>(null);
-    const [redeemHighlight, setRedeemHighlight] = useState(false);
     const [openingBox, setOpeningBox] = useState<string | null>(null);
+    const [discardingBox, setDiscardingBox] = useState<string | null>(null);
     const [rewards, setRewards] = useState<any[] | null>(null);
     const [promoCode, setPromoCode] = useState('');
     const [redeeming, setRedeeming] = useState(false);
-    const [roletaCode, setRoletaCode] = useState<string | null>(null);
+    const [notice, setNotice] = useState<UiNotice | null>(null);
+
+    type LuckyTab = 'inventario' | 'loja';
+
+    const shopBoxes = useMemo(() => lootBoxes.filter(b => b.isActive !== false), [lootBoxes]);
+
+    const openableInventoryTotal = useMemo(
+        () => countOpenableInventoryBoxes(gameState.unopenedBoxes, lootBoxes),
+        [gameState.unopenedBoxes, lootBoxes]
+    );
+
+    const [activeTab, setActiveTab] = useState<LuckyTab>(() =>
+        countOpenableInventoryBoxes(gameState.unopenedBoxes, lootBoxes) > 0 ? 'inventario' : 'loja'
+    );
+
+    const lastOwnedRef = useRef(openableInventoryTotal);
+    useEffect(() => {
+        if (openableInventoryTotal > lastOwnedRef.current) setActiveTab('inventario');
+        lastOwnedRef.current = openableInventoryTotal;
+    }, [openableInventoryTotal]);
+
+    const lojaBoxes = useMemo(() => {
+        const claimed = gameState.claimedBoxes || [];
+        return shopBoxes.filter(b => {
+            const t = String(b.trigger || '').trim();
+            if (t !== 'shop' && t !== 'shop_once' && t !== 'special') return false;
+            if (t === 'shop_once' && claimed.includes(b.id)) return false;
+            return true;
+        });
+    }, [shopBoxes, gameState.claimedBoxes]);
 
     // Helper to render icon (emoji or image)
     const renderIcon = (icon: string, sizeClass: string = "text-xl", imgClass: string = "") => {
@@ -83,29 +132,28 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
         return { canBuy: false, label: trigger ? trigger.toUpperCase() : 'INDISPONIVEL' };
     };
 
-    const shopBoxes = lootBoxes.filter(b => b.isActive !== false);
-
     // Get boxes the player owns (from any source)
-    const ownedBoxes = useMemo(() => (Object.entries(gameState.unopenedBoxes) as [string, number][])
-        .filter(([_, qty]) => qty > 0)
-        .map(([id, qty]) => {
-            const def = lootBoxes.find(b => b.id === id);
-            return {
-                id,
-                qty,
-                name: displayLootBoxName(def?.name),
-                description: def?.description || 'Recompensa obtida.',
-                icon: def?.icon || '🎁',
-<<<<<<< Updated upstream
-                items: def?.items || [],
-                /** Caixa retirada do catálogo público; inventário e abertura continuam válidos. */
-                isRetiredCatalog: def?.isActive === false
-=======
-                trigger: def?.trigger,
-                items: effectiveLootBoxItems(def, upgrades)
->>>>>>> Stashed changes
-            };
-        }), [gameState.unopenedBoxes, lootBoxes, upgrades]);
+    const ownedBoxes = useMemo(
+        () =>
+            (Object.entries(gameState.unopenedBoxes) as [string, number][])
+                .filter(([_, qty]) => qty > 0)
+                .map(([id, qty]) => {
+                    const def = lootBoxes.find((b) => b.id === id);
+                    return {
+                        id,
+                        qty,
+                        name: displayLootBoxName(def?.name),
+                        description: def?.description || 'Recompensa obtida.',
+                        icon: def?.icon || '🎁',
+                        trigger: def?.trigger,
+                        items: effectiveLootBoxItems(def, upgrades),
+                        /** Caixa retirada do catálogo público; inventário e abertura continuam válidos. */
+                        isRetiredCatalog: def?.isActive === false
+                    };
+                })
+                .filter((box) => box.trigger !== 'roleta_code'),
+        [gameState.unopenedBoxes, lootBoxes, upgrades]
+    );
 
     const handleOpen = (boxId: string) => {
         setOpeningBox(boxId);
@@ -118,6 +166,25 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
             }
             setOpeningBox(null);
         }, 1500);
+    };
+
+    const handleDiscardClick = async (boxId: string, name: string, qty: number) => {
+        if (!onDiscardBox) return;
+        const unit = qty === 1 ? 'esta caixa' : `estas ${qty} caixas`;
+        if (
+            !window.confirm(
+                `Descartar ${unit} «${name}»?\n\nNão recebe qualquer recompensa. Esta ação não pode ser anulada.`
+            )
+        ) {
+            return;
+        }
+        setDiscardingBox(boxId);
+        try {
+            const result = await onDiscardBox(boxId);
+            if (!result.ok) alert(result.error || 'Não foi possível descartar.');
+        } finally {
+            setDiscardingBox(null);
+        }
     };
 
     const handleCloseRewards = () => {
@@ -137,10 +204,19 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
             const data = await res.json();
             if (res.ok) {
                 if (data.type === 'roleta') {
-                    setRoletaCode(data.code);
+                    const c = typeof data.code === 'string' ? data.code.trim() : '';
                     setPromoCode('');
+                    if (c && onOpenRoleta) {
+                        onOpenRoleta(c);
+                    } else if (c) {
+                        setNotice({
+                            variant: 'info',
+                            title: 'Resgate OK',
+                            message: 'Abra o menu Roleta para girar.'
+                        });
+                    }
                 } else {
-                    alert('Código resgatado com sucesso!');
+                    setNotice({ variant: 'success', message: 'Código resgatado com sucesso!' });
                     setPromoCode('');
                     if (onRedeemSuccess && data.unopenedBoxes) {
                         onRedeemSuccess(data.unopenedBoxes);
@@ -149,10 +225,10 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                     }
                 }
             } else {
-                alert(data.error || 'Erro ao resgatar código');
+                setNotice({ variant: 'error', message: data.error || 'Erro ao resgatar código' });
             }
         } catch (e) {
-            alert('Falha na comunicação com o servidor');
+            setNotice({ variant: 'error', message: 'Falha na comunicação com o servidor' });
         }
         setRedeeming(false);
     };
@@ -162,80 +238,105 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
         return val.toLocaleString('en-US', { maximumFractionDigits: 2 });
     };
 
-    /** Leva ao bloco de código e destaca-o — a roleta só abre após RESGATAR com um código válido. */
-    const goToRedeemCode = useCallback(() => {
-        setRedeemHighlight(true);
-        window.setTimeout(() => setRedeemHighlight(false), 3200);
-        const run = () => {
-            const section = redeemSectionRef.current ?? document.getElementById('lucky-store-redeem');
-            const input = promoInputRef.current;
-            if (section instanceof HTMLElement) {
-                section.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'nearest' });
-            }
-            input?.focus({ preventScroll: true });
-        };
-        requestAnimationFrame(() => {
-            run();
-            requestAnimationFrame(run);
-        });
-    }, []);
-
     return (
-        <div className="flex flex-col p-6 animate-in fade-in slide-in-from-bottom-4 duration-300 relative">
+        <div className="relative flex flex-col p-3 animate-in fade-in slide-in-from-bottom-4 duration-300 sm:p-6">
 
-            <div className="flex items-center gap-3 mb-8 border-b border-slate-200 dark:border-slate-800 pb-4">
-                <div className="bg-gradient-to-br from-amber-500 to-orange-700 p-2 rounded-lg text-white shadow-lg">
+            <div className="mb-6 flex items-center gap-3 border-b border-slate-200 pb-4 dark:border-slate-800">
+                <div className="rounded-lg bg-gradient-to-br from-amber-500 to-orange-700 p-2 text-white shadow-lg">
                     <Gift size={24} />
                 </div>
                 <div>
-                    <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Caixa da Sorte</h2>
-                    <p className="text-sm text-slate-500">Tente a sorte e ganhe itens raros ou cripto.</p>
+                    <h2 className="text-lg font-bold text-slate-800 dark:text-slate-200 sm:text-xl">Caixa da Sorte</h2>
+                    <p className="text-xs text-slate-500 sm:text-sm">Loja para comprar; inventário separado para abrir o que você já tem.</p>
                 </div>
             </div>
 
-            {/* REDEEM CODE SECTION */}
             <div
-                ref={redeemSectionRef}
                 id="lucky-store-redeem"
-                className={`mb-8 bg-gradient-to-r from-orange-900/10 to-amber-950/30 border rounded-2xl p-6 shadow-sm transition-shadow duration-300 ${
-                    redeemHighlight
-                        ? 'border-orange-500 ring-4 ring-orange-500/60 ring-offset-2 ring-offset-white dark:ring-offset-slate-950 shadow-lg shadow-orange-500/25'
-                        : 'border-orange-500/20'
-                }`}
+                className="mb-6 rounded-2xl border border-orange-500/25 bg-gradient-to-r from-orange-900/15 to-amber-950/35 p-4 shadow-sm sm:p-6"
             >
-                <div className="flex flex-col md:flex-row md:items-center gap-6">
-                    <div className="flex-1">
-                        <h3 className="text-sm font-black text-orange-600 dark:text-orange-400 uppercase tracking-widest flex items-center gap-2 mb-1">
-                            <Ticket size={18} /> Código de Resgate
+                <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+                    <div className="min-w-0 flex-1">
+                        <h3 className="mb-1 flex items-center gap-2 text-xs font-black uppercase tracking-widest text-orange-600 dark:text-orange-400 sm:text-sm">
+                            <Ticket size={18} aria-hidden /> Código promocional
                         </h3>
-                        <p className="text-[11px] text-slate-500 uppercase font-bold tracking-tight">Utilize códigos promocionais para obter caixas exclusivas.</p>
+                        <p className="text-xs leading-relaxed text-slate-600 dark:text-slate-400">
+                            Caixas, USDC ou outros prémios de campanha. Códigos da{' '}
+                            <span className="font-bold text-slate-800 dark:text-slate-200">Roleta</span> abrem automaticamente no menu{' '}
+                            <span className="font-bold text-rose-600 dark:text-rose-400">Roleta</span> — não precisa de os colar aqui.
+                        </p>
                     </div>
-                    <div className="flex gap-2 w-full md:w-auto">
+                    <div className="flex w-full flex-col gap-2 sm:flex-row sm:items-stretch md:w-auto md:shrink-0">
                         <input
                             ref={promoInputRef}
                             type="text"
                             value={promoCode}
                             onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
-                            placeholder="DIGITE SEU CÓDIGO"
-                            className="bg-white dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl px-4 py-2 text-sm font-mono font-bold tracking-widest text-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 w-full md:w-64"
+                            placeholder="CÓDIGO"
+                            className="min-h-[44px] w-full rounded-xl border border-slate-300 bg-white px-4 py-2 font-mono text-sm font-bold tracking-widest text-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500/50 dark:border-slate-700 dark:bg-slate-950 dark:text-orange-400 sm:min-w-[12rem] md:w-56"
                         />
                         <button
+                            type="button"
                             onClick={handleRedeem}
                             disabled={redeeming || !promoCode.trim()}
-                            className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white font-bold px-6 py-2 rounded-xl text-xs uppercase tracking-widest transition-all shadow-lg shadow-orange-600/20 active:scale-95 whitespace-nowrap"
+                            className="min-h-[44px] shrink-0 rounded-xl bg-orange-600 px-6 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-orange-600/25 transition hover:bg-orange-500 disabled:opacity-50"
                         >
-                            {redeeming ? '...' : 'RESGATAR'}
+                            {redeeming ? '…' : 'Resgatar'}
                         </button>
                     </div>
                 </div>
             </div>
 
-            {/* OWNED BOXES SECTION */}
-            {ownedBoxes.length > 0 && (
+            <nav className="mb-6 flex flex-wrap gap-2" aria-label="Secções da loja de caixas">
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('inventario')}
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all ${
+                        activeTab === 'inventario'
+                            ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/25'
+                            : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                >
+                    <Package size={16} />
+                    Meu inventário
+                    {openableInventoryTotal > 0 ? (
+                        <span className="ml-0.5 rounded-full bg-white/20 px-2 py-0.5 text-[10px] tabular-nums">{openableInventoryTotal}</span>
+                    ) : null}
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setActiveTab('loja')}
+                    className={`inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold uppercase tracking-widest transition-all ${
+                        activeTab === 'loja'
+                            ? 'bg-orange-600 text-white shadow-lg shadow-orange-600/25'
+                            : 'bg-slate-100 dark:bg-slate-800/80 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                    }`}
+                >
+                    <Store size={16} />
+                    Loja
+                </button>
+            </nav>
+
+            {activeTab === 'inventario' && (
                 <div className="mb-8">
                     <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
-                        <Package size={16} /> Suas Caixas ({ownedBoxes.reduce((a, b) => a + b.qty, 0)})
+                        <Package size={16} /> Inventário — abrir caixas ({openableInventoryTotal})
                     </h3>
+                    {ownedBoxes.length === 0 ? (
+                        <div className="rounded-2xl border-2 border-dashed border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-900/40 px-6 py-14 text-center">
+                            <p className="text-slate-700 dark:text-slate-300 font-medium mb-2">Você não tem caixas para abrir.</p>
+                            <p className="mb-6 text-sm text-slate-500">Compre na loja ou use o código promocional acima.</p>
+                            <div className="flex flex-wrap justify-center gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setActiveTab('loja')}
+                                    className="rounded-lg bg-amber-600 px-4 py-2 text-xs font-bold uppercase tracking-wider text-white shadow-md shadow-amber-600/20 transition hover:bg-amber-500 active:scale-95"
+                                >
+                                    Ir à loja
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                         {ownedBoxes.map((box: any) => (
                             <div key={box.id} className="bg-white dark:bg-slate-900 border-2 border-orange-500/30 rounded-xl p-4 flex flex-col items-center text-center shadow-lg relative overflow-hidden group">
@@ -280,42 +381,51 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                                 <div className="text-xs font-bold text-orange-600 dark:text-orange-400 bg-orange-100 dark:bg-orange-900/30 px-3 py-1 rounded-full mb-3 relative z-10">
                                     Quantidade: {box.qty}
                                 </div>
-                                {box.trigger === 'roleta_code' ? (
-                                    <div className="w-full space-y-2 relative z-10">
-                                        <button
-                                            type="button"
-                                            onClick={goToRedeemCode}
-                                            className="w-full bg-slate-700 hover:bg-slate-600 text-white font-bold py-2 rounded-lg transition-all active:scale-95 flex items-center justify-center gap-2 border border-orange-500/40"
-                                        >
-                                            <Ticket size={16} /> IR AO CÓDIGO DE RESGATE
-                                        </button>
-                                        <p className="text-[10px] text-slate-500 leading-snug px-1">
-                                            Cole o código no campo destacado acima e toque em <span className="font-bold text-orange-500">RESGATAR</span> — a roleta abre a seguir (não é este botão que a abre).
-                                        </p>
-                                    </div>
-                                ) : (
+                                <div className="relative z-10 flex w-full flex-col gap-2">
                                     <button
+                                        type="button"
                                         onClick={() => handleOpen(box.id)}
-                                        disabled={openingBox !== null}
-                                        className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 rounded-lg transition-all active:scale-95 flex items-center justify-center gap-2 relative z-10 disabled:opacity-50"
+                                        disabled={openingBox !== null || discardingBox !== null}
+                                        className="flex w-full items-center justify-center gap-2 rounded-lg bg-orange-600 py-2 font-bold text-white transition-all hover:bg-orange-500 active:scale-95 disabled:opacity-50"
                                     >
-                                        {openingBox === box.id ? <Sparkles className="animate-spin" size={16} /> : <Box size={16} />}
+                                        {openingBox === box.id ? (
+                                            <Sparkles className="animate-spin" size={16} />
+                                        ) : (
+                                            <Box size={16} />
+                                        )}
                                         {openingBox === box.id ? 'ABRINDO...' : 'ABRIR AGORA'}
                                     </button>
-                                )}
+                                    {onDiscardBox && (
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDiscardClick(box.id, box.name, box.qty)}
+                                            disabled={openingBox !== null || discardingBox !== null}
+                                            className="flex w-full items-center justify-center gap-2 rounded-lg border border-red-500/40 bg-red-500/10 py-2 text-xs font-bold uppercase tracking-wider text-red-600 transition-all hover:bg-red-500/20 active:scale-95 disabled:opacity-50 dark:text-red-400"
+                                        >
+                                            {discardingBox === box.id ? (
+                                                <Sparkles className="animate-spin" size={14} />
+                                            ) : (
+                                                <Trash2 size={14} />
+                                            )}
+                                            {discardingBox === box.id ? 'A descartar…' : 'Descartar'}
+                                        </button>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>
+                    )}
                 </div>
             )}
 
-            {/* SHOP SECTION */}
+            {activeTab === 'loja' && (
             <div>
                 <h3 className="text-sm font-bold text-slate-500 uppercase tracking-widest mb-4 flex items-center gap-2">
                     <DollarSign size={16} /> Loja de Caixas
                 </h3>
+                <p className="text-xs text-slate-500 mb-4 -mt-2">Só aparecem ofertas que você ainda pode comprar. Caixas que você já tem ficam em <span className="font-semibold text-slate-600 dark:text-slate-400">Meu inventário</span>.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {shopBoxes.map(box => {
+                    {lojaBoxes.map(box => {
                         const availability = getBoxAvailability(box);
                         const canAfford = gameState.usdc >= box.price;
                         const canBuyNow = availability.canBuy && canAfford;
@@ -386,13 +496,14 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                             </div>
                         </div>
                     )})}
-                    {shopBoxes.length === 0 && (
+                    {lojaBoxes.length === 0 && (
                         <div className="col-span-full text-center py-12 text-slate-500 italic border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
                             Nenhuma caixa disponível para compra no momento.
                         </div>
                     )}
                 </div>
             </div>
+            )}
 
             {/* REWARDS MODAL */}
             {rewards && (
@@ -439,35 +550,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({ gameState, lootBox
                 </div>
             )}
 
-            {/* ROLETA MODAL */}
-            {roletaCode && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/85 backdrop-blur-md animate-in fade-in duration-300 p-4 sm:p-6">
-                    <div className="relative w-full max-w-lg overflow-hidden rounded-2xl border border-orange-500/25 bg-slate-900/95 shadow-[0_0_0_1px_rgba(255,255,255,0.04),0_24px_80px_rgba(0,0,0,0.65)] sm:max-w-2xl">
-                        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-orange-500/10 via-transparent to-amber-950/20" aria-hidden />
-                        <button
-                            type="button"
-                            onClick={() => setRoletaCode(null)}
-                            className="absolute right-3 top-3 z-10 flex h-10 w-10 items-center justify-center rounded-full border border-slate-600/80 bg-slate-800/90 text-slate-400 transition hover:border-slate-500 hover:bg-slate-700 hover:text-white"
-                            aria-label="Fechar"
-                        >
-                            <X size={20} />
-                        </button>
-                        <div className="relative max-h-[min(92vh,52rem)] overflow-y-auto px-4 pb-8 pt-12 sm:px-8 sm:pb-10 sm:pt-14 custom-scrollbar">
-                            <GameView
-                                items={[]}
-                                onBack={() => setRoletaCode(null)}
-                                redeemCode={roletaCode}
-                                upgrades={upgrades}
-                                onRedeemComplete={() => {
-                                    setRoletaCode(null);
-                                    if (onRedeemSuccess) onRedeemSuccess({}); // Refresh inventory
-                                }}
-                            />
-                        </div>
-                    </div>
-                </div>
-            )}
-
+            <UiNoticeModal notice={notice} onClose={() => setNotice(null)} />
         </div>
     );
 };

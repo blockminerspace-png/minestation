@@ -22,14 +22,14 @@ function validateLootBoxForm(box: Partial<LootBox>): string | null {
     }
     if (active && STORE_LIKE_TRIGGERS.has(trig)) {
         const p = Number(box.price);
-        if (!Number.isFinite(p) || p < 0) {
-            return 'Para gatilhos de loja (Loja / Loja 1x / Evento especial), defina preço USDC ≥ 0 (use 0 para caixa grátis na loja).';
+        if (!Number.isFinite(p) || p <= 0) {
+            return 'Para gatilhos de loja (Loja / Loja 1x / Evento especial), defina preço USDC maior que zero.';
         }
     }
     return null;
 }
 import { PlusCircle, X, Trash2, Gift, Ticket, Plus, Users, RefreshCw, Package, ToggleLeft, ToggleRight } from 'lucide-react';
-import { getSeasonPasses, getAdminUpgrades, getLootBoxes } from '../services/api';
+import { getSeasonPasses, getAdminUpgrades, getLootBoxes, deleteLootBox } from '../services/api';
 
 interface AdminLootBoxesProps {
     lootBoxes: LootBox[];
@@ -40,7 +40,7 @@ interface AdminLootBoxesProps {
 export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpdateLootBoxes, gameUpgrades }) => {
     const [editBoxMode, setEditBoxMode] = useState<boolean>(false);
     const [boxForm, setBoxForm] = useState<Partial<LootBox>>({
-        id: '', name: '', description: '', price: 0, trigger: 'shop', items: [], icon: '🎁'
+        id: '', name: '', description: '', price: 1, trigger: 'shop', items: [], icon: '🎁'
     });
     const [newItemForm, setNewItemForm] = useState<Partial<LootBoxItem>>({
         type: 'item', id: '', minQty: 1, maxQty: 1, probability: 50
@@ -144,7 +144,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
     const handleNewBox = () => {
         setEditBoxMode(true);
         setBoxForm({
-            id: crypto.randomUUID(), name: 'Nova Caixa', description: '', price: 0, trigger: 'shop', items: [], icon: '🎁', isActive: true
+            id: crypto.randomUUID(), name: 'Nova Caixa', description: '', price: 1, trigger: 'shop', items: [], icon: '🎁', isActive: true
         });
     };
 
@@ -169,13 +169,47 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
         setEditBoxMode(false);
     };
 
-    const handleDeleteBox = (id: string) => {
+    const handleDeleteBox = async (id: string) => {
         if (!onUpdateLootBoxes) return;
-        if (window.confirm("Excluir esta caixa?")) {
+        if (!window.confirm(
+            'Apagar esta caixa na base de dados? Isto remove prémios, caixas não abertas nos inventários, registos shop_once, vínculos em pacotes admin, códigos promo (loot_box_id) e referências em modelos de indicação. Não dá para desfazer.'
+        )) {
+            return;
+        }
+        try {
+            const { summary } = await deleteLootBox(id);
             onUpdateLootBoxes(lootBoxes.filter(b => b.id !== id));
             setEditBoxMode(false);
+            alert(
+                `Caixa removida.\n` +
+                `Prémios (linhas): ${summary.lootBoxItemsRemoved}\n` +
+                `Inventários (unopened_boxes): ${summary.unopenedBoxesRows}\n` +
+                `Shop 1x (player_claimed): ${summary.playerClaimedRows}\n` +
+                `Pacotes admin: ${summary.adminUpgradeBoxesRows}\n` +
+                `Códigos promo atualizados: ${summary.promoCodesCleared}\n` +
+                `Referral sender/receiver limpos: ${summary.referralModelsSenderCleared} / ${summary.referralModelsReceiverCleared}`
+            );
+        } catch (e) {
+            alert(e instanceof Error ? e.message : 'Falha ao apagar caixa no servidor.');
         }
-    }
+    };
+
+    const handleDeleteBoxIfBroken = async (id: string) => {
+        if (!onUpdateLootBoxes) return;
+        if (!window.confirm(
+            'Remover da base de dados só se a caixa estiver inválida (sem linhas em loot_box_items ou todas as probabilidades a zero)? Caixas com sorteio válido não serão apagadas.'
+        )) {
+            return;
+        }
+        try {
+            const { summary } = await deleteLootBox(id, { brokenOnly: true });
+            onUpdateLootBoxes(lootBoxes.filter(b => b.id !== id));
+            setEditBoxMode(false);
+            alert(`Caixa inválida removida.\nloot_boxes removidos: ${summary.lootBoxesRemoved}`);
+        } catch (e) {
+            alert(e instanceof Error ? e.message : 'Não foi possível apagar (caixa pode ter prémios válidos).');
+        }
+    };
 
     const handleAddBoxItem = () => {
         if (!newItemForm.id) return;
@@ -223,15 +257,12 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
             }
             payload.upgradeId = selectedUpgradeId;
         } else {
-            if (String(promoType).startsWith('roleta_')) {
-                // Códigos de roleta não devem gravar loot_box_id (evita caixa modelo no inventário).
-            } else {
-                if (!boxForm.id) {
-                    alert("ID da caixa ausente!");
-                    return;
-                }
-                payload.lootBoxId = boxForm.id;
+            if (!boxForm.id) {
+                alert("ID da caixa ausente!");
+                return;
             }
+            /** Sempre ligar o código à caixa (incl. roleta): o servidor usa `loot_box_id` + gatilho `roleta_code` para o fluxo certo. */
+            payload.lootBoxId = boxForm.id;
         }
 
         setGeneratingCode(true);
@@ -447,6 +478,11 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                             {boxForm.trigger !== 'roleta_code' && (
                                 <div className="border-t border-slate-700 pt-4">
                                     <h4 className="font-bold text-orange-400 mb-2">Conteúdo da Caixa</h4>
+                                    {boxForm.trigger === 'registration' && (
+                                        <p className="text-xs text-slate-400 mb-3 leading-relaxed border-l-2 border-emerald-600/80 pl-3">
+                                            <strong className="text-slate-200">Cadastro:</strong> cada abertura entrega <strong className="text-slate-200">todas</strong> as linhas com valor &gt; 0 (quantidade aleatória entre min e max). Noutros gatilhos, o número é <strong className="text-slate-200">peso</strong> num sorteio de <strong className="text-slate-200">um único</strong> prémio.
+                                        </p>
+                                    )}
                                     <div className="bg-slate-900 rounded p-3 mb-4 space-y-2">
                                         {boxForm.items?.map((item, idx) => (
                                             <div key={idx} className="flex justify-between items-center text-sm bg-slate-800 p-2 rounded border border-slate-700">
@@ -455,7 +491,11 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                     <span className="text-slate-500 ml-2">x{item.minQty}-{item.maxQty}</span>
                                                 </div>
                                                 <div className="flex items-center gap-3">
-                                                    <span className="text-yellow-500 font-mono">{item.probability}% Chance</span>
+                                                    <span className="text-yellow-500 font-mono">
+                                                        {boxForm.trigger === 'registration'
+                                                            ? (Number(item.probability) > 0 ? 'No pacote' : '—')
+                                                            : `${item.probability}% peso`}
+                                                    </span>
                                                     <button onClick={() => removeBoxItem(idx)} className="text-red-500 hover:text-red-400"><Trash2 size={14} /></button>
                                                 </div>
                                             </div>
@@ -499,7 +539,9 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                             </div>
                                         </div>
                                         <div className="col-span-2">
-                                            <label className="text-[10px] text-slate-500 font-bold block mb-1">Chance %</label>
+                                            <label className="text-[10px] text-slate-500 font-bold block mb-1">
+                                                {boxForm.trigger === 'registration' ? 'Ativo (> 0)' : 'Peso %'}
+                                            </label>
                                             <input type="number" min="1" max="100" value={newItemForm.probability} onChange={e => setNewItemForm({ ...newItemForm, probability: parseFloat(e.target.value) })} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
                                         </div>
                                         <div className="col-span-2">
@@ -723,12 +765,23 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                 </div>
                             )}
 
-                            <div className="flex gap-4 pt-4">
-                                <button onClick={() => setEditBoxMode(false)} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded font-bold">CANCELAR</button>
-                                <button onClick={handleSaveBox} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded font-bold flex-1">SALVAR CAIXA</button>
+                            <div className="flex flex-col gap-2 pt-4">
+                                <div className="flex gap-4">
+                                    <button onClick={() => setEditBoxMode(false)} className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded font-bold">CANCELAR</button>
+                                    <button onClick={handleSaveBox} className="bg-green-600 hover:bg-green-500 text-white px-4 py-2 rounded font-bold flex-1">SALVAR CAIXA</button>
+                                    {boxForm.id && (
+                                        <button type="button" onClick={() => handleDeleteBox(boxForm.id!)} className="bg-red-900/50 hover:bg-red-800 text-red-400 border border-red-800 px-4 py-2 rounded shrink-0" title="Apagar na base de dados">
+                                            <Trash2 size={16} />
+                                        </button>
+                                    )}
+                                </div>
                                 {boxForm.id && (
-                                    <button onClick={() => handleDeleteBox(boxForm.id!)} className="bg-red-900/50 hover:bg-red-800 text-red-400 border border-red-800 px-4 py-2 rounded">
-                                        <Trash2 size={16} />
+                                    <button
+                                        type="button"
+                                        onClick={() => handleDeleteBoxIfBroken(boxForm.id!)}
+                                        className="self-end text-[10px] uppercase tracking-wide text-amber-600 hover:text-amber-400 border border-amber-900/40 rounded px-2 py-1"
+                                    >
+                                        Apagar só se inválida (sem itens / prob. 0)
                                     </button>
                                 )}
                             </div>

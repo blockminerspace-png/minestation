@@ -5,8 +5,18 @@
   <meta name="cryptocoinsad" content="cryptocoinsad-82489" />
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Genesis Miner</title>
+  <title>Genesis Miner — simulador Web3 de mineração | Genesis DAO</title>
+  <meta
+    name="description"
+    content="Genesis Miner: simulador de mineração digital com racks, energia e economia Web3. Entre, monte o seu data center e evolua no ecossistema Genesis DAO."
+  />
+  <meta name="theme-color" content="#0f0c08" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+  <meta property="og:title" content="Genesis Miner — Genesis DAO" />
+  <meta property="og:description" content="Simulador Web3 de mineração digital: racks, energia, mercado e progressão rumo à Polygon." />
+  <meta property="og:type" content="website" />
   <link rel="icon" type="image/png" href="/genesis-miner-logo.png" />
+  <link rel="preload" href="/genesis-miner-logo.png" as="image" type="image/png" />
   <style>
     /* Tipografia local (sem fonts.googleapis.com — menos latência e menos terceiros na cadeia crítica) */
     body {
@@ -37,7 +47,7 @@
 </head>
 
 <body
-  class="bg-slate-50 dark:bg-[#0f0c08] text-slate-900 dark:text-slate-100 overflow-hidden transition-colors duration-300">
+  class="bg-slate-50 dark:bg-[#0f0c08] text-slate-900 dark:text-slate-100 overflow-x-hidden overflow-y-hidden transition-colors duration-300">
   <div id="applixir_wan"></div>
   <div id="root"></div>
   <script type="module" src="/index.tsx"></script>

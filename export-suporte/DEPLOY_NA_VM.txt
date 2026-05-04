@@ -1,0 +1,33 @@
+Passos na VM (~/minestation/frontend)
+=====================================
+
+1) APAGAR (obrigatório):
+   rm -f services/api_support_fragment.ts
+
+2) COPIAR do repositório Git (PC) para a VM o ficheiro NOVO:
+   frontend/services/supportTicketsApi.ts
+   -> colar em ~/minestation/frontend/services/supportTicketsApi.ts
+
+3) EDITAR ~/minestation/frontend/services/api.ts
+   Imediatamente ANTES de "export async function getReferrals" (ou equivalente),
+   inserir estas linhas (se ainda não existirem):
+
+   export type {
+     SupportTicketAttachment,
+     SupportTicketReplyRow,
+     SupportTicketRow,
+   } from './supportTicketsApi';
+   export {
+     submitSupportTicket,
+     getAdminSupportTickets,
+     postAdminSupportTicketReply,
+     updateAdminSupportTicketStatus,
+   } from './supportTicketsApi';
+
+   Se o teu api.ts ainda tiver blocos DUPLICADOS antigos (tipos + funções de suporte
+   com apiFetch/base), REMOVE-OS para não haver duplicação.
+
+4) Build:
+   cd ~/minestation/frontend && npm run build
+
+Melhor: git pull a partir do branch onde estes ficheiros já estão committed.

@@ -9,7 +9,12 @@ import { EzoicConfig } from './monetization/EzoicConfig';
 export const AdminMonetization: React.FC = () => {
     const [subTab, setSubTab] = useState<'rewarded' | 'ads' | 'economy' | 'promo'>('rewarded');
     const [rewardProvider, setRewardProvider] = useState<'applixir' | 'ezoic'>('applixir');
-    const [economy, setEconomy] = useState<EconomySettings>({ hardwareMarketEnabled: true, blackMarketEnabled: true });
+    const [economy, setEconomy] = useState<EconomySettings>({
+        hardwareMarketEnabled: true,
+        blackMarketEnabled: true,
+        marketTaxPercent: 0,
+        blackMarketPriceBandPercent: 20
+    });
     const [settings, setSettings] = useState<MonetizationSettings>({
         applixirEnabled: true,
         applixirSiteId: '',
@@ -73,13 +78,18 @@ export const AdminMonetization: React.FC = () => {
 
     const handleSave = async () => {
         setSaving(true);
-        if (subTab === 'economy') {
-            await apiSetEconomySettings(economy);
-        } else if (subTab !== 'promo') {
-            await setMonetizationSettings(settings);
+        try {
+            if (subTab === 'economy') {
+                await apiSetEconomySettings(economy);
+            } else if (subTab !== 'promo') {
+                await setMonetizationSettings(settings);
+            }
+            alert('Configurações salvas!');
+        } catch (e) {
+            alert(e instanceof Error ? e.message : 'Erro ao salvar.');
+        } finally {
+            setSaving(false);
         }
-        setSaving(false);
-        alert('Configurações salvas!');
     };
 
     if (loading) return <div className="p-8 text-slate-500 animate-pulse uppercase tracking-widest text-xs">Carregando parâmetros...</div>;

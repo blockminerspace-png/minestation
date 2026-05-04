@@ -11,7 +11,15 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
             {/* Hero — ouro / âmbar Genesis DAO */}
             <div className="relative overflow-hidden py-20 lg:py-32 bg-gradient-to-b from-slate-50 via-white to-slate-100 dark:from-[#120e09] dark:via-[#1c140c] dark:to-[#0a0805]">
-                <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-[0.07] dark:opacity-[0.12] pointer-events-none" />
+                {/* Textura local (evita pedido HTTP a terceiros no caminho crítico / LCP) */}
+                <div
+                    className="absolute inset-0 opacity-[0.07] dark:opacity-[0.12] pointer-events-none"
+                    style={{
+                        backgroundImage:
+                            'repeating-linear-gradient(45deg, transparent, transparent 2px, rgba(0,0,0,0.04) 2px, rgba(0,0,0,0.04) 4px)'
+                    }}
+                    aria-hidden
+                />
                 <div className="absolute top-1/4 left-0 w-1 h-48 md:h-64 bg-gradient-to-b from-amber-400 via-amber-500 to-orange-600 rounded-r-full opacity-90 hidden sm:block" aria-hidden />
                 <div className="absolute top-0 right-0 -mr-24 -mt-24 w-[28rem] h-[28rem] bg-amber-500/[0.12] dark:bg-amber-400/15 rounded-full blur-3xl" />
                 <div className="absolute bottom-0 left-0 -ml-24 -mb-24 w-[28rem] h-[28rem] bg-orange-600/[0.1] dark:bg-orange-500/15 rounded-full blur-3xl" />
@@ -33,13 +41,17 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate }) => {
 
                     <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
                         <button
+                            type="button"
                             onClick={() => onNavigate('auth')}
+                            aria-label="Entrar na operação — abrir login"
                             className="group w-full sm:w-auto bg-gradient-to-r from-amber-400 to-amber-600 hover:from-amber-300 hover:to-amber-500 text-stone-950 font-bold py-4 px-10 rounded-xl shadow-[0_0_32px_rgba(245,158,11,0.45)] border border-amber-300/50 transition-all active:scale-[0.98] flex items-center justify-center gap-2"
                         >
-                            ENTRAR NA OPERAÇÃO <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" />
+                            ENTRAR NA OPERAÇÃO <ArrowRight size={20} className="group-hover:translate-x-1 transition-transform" aria-hidden />
                         </button>
                         <button
+                            type="button"
                             onClick={() => onNavigate('docs')}
+                            aria-label="Abrir manual e documentação"
                             className="w-full sm:w-auto bg-white/90 dark:bg-slate-900/80 hover:bg-white dark:hover:bg-slate-900 text-slate-800 dark:text-slate-100 font-bold py-4 px-10 rounded-xl border-2 border-amber-500/25 dark:border-amber-400/30 hover:border-orange-500/40 dark:hover:border-orange-400/40 transition-all shadow-md backdrop-blur-sm"
                         >
                             ABRIR MANUAL

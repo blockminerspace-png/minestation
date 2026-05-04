@@ -1,8 +1,5 @@
-<<<<<<< Updated upstream
-import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry } from '../types';
-=======
-import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog } from '../types';
->>>>>>> Stashed changes
+import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog, PlacedRack, StoredBattery, P2PMarketTradeHistory, P2PMarketTradeHistoryEntry } from '../types';
+import { GAME_NAV_LABEL_KEYS } from '../constants/gameNavLabels';
 
 const base = '/api';
 
@@ -45,6 +42,23 @@ async function apiFetch(url: string, options: RequestInit = {}, allowRefreshRetr
     }
   }
   return res;
+}
+
+/** Log de atividade do jogador (auditoria); falhas não devem bloquear o jogo. */
+export async function logPlayerActivity(
+  action: string,
+  meta: Record<string, unknown>,
+  clientHints?: Record<string, unknown>
+): Promise<void> {
+  try {
+    await apiFetch(`${base}/player-activity-log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, meta, clientHints: clientHints && typeof clientHints === 'object' ? clientHints : {} })
+    });
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Transferências USDC (Polygon) para o treasury — só admin; chave Etherscan fica no servidor. */
@@ -103,6 +117,51 @@ export async function setAccessLevels(levels: AccessLevel[]): Promise<void> {
   }
 }
 
+/** Prefixo em `ui_display_labels` para itens da barra de navegação (alinhado ao backend). */
+const GAME_NAV_DB_PREFIX = 'nav.';
+
+function gameNavLabelsFromDisplayLabelsPayload(data: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const short of GAME_NAV_LABEL_KEYS) {
+    const v = data[`${GAME_NAV_DB_PREFIX}${short}`];
+    if (typeof v === 'string' && v.trim()) out[short] = v.trim();
+  }
+  return out;
+}
+
+/** Rótulos do menu do jogo (via GET /api/display-labels; chaves `nav.*` no servidor). */
+export async function getGameNavLabels(): Promise<Record<string, string>> {
+  try {
+    const res = await apiFetch(`${base}/display-labels`);
+    if (!res.ok) return {};
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+    return gameNavLabelsFromDisplayLabelsPayload(data);
+  } catch {
+    return {};
+  }
+}
+
+/** Salva rótulos do menu (admin) em POST /api/admin/display-labels. */
+export async function saveGameNavLabels(labels: Record<string, string>): Promise<Record<string, string>> {
+  const payload: Record<string, string> = {};
+  for (const short of GAME_NAV_LABEL_KEYS) {
+    const raw = labels[short];
+    const s = typeof raw === 'string' ? raw.trim().slice(0, 200) : '';
+    payload[`${GAME_NAV_DB_PREFIX}${short}`] = s;
+  }
+  const res = await apiFetch(`${base}/admin/display-labels`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ labels: payload })
+  });
+  const data = (await res.json().catch(() => ({}))) as { error?: string; labels?: unknown };
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  const merged = data.labels;
+  if (!merged || typeof merged !== 'object' || Array.isArray(merged)) return {};
+  return gameNavLabelsFromDisplayLabelsPayload(merged as Record<string, unknown>);
+}
+
 export async function getLootBoxes(): Promise<LootBox[]> {
   try {
     const res = await apiFetch(`${base}/loot-boxes`);
@@ -130,6 +189,45 @@ export async function setLootBoxes(
   }
 }
 
+/** Resumo do DELETE em cascata na base de dados (admin). */
+export type LootBoxDeleteSummary = {
+  lootBoxItemsRemoved: number;
+  unopenedBoxesRows: number;
+  playerClaimedRows: number;
+  adminUpgradeBoxesRows: number;
+  promoCodesCleared: number;
+  referralModelsSenderCleared: number;
+  referralModelsReceiverCleared: number;
+  lootBoxesRemoved: number;
+};
+
+/**
+ * Remove a caixa do PostgreSQL (itens, inventários, shop_once, pacotes admin, promo_codes, referral_models).
+ * Use `brokenOnly: true` para apagar apenas caixas sem itens ou com soma de probabilidades ≤ 0.
+ */
+export async function deleteLootBox(
+  boxId: string,
+  options?: { brokenOnly?: boolean }
+): Promise<{ ok: true; summary: LootBoxDeleteSummary }> {
+  const enc = encodeURIComponent(boxId);
+  const qs = options?.brokenOnly ? '?brokenOnly=1' : '';
+  const res = await apiFetch(`${base}/admin/loot-boxes/${enc}${qs}`, { method: 'DELETE' });
+  const text = await res.text();
+  let data: { ok?: boolean; summary?: LootBoxDeleteSummary; error?: string } = {};
+  try {
+    if (text) data = JSON.parse(text) as typeof data;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    throw new Error(data.error || text || `Erro ao apagar caixa: ${res.status}`);
+  }
+  if (!data.ok || !data.summary) {
+    throw new Error('Resposta inválida do servidor.');
+  }
+  return { ok: true, summary: data.summary };
+}
+
 export async function getRigRooms(): Promise<RigRoom[]> {
   try {
     const res = await apiFetch(`${base}/rig-rooms`);
@@ -154,9 +252,17 @@ export async function getMyRigRooms(email: string): Promise<RigRoom[]> {
   } catch { return []; }
 }
 
-export async function purchaseRoomSlot(email: string, roomId: string): Promise<{ ok: boolean; newUsdc?: number; error?: string; missing?: number }> {
+export async function purchaseRoomSlot(
+  email: string,
+  roomId: string,
+  quantity = 1
+): Promise<{ ok: boolean; newUsdc?: number; slotsPurchased?: number; totalPaid?: number; error?: string; missing?: number }> {
   try {
-    const res = await apiFetch(`${base}/rig-rooms/purchase-slot`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ roomId }) });
+    const res = await apiFetch(`${base}/rig-rooms/purchase-slot`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, quantity })
+    });
     if (!res.ok) {
       try { return await res.json(); } catch { return { ok: false, error: 'Purchase failed' }; }
     }
@@ -370,11 +476,59 @@ export async function getGameState(email: string, opts?: { adminOverride?: boole
 
 export async function getMarketListings(): Promise<MarketListing[]> {
   try {
-    const res = await apiFetch(`${base}/market/listings`);
+    const res = await apiFetch(`${base}/market/listings?t=${Date.now()}`);
     if (!res.ok) return [];
     try { return await res.json(); } catch { return []; }
   } catch {
     return [];
+  }
+}
+
+const emptyP2pHistory: P2PMarketTradeHistory = { purchases: [], sales: [] };
+
+export async function getMarketTradeHistory(): Promise<P2PMarketTradeHistory> {
+  try {
+    const res = await apiFetch(`${base}/market/history?limit=100&t=${Date.now()}`);
+    if (!res.ok) return emptyP2pHistory;
+    let j: unknown;
+    try {
+      j = await res.json();
+    } catch {
+      return emptyP2pHistory;
+    }
+    if (!j || typeof j !== 'object') return emptyP2pHistory;
+    const o = j as Record<string, unknown>;
+    const purchases = Array.isArray(o.purchases) ? o.purchases : [];
+    const sales = Array.isArray(o.sales) ? o.sales : [];
+    const norm = (row: unknown): P2PMarketTradeHistoryEntry | null => {
+      if (!row || typeof row !== 'object') return null;
+      const r = row as Record<string, unknown>;
+      const at = typeof r.at === 'number' ? r.at : parseInt(String(r.at ?? '0'), 10) || 0;
+      const itemId = typeof r.itemId === 'string' ? r.itemId : String(r.itemId ?? '');
+      const qty = Math.max(1, parseInt(String(r.qty ?? 1), 10) || 1);
+      const unitPrice = Number(r.unitPrice);
+      const buyerPaidUsdc = Number(r.buyerPaidUsdc);
+      const sellerReceivedUsdc = Number(r.sellerReceivedUsdc);
+      const taxUsdc = Number(r.taxUsdc);
+      const counterpartName = typeof r.counterpartName === 'string' ? r.counterpartName : '—';
+      if (!itemId) return null;
+      return {
+        at,
+        itemId,
+        qty,
+        unitPrice: Number.isFinite(unitPrice) ? unitPrice : 0,
+        buyerPaidUsdc: Number.isFinite(buyerPaidUsdc) ? buyerPaidUsdc : 0,
+        sellerReceivedUsdc: Number.isFinite(sellerReceivedUsdc) ? sellerReceivedUsdc : 0,
+        taxUsdc: Number.isFinite(taxUsdc) ? taxUsdc : 0,
+        counterpartName
+      };
+    };
+    return {
+      purchases: purchases.map(norm).filter((x): x is P2PMarketTradeHistoryEntry => x != null),
+      sales: sales.map(norm).filter((x): x is P2PMarketTradeHistoryEntry => x != null)
+    };
+  } catch {
+    return emptyP2pHistory;
   }
 }
 
@@ -392,9 +546,27 @@ export async function cancelMarketReservation(listingId: string): Promise<{ ok: 
   } catch { return { ok: false, error: 'Network error' } }
 }
 
-export async function buyMarketListing(listingId: string): Promise<{ ok: boolean; error?: string; missing?: number }> {
+export type BuyMarketListingResult = {
+  ok: boolean;
+  error?: string;
+  missing?: number;
+  message?: string;
+  purchasedQty?: number;
+  totalUsdc?: number;
+  unitPrice?: number;
+};
+
+export async function buyMarketListing(listingId: string, qty?: number): Promise<BuyMarketListingResult> {
   try {
-    const res = await apiFetch(`${base}/market/buy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ listingId }) });
+    const body: Record<string, unknown> = { listingId };
+    if (qty != null) {
+      const q = Math.floor(Number(qty));
+      if (Number.isFinite(q) && q >= 1) {
+        body.qty = q;
+        body.quantity = q;
+      }
+    }
+    const res = await apiFetch(`${base}/market/buy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) {
       try { return await res.json(); } catch { return { ok: false, error: 'Purchase failed' }; }
     }
@@ -438,7 +610,7 @@ export async function cancelMarketListing(listingId: string): Promise<{ ok: bool
 
 export async function getCustodyListings(): Promise<MarketListing[]> {
   try {
-    const res = await apiFetch(`${base}/market/custody`);
+    const res = await apiFetch(`${base}/market/custody?t=${Date.now()}`);
     if (!res.ok) return [];
     try { return await res.json(); } catch { return []; }
   } catch {
@@ -527,11 +699,29 @@ export async function purchaseAdminUpgrade(email: string, upgradeId: string): Pr
   } catch { return { ok: false, error: 'Network error' } }
 }
 
+/** Flags de «desativar depósito» vindas da API/BD (boolean, 1, "1", "true"). */
+export function web3DepositFlagDisabled(v: unknown): boolean {
+  if (v === true || v === 1) return true;
+  if (typeof v === 'string') {
+    const t = v.trim().toLowerCase();
+    return t === '1' || t === 'true' || t === 'yes' || t === 'on';
+  }
+  return false;
+}
+
 export async function getWeb3Settings(): Promise<Web3Settings | null> {
   try {
-    const res = await apiFetch(`${base}/web3-settings`);
+    const res = await apiFetch(`${base}/web3-settings?_=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) return null;
-    try { return await res.json(); } catch { return null; }
+    const raw = await res.json().catch(() => null);
+    if (!raw || typeof raw !== 'object') return null;
+    const o = raw as Record<string, unknown>;
+    return {
+      ...(raw as Web3Settings),
+      depositPolygonDisabled: web3DepositFlagDisabled(o.depositPolygonDisabled),
+      depositBnbDisabled: web3DepositFlagDisabled(o.depositBnbDisabled),
+      depositBaseDisabled: web3DepositFlagDisabled(o.depositBaseDisabled)
+    };
   } catch {
     return null;
   }
@@ -542,6 +732,21 @@ export async function setWeb3Settings(settings: Web3Settings): Promise<void> {
   if (!res.ok) {
     const text = await res.text();
     throw new Error(text || `Erro ao salvar configurações Web3: ${res.status}`);
+  }
+}
+
+/** Código promocional de roleta resgatado mas ainda com fluxo em curso (servidor). */
+export async function getPendingRoletaCode(): Promise<string | null> {
+  try {
+    const res = await apiFetch(`${base}/roleta/pending-code`);
+    if (!res.ok) return null;
+    const data = (await res.json().catch(() => ({}))) as { code?: unknown };
+    const c = data.code;
+    if (c == null || typeof c !== 'string') return null;
+    const t = c.trim();
+    return t.length > 0 ? t : null;
+  } catch {
+    return null;
   }
 }
 
@@ -571,9 +776,53 @@ export async function getMiningCoins(): Promise<any[]> {
   }
 }
 
+/** Aceita vírgula decimal (ex.: 0,11) e evita NaN ao guardar moedas no admin. */
+function parseLocaleNumber(input: unknown, fallback: number): number {
+  if (typeof input === 'number' && Number.isFinite(input)) return input;
+  if (input === null || input === undefined) return fallback;
+  const str = String(input).trim().replace(/\s/g, '');
+  if (!str) return fallback;
+  let s = str;
+  const hasComma = s.includes(',');
+  const hasDot = s.includes('.');
+  if (hasComma && (!hasDot || s.lastIndexOf(',') > s.lastIndexOf('.'))) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else {
+    s = s.replace(/,/g, '');
+  }
+  const n = Number(s);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+/** Normaliza payload antes de POST /api/mining/coins (evita blockReward=1 por NaN e preço errado). */
+export function normalizeMiningCoinPayload(coin: Record<string, any>): Record<string, any> {
+  const networkHashrate = parseLocaleNumber(coin.networkHashrate, 1_000_000);
+  const blockReward = parseLocaleNumber(coin.blockReward, 0);
+  const blockTimeRaw = parseLocaleNumber(coin.blockTime, 60);
+  const priceUSDRaw = parseLocaleNumber(coin.priceUSD, NaN);
+  const priceUSD = Number.isFinite(priceUSDRaw) ? priceUSDRaw : 1;
+  const multiplier = parseLocaleNumber(coin.multiplier, 1);
+  const minProportion = parseLocaleNumber(coin.minProportion, 0);
+  const targetDailyUSD = parseLocaleNumber(coin.targetDailyUSD, 0);
+  const difficulty = parseLocaleNumber(coin.difficulty, 1);
+  return {
+    ...coin,
+    networkHashrate: networkHashrate > 0 ? networkHashrate : 1_000_000,
+    blockReward: Math.max(0, blockReward),
+    blockTime: blockTimeRaw > 0 ? blockTimeRaw : 60,
+    priceUSD: priceUSD >= 0 ? priceUSD : 1,
+    multiplier: multiplier > 0 ? multiplier : 1,
+    minProportion: Math.max(0, minProportion),
+    difficulty: difficulty > 0 ? difficulty : 1,
+    targetDailyUSD: Math.max(0, targetDailyUSD),
+    usdcRate: priceUSD >= 0 ? priceUSD : 1
+  };
+}
+
 export async function saveMiningCoin(coin: any): Promise<{ ok: boolean; id?: string; error?: string }> {
   try {
-    const res = await apiFetch(`${base}/mining/coins`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(coin) });
+    const payload = normalizeMiningCoinPayload(coin && typeof coin === 'object' ? coin : {});
+    const res = await apiFetch(`${base}/mining/coins`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!res.ok) {
       try { return await res.json(); } catch { return { ok: false, error: 'Save failed' }; }
     }
@@ -639,7 +888,98 @@ let globalLastLoadTime = 0;
 
 // fetchGameState removida em favor de getGameState unificada
 
-export async function saveGameState(email: string, state: Partial<GameState>, options: { adminOverride?: boolean } = {}): Promise<{ ok: boolean; forceReload?: boolean; error?: string }> {
+/** Bateria em massa na sala (Servidores) — servidor aplica regras e persiste. */
+export async function postServerRoomBulkBatteries(payload: {
+  roomId: string;
+  batteryUpgradeId?: string;
+  smartFill?: boolean;
+  rigSort?: string;
+}): Promise<
+  | {
+      ok: true;
+      serverUpdatedAt: number;
+      stock: Record<string, number>;
+      storedBatteries: StoredBattery[];
+      placedRacks: PlacedRack[];
+      appliedRigs: number;
+      compatibleRigs: number;
+      smartFill?: boolean;
+    }
+  | { ok: false; error: string }
+> {
+  try {
+    const res = await apiFetch(`${base}/server-room/bulk-batteries`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+      return { ok: false, error: err };
+    }
+    const su = Number(data.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) globalLastLoadTime = su;
+    return {
+      ok: true,
+      serverUpdatedAt: su,
+      stock: (data.stock as Record<string, number>) || {},
+      storedBatteries: Array.isArray(data.storedBatteries) ? (data.storedBatteries as StoredBattery[]) : [],
+      placedRacks: Array.isArray(data.placedRacks) ? (data.placedRacks as PlacedRack[]) : [],
+      appliedRigs: Math.max(0, Math.floor(Number(data.appliedRigs) || 0)),
+      compatibleRigs: Math.max(0, Math.floor(Number(data.compatibleRigs) || 0)),
+      smartFill: !!data.smartFill
+    };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+/** Moeda em todas as rigs da sala (Servidores) — servidor valida e persiste. */
+export async function postServerRoomRoomCoins(
+  roomId: string,
+  coinId: string
+): Promise<{ ok: true; serverUpdatedAt: number; placedRacks: PlacedRack[] } | { ok: false; error: string }> {
+  try {
+    const res = await apiFetch(`${base}/server-room/room-coins`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ roomId, coinId })
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+      return { ok: false, error: err };
+    }
+    const su = Number(data.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) globalLastLoadTime = su;
+    return {
+      ok: true,
+      serverUpdatedAt: su,
+      placedRacks: Array.isArray(data.placedRacks) ? (data.placedRacks as PlacedRack[]) : []
+    };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+/** fetch + keepalive: corpos grandes falham no browser (~64 KiB). */
+const SAVE_GAME_KEEPALIVE_MAX_BYTES = 61440;
+
+export async function saveGameState(
+  email: string,
+  state: Partial<GameState>,
+  options: { adminOverride?: boolean; keepalive?: boolean } = {}
+): Promise<{
+  ok: boolean;
+  forceReload?: boolean;
+  error?: string;
+  serverUpdatedAt?: number;
+  nftAutoSanitized?: boolean;
+  placedRacks?: PlacedRack[];
+  stock?: Record<string, number>;
+  storedBatteries?: StoredBattery[];
+}> {
   // email is now redundant but kept in signature for compatibility
   const payload = {
     changes: { ...state, lastLoadTime: globalLastLoadTime },
@@ -647,11 +987,13 @@ export async function saveGameState(email: string, state: Partial<GameState>, op
     targetEmail: email
   };
   try {
+    const body = JSON.stringify(payload);
+    const useKeepalive = !!options.keepalive && body.length < SAVE_GAME_KEEPALIVE_MAX_BYTES;
     const res = await apiFetch(`${base}/save-game`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      keepalive: true
+      body,
+      ...(useKeepalive ? { keepalive: true as const } : {})
     });
     if (!res.ok) {
       try {
@@ -670,6 +1012,24 @@ export async function saveGameState(email: string, state: Partial<GameState>, op
     } catch { return { ok: true }; }
   } catch { return { ok: false, error: 'Network error' }; }
 }
+
+export type {
+  SupportTicketAttachment,
+  SupportTicketReplyRow,
+  SupportTicketPlayerReplyRow,
+  SupportTicketRow,
+  MySupportTicketSummary,
+  MySupportTicketDetail,
+} from './supportTicketsApi';
+export {
+  submitSupportTicket,
+  getAdminSupportTickets,
+  postAdminSupportTicketReply,
+  updateAdminSupportTicketStatus,
+  getMySupportTickets,
+  getMySupportTicketDetail,
+  postPlayerSupportTicketReply,
+} from './supportTicketsApi';
 
 export async function getReferrals(email: string): Promise<string[]> {
   try {
@@ -756,7 +1116,7 @@ export async function getMonetizationSettings(): Promise<MonetizationSettings | 
 /** Inclui applixirCallbackSecret — apenas para o painel admin autenticado. */
 export async function getAdminMonetizationSettings(): Promise<MonetizationSettings | null> {
   try {
-    const res = await apiFetch(`${base}/admin/monetization-settings`);
+    const res = await apiFetch(`${base}/admin/monetization-settings?t=${Date.now()}`);
     if (!res.ok) return null;
     return await res.json();
   } catch { return null; }
@@ -817,10 +1177,14 @@ export async function getAdminUserActivity(
   opts?: { userId?: number; limit?: number }
 ): Promise<{ logs: GameUserActivityEntry[]; error?: string }> {
   const q = new URLSearchParams();
-  const em = email.trim().toLowerCase();
-  if (em) q.set('email', em);
-  else if (opts?.userId != null && opts.userId > 0) q.set('userId', String(opts.userId));
-  else return { logs: [], error: 'Indique o email do jogador.' };
+  const uid = opts?.userId;
+  if (uid != null && Number.isFinite(uid) && uid > 0) {
+    q.set('userId', String(Math.floor(uid)));
+  } else {
+    const em = email.trim().toLowerCase();
+    if (!em) return { logs: [], error: 'Indique o email ou username do jogador.' };
+    q.set('email', em);
+  }
   if (opts?.limit != null && opts.limit > 0) q.set('limit', String(Math.min(200, opts.limit)));
   try {
     const res = await apiFetch(`${base}/admin/user-activity?${q.toString()}`);
@@ -906,7 +1270,7 @@ export async function performDailyBoost(email: string, slotIndex: number): Promi
 
 export async function getEconomySettings(): Promise<EconomySettings | null> {
   try {
-    const res = await apiFetch(`${base}/economy-settings`);
+    const res = await apiFetch(`${base}/economy-settings?t=${Date.now()}`);
     if (!res.ok) return null;
     try { return await res.json(); } catch { return null; }
   } catch {
@@ -988,6 +1352,40 @@ export async function buyLootBox(email: string, boxId: string): Promise<{ ok: bo
       body: JSON.stringify({ boxId, email })
     });
     return await res.json();
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+/** Descarta caixas não abertas (sem prémio). `qty` omitido = todas as unidades desse `boxId`. */
+export async function discardLootBox(
+  email: string,
+  boxId: string,
+  qty?: number
+): Promise<{ ok: boolean; error?: string; discardedQty?: number; remainingQty?: number }> {
+  try {
+    const body: Record<string, unknown> = { boxId, email };
+    if (qty !== undefined && Number.isFinite(qty) && qty > 0) body.qty = qty;
+    const res = await apiFetch(`${base}/loot-boxes/discard`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = (await res.json()) as {
+      ok?: boolean;
+      error?: string;
+      discardedQty?: number;
+      remainingQty?: number;
+    };
+    if (!res.ok) {
+      return { ok: false, error: data.error || 'Erro ao descartar.' };
+    }
+    return {
+      ok: !!data.ok,
+      discardedQty: data.discardedQty,
+      remainingQty: data.remainingQty,
+      error: data.error
+    };
   } catch {
     return { ok: false, error: 'Network error' };
   }

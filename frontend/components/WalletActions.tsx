@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { web3DepositFlagDisabled } from '../services/api';
 import { CreditCard, Upload, Download, HardDrive, Coins, TrendingUp, Shield, Clock } from 'lucide-react';
 
 interface WalletActionsProps {
@@ -70,10 +71,37 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
     }
   }, [miningCoins, selectedCoinId]);
 
+  const polyDepositOff = web3DepositFlagDisabled(depositPolygonDisabled);
+  const bnbDepositOff = web3DepositFlagDisabled(depositBnbDisabled);
+  const baseDepositOff = web3DepositFlagDisabled(depositBaseDisabled);
+  const networkDepositAllowed = (id: 'polygon' | 'bnb' | 'base') => {
+    if (id === 'polygon') return !polyDepositOff;
+    if (id === 'bnb') return !bnbDepositOff;
+    if (id === 'base') return !baseDepositOff;
+    return true;
+  };
+  const allDepositNetworksDisabled = polyDepositOff && bnbDepositOff && baseDepositOff;
+  const selectedDepositBlocked = !networkDepositAllowed(selectedNetwork);
+
+  React.useEffect(() => {
+    if (networkDepositAllowed(selectedNetwork)) return;
+    const order: ('polygon' | 'bnb' | 'base')[] = ['polygon', 'bnb', 'base'];
+    const next = order.find((id) => networkDepositAllowed(id));
+    if (next) setSelectedNetwork(next);
+  }, [polyDepositOff, bnbDepositOff, baseDepositOff, selectedNetwork]);
+
   const handleDeposit = () => {
     setDepositFieldError('');
     if (!hasWallet) {
       setDepositFieldError('Conecte uma carteira no perfil.');
+      return;
+    }
+    if (allDepositNetworksDisabled) {
+      setDepositFieldError('Depósitos USDC estão desativados em todas as redes.');
+      return;
+    }
+    if (selectedDepositBlocked) {
+      setDepositFieldError('Depósitos nesta rede estão desativados.');
       return;
     }
     const raw = usdcAmount.replace(/\s/g, '').replace(',', '.');
@@ -226,9 +254,9 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
               { id: 'bnb', name: 'BNB Chain', color: 'bg-yellow-500', border: 'border-yellow-500/50', text: 'text-yellow-500' },
               { id: 'base', name: 'Base', color: 'bg-amber-500', border: 'border-amber-500/50', text: 'text-amber-500' }
             ].filter(net => {
-              if (net.id === 'polygon') return !depositPolygonDisabled;
-              if (net.id === 'bnb') return !depositBnbDisabled;
-              if (net.id === 'base') return !depositBaseDisabled;
+              if (net.id === 'polygon') return !polyDepositOff;
+              if (net.id === 'bnb') return !bnbDepositOff;
+              if (net.id === 'base') return !baseDepositOff;
               return true;
             }).map((net) => (
               <button
@@ -244,6 +272,11 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
               </button>
             ))}
           </div>
+          {allDepositNetworksDisabled && (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-2 text-center leading-snug">
+              Depósitos USDC estão desativados em todas as redes (configuração do servidor).
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <input
@@ -263,7 +296,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
           <button
             onClick={handleDeposit}
             disabled={(() => {
-              if (!hasWallet || !usdcAmount) return true;
+              if (!hasWallet || !usdcAmount || allDepositNetworksDisabled || selectedDepositBlocked) return true;
               const v = parseFloat(usdcAmount.replace(/\s/g, '').replace(',', '.'));
               const minD = typeof minDepositUsdc === 'number' && Number.isFinite(minDepositUsdc) ? minDepositUsdc : 0.001;
               return !Number.isFinite(v) || v < minD || v > MAX_USDC_DEPOSIT_UI;
@@ -300,7 +333,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
               />
               <button
                 type="button"
-                disabled={manualVerifyBusy || !manualTxHash}
+                disabled={manualVerifyBusy || !manualTxHash || allDepositNetworksDisabled || selectedDepositBlocked}
                 onClick={async () => {
                   if (!onVerifyDepositByHash) return;
                   setManualVerifyBusy(true);
@@ -326,7 +359,8 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
               </button>
             </div>
             <p className="text-[9px] text-slate-500 dark:text-slate-500">
-              Usa a rede selecionada em «Rede da entrada». O envio tem de ser da carteira ligada no perfil para o endereço de depósito do jogo.
+              Usa a rede selecionada em «Rede da entrada». O envio tem de ser da carteira ligada no perfil para o endereço de depósito do jogo. Copia o hash pelo botão «Copy» do explorador — um só carácter errado (ex.:{' '}
+              <span className="font-mono">8</span> em vez de <span className="font-mono">B</span>) invalida a transação.
             </p>
           </div>
         )}

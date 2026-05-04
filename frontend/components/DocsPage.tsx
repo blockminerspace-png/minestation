@@ -251,10 +251,10 @@ export const DocsPage: React.FC = () => {
                         </ul>
                     </div>
 
-                    {/* TAB 4: HARDWARE MARKET */}
+                    {/* TAB 4: LOJINHA / GENESIS SUPPLY */}
                     <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
                         <h3 className="text-amber-600 dark:text-amber-500 font-bold mb-2 flex items-center gap-2">
-                            <ShoppingCart size={18} /> 4. Genesis Supply — hardware
+                            <ShoppingCart size={18} /> 4. Lojinha Miner (Genesis Supply)
                         </h3>
                         <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
                             Canal oficial para SKUs novos, com carrinho e precificação dinâmica.
