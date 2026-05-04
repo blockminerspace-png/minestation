@@ -1,5 +1,7 @@
-
 import React, { useEffect, useState } from 'react';
+import DOMPurify from 'dompurify';
+import type { Config } from 'dompurify';
+import type { LucideIcon } from 'lucide-react';
 import { AccessLevel, User, SeasonPass, SeasonPurchase, AdminUpgrade, Upgrade, LootBox, MiningCoin, RigRoom } from '../types';
 import { Crown, CheckCircle2, ShieldCheck, Zap, Rocket, Gift } from 'lucide-react';
 import { getSeasonPasses, getSeasonPurchases, purchaseSeasonPass, getAdminUpgrades, purchaseAdminUpgrade, getUpgrades, getLootBoxes, getAdminUpgradePurchases, getMiningCoins, getMyRigRooms } from '../services/api';
@@ -14,15 +16,53 @@ interface UpgradeAccountProps {
   onReloadGameState?: () => void;
 }
 
-/** Reduz XSS quando descrições ricas vêm da API (admin). Não substitui CSP no servidor. */
+/** Lista branca para descrições HTML vindas do admin (UpgradeAccount). */
+const RICH_HTML_PURIFY: Config = {
+  ALLOWED_TAGS: [
+    'p',
+    'br',
+    'strong',
+    'em',
+    'b',
+    'i',
+    'u',
+    'span',
+    'div',
+    'ul',
+    'ol',
+    'li',
+    'h3',
+    'h4',
+    'h5',
+    'small',
+    'sub',
+    'sup',
+    'a'
+  ],
+  ALLOWED_ATTR: ['class', 'href', 'title', 'target', 'rel'],
+  ALLOW_DATA_ATTR: false,
+  ALLOW_UNKNOWN_PROTOCOLS: false
+};
+
+let richHtmlPurifyHooksInstalled = false;
+function ensureRichHtmlPurifyHooks(): void {
+  if (richHtmlPurifyHooksInstalled) return;
+  richHtmlPurifyHooksInstalled = true;
+  DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+    if (node.nodeName !== 'A' || !(node instanceof HTMLAnchorElement)) return;
+    if (node.getAttribute('target') === '_blank') {
+      const rel = node.getAttribute('rel') || '';
+      if (!/\bnoopener\b/i.test(rel)) {
+        node.setAttribute('rel', rel ? `${rel} noopener noreferrer`.trim() : 'noopener noreferrer');
+      }
+    }
+  });
+}
+
 function sanitizeRichHtmlFragment(html: string): string {
   if (!html) return '';
-  let s = html.replace(/<script\b[\s\S]*?>[\s\S]*?<\/script>/gi, '');
-  s = s.replace(/<\/?(?:iframe|object|embed|link|meta|base|form|input|button)\b[^>]*>/gi, '');
-  s = s.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
-  s = s.replace(/javascript:\s*/gi, '');
-  s = s.replace(/data:\s*text\/html/gi, 'data:text/plain');
-  return s;
+  ensureRichHtmlPurifyHooks();
+  return DOMPurify.sanitize(html, RICH_HTML_PURIFY);
 }
 
 const RichDescription: React.FC<{ content: string; isRaw?: boolean }> = ({ content, isRaw }) => {
@@ -49,7 +89,7 @@ const RichDescription: React.FC<{ content: string; isRaw?: boolean }> = ({ conte
   // HTML/JSX Content
   let processed = trimmed.replace(/className=/g, 'class=');
   const iconRegex = /<([A-Z][a-zA-Z0-9]+)\s*([^>]*)\/>/g;
-  const iconsMap: Record<string, any> = { Gift, CheckCircle2, ShieldCheck, Zap, Rocket, Crown };
+  const iconsMap: Record<string, LucideIcon> = { Gift, CheckCircle2, ShieldCheck, Zap, Rocket, Crown };
 
   const parts: React.ReactNode[] = [];
   let lastIndex = 0;
@@ -233,9 +273,16 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
                         <Crown className={`${styles.text} shrink-0`} size={24} />
                       </div>
 
-                      {/* Description */}
+                      {/* Description (HTML opcional do admin, sanitizado com DOMPurify) */}
                       <div className="text-sm text-slate-300 font-medium mb-8 leading-relaxed">
-                        {offer.description || 'Desbloqueie vantagens e conteúdos extras na sua operação.'}
+                        <RichDescription
+                          isRaw
+                          content={
+                            offer.description?.trim()
+                              ? offer.description
+                              : 'Desbloqueie vantagens e conteúdos extras na sua operação.'
+                          }
+                        />
                       </div>
 
                       {/* Price */}

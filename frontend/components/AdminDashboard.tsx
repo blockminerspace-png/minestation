@@ -42,26 +42,56 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
         top10: { username: string; email: string; power: number; coinBalances?: Record<string, number> }[];
         rankingExcluded: { username: string; email: string }[];
         last10: User[];
+        /** Valor mostrado no cartão (cadeia ou BD). */
         totalDeposited: number;
+        /** Sempre o agregado da BD (game_states), para comparar quando o cartão mostra on-chain. */
+        dbTotalDeposited: number;
+        depositDisplayMode: 'chain' | 'db';
         topDeposits: { username: string; email: string; amount: number }[];
         totalWithdrawn: number;
         topWithdrawalsByCoin: Array<{ coinId: string; coinName: string; top: { username: string; email: string; total: number }[] }>;
-    }>({ totalUsers: 0, onlineUsers: 0, totalHashrate: 0, top10: [], rankingExcluded: [], last10: [], totalDeposited: 0, topDeposits: [], totalWithdrawn: 0, topWithdrawalsByCoin: [] });
+    }>({
+        totalUsers: 0,
+        onlineUsers: 0,
+        totalHashrate: 0,
+        top10: [],
+        rankingExcluded: [],
+        last10: [],
+        totalDeposited: 0,
+        dbTotalDeposited: 0,
+        depositDisplayMode: 'db',
+        topDeposits: [],
+        totalWithdrawn: 0,
+        topWithdrawalsByCoin: []
+    });
     const [selectedCoinId, setSelectedCoinId] = useState<string>('');
     const [miningCoins, setMiningCoins] = useState<{ id: string; name: string }[]>([]);
     const [statsError, setStatsError] = useState<string | null>(null);
     const [wsConnected, setWsConnected] = useState(false);
     const lastEthFetchRef = useRef(0);
+    /** Último total on-chain + top depósitos; o WebSocket não pode sobrescrever isto até expirar o TTL. */
+    const chainDepositSnapshotRef = useRef<{
+        totalDeposited: number;
+        topDeposits: { username: string; email: string; amount: number }[];
+        fetchedAt: number;
+    } | null>(null);
+    /** Manter snapshot visível pelo menos até à próxima janela de refresh Etherscan (60s) + margem. */
+    const CHAIN_DEPOSIT_SNAPSHOT_TTL_MS = 70_000;
 
     const applyServerDashboard = useCallback((data: any) => {
+        const snap = chainDepositSnapshotRef.current;
+        const useChain =
+            snap != null && Date.now() - snap.fetchedAt < CHAIN_DEPOSIT_SNAPSHOT_TTL_MS;
         setStats(prev => ({
             ...prev,
             totalUsers: data.totalUsers,
             onlineUsers: data.onlineUsers,
-            totalDeposited: data.totalDeposited,
+            dbTotalDeposited: data.totalDeposited,
+            totalDeposited: useChain ? snap!.totalDeposited : data.totalDeposited,
+            depositDisplayMode: useChain ? 'chain' : 'db',
             totalWithdrawn: data.totalWithdrawn,
             last10: data.last10,
-            topDeposits: data.topDeposits,
+            topDeposits: useChain ? snap!.topDeposits : data.topDeposits,
             topWithdrawalsByCoin: data.topWithdrawalsByCoin,
             totalHashrate: data.globalPower || 0,
             top10: (data.topMiners || []).map((m: any) => ({
@@ -111,10 +141,17 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                 })
                 .sort((a, b) => b.amount - a.amount)
                 .slice(0, 10);
+            const fetchedAt = Date.now();
+            chainDepositSnapshotRef.current = {
+                totalDeposited: realTotalUSDC,
+                topDeposits: filteredTopDeposits,
+                fetchedAt
+            };
             setStats(prev => ({
                 ...prev,
                 totalDeposited: realTotalUSDC,
-                topDeposits: filteredTopDeposits
+                topDeposits: filteredTopDeposits,
+                depositDisplayMode: 'chain'
             }));
         }
         catch (err) {
@@ -239,7 +276,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                     <Users className="absolute right-4 top-4 text-slate-700" size={64} />
                     <h3 className="text-slate-400 text-xs uppercase tracking-widest font-bold">Usuários Cadastrados</h3>
                     <div className="text-4xl font-bold text-white mt-2">{stats.totalUsers}</div>
-                    <div className="text-xs text-green-500 mt-2 flex items-center gap-1" title="Sessão válida + atividade na API nos últimos 4 min (atualização da sessão no máximo a cada ~45 s).">
+                    <div
+                        className="text-xs text-green-500 mt-2 flex items-center gap-1"
+                        title="Apenas contas jogador (não-admin). Sessão válida em BD e última atividade na API nos últimos 4 minutos (last_seen_at). Zero é normal se ninguém acabou de usar o site."
+                    >
                         <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                         {stats.onlineUsers} com sessão ativa
                     </div>
@@ -257,7 +297,19 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                     <DollarSign className="absolute right-4 top-4 text-green-900/50" size={64} />
                     <h3 className="text-slate-400 text-xs uppercase tracking-widest font-bold">USDC Depositado</h3>
                     <div className="text-4xl font-bold text-green-500 mt-2">{formatMoney(stats.totalDeposited)}</div>
-                    <div className="text-xs text-slate-500 mt-2">Acumulado por todos os jogadores</div>
+                    {stats.depositDisplayMode === 'chain' ? (
+                        <p className="text-[11px] text-slate-500 mt-2 leading-snug">
+                            <span className="text-emerald-400/90 font-semibold">On-chain</span>
+                            {' — '}soma de transferências USDC (Polygon) para a tesouraria, filtradas pela data em Relatórios.
+                            {' '}
+                            <span className="text-slate-400">No jogo (BD): {formatMoney(stats.dbTotalDeposited)}</span>
+                        </p>
+                    ) : (
+                        <p className="text-[11px] text-slate-500 mt-2 leading-snug">
+                            Soma de <span className="text-slate-400">total_usdc_deposited</span> na base (registo interno do jogo).
+                            Quando a API Etherscan responde, mostramos também o total da tesouraria na cadeia.
+                        </p>
+                    )}
                 </div>
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 relative overflow-hidden">
                     <Download className="absolute right-4 top-4 text-red-900/50" size={64} />

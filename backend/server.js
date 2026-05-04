@@ -33,6 +33,8 @@ import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
 import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controllers/backupController.js';
+import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
+import { validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave } from './dist/lib/saveGameEconomyValidate.js';
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
     console.error('[Fatal] Unhandled Rejection at:', promise, 'reason:', reason);
@@ -596,6 +598,8 @@ async function appendGameActivityLog(q, userId, action, meta) {
 }
 /** WebSocket: métricas do painel admin (KPIs; cookie de sessão). */
 let adminDashboardWss = null;
+/** WebSocket: cabeçalho do jogo (tokens, USDC, hashrate) para jogador com sessão válida. */
+let playerGameHeaderWss = null;
 /** WebSocket: atualizações do mercado P2P (clientes ligam em /ws/market). */
 let marketWss = null;
 function marketWsBroadcastLocal(payload) {
@@ -702,16 +706,37 @@ async function resolveAdminUserIdFromWsUpgradeRequest(req) {
         return null;
     }
 }
+/** Cookie `sid` + sessão válida (qualquer utilizador autenticado) para upgrade WS `/ws/player-game`. */
+async function resolveSessionUserIdFromWsUpgradeRequest(req) {
+    try {
+        const sid = parseCookies(req).sid;
+        if (!sid)
+            return null;
+        const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
+        const s = sRes.rows[0];
+        if (!s || Number(s.expires_at) < Date.now())
+            return null;
+        const uid = Number(s.user_id);
+        return Number.isFinite(uid) && uid > 0 ? uid : null;
+    }
+    catch (e) {
+        console.warn('[PlayerGameWs] resolve session:', e instanceof Error ? e.message : String(e));
+        return null;
+    }
+}
 const app = express();
-// Serve static images
-app.use('/img', express.static(path.join(__dirname, 'img')));
+/** Imagens do jogo (itens, racks) na imagem Docker; uploads admin/suporte só em `img/uploads` (pode ter volume). */
+const IMG_DIR = path.join(__dirname, 'img');
+const IMG_UPLOADS_DIR = path.join(__dirname, 'img', 'uploads');
+try {
+    fs.mkdirSync(IMG_DIR, { recursive: true });
+    fs.mkdirSync(IMG_UPLOADS_DIR, { recursive: true });
+}
+catch { /* ignore */ }
 // Configure Multer for ad uploads
 const adStorage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const dir = path.join(__dirname, 'img');
-        if (!fs.existsSync(dir))
-            fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        cb(null, IMG_UPLOADS_DIR);
     },
     filename: (req, file, cb) => {
         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -735,10 +760,7 @@ const SUPPORT_UPLOAD_MAX = 12 * 1024 * 1024;
 const SUPPORT_ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.webm', '.mov']);
 const supportStorage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const dir = path.join(__dirname, 'img');
-        if (!fs.existsSync(dir))
-            fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        cb(null, IMG_UPLOADS_DIR);
     },
     filename: (req, file, cb) => {
         const uid = req.userId ? String(req.userId) : '0';
@@ -759,10 +781,7 @@ const uploadSupport = multer({
 });
 const supportReplyStorage = multer.diskStorage({
     destination: (req, file, cb) => {
-        const dir = path.join(__dirname, 'img');
-        if (!fs.existsSync(dir))
-            fs.mkdirSync(dir, { recursive: true });
-        cb(null, dir);
+        cb(null, IMG_UPLOADS_DIR);
     },
     filename: (req, file, cb) => {
         const uid = req.userId ? String(req.userId) : '0';
@@ -926,11 +945,8 @@ app.use((req, res, next) => {
     }
     next();
 });
-const IMG_DIR = path.join(__dirname, 'img');
-try {
-    fs.mkdirSync(IMG_DIR, { recursive: true });
-}
-catch { }
+// Uploads primeiro (volume em produção); depois assets em img/ vindos da imagem Docker.
+app.use('/img', express.static(IMG_UPLOADS_DIR));
 app.use('/img', express.static(IMG_DIR));
 // --- Moved utilities below ---
 // Activity tracking (utilizador já resolvido por JWT ou sessão legacy)
@@ -2305,7 +2321,7 @@ app.post('/api/upload-image', (req, res) => {
     const ext = mime === 'image/png' ? '.png' : (mime === 'image/gif' ? '.gif' : '.jpg');
     const safeBase = (originalName || 'image').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'image';
     const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeBase}${ext}`;
-    const filePath = path.join(IMG_DIR, filename);
+    const filePath = path.join(IMG_UPLOADS_DIR, filename);
     try {
         fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
     }
@@ -6816,7 +6832,7 @@ app.post('/api/save-game', async (req, res) => {
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (user_id) DO UPDATE SET
           start_time = EXCLUDED.start_time,
-          last_updated_at = EXCLUDED.last_updated_at,
+          last_updated_at = GREATEST(COALESCE(game_states.last_updated_at, 0), COALESCE(EXCLUDED.last_updated_at, 0)),
           server_updated_at = EXCLUDED.server_updated_at,
           claimed_referrals = EXCLUDED.claimed_referrals,
           referral_bonus_claimed = EXCLUDED.referral_bonus_claimed,
@@ -6837,40 +6853,66 @@ app.post('/api/save-game', async (req, res) => {
                 }
             }
             if (gs.dailyActions) {
-                const keys = Object.keys(gs.dailyActions);
-                const vals = Object.values(gs.dailyActions);
-                if (keys.length > 0) {
+                if (typeof gs.dailyActions !== 'object' || Array.isArray(gs.dailyActions)) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: 'dailyActions inválido.' });
+                }
+                const dv = validateDailyActionsForSave(gs.dailyActions, effectiveAdminOverride, Date.now());
+                if (!dv.ok) {
+                    await client.query('ROLLBACK');
+                    return res.status(400).json({ error: dv.error });
+                }
+                if (dv.keys.length > 0) {
                     await client.query(`
             INSERT INTO daily_actions (user_id, action_key, last_performed_at) 
             SELECT $1, unnest($2::text[]), unnest($3::numeric[])
-            ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at`, [uid, keys, vals]);
+            ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at`, [uid, dv.keys, dv.vals]);
                 }
             }
         }
-        if (changes.stock) {
-            const itemIds = Object.keys(changes.stock);
-            const qtys = Object.values(changes.stock).map(q => q || 0);
-            if (itemIds.length > 0) {
+        if (changes.stock !== undefined && changes.stock !== null) {
+            if (typeof changes.stock !== 'object' || Array.isArray(changes.stock)) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: 'stock inválido.' });
+            }
+            const sv = await validateStockForSave(client, changes.stock);
+            if (!sv.ok) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: sv.error });
+            }
+            if (sv.itemIds.length > 0) {
                 await client.query(`
           INSERT INTO stock (user_id, item_id, qty) 
           SELECT $1, unnest($2::text[]), unnest($3::int[])
-          ON CONFLICT (user_id, item_id) DO UPDATE SET qty = EXCLUDED.qty`, [uid, itemIds, qtys]);
+          ON CONFLICT (user_id, item_id) DO UPDATE SET qty = EXCLUDED.qty`, [uid, sv.itemIds, sv.qtys]);
             }
         }
-        if (changes.unopenedBoxes) {
-            const boxIds = Object.keys(changes.unopenedBoxes);
-            const qtys = Object.values(changes.unopenedBoxes).map(q => q || 0);
-            if (boxIds.length > 0) {
+        if (changes.unopenedBoxes !== undefined && changes.unopenedBoxes !== null) {
+            if (typeof changes.unopenedBoxes !== 'object' || Array.isArray(changes.unopenedBoxes)) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: 'unopenedBoxes inválido.' });
+            }
+            const bv = await validateUnopenedBoxesForSave(client, changes.unopenedBoxes);
+            if (!bv.ok) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: bv.error });
+            }
+            if (bv.boxIds.length > 0) {
                 await client.query(`
           INSERT INTO unopened_boxes (user_id, box_id, qty) 
           SELECT $1, unnest($2::text[]), unnest($3::int[])
-          ON CONFLICT (user_id, box_id) DO UPDATE SET qty = EXCLUDED.qty`, [uid, boxIds, qtys]);
+          ON CONFLICT (user_id, box_id) DO UPDATE SET qty = EXCLUDED.qty`, [uid, bv.boxIds, bv.qtys]);
             }
         }
         if (changes.storedBatteries) {
             if (!Array.isArray(changes.storedBatteries)) {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ error: 'storedBatteries inválido.' });
+            }
+            const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
+            if (!batVal.ok) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: batVal.error });
             }
             // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores).
             const incomingIds = changes.storedBatteries.map(b => b.id);
@@ -8494,7 +8536,10 @@ const startServer = async () => {
     marketWss = wss;
     const wssAdminDash = new WebSocketServer({ noServer: true });
     adminDashboardWss = wssAdminDash;
+    const wssPlayerGame = new WebSocketServer({ noServer: true });
+    playerGameHeaderWss = wssPlayerGame;
     const ADMIN_DASH_WS_PUSH_MS = 4000;
+    const PLAYER_GAME_WS_PUSH_MS = 3500;
     httpServer.on('upgrade', (req, socket, head) => {
         const pathOnly = (req.url || '').split('?')[0];
         if (pathOnly === '/ws/market') {
@@ -8550,6 +8595,47 @@ const startServer = async () => {
             })();
             return;
         }
+        if (pathOnly === '/ws/player-game') {
+            void (async () => {
+                try {
+                    const uid = await resolveSessionUserIdFromWsUpgradeRequest(req);
+                    if (!uid) {
+                        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+                        socket.destroy();
+                        return;
+                    }
+                    wssPlayerGame.handleUpgrade(req, socket, head, (ws) => {
+                        ws.isAlive = true;
+                        ws.on('pong', () => {
+                            ws.isAlive = true;
+                        });
+                        const push = async () => {
+                            if (ws.readyState !== 1)
+                                return;
+                            try {
+                                const data = await computePlayerGameHeaderSnapshot(db, uid);
+                                ws.send(JSON.stringify({ type: 'player_game', event: 'tick', data }));
+                            }
+                            catch (e) {
+                                console.warn('[PlayerGameWs] push:', e instanceof Error ? e.message : String(e));
+                            }
+                        };
+                        void push();
+                        const tick = setInterval(push, PLAYER_GAME_WS_PUSH_MS);
+                        ws.on('close', () => clearInterval(tick));
+                    });
+                }
+                catch (e) {
+                    try {
+                        socket.destroy();
+                    }
+                    catch (_) {
+                        /* ignore */
+                    }
+                }
+            })();
+            return;
+        }
         try {
             socket.destroy();
         }
@@ -8557,7 +8643,7 @@ const startServer = async () => {
     });
     const wsPingMs = 45000;
     setInterval(() => {
-        for (const w of [marketWss, adminDashboardWss]) {
+        for (const w of [marketWss, adminDashboardWss, playerGameHeaderWss]) {
             if (!w)
                 continue;
             for (const c of w.clients) {
@@ -8577,7 +8663,7 @@ const startServer = async () => {
         }
     }, wsPingMs);
     httpServer.listen(desiredPort, '0.0.0.0', () => {
-        console.log(`Server running on port ${desiredPort} (HTTP + /ws/market + /ws/admin-dashboard)`);
+        console.log(`Server running on port ${desiredPort} (HTTP + /ws/market + /ws/admin-dashboard + /ws/player-game)`);
         setInterval(async () => {
             try {
                 const activeRes = await db.query('SELECT COUNT(DISTINCT user_id) as count FROM sessions WHERE expires_at > $1', [Date.now()]);

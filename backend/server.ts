@@ -56,6 +56,14 @@ import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
 import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controllers/backupController.js';
+import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
+import {
+  validateStockForSave,
+  validateUnopenedBoxesForSave,
+  validateDailyActionsForSave,
+  validateStoredBatteriesForSave,
+  validateWorkshopSlotsPayloadForSave
+} from './dist/lib/saveGameEconomyValidate.js';
 
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
@@ -629,6 +637,8 @@ async function appendGameActivityLog(q, userId, action, meta) {
 
 /** WebSocket: métricas do painel admin (KPIs; cookie de sessão). */
 let adminDashboardWss: WebSocketServer | null = null;
+/** WebSocket: cabeçalho do jogo (tokens, USDC, hashrate) para jogador com sessão válida. */
+let playerGameHeaderWss: WebSocketServer | null = null;
 /** WebSocket: atualizações do mercado P2P (clientes ligam em /ws/market). */
 let marketWss: WebSocketServer | null = null;
 function marketWsBroadcastLocal(payload) {
@@ -736,17 +746,36 @@ async function resolveAdminUserIdFromWsUpgradeRequest(req) {
   }
 }
 
+/** Cookie `sid` + sessão válida (qualquer utilizador autenticado) para upgrade WS `/ws/player-game`. */
+async function resolveSessionUserIdFromWsUpgradeRequest(req) {
+  try {
+    const sid = parseCookies(req).sid;
+    if (!sid) return null;
+    const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
+    const s = sRes.rows[0];
+    if (!s || Number(s.expires_at) < Date.now()) return null;
+    const uid = Number(s.user_id);
+    return Number.isFinite(uid) && uid > 0 ? uid : null;
+  } catch (e) {
+    console.warn('[PlayerGameWs] resolve session:', e instanceof Error ? e.message : String(e));
+    return null;
+  }
+}
+
 const app = express();
 
-// Serve static images
-app.use('/img', express.static(path.join(__dirname, 'img')));
+/** Imagens do jogo (itens, racks) na imagem Docker; uploads admin/suporte só em `img/uploads` (pode ter volume). */
+const IMG_DIR = path.join(__dirname, 'img');
+const IMG_UPLOADS_DIR = path.join(__dirname, 'img', 'uploads');
+try {
+  fs.mkdirSync(IMG_DIR, { recursive: true });
+  fs.mkdirSync(IMG_UPLOADS_DIR, { recursive: true });
+} catch { /* ignore */ }
 
 // Configure Multer for ad uploads
 const adStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = path.join(__dirname, 'img');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
+    cb(null, IMG_UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -770,9 +799,7 @@ const SUPPORT_UPLOAD_MAX = 12 * 1024 * 1024;
 const SUPPORT_ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.webm', '.mov']);
 const supportStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = path.join(__dirname, 'img');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
+    cb(null, IMG_UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
     const uid = req.userId ? String(req.userId) : '0';
@@ -792,9 +819,7 @@ const uploadSupport = multer({
 });
 const supportReplyStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const dir = path.join(__dirname, 'img');
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
+    cb(null, IMG_UPLOADS_DIR);
   },
   filename: (req, file, cb) => {
     const uid = req.userId ? String(req.userId) : '0';
@@ -971,9 +996,8 @@ app.use((req, res, next) => {
   next();
 });
 
-
-const IMG_DIR = path.join(__dirname, 'img');
-try { fs.mkdirSync(IMG_DIR, { recursive: true }); } catch { }
+// Uploads primeiro (volume em produção); depois assets em img/ vindos da imagem Docker.
+app.use('/img', express.static(IMG_UPLOADS_DIR));
 app.use('/img', express.static(IMG_DIR));
 
 // --- Moved utilities below ---
@@ -2449,7 +2473,7 @@ app.post('/api/upload-image', (req, res) => {
   const ext = mime === 'image/png' ? '.png' : (mime === 'image/gif' ? '.gif' : '.jpg');
   const safeBase = (originalName || 'image').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'image';
   const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeBase}${ext}`;
-  const filePath = path.join(IMG_DIR, filename);
+  const filePath = path.join(IMG_UPLOADS_DIR, filename);
   try {
     fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
   } catch (e) {
@@ -2547,6 +2571,10 @@ app.post('/api/daily-boost', async (req, res) => {
 
   if (!req.userId) return res.status(401).json({ error: 'Não autorizado' });
   if (slotIndex === undefined) return res.status(400).json({ error: 'slotIndex ausente' });
+  const slotIdx = Number(slotIndex);
+  if (!Number.isInteger(slotIdx) || slotIdx < 0 || slotIdx > 5) {
+    return res.status(400).json({ error: 'Índice de bancada inválido.' });
+  }
 
   const uid = req.userId;
   if (!uid) return res.status(404).json({ error: 'User not found' });
@@ -2554,7 +2582,7 @@ app.post('/api/daily-boost', async (req, res) => {
   const client = await db.connect();
   try {
     await client.query('BEGIN');
-    const slotRes = await client.query('SELECT * FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, slotIndex]);
+    const slotRes = await client.query('SELECT * FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, slotIdx]);
     const slot = slotRes.rows[0];
 
     if (!slot || !slot.item_id) {
@@ -2564,7 +2592,7 @@ app.post('/api/daily-boost', async (req, res) => {
 
     const now = new Date();
     const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
-    const actionKey = `daily_boost_slot_${slotIndex}`;
+    const actionKey = `daily_boost_slot_${slotIdx}`;
 
     const actionRes = await client.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [uid, actionKey]);
     const lastPerformed = actionRes.rows[0]?.last_performed_at;
@@ -2590,7 +2618,7 @@ app.post('/api/daily-boost', async (req, res) => {
     const boostAmount = maxCap - (slot.current_charge || 0);
 
     await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [uid, actionKey, Date.now()]);
-    await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [newCharge, uid, slotIndex]);
+    await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [newCharge, uid, slotIdx]);
 
     await client.query('COMMIT');
     res.json({ ok: true, newCharge, boostAmount });
@@ -2714,16 +2742,25 @@ app.get('/api/applixir-callback', async (req, res) => {
     if (!userRes.rows[0]) return res.status(404).send('User not found');
 
     const wsIdx = Number(req.query.custom);
-    if (!isNaN(wsIdx) && wsIdx >= 0 && wsIdx <= 2) {
+    if (Number.isInteger(wsIdx) && wsIdx >= 0 && wsIdx <= 5) {
       const rowRes = await db.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [userId, wsIdx]);
       const row = rowRes.rows[0];
       if (row && row.item_id) {
-        const upgRes = await db.query('SELECT power_capacity FROM upgrades WHERE id = $1', [row.item_id]);
-        const maxCap = upgRes.rows[0]?.power_capacity || 1000;
-
-        await db.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, userId, wsIdx]);
+        const nowCb = new Date();
+        const startOfDay = new Date(Date.UTC(nowCb.getUTCFullYear(), nowCb.getUTCMonth(), nowCb.getUTCDate())).getTime();
         const actionKey = `reward_ad_slot_${wsIdx}`;
-        await db.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [userId, actionKey, Date.now()]);
+        const actionRes = await db.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [userId, actionKey]);
+        const lastPerformed = actionRes.rows[0]?.last_performed_at;
+        if (!lastPerformed || Number(lastPerformed) < startOfDay) {
+          const upgRes = await db.query('SELECT power_capacity FROM upgrades WHERE id = $1', [row.item_id]);
+          const maxCap = upgRes.rows[0]?.power_capacity || 1000;
+
+          await db.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, userId, wsIdx]);
+          await db.query(
+            'INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at',
+            [userId, actionKey, Date.now()]
+          );
+        }
       }
     }
     res.send('OK');
@@ -2733,22 +2770,47 @@ app.get('/api/applixir-callback', async (req, res) => {
 });
 
 app.post('/api/workshop/recharge', async (req, res) => {
-  const { wsIdx } = req.body;
-  if (!req.userId || wsIdx === undefined) return res.status(400).json({ error: 'Campos ausentes' });
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const wsIdx = Number(req.body?.wsIdx);
+  if (!Number.isInteger(wsIdx) || wsIdx < 0 || wsIdx > 5) {
+    return res.status(400).json({ error: 'Índice de bancada inválido.' });
+  }
 
   const uid = req.userId;
   const client = await db.connect();
   try {
+    await client.query('BEGIN');
     const slotRes = await client.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, wsIdx]);
     const slot = slotRes.rows[0];
-    if (!slot || !slot.item_id) return res.status(404).json({ error: 'Nenhum carregador neste slot' });
+    if (!slot || !slot.item_id) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Nenhum carregador neste slot.' });
+    }
+
+    const now = new Date();
+    const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
+    const actionKey = `instant_recharge_slot_${wsIdx}`;
+    const actionRes = await client.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [uid, actionKey]);
+    const lastPerformed = actionRes.rows[0]?.last_performed_at;
+    if (lastPerformed && Number(lastPerformed) >= startOfDay) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: 'O limite diário de recarga instantânea nesta bancada já foi utilizado. Volte amanhã (UTC) ou use o boost diário / anúncio.'
+      });
+    }
 
     const upgRes = await client.query('SELECT power_capacity FROM upgrades WHERE id = $1', [slot.item_id]);
     const maxCap = upgRes.rows[0]?.power_capacity || 1000;
 
+    await client.query(
+      'INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at',
+      [uid, actionKey, Date.now()]
+    );
     await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, uid, wsIdx]);
+    await client.query('COMMIT');
     res.json({ ok: true, newCharge: maxCap });
   } catch (e) {
+    await client.query('ROLLBACK');
     res.status(500).json({ error: e.message });
   } finally {
     client.release();
@@ -2756,8 +2818,12 @@ app.post('/api/workshop/recharge', async (req, res) => {
 });
 
 app.post('/api/reward-ad', async (req, res) => {
-  const { wsIdx } = req.body || {};
-  if (!req.userId || wsIdx === undefined) return res.status(400).json({ error: 'Missing fields' });
+  const { wsIdx: wsIdxRaw } = req.body || {};
+  if (!req.userId || wsIdxRaw === undefined) return res.status(400).json({ error: 'Missing fields' });
+  const wsIdx = Number(wsIdxRaw);
+  if (!Number.isInteger(wsIdx) || wsIdx < 0 || wsIdx > 5) {
+    return res.status(400).json({ error: 'Índice de bancada inválido.' });
+  }
 
   const uid = req.userId;
   if (!uid) return res.status(404).json({ error: 'User not found' });
@@ -7016,7 +7082,7 @@ app.post('/api/save-game', async (req, res) => {
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (user_id) DO UPDATE SET
           start_time = EXCLUDED.start_time,
-          last_updated_at = EXCLUDED.last_updated_at,
+          last_updated_at = GREATEST(COALESCE(game_states.last_updated_at, 0), COALESCE(EXCLUDED.last_updated_at, 0)),
           server_updated_at = EXCLUDED.server_updated_at,
           claimed_referrals = EXCLUDED.claimed_referrals,
           referral_bonus_claimed = EXCLUDED.referral_bonus_claimed,
@@ -7040,14 +7106,24 @@ app.post('/api/save-game', async (req, res) => {
         }
       }
       if (gs.dailyActions) {
-        const keys = Object.keys(gs.dailyActions);
-        const vals = Object.values(gs.dailyActions);
-        if (keys.length > 0) {
+        if (typeof gs.dailyActions !== 'object' || Array.isArray(gs.dailyActions)) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error:
+              'O formato dos dados diários (oficina) está incorrecto. Recarregue a página (F5).'
+          });
+        }
+        const dv = validateDailyActionsForSave(gs.dailyActions, effectiveAdminOverride, Date.now());
+        if (!dv.ok) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({ error: dv.error });
+        }
+        if (dv.keys.length > 0) {
           await client.query(`
             INSERT INTO daily_actions (user_id, action_key, last_performed_at) 
             SELECT $1, unnest($2::text[]), unnest($3::numeric[])
             ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at`,
-            [uid, keys, vals]);
+            [uid, dv.keys, dv.vals]);
         }
       }
     }
@@ -7056,34 +7132,59 @@ app.post('/api/save-game', async (req, res) => {
 
 
 
-    if (changes.stock) {
-      const itemIds = Object.keys(changes.stock);
-      const qtys = Object.values(changes.stock).map(q => q || 0);
-      if (itemIds.length > 0) {
+    if (changes.stock !== undefined && changes.stock !== null) {
+      if (typeof changes.stock !== 'object' || Array.isArray(changes.stock)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'O inventário foi enviado num formato inválido. Recarregue a página (F5).'
+        });
+      }
+      const sv = await validateStockForSave(client, changes.stock);
+      if (!sv.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: sv.error });
+      }
+      if (sv.itemIds.length > 0) {
         await client.query(`
           INSERT INTO stock (user_id, item_id, qty) 
           SELECT $1, unnest($2::text[]), unnest($3::int[])
           ON CONFLICT (user_id, item_id) DO UPDATE SET qty = EXCLUDED.qty`,
-          [uid, itemIds, qtys]);
+          [uid, sv.itemIds, sv.qtys]);
       }
     }
 
-    if (changes.unopenedBoxes) {
-      const boxIds = Object.keys(changes.unopenedBoxes);
-      const qtys = Object.values(changes.unopenedBoxes).map(q => q || 0);
-      if (boxIds.length > 0) {
+    if (changes.unopenedBoxes !== undefined && changes.unopenedBoxes !== null) {
+      if (typeof changes.unopenedBoxes !== 'object' || Array.isArray(changes.unopenedBoxes)) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: 'A lista de caixas foi enviada num formato inválido. Recarregue a página (F5).'
+        });
+      }
+      const bv = await validateUnopenedBoxesForSave(client, changes.unopenedBoxes);
+      if (!bv.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: bv.error });
+      }
+      if (bv.boxIds.length > 0) {
         await client.query(`
           INSERT INTO unopened_boxes (user_id, box_id, qty) 
           SELECT $1, unnest($2::text[]), unnest($3::int[])
           ON CONFLICT (user_id, box_id) DO UPDATE SET qty = EXCLUDED.qty`,
-          [uid, boxIds, qtys]);
+          [uid, bv.boxIds, bv.qtys]);
       }
     }
 
     if (changes.storedBatteries) {
       if (!Array.isArray(changes.storedBatteries)) {
         await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'storedBatteries inválido.' });
+        return res.status(400).json({
+          error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
+        });
+      }
+      const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
+      if (!batVal.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: batVal.error });
       }
       // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores).
       const incomingIds = changes.storedBatteries.map(b => b.id);
@@ -7268,22 +7369,55 @@ app.post('/api/save-game', async (req, res) => {
     }
 
     if (changes.workshopSlots) {
-      const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge FROM workshop_slots WHERE user_id = $1', [uid]);
+      const wVal = await validateWorkshopSlotsPayloadForSave(client, changes.workshopSlots, {
+        adminOverride: effectiveAdminOverride
+      });
+      if (!wVal.ok) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: wVal.error });
+      }
+      const workshopNorm = wVal.normalized;
+
+      const existingSlotsRes = await client.query(
+        'SELECT slot_index, item_id, installed_at, current_charge, slot_charges FROM workshop_slots WHERE user_id = $1',
+        [uid]
+      );
       const existingSlots: Record<number, Record<string, unknown>> = {};
-      existingSlotsRes.rows.forEach(r => {
+      existingSlotsRes.rows.forEach((r) => {
         existingSlots[r.slot_index] = r;
       });
 
-      // Pre-load upgrades for workshop validation
-      const workshopItemIds = changes.workshopSlots.map(w => w?.itemId).filter(id => !!id);
-      const existingItemIds = Object.values(existingSlots).map(s => s.item_id).filter(id => !!id);
-      const allWorkshopTargetIds = [...new Set([...workshopItemIds, ...existingItemIds])];
+      const workshopItemIds = workshopNorm.map((w) => w?.itemId).filter(Boolean);
+      const slotRefIds: string[] = [];
+      for (const w of workshopNorm) {
+        if (w?.slotItemIds) slotRefIds.push(...Object.values(w.slotItemIds));
+      }
+      const existingItemIds = Object.values(existingSlots)
+        .map((s) => s.item_id)
+        .filter((id) => !!id);
+      const allWorkshopTargetIds = [...new Set([...workshopItemIds, ...existingItemIds, ...slotRefIds])];
 
       const workshopUpgradesMap = new Map();
       if (allWorkshopTargetIds.length > 0) {
-        const upRes = await client.query('SELECT id, type, base_production FROM upgrades WHERE id = ANY($1)', [allWorkshopTargetIds]);
-        upRes.rows.forEach(u => workshopUpgradesMap.set(u.id, u));
+        const upRes = await client.query(
+          'SELECT id, type, category, base_production, power_capacity FROM upgrades WHERE id = ANY($1::text[])',
+          [allWorkshopTargetIds]
+        );
+        upRes.rows.forEach((u) => workshopUpgradesMap.set(u.id, u));
       }
+
+      const capSlotCharges = (charges: Record<string, number>, slotItemIds: Record<string, string> | null) => {
+        if (!slotItemIds) return { ...charges };
+        const out = { ...charges };
+        for (const key of Object.keys(out)) {
+          const iid = slotItemIds[key];
+          if (!iid) continue;
+          const defB = workshopUpgradesMap.get(String(iid));
+          const maxB = Number(defB?.power_capacity);
+          if (Number.isFinite(maxB) && maxB >= 0 && out[key] > maxB) out[key] = maxB;
+        }
+        return out;
+      };
 
       const wsUserIds = [];
       const wsSlotIdxs = [];
@@ -7293,28 +7427,43 @@ app.post('/api/save-game', async (req, res) => {
       const wsSlotCharges = [];
       const wsSlotItemIds = [];
       const wsInstalledAts = [];
-      let validInstalledAt = Date.now();
 
-      for (let i = 0; i < changes.workshopSlots.length; i++) {
-        const w = changes.workshopSlots[i];
+      for (let i = 0; i < workshopNorm.length; i++) {
+        const w = workshopNorm[i];
         const existing = existingSlots[i];
 
         if (w && w.itemId) {
-          let finalCharge = w.currentCharge || 0;
-          let finalSlotCharges = w.slotCharges ? { ...w.slotCharges } : {};
-          validInstalledAt = Date.now();
+          const defStruct = workshopUpgradesMap.get(String(w.itemId));
+          const maxCapStruct = Number(defStruct?.power_capacity);
 
-          if (!existing || !existing.item_id || existing.item_id !== w.itemId) {
+          const isNewOrChanged =
+            !existing || !existing.item_id || String(existing.item_id) !== String(w.itemId);
+
+          let finalCharge = w.currentCharge || 0;
+          let finalSlotCharges: Record<string, number> = w.slotCharges ? { ...w.slotCharges } : {};
+          let internalPayload =
+            w.internalSlots && Object.keys(w.internalSlots).length ? { ...w.internalSlots } : {};
+          let slotItemIdsPayload: Record<string, string> | null =
+            w.slotItemIds && Object.keys(w.slotItemIds).length ? { ...w.slotItemIds } : null;
+          let validInstalledAt = Date.now();
+
+          if (isNewOrChanged) {
             console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
             saveActivityLogs.push({ action: 'workshop_place', meta: { slotIndex: i, itemId: w.itemId } });
-          }
-
-          if (existing && existing.item_id === w.itemId) {
-            // 1. Preserve highest progress for individual battery slots
+            if (!effectiveAdminOverride) {
+              finalCharge = 0;
+              finalSlotCharges = {};
+              internalPayload = {};
+              slotItemIdsPayload = null;
+            }
+          } else if (existing && existing.item_id === w.itemId) {
             if (existing.slot_charges) {
               try {
-                const dbSlotCharges = typeof existing.slot_charges === 'string' ? JSON.parse(existing.slot_charges) : existing.slot_charges;
-                for (const [sid, dbVal] of Object.entries(dbSlotCharges)) {
+                const dbSlotCharges =
+                  typeof existing.slot_charges === 'string'
+                    ? JSON.parse(existing.slot_charges as string)
+                    : existing.slot_charges;
+                for (const [sid, dbVal] of Object.entries(dbSlotCharges as Record<string, unknown>)) {
                   if (finalSlotCharges[sid] !== undefined && Number(dbVal) > Number(finalSlotCharges[sid])) {
                     finalSlotCharges[sid] = Number(dbVal);
                   }
@@ -7326,40 +7475,38 @@ app.post('/api/save-game', async (req, res) => {
                 );
               }
             }
-            // 2. Preserve highest internal charge (unless frontend is lower, which might happen if used, but chargers only drain to batteries)
-            // Actually, server 'computeProgress' is the primary authority for internal_charge draining.
             if (Number(existing.current_charge) > finalCharge) {
               finalCharge = Number(existing.current_charge);
             }
-            
             validInstalledAt = Number(existing.installed_at || Date.now());
           }
+
+          if (Number.isFinite(maxCapStruct) && maxCapStruct > 0) {
+            finalCharge = Math.min(finalCharge, maxCapStruct);
+          }
+          finalSlotCharges = capSlotCharges(finalSlotCharges, slotItemIdsPayload);
 
           wsUserIds.push(uid);
           wsSlotIdxs.push(i);
           wsItemIds.push(w.itemId);
-          wsInternalStates.push(w.internalSlots ? JSON.stringify(w.internalSlots) : null);
+          wsInternalStates.push(Object.keys(internalPayload).length ? JSON.stringify(internalPayload) : null);
           wsCharges.push(finalCharge);
           wsSlotCharges.push(JSON.stringify(finalSlotCharges));
-          wsSlotItemIds.push(w.slotItemIds ? JSON.stringify(w.slotItemIds) : null);
+          wsSlotItemIds.push(slotItemIdsPayload ? JSON.stringify(slotItemIdsPayload) : null);
           wsInstalledAts.push(validInstalledAt);
         } else {
           if (existing && existing.item_id) {
-            console.log(`[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`);
+            console.log(
+              `[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`
+            );
             saveActivityLogs.push({ action: 'workshop_dismantle', meta: { slotIndex: i, itemId: existing.item_id } });
             const itemDef = workshopUpgradesMap.get(String(existing.item_id));
-            if (itemDef && itemDef.type === 'charger') {
-              if (Number(existing.current_charge) > 0.001) throw new Error("Não é possível remover um carregador com carga.");
-              /*
-              const installedAt = Number(existing.installed_at || 0);
-              if (installedAt > 0) {
-                const instDate = new Date(installedAt);
-                const midnight = new Date(instDate);
-                midnight.setDate(midnight.getDate() + 1);
-                midnight.setHours(0, 0, 0, 0);
-                if (Date.now() < midnight.getTime()) throw new Error("Este carregador ainda está travado até 00:00.");
+            if (itemDef && String(itemDef.type).toLowerCase() === 'charger') {
+              if (Number(existing.current_charge) > 0.001) {
+                throw Object.assign(new Error('Não é possível remover um carregador com carga.'), {
+                  workshopClientError: true
+                });
               }
-              */
             }
           }
           await client.query('UPDATE workshop_slots SET item_id = NULL, installed_at = 0 WHERE user_id = $1 AND slot_index = $2', [uid, i]);
@@ -7367,13 +7514,15 @@ app.post('/api/save-game', async (req, res) => {
       }
 
       if (wsUserIds.length > 0) {
-        await client.query(`
+        await client.query(
+          `
           INSERT INTO workshop_slots (user_id, slot_index, item_id, internal_state, current_charge, slot_charges, slot_item_ids, installed_at)
           SELECT unnest($1::int[]), unnest($2::int[]), unnest($3::text[]), unnest($4::text[]), unnest($5::numeric[]), unnest($6::text[]), unnest($7::text[]), unnest($8::numeric[])
           ON CONFLICT (user_id, slot_index) DO UPDATE SET
             item_id = EXCLUDED.item_id, internal_state = EXCLUDED.internal_state, current_charge = EXCLUDED.current_charge,
             slot_charges = EXCLUDED.slot_charges, slot_item_ids = EXCLUDED.slot_item_ids, installed_at = EXCLUDED.installed_at`,
-          [wsUserIds, wsSlotIdxs, wsItemIds, wsInternalStates, wsCharges, wsSlotCharges, wsSlotItemIds, wsInstalledAts]);
+          [wsUserIds, wsSlotIdxs, wsItemIds, wsInternalStates, wsCharges, wsSlotCharges, wsSlotItemIds, wsInstalledAts]
+        );
       }
     }
 
@@ -7425,8 +7574,12 @@ app.post('/api/save-game', async (req, res) => {
     res.json(savePayload);
   } catch (e) {
     await client.query('ROLLBACK');
+    const err = e as { workshopClientError?: boolean; message?: string };
+    if (err && err.workshopClientError && typeof err.message === 'string') {
+      return res.status(400).json({ error: err.message });
+    }
     console.error('[SaveGame] CRITICAL ERROR:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: (e as Error)?.message || 'Erro ao guardar.' });
   } finally { client.release(); }
 });
 
@@ -8808,7 +8961,10 @@ const startServer = async () => {
   marketWss = wss;
   const wssAdminDash = new WebSocketServer({ noServer: true });
   adminDashboardWss = wssAdminDash;
+  const wssPlayerGame = new WebSocketServer({ noServer: true });
+  playerGameHeaderWss = wssPlayerGame;
   const ADMIN_DASH_WS_PUSH_MS = 4000;
+  const PLAYER_GAME_WS_PUSH_MS = 3500;
 
   httpServer.on('upgrade', (req, socket, head) => {
     const pathOnly = (req.url || '').split('?')[0];
@@ -8855,12 +9011,49 @@ const startServer = async () => {
       })();
       return;
     }
+    if (pathOnly === '/ws/player-game') {
+      void (async () => {
+        try {
+          const uid = await resolveSessionUserIdFromWsUpgradeRequest(req);
+          if (!uid) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+            socket.destroy();
+            return;
+          }
+          wssPlayerGame.handleUpgrade(req, socket, head, (ws) => {
+            ws.isAlive = true;
+            ws.on('pong', () => {
+              ws.isAlive = true;
+            });
+            const push = async () => {
+              if (ws.readyState !== 1) return;
+              try {
+                const data = await computePlayerGameHeaderSnapshot(db, uid);
+                ws.send(JSON.stringify({ type: 'player_game', event: 'tick', data }));
+              } catch (e) {
+                console.warn('[PlayerGameWs] push:', e instanceof Error ? e.message : String(e));
+              }
+            };
+            void push();
+            const tick = setInterval(push, PLAYER_GAME_WS_PUSH_MS);
+            ws.on('close', () => clearInterval(tick));
+          });
+        } catch (e) {
+          try {
+            socket.destroy();
+          } catch (_) {
+            /* ignore */
+          }
+        }
+      })();
+      return;
+    }
     try { socket.destroy(); } catch (_) { /* ignore */ }
   });
 
   const wsPingMs = 45000;
   setInterval(() => {
-    for (const w of [marketWss, adminDashboardWss]) {
+    for (const w of [marketWss, adminDashboardWss, playerGameHeaderWss]) {
       if (!w) continue;
       for (const c of w.clients) {
         if (!c.isAlive) {
@@ -8874,7 +9067,7 @@ const startServer = async () => {
   }, wsPingMs);
 
   httpServer.listen(desiredPort, '0.0.0.0', () => {
-    console.log(`Server running on port ${desiredPort} (HTTP + /ws/market + /ws/admin-dashboard)`);
+    console.log(`Server running on port ${desiredPort} (HTTP + /ws/market + /ws/admin-dashboard + /ws/player-game)`);
     setInterval(async () => {
       try {
         const activeRes = await db.query('SELECT COUNT(DISTINCT user_id) as count FROM sessions WHERE expires_at > $1', [Date.now()]);

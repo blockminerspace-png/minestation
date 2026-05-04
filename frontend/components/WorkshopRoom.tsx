@@ -66,6 +66,14 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
         return lastPerformedAt >= startOfDay;
     };
 
+    const activeBenches = slots.filter(Boolean).length;
+    const activeBenchesLabel =
+        activeBenches === 0
+            ? 'Nenhuma bancada ativa'
+            : activeBenches === 1
+              ? '1 bancada ativa'
+              : `${activeBenches} bancadas ativas`;
+
     return (
         <div className="flex flex-col gap-6">
             <style>
@@ -91,7 +99,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                         <History size={14} /> Log de carga
                     </button>
                     <div className="text-xs text-slate-500 font-mono">
-                        6 bancadas ativas
+                        {activeBenchesLabel}
                     </div>
                 </div>
             </div>
@@ -293,15 +301,20 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             );
                                                         }
                                                         if (slot.type === 'instant_recharge') {
+                                                            const instantUsed = isUsedToday(`instant_recharge_slot_${idx}`);
                                                             return (
                                                                 <button
                                                                     key={i}
+                                                                    disabled={instantUsed}
                                                                     onClick={() => onInstantRecharge(idx)}
-                                                                    className="absolute overflow-hidden rounded-full flex items-center justify-center border border-amber-500/50 bg-amber-950/80 text-amber-400 z-30 hover:scale-110 active:scale-95 transition-transform hover:bg-amber-900 shadow-[0_0_10px_rgba(245,158,11,0.3)]"
+                                                                    className={`absolute overflow-hidden rounded-full flex items-center justify-center border z-30 transition-transform shadow-[0_0_10px_rgba(245,158,11,0.3)] ${instantUsed
+                                                                        ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 grayscale'
+                                                                        : 'border-amber-500/50 bg-amber-950/80 text-amber-400 hover:scale-110 active:scale-95 hover:bg-amber-900'
+                                                                        }`}
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
-                                                                    title="Recarga Instantânea"
+                                                                    title={instantUsed ? 'Limite diário de recarga instantânea (UTC) já usado nesta bancada.' : 'Recarga instantânea (1× por dia por bancada, UTC)'}
                                                                 >
-                                                                    <RefreshCw size={slot.w > 10 ? 12 : 8} className="animate-pulse" />
+                                                                    <RefreshCw size={slot.w > 10 ? 12 : 8} className={instantUsed ? '' : 'animate-pulse'} />
                                                                 </button>
                                                             );
                                                         }

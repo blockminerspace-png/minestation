@@ -254,6 +254,11 @@ export default function App() {
   }, [gameState]);
 
   const [productionRate, setProductionRate] = useState(0);
+  /** Hash por moeda + total vindos de `/ws/player-game` (BD). `null` = usar só cálculo local. */
+  const [livePlayerGameWs, setLivePlayerGameWs] = useState<{
+    hashByCoinId: Record<string, number>;
+    totalHash: number;
+  } | null>(null);
   const [currentView, setCurrentView] = useState<View>(() => {
     try {
       const saved = sessionStorage.getItem('lastView');
@@ -513,6 +518,71 @@ export default function App() {
     }, 15000);
     return () => clearInterval(interval);
   }, []);
+
+  // WebSocket: cabeçalho do jogo — saldos (coin_balances + USDC) e hashrate alinhados à BD (~3,5s)
+  useEffect(() => {
+    if (!user || user.isAdmin || globalView !== 'game' || !saveLoaded) {
+      setLivePlayerGameWs(null);
+      return;
+    }
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = `${proto}//${window.location.host}/ws/player-game`;
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(url);
+      ws.onmessage = (ev) => {
+        try {
+          const msg = JSON.parse(String(ev.data)) as {
+            type?: string;
+            event?: string;
+            data?: {
+              coinBalances?: Record<string, number>;
+              usdc?: number;
+              hashByCoinId?: Record<string, number>;
+              totalHash?: number;
+            };
+          };
+          if (msg.type !== 'player_game' || msg.event !== 'tick' || !msg.data) return;
+          const d = msg.data;
+          const hashByCoinId =
+            d.hashByCoinId && typeof d.hashByCoinId === 'object' && !Array.isArray(d.hashByCoinId)
+              ? d.hashByCoinId
+              : {};
+          const totalHash = typeof d.totalHash === 'number' && Number.isFinite(d.totalHash) ? d.totalHash : 0;
+          setLivePlayerGameWs({ hashByCoinId, totalHash });
+          setGameState((prev) => {
+            const nextCb =
+              d.coinBalances && typeof d.coinBalances === 'object' && !Array.isArray(d.coinBalances)
+                ? { ...prev.coinBalances, ...d.coinBalances }
+                : prev.coinBalances;
+            const nextUsdc = typeof d.usdc === 'number' && Number.isFinite(d.usdc) ? d.usdc : prev.usdc;
+            if (nextCb === prev.coinBalances && nextUsdc === prev.usdc) return prev;
+            return { ...prev, coinBalances: nextCb, usdc: nextUsdc };
+          });
+        } catch {
+          /* frame inválido */
+        }
+      };
+      ws.onclose = () => setLivePlayerGameWs(null);
+      ws.onerror = () => {
+        try {
+          ws?.close();
+        } catch {
+          /* ignore */
+        }
+      };
+    } catch {
+      setLivePlayerGameWs(null);
+    }
+    return () => {
+      setLivePlayerGameWs(null);
+      try {
+        ws?.close();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [user, globalView, saveLoaded]);
 
   // Load Save when User changes (Not for admin)
   useEffect(() => {
@@ -1748,7 +1818,8 @@ export default function App() {
           const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
           const item = nw[wsIdx]; if (!item) return p;
           nw[wsIdx] = { ...item, currentCharge: res.newCharge || 0 };
-          return { ...p, workshopSlots: nw };
+          const nextDaily = { ...(p.dailyActions || {}), [`instant_recharge_slot_${wsIdx}`]: Date.now() };
+          return { ...p, workshopSlots: nw, dailyActions: nextDaily };
         });
       } else {
         alert(res.error || "Erro ao recarregar carregador.");
@@ -1844,7 +1915,7 @@ export default function App() {
         const res = await claimAdReward(user.email, wsIdx);
         if (res.ok && res.newCharge !== undefined) {
           setGameState(p => {
-            const nw = [...(p.workshopSlots || [null, null, null])];
+            const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
             const item = nw[wsIdx]; if (!item) return p;
             nw[wsIdx] = { ...item, currentCharge: res.newCharge || 0 };
             const nextDaily = { ...(p.dailyActions || {}), [`reward_ad_slot_${wsIdx}`]: Date.now() };
@@ -1951,7 +2022,7 @@ export default function App() {
     const res = await performDailyBoost(user.email, wsIdx);
     if (res.ok && res.newCharge !== undefined) {
       setGameState(p => {
-        const nw = [...(p.workshopSlots || [null, null, null])];
+        const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
         const item = nw[wsIdx]; if (!item) return p;
         nw[wsIdx] = { ...item, currentCharge: res.newCharge || 0 };
         const nextDaily = { ...(p.dailyActions || {}), [`daily_boost_slot_${wsIdx}`]: Date.now() };
@@ -2127,7 +2198,11 @@ export default function App() {
                   ) : (
                     (() => {
                       // Calcular poder para todas as moedas e ordenar
-                      const coinsWithPower = miningCoins.map(c => {
+                      const coinsWithPower = miningCoins.map((c) => {
+                        const wsP = livePlayerGameWs?.hashByCoinId[c.id];
+                        if (wsP != null && Number.isFinite(wsP)) {
+                          return { ...c, power: wsP };
+                        }
                         let base = 0;
                         gameState.placedRacks.forEach(r => {
                           const batt = gameUpgrades.find(u => u.id === r.batteryId);
@@ -2174,7 +2249,7 @@ export default function App() {
               </div>
               <div className="flex flex-col items-end px-2">
                 <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-wider flex gap-1"><TrendingUp size={10} /> Hash Total</span>
-                <span className="font-mono text-slate-700 dark:text-slate-200">{formatHash(productionRate)}</span>
+                <span className="font-mono text-slate-700 dark:text-slate-200">{formatHash(livePlayerGameWs ? livePlayerGameWs.totalHash : productionRate)}</span>
               </div>
             </div>
           )}
@@ -2401,7 +2476,7 @@ export default function App() {
                     <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
                       <div className="flex-1">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <WorkshopRoom slots={gameState.workshopSlots || [null, null, null]} stock={gameState.stock} upgrades={gameUpgrades} onEquip={handleEquipWorkshop} onUnequip={handleUnequipWorkshop} onEquipComponent={handleEquipWorkshopComponent} onUnequipComponent={handleUnequipWorkshopComponent} storedBatteries={gameState.storedBatteries} onInstantRecharge={handleWorkshopInstantRecharge} onRewardedAd={handleRewardedAd} onDailyBoost={handleDailyBoost} timeOffset={timeOffset} dailyActions={gameState.dailyActions} />
+                          <WorkshopRoom slots={gameState.workshopSlots || [null, null, null, null, null, null]} stock={gameState.stock} upgrades={gameUpgrades} onEquip={handleEquipWorkshop} onUnequip={handleUnequipWorkshop} onEquipComponent={handleEquipWorkshopComponent} onUnequipComponent={handleUnequipWorkshopComponent} storedBatteries={gameState.storedBatteries} onInstantRecharge={handleWorkshopInstantRecharge} onRewardedAd={handleRewardedAd} onDailyBoost={handleDailyBoost} timeOffset={timeOffset} dailyActions={gameState.dailyActions} />
                         </Suspense>
                       </div>
                       <Footer />

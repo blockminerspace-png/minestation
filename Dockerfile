@@ -8,9 +8,18 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM node:20-bookworm-slim
-# pg_dump / psql / pg_restore para backups SQL no painel admin (evita spawn ENOENT)
+# pg_dump / psql / pg_restore precisam acompanhar o major do Postgres da stack.
+# O Debian bookworm instala a serie 15 por padrao, entao fixamos o cliente 16 do PGDG.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends postgresql-client \
+  && apt-get install -y --no-install-recommends ca-certificates curl gnupg \
+  && install -d /usr/share/postgresql-common/pgdg \
+  && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    | gpg --dearmor -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg \
+  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+    > /etc/apt/sources.list.d/pgdg.list \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends postgresql-client-16 \
+  && apt-get purge -y --auto-remove curl gnupg \
   && rm -rf /var/lib/apt/lists/*
 WORKDIR /app/backend
 
