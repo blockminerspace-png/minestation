@@ -23,6 +23,7 @@ import {
 } from '../services/api';
 import type { GameUserActivityEntry } from '../types';
 import { formatUserActivityMeta, ACTIVITY_LOG_FILTER_GROUPS, filterUserActivityLogs } from '../utils/adminUserActivityLog';
+import { safeSupportAttachmentHref } from '../utils/supportAttachmentUrls';
 
 export type AdminSupportOpenPlayerPayload = { userId: number; email: string; username: string };
 
@@ -53,28 +54,41 @@ const ReplyAttachments: React.FC<{ items: SupportTicketReplyRow['attachments'] }
   if (!Array.isArray(items) || items.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2 mt-2">
-      {items.map((a, i) =>
-        isVideoAtt(a) ? (
+      {items.map((a, i) => {
+        const href = safeSupportAttachmentHref(a.url);
+        const label = a.originalName || (typeof a.url === 'string' ? a.url : 'anexo');
+        if (!href) {
+          return (
+            <span
+              key={i}
+              className="text-[10px] text-slate-500 border border-slate-800 rounded px-2 py-1 max-w-full truncate"
+              title="URL de anexo inválida ou não permitida"
+            >
+              Anexo bloqueado: {label}
+            </span>
+          );
+        }
+        return isVideoAtt({ ...a, url: href }) ? (
           <a
             key={i}
-            href={a.url}
+            href={href}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300 border border-sky-900/50 rounded px-2 py-1"
           >
             <ExternalLink size={11} />
-            Vídeo: {a.originalName || a.url}
+            Vídeo: {label}
           </a>
         ) : (
-          <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="block shrink-0">
+          <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="block shrink-0">
             <img
-              src={a.url}
-              alt={a.originalName || ''}
+              src={href}
+              alt={typeof a.originalName === 'string' ? a.originalName : ''}
               className="max-h-24 rounded border border-slate-700 object-cover hover:opacity-90"
             />
           </a>
-        )
-      )}
+        );
+      })}
     </div>
   );
 };
@@ -99,6 +113,8 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
   const [activitySearch, setActivitySearch] = useState('');
   const [copiedTicketId, setCopiedTicketId] = useState<string | null>(null);
   const [listTab, setListTab] = useState<'open' | 'archived'>('open');
+  /** Evita duplo clique em Arquivar/Reabrir e mostra estado no botão. */
+  const [statusBusyId, setStatusBusyId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -153,7 +169,8 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
     if (detailTab !== 'activity' || !openId) return;
     const t = tickets.find((x) => x.id === openId);
     if (!t) return;
-    const uid = typeof t.userId === 'number' && Number.isFinite(t.userId) && t.userId > 0 ? Math.floor(t.userId) : undefined;
+    const uidN = ticketUserNumericId(t);
+    const uid = uidN > 0 ? uidN : undefined;
     if (!t.email?.trim() && !uid) return;
     let cancelled = false;
     (async () => {
@@ -210,7 +227,8 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
   };
 
   const refreshTicketActivity = async (t: SupportTicketRow) => {
-    const uid = typeof t.userId === 'number' && Number.isFinite(t.userId) && t.userId > 0 ? Math.floor(t.userId) : undefined;
+    const uidN = ticketUserNumericId(t);
+    const uid = uidN > 0 ? uidN : undefined;
     if (!t.email?.trim() && !uid) return;
     setActivityLoading(true);
     setActivityError(null);
@@ -225,21 +243,33 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
   };
 
   const archive = async (id: string) => {
-    const r = await updateAdminSupportTicketStatus(id, 'archived');
-    if (!r.ok) {
-      alert(r.error || 'Erro');
-      return;
+    if (statusBusyId) return;
+    setStatusBusyId(id);
+    try {
+      const r = await updateAdminSupportTicketStatus(id, 'archived');
+      if (!r.ok) {
+        alert(r.error || 'Erro');
+        return;
+      }
+      await load();
+    } finally {
+      setStatusBusyId(null);
     }
-    await load();
   };
 
   const reopen = async (id: string) => {
-    const r = await updateAdminSupportTicketStatus(id, 'open');
-    if (!r.ok) {
-      alert(r.error || 'Erro');
-      return;
+    if (statusBusyId) return;
+    setStatusBusyId(id);
+    try {
+      const r = await updateAdminSupportTicketStatus(id, 'open');
+      if (!r.ok) {
+        alert(r.error || 'Erro');
+        return;
+      }
+      await load();
+    } finally {
+      setStatusBusyId(null);
     }
-    await load();
   };
 
   const onPickReplyFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -261,6 +291,11 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
   };
 
   const sendReply = async (ticketId: string) => {
+    const msg = replyMessage.trim();
+    if (msg.length < 3 && replyFiles.length === 0) {
+      setReplyErr('Escreve pelo menos 3 caracteres ou anexa ficheiros.');
+      return;
+    }
     setReplyErr(null);
     setReplying(true);
     try {
@@ -280,6 +315,8 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
       setReplying(false);
     }
   };
+
+  const canSendReply = replyMessage.trim().length >= 3 || replyFiles.length > 0;
 
   const fmt = (ts: unknown) => {
     if (ts == null) return '—';
@@ -395,10 +432,18 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
         <div className="space-y-2">
           {filteredTickets.map((t) => (
             <div key={t.id} className="rounded-xl border border-slate-700 bg-slate-900/60 overflow-hidden">
-              <button
-                type="button"
+              {/* Não usar <button> aqui: filhos com botões (copiar / perfil) são HTML inválido e partem cliques. */}
+              <div
+                role="button"
+                tabIndex={0}
                 onClick={() => setOpenId((v) => (v === t.id ? null : t.id))}
-                className="w-full text-left px-4 py-3 flex flex-wrap items-center justify-between gap-2 hover:bg-slate-800/50 transition-colors"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setOpenId((v) => (v === t.id ? null : t.id));
+                  }
+                }}
+                className="w-full text-left px-4 py-3 flex flex-wrap items-center justify-between gap-2 hover:bg-slate-800/50 transition-colors cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500/50 rounded-t-xl"
               >
                 <div className="min-w-0">
                   <div className="font-bold text-white truncate">{t.subject}</div>
@@ -421,17 +466,17 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                     {onOpenPlayerProfile && (
                       <button
                         type="button"
+                        disabled={!canOpenPlayerProfile}
                         onClick={(e) => {
                           e.stopPropagation();
+                          if (!canOpenPlayerProfile) return;
                           onOpenPlayerProfile({
                             userId: ticketUserNumericId(t),
                             email: t.email,
                             username: t.username,
                           });
                         }}
-                        className={`shrink-0 inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase border-amber-600/70 text-amber-500 hover:bg-amber-950/35 hover:text-amber-400 ${
-                          !canOpenPlayerProfile ? 'opacity-50' : ''
-                        }`}
+                        className="shrink-0 inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-[10px] font-bold uppercase border-amber-600/70 text-amber-500 hover:bg-amber-950/35 hover:text-amber-400 disabled:pointer-events-none disabled:opacity-40 disabled:cursor-not-allowed"
                         title={
                           canOpenPlayerProfile
                             ? 'Abrir editor de perfil, estoque e dados do jogador (separador Utilizadores)'
@@ -460,7 +505,7 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                     {t.status === 'archived' ? 'Arquivado' : 'Aberto'}
                   </span>
                 </div>
-              </button>
+              </div>
               {openId === t.id && (
                 <div className="px-4 pb-4 pt-2 border-t border-slate-800 space-y-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
@@ -501,16 +546,16 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                       {onOpenPlayerProfile && (
                         <button
                           type="button"
-                          onClick={() =>
+                          disabled={!canOpenPlayerProfile}
+                          onClick={() => {
+                            if (!canOpenPlayerProfile) return;
                             onOpenPlayerProfile({
                               userId: ticketUserNumericId(t),
                               email: t.email,
                               username: t.username,
-                            })
-                          }
-                          className={`inline-flex items-center gap-1 rounded-lg border border-amber-600/70 px-2 py-1 text-[10px] font-bold uppercase text-amber-500 hover:bg-amber-950/30 hover:bg-slate-800/80 ${
-                            !canOpenPlayerProfile ? 'opacity-50' : ''
-                          }`}
+                            });
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg border border-amber-600/70 px-2 py-1 text-[10px] font-bold uppercase text-amber-500 hover:bg-amber-950/30 hover:bg-slate-800/80 disabled:pointer-events-none disabled:opacity-40 disabled:cursor-not-allowed"
                           title={
                             canOpenPlayerProfile
                               ? 'Abrir editor de perfil, estoque e dados do jogador'
@@ -601,9 +646,9 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                         )}
                         <button
                           type="button"
-                          disabled={replying}
-                          onClick={() => sendReply(t.id)}
-                          className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-bold flex items-center gap-2 hover:bg-amber-500 disabled:opacity-50"
+                          disabled={replying || !canSendReply}
+                          onClick={() => void sendReply(t.id)}
+                          className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-bold flex items-center gap-2 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {replying ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />}
                           Enviar resposta
@@ -614,17 +659,25 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                         {t.status !== 'archived' ? (
                           <button
                             type="button"
-                            onClick={() => archive(t.id)}
-                            className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-xs font-bold flex items-center gap-1 hover:bg-slate-600"
+                            disabled={!!statusBusyId}
+                            onClick={() => void archive(t.id)}
+                            className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-xs font-bold flex items-center gap-1 hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait"
                           >
-                            <Archive size={14} /> Arquivar
+                            {statusBusyId === t.id ? (
+                              <Loader2 size={14} className="animate-spin shrink-0" />
+                            ) : (
+                              <Archive size={14} />
+                            )}
+                            Arquivar
                           </button>
                         ) : (
                           <button
                             type="button"
-                            onClick={() => reopen(t.id)}
-                            className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-xs font-bold hover:bg-slate-600"
+                            disabled={!!statusBusyId}
+                            onClick={() => void reopen(t.id)}
+                            className="px-3 py-1.5 rounded-lg bg-slate-700 text-white text-xs font-bold hover:bg-slate-600 disabled:opacity-50 disabled:cursor-wait inline-flex items-center gap-1"
                           >
+                            {statusBusyId === t.id ? <Loader2 size={14} className="animate-spin shrink-0" /> : null}
                             Reabrir
                           </button>
                         )}
@@ -635,8 +688,8 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                       <p className="text-[11px] text-slate-500">
                         Linhas da tabela <span className="font-mono text-slate-400">game_activity_logs</span> para{' '}
                         <span className="font-mono text-slate-300">{t.email}</span>
-                        {typeof t.userId === 'number' && t.userId > 0 ? (
-                          <span className="text-slate-500"> (user #{t.userId})</span>
+                        {ticketUserNumericId(t) > 0 ? (
+                          <span className="text-slate-500"> (user #{ticketUserNumericId(t)})</span>
                         ) : null}
                         : caixas, roleta, resgate de códigos, depósitos quando o servidor regista o evento.
                       </p>

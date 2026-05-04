@@ -1,1 +1,0 @@
-function r(i){if(i==null)return;const t=String(i).trim();if(t)return/^data:/i.test(t)||/^https?:\/\//i.test(t)||t.startsWith("//")||t.startsWith("/")?t:/[.](png|jpe?g|gif|webp|ico|svg)(\?|$)/i.test(t)||/^img\//i.test(t)?`/${t.replace(/^\/+/,"")}`:t}export{r as n};

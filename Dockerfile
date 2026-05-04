@@ -30,7 +30,11 @@ COPY backend/ ./
 
 COPY --from=frontend-builder /app/frontend/dist ../frontend/dist
 
+# Compila uma vez na imagem (cron ao lado de cron/, resto em dist/). Evita `npm start` no runtime,
+# que recompilaria tudo a cada arranque do contentor.
+RUN npm run build:app
+
 ENV NODE_ENV=production
 EXPOSE 3000
 
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

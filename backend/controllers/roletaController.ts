@@ -6,6 +6,7 @@ import {
   normalizePromoCode,
   parseWonItemId
 } from '../validation/roletaValidation.js';
+import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type RoletaPlayerDeps = {
   pool: Pool;
@@ -99,7 +100,8 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Wheel Roll]', e);
-      return res.status(500).json({ error: e instanceof Error ? e.message : 'Erro interno' });
+      sendInternalErrorSafeMessage(res, 'POST /api/wheel/roll', e, 'Erro interno.');
+      return;
     } finally {
       client.release();
     }
@@ -150,7 +152,8 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Roleta Claim]', e);
-      return res.status(500).json({ error: e instanceof Error ? e.message : 'Erro interno' });
+      sendInternalErrorSafeMessage(res, 'POST /api/roleta/claim', e, 'Erro interno.');
+      return;
     } finally {
       client.release();
     }

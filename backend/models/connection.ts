@@ -10,7 +10,9 @@ type DbModule = {
   connect: () => Promise<PoolClient>;
 };
 
-const dbUrl = pathToFileURL(path.join(getBackendRootFromModelsFile(import.meta.url), 'db.js')).href;
+const dbUrl = pathToFileURL(
+  path.join(getBackendRootFromModelsFile(import.meta.url), 'dist', 'config', 'db.js')
+).href;
 
 const dbMod: DbModule = (await import(dbUrl)) as DbModule;
 

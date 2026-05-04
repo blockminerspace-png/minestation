@@ -7,10 +7,9 @@
     "outDir": "./dist",
     "rootDir": ".",
     "skipLibCheck": true,
-    "esModuleInterop": true,
-    "declaration": false,
-    "noEmitOnError": true
+    "noEmitOnError": true,
+    "esModuleInterop": true
   },
   "include": ["cron/**/*.ts", "lib/safeText.ts"],
-  "exclude": ["node_modules", "dist", "controllers", "models", "validation"]
+  "exclude": ["node_modules", "dist"]
 }

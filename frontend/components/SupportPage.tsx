@@ -20,6 +20,7 @@ import {
   type MySupportTicketDetail,
   type SupportTicketAttachment,
 } from '../services/api';
+import { safeSupportAttachmentHref } from '../utils/supportAttachmentUrls';
 
 type Props = {
   userEmail?: string | null;
@@ -39,11 +40,23 @@ const AttLinks: React.FC<{ items: SupportTicketAttachment[] }> = ({ items }) => 
   if (!Array.isArray(items) || items.length === 0) return null;
   return (
     <div className="flex flex-wrap gap-2 mt-2">
-      {items.map((a, i) =>
-        isVideoAtt(a) ? (
+      {items.map((a, i) => {
+        const href = safeSupportAttachmentHref(a.url);
+        if (!href) {
+          return (
+            <span
+              key={i}
+              className="text-[10px] text-slate-500 border border-slate-800 rounded px-2 py-1 max-w-full truncate"
+              title="URL de anexo inválida"
+            >
+              Anexo indisponível
+            </span>
+          );
+        }
+        return isVideoAtt({ ...a, url: href }) ? (
           <a
             key={i}
-            href={a.url}
+            href={href}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1 text-[11px] text-sky-400 hover:text-sky-300"
@@ -52,11 +65,11 @@ const AttLinks: React.FC<{ items: SupportTicketAttachment[] }> = ({ items }) => 
             {a.originalName || 'Vídeo'}
           </a>
         ) : (
-          <a key={i} href={a.url} target="_blank" rel="noopener noreferrer" className="block shrink-0">
-            <img src={a.url} alt="" className="max-h-28 rounded border border-slate-700 object-cover" />
+          <a key={i} href={href} target="_blank" rel="noopener noreferrer" className="block shrink-0">
+            <img src={href} alt="" className="max-h-28 rounded border border-slate-700 object-cover" />
           </a>
-        )
-      )}
+        );
+      })}
     </div>
   );
 };

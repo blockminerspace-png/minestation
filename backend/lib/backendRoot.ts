@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Pasta `backend/` (onde estão `db.js`, `config/`, etc.), quer o ficheiro actual
+ * Pasta `backend/` (onde estão `dist/config/db.js`, `config/`, etc.), quer o ficheiro actual
  * esteja em `backend/models/*.ts` ou em `backend/dist/models/*.js` após `tsc`.
  */
 export function getBackendRootFromModelsFile(importMetaUrl: string): string {

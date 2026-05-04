@@ -181,7 +181,13 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
         setDiscardingBox(boxId);
         try {
             const result = await onDiscardBox(boxId);
-            if (!result.ok) alert(result.error || 'Não foi possível descartar.');
+            if (!result.ok) {
+                setNotice({
+                    variant: 'error',
+                    title: 'Caixas da Sorte',
+                    message: result.error || 'Não foi possível descartar.'
+                });
+            }
         } finally {
             setDiscardingBox(null);
         }

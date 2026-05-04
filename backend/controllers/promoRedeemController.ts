@@ -2,6 +2,7 @@ import type { Express, Request, Response } from 'express';
 import type { Pool, PoolClient } from 'pg';
 import { runPromoCodeRedeemInTransaction, type GrantAdminUpgradeRewardsFn } from '../models/promoRedeemModel.js';
 import { RoletaAppError, normalizePromoCode } from '../validation/roletaValidation.js';
+import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type PromoRedeemDeps = {
   pool: Pool;
@@ -108,7 +109,8 @@ export function registerPromoRedeemRoutes(app: Express, deps: PromoRedeemDeps): 
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[redeem-code]', e);
-      return res.status(500).json({ error: e instanceof Error ? e.message : 'Erro interno' });
+      sendInternalErrorSafeMessage(res, 'POST /api/promo/redeem', e, 'Erro interno.');
+      return;
     } finally {
       client.release();
     }

@@ -12,9 +12,11 @@ export type UiNotice = {
 type Props = {
     notice: UiNotice | null;
     onClose: () => void;
+    /** Classes Tailwind para o stacking (ex. `z-[140]` acima de outros modais na App). */
+    overlayZClassName?: string;
 };
 
-export const UiNoticeModal: React.FC<Props> = ({ notice, onClose }) => {
+export const UiNoticeModal: React.FC<Props> = ({ notice, onClose, overlayZClassName = 'z-[100]' }) => {
     if (!notice) return null;
     const { variant, message, title } = notice;
     const Icon = variant === 'error' ? AlertTriangle : variant === 'success' ? CheckCircle2 : Info;
@@ -27,7 +29,7 @@ export const UiNoticeModal: React.FC<Props> = ({ notice, onClose }) => {
 
     return (
         <div
-            className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200"
+            className={`fixed inset-0 ${overlayZClassName} flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-in fade-in duration-200`}
             role="dialog"
             aria-modal="true"
             aria-label={title || 'Mensagem'}

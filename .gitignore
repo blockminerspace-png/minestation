@@ -7,6 +7,16 @@ admin/node_modules/
 # Build output
 frontend/dist/
 
+# Coverage (Vitest)
+backend/coverage/
+frontend/coverage/
+
+# Backend — artefactos gerados (não versionar)
+backend/dist/
+backend/assets/
+# Cópia obsoleta de ficheiros do frontend; fonte única: pasta `frontend/` na raiz
+backend/frontend/
+
 # Environment files
 .env
 backend/.env

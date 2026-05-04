@@ -1338,7 +1338,11 @@ export async function openLootBox(email: string, boxId: string): Promise<{ ok: b
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ boxId, email })
     });
-    return await res.json();
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; rewards?: any[]; error?: string };
+    if (!res.ok) {
+      return { ok: false, error: data.error || `Erro HTTP ${res.status}` };
+    }
+    return { ok: !!data.ok, rewards: data.rewards };
   } catch {
     return { ok: false, error: 'Network error' };
   }
@@ -1351,7 +1355,11 @@ export async function buyLootBox(email: string, boxId: string): Promise<{ ok: bo
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ boxId, email })
     });
-    return await res.json();
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; newUsdc?: number };
+    if (!res.ok) {
+      return { ok: false, error: data.error || `Erro HTTP ${res.status}` };
+    }
+    return { ok: !!data.ok, newUsdc: data.newUsdc };
   } catch {
     return { ok: false, error: 'Network error' };
   }
@@ -1391,10 +1399,21 @@ export async function discardLootBox(
   }
 }
 
-export async function buyUpgrades(email: string, cart: Record<string, number>): Promise<{ ok: boolean; error?: string }> {
+export async function buyUpgrades(
+  email: string,
+  cart: Record<string, number>
+): Promise<{ ok: boolean; newUsdc?: number; error?: string }> {
   try {
-    const res = await apiFetch(`${base}/upgrades/buy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cart }) });
-    return await res.json();
+    const res = await apiFetch(`${base}/upgrades/buy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cart })
+    });
+    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; newUsdc?: number; error?: string };
+    if (!res.ok) {
+      return { ok: false, error: data.error || `Erro HTTP ${res.status}` };
+    }
+    return { ok: true, newUsdc: data.newUsdc };
   } catch {
     return { ok: false, error: 'Network error' };
   }

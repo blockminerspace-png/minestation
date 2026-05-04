@@ -1,4 +1,4 @@
-import './loadEnv.js';
+import './dist/utils/loadEnv.js';
 import express from 'express'; // Reload Trigger 2026-01-29
 import http from 'http';
 import { WebSocketServer } from 'ws';
@@ -15,11 +15,11 @@ import bcrypt from 'bcryptjs';
 import multer from 'multer';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-import db from './db.js';
+import db from './dist/config/db.js';
 import { startMiningYieldCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { UI_DISPLAY_LABEL_KEY_SET } from './dist/config/uiDisplayLabelKeys.js';
-import { initDb } from './db.pg.js';
+import { initDb } from './dist/config/initDb.js';
 import { sendResetEmail } from './dist/utils/mailer.js';
 import { getJwtAuthConfig, createResolveAuthMiddleware, issueJwtAuthCookies, handleJwtRefresh, revokeJwtRefreshForUser, clearAuthCookies } from './dist/src/auth/index.js';
 import { registerDeviceFingerprintAdminRoutes } from './dist/controllers/deviceFingerprintAdminController.js';
@@ -33,8 +33,10 @@ import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
 import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controllers/backupController.js';
+import { createSupportTicketUploadMiddlewares, registerSupportTicketRoutes } from './dist/controllers/supportTicketController.js';
+import { sendInternalError, sendInternalErrorSafeMessage, sendInternalErrorShape } from './dist/utils/apiErrorResponse.js';
 import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
-import { validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave } from './dist/lib/saveGameEconomyValidate.js';
+import { validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, validateWorkshopSlotsPayloadForSave } from './dist/lib/saveGameEconomyValidate.js';
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
     console.error('[Fatal] Unhandled Rejection at:', promise, 'reason:', reason);
@@ -153,6 +155,50 @@ const ensureP2pMarketListingSchema = async () => {
     }
     catch (e) {
         console.warn('[Migration] p2p_market_trade_history:', e instanceof Error ? e.message : e);
+    }
+};
+/**
+ * Tickets de suporte: tem de correr em todos os workers (ex.: só API em cluster).
+ * `initDb` só corre em BACKGROUND/ALL — sem isto, pedidos a /api/support/* falham com "relation does not exist".
+ */
+const ensureSupportTicketSchema = async () => {
+    try {
+        await db.query(`
+      CREATE TABLE IF NOT EXISTS support_tickets (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        subject TEXT NOT NULL,
+        message TEXT NOT NULL,
+        attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+        status TEXT NOT NULL DEFAULT 'open',
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_tickets_user_created ON support_tickets (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_support_tickets_status_created ON support_tickets (status, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS support_ticket_replies (
+        id TEXT PRIMARY KEY,
+        ticket_id TEXT NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+        admin_user_id INTEGER NOT NULL REFERENCES users(id),
+        message TEXT NOT NULL,
+        attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_ticket_replies_ticket_created ON support_ticket_replies (ticket_id, created_at ASC);
+
+      CREATE TABLE IF NOT EXISTS support_ticket_player_replies (
+        id TEXT PRIMARY KEY,
+        ticket_id TEXT NOT NULL REFERENCES support_tickets(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message TEXT NOT NULL,
+        attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_support_ticket_player_replies_ticket ON support_ticket_player_replies (ticket_id, created_at ASC);
+    `);
+    }
+    catch (e) {
+        console.warn('[Migration] support_tickets:', e instanceof Error ? e.message : e);
     }
 };
 // MIGRATION: Ensure default mining coins exist
@@ -756,50 +802,7 @@ const uploadAd = multer({
             cb(new Error('Formato de arquivo não permitido'));
     }
 });
-const SUPPORT_UPLOAD_MAX = 12 * 1024 * 1024;
-const SUPPORT_ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.mp4', '.webm', '.mov']);
-const supportStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, IMG_UPLOADS_DIR);
-    },
-    filename: (req, file, cb) => {
-        const uid = req.userId ? String(req.userId) : '0';
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
-        cb(null, `support-${uid}-${uniqueSuffix}${ext}`);
-    }
-});
-const uploadSupport = multer({
-    storage: supportStorage,
-    limits: { fileSize: SUPPORT_UPLOAD_MAX, files: 5 },
-    fileFilter: (req, file, cb) => {
-        const ext = path.extname(file.originalname || '').toLowerCase();
-        if (SUPPORT_ALLOWED_EXT.has(ext))
-            return cb(null, true);
-        cb(new Error('Tipo de ficheiro não permitido (imagens ou vídeo mp4/webm/mov).'));
-    }
-});
-const supportReplyStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, IMG_UPLOADS_DIR);
-    },
-    filename: (req, file, cb) => {
-        const uid = req.userId ? String(req.userId) : '0';
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1e9);
-        const ext = path.extname(file.originalname || '').toLowerCase() || '.bin';
-        cb(null, `support-reply-${uid}-${uniqueSuffix}${ext}`);
-    }
-});
-const uploadSupportReply = multer({
-    storage: supportReplyStorage,
-    limits: { fileSize: SUPPORT_UPLOAD_MAX, files: 5 },
-    fileFilter: (req, file, cb) => {
-        const ext = path.extname(file.originalname || '').toLowerCase();
-        if (SUPPORT_ALLOWED_EXT.has(ext))
-            return cb(null, true);
-        cb(new Error('Tipo de ficheiro não permitido (imagens ou vídeo mp4/webm/mov).'));
-    }
-});
+const { uploadSupport, uploadSupportReply } = createSupportTicketUploadMiddlewares(IMG_UPLOADS_DIR);
 // Número de proxies à frente do Node (ex.: 1 = só Nginx; 2 = Cloudflare + Nginx). Evita trust proxy=true,
 // que confia em todos os hops e pode distorcer req.ip. Ajuste TRUST_PROXY_HOPS no .env se o IP real vier errado.
 const trustProxyHops = parseInt(String(process.env.TRUST_PROXY_HOPS ?? '1'), 10);
@@ -997,6 +1000,14 @@ registerBackupRoutes(app, {
     getPgRestoreSpawnOptions,
     getPgRestorePath
 });
+registerSupportTicketRoutes(app, {
+    pool: db,
+    authenticateToken,
+    isAdmin,
+    uploadSupport,
+    uploadSupportReply,
+    appendGameActivityLog
+});
 const PLAYER_ACTIVITY_ACTIONS = new Set(['room_battery_smart', 'room_battery_bulk_equip', 'room_battery_remove_all']);
 function sanitizePlayerActivityMeta(raw) {
     const out = {};
@@ -1147,7 +1158,7 @@ app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error(e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/wheel/config', isAdmin, async (req, res) => {
@@ -1164,7 +1175,7 @@ app.post('/api/admin/wheel/config', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -1176,7 +1187,7 @@ app.get('/api/admin/wheel/players', isAdmin, async (req, res) => {
         res.json(r.rows);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/wheel/players', isAdmin, async (req, res) => {
@@ -1188,7 +1199,7 @@ app.post('/api/admin/wheel/players', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- MINING RANKING (PUBLIC) ---
@@ -1360,7 +1371,7 @@ app.get('/api/admin/ranking', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Admin Ranking Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -1384,7 +1395,7 @@ app.post('/api/admin/update-coin-balance', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Update Coin Balance Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -1429,7 +1440,7 @@ app.post('/api/admin/bulk-update-coin-balance', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('Bulk Update Coin Balance Error:', e);
-        res.status(500).json({ error: e.message || 'Erro interno no servidor' });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno no servidor.');
     }
     finally {
         client.release();
@@ -1518,7 +1529,7 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Economy Stats Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -1562,7 +1573,7 @@ app.post('/api/admin/economy-settings', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Update Economy Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/wheel/players/:username', isAdmin, async (req, res) => {
@@ -1572,7 +1583,7 @@ app.delete('/api/admin/wheel/players/:username', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- WALLET LABELS ---
@@ -1582,7 +1593,7 @@ app.get('/api/wallet-labels', isAdmin, async (req, res) => {
         res.json(r.rows);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/wallet-labels', isAdmin, async (req, res) => {
@@ -1594,7 +1605,7 @@ app.post('/api/wallet-labels', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // API UTILITIES
@@ -1899,7 +1910,7 @@ app.get('/api/admin-upgrades', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
@@ -1942,7 +1953,7 @@ app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('Failed to save admin upgrade', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -1972,7 +1983,7 @@ app.delete('/api/admin-upgrades/:id', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('Failed to delete admin upgrade', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -2033,7 +2044,7 @@ app.post('/api/admin-upgrades/purchase', async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('Purchase error:', e);
-        res.status(500).json({ ok: false, error: e.message });
+        sendInternalErrorShape(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
     }
     finally {
         client.release();
@@ -2114,7 +2125,7 @@ app.get('/api/upgrades', async (req, res) => {
         res.json(upgrades);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/upgrades', isAdmin, async (req, res) => {
@@ -2185,7 +2196,7 @@ app.post('/api/upgrades', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[Upgrades API] Error saving upgrades:', e);
-        res.status(500).json({ error: e.message || 'Erro interno ao salvar upgrades.' });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno ao salvar upgrades.');
     }
     finally {
         client.release();
@@ -2215,15 +2226,18 @@ app.post('/api/upgrades/buy', async (req, res) => {
     const client = await db.connect();
     try {
         const uid = req.userId;
+        await client.query('BEGIN');
         const hwDis = await client.query("SELECT value FROM settings WHERE key = 'hardware_market_enabled'");
         if (hwDis.rows[0] && hwDis.rows[0].value !== '1') {
+            await client.query('ROLLBACK');
             return res.status(403).json({ error: 'Mercado de hardware pausado.' });
         }
-        const upgradeIds = Object.keys(cart);
+        const upgradeIds = Object.keys(cart).sort();
         const upgradesRes = await client.query(`SELECT id, base_cost, name, sell_in_hardware_market, status, max_global_stock, total_sold,
-              COALESCE(is_active, 1) AS ia
-       FROM upgrades WHERE id = ANY($1::text[])`, [upgradeIds]);
+              COALESCE(is_active, 1) AS ia, COALESCE(is_nft, 0) AS is_nft
+       FROM upgrades WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE`, [upgradeIds]);
         if (upgradesRes.rows.length !== upgradeIds.length) {
+            await client.query('ROLLBACK');
             return res.status(400).json({ error: 'Um ou mais itens do carrinho não existem.' });
         }
         let totalCost = 0;
@@ -2232,33 +2246,45 @@ app.post('/api/upgrades/buy', async (req, res) => {
         for (const [id, rawQty] of Object.entries(cart)) {
             const qty = Number(rawQty);
             const u = upgradesRes.rows.find(x => x.id === id);
-            if (!u)
+            if (!u) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({ error: `Item inválido: ${id}` });
+            }
             if (Number(u.ia) === 0) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({ error: `Item indisponível: ${u.name}` });
             }
             if (u.sell_in_hardware_market === 0) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({ error: `Item não disponível para venda: ${u.name}` });
+            }
+            if (Number(u.is_nft) === 1) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({
+                    error: 'Itens NFT não podem ser comprados na Lojinha com USDC. Usa os fluxos de carteira / NFT do jogo.'
+                });
             }
             if (u.status === 'limited') {
                 const available = (Number(u.max_global_stock) || 0) - (Number(u.total_sold) || 0);
                 if (available < qty) {
+                    await client.query('ROLLBACK');
                     return res.status(400).json({ error: `Estoque insuficiente para ${u.name}. Restam ${available}.` });
                 }
                 limitedItemsToUpdate.push({ id: u.id, qty });
             }
             const unit = Number(u.base_cost);
             if (!Number.isFinite(unit) || unit < 0 || unit > 1e12) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({ error: 'Preço de item inválido.' });
             }
             const cost = unit * qty;
             if (!Number.isFinite(cost) || cost < 0 || cost > 1e15) {
+                await client.query('ROLLBACK');
                 return res.status(400).json({ error: 'Valor de compra inválido.' });
             }
             totalCost += cost;
             itemsToBuy.push({ id, qty, name: u.name });
         }
-        await client.query('BEGIN');
         const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
         const currentUsdc = Number(gsRes.rows[0]?.usdc) || 0;
         if (currentUsdc < totalCost) {
@@ -2277,7 +2303,7 @@ app.post('/api/upgrades/buy', async (req, res) => {
             const updateRes = await client.query(`UPDATE upgrades SET total_sold = total_sold + $1
          WHERE id = $2 AND (max_global_stock - total_sold) >= $1`, [lim.qty, lim.id]);
             if (updateRes.rowCount === 0) {
-                throw new Error(`Falha de concorrência: estoque esgotado para o item ${lim.id}.`);
+                throw Object.assign(new Error('Este item esgotou enquanto confirmavas a compra. Atualiza a página e tenta de novo.'), { buyClientError: true, httpStatus: 409 });
             }
         }
         for (const item of itemsToBuy) {
@@ -2299,9 +2325,15 @@ app.post('/api/upgrades/buy', async (req, res) => {
         try {
             await client.query('ROLLBACK');
         }
-        catch (_) { /* ignore */ }
+        catch {
+            /* ignore */
+        }
+        const err = e;
+        if (err && err.buyClientError && typeof err.message === 'string') {
+            return res.status(Number.isInteger(err.httpStatus) ? err.httpStatus : 400).json({ error: err.message });
+        }
         console.error('[BuyUpgrades] Error:', e);
-        res.status(500).json({ error: e.message || 'Erro ao processar compra' });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao processar compra.');
     }
     finally {
         client.release();
@@ -2363,7 +2395,7 @@ app.get('/api/monetization-settings', async (req, res) => {
         res.json(publicSettings);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/monetization-settings', isAdmin, async (req, res) => {
@@ -2373,7 +2405,7 @@ app.get('/api/admin/monetization-settings', isAdmin, async (req, res) => {
         res.json(settings);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/monetization-settings', isAdmin, async (req, res) => {
@@ -2397,7 +2429,7 @@ app.post('/api/monetization-settings', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -2413,13 +2445,17 @@ app.post('/api/daily-boost', async (req, res) => {
         return res.status(401).json({ error: 'Não autorizado' });
     if (slotIndex === undefined)
         return res.status(400).json({ error: 'slotIndex ausente' });
+    const slotIdx = Number(slotIndex);
+    if (!Number.isInteger(slotIdx) || slotIdx < 0 || slotIdx > 5) {
+        return res.status(400).json({ error: 'Índice de bancada inválido.' });
+    }
     const uid = req.userId;
     if (!uid)
         return res.status(404).json({ error: 'User not found' });
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        const slotRes = await client.query('SELECT * FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, slotIndex]);
+        const slotRes = await client.query('SELECT * FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, slotIdx]);
         const slot = slotRes.rows[0];
         if (!slot || !slot.item_id) {
             await client.query('ROLLBACK');
@@ -2427,7 +2463,7 @@ app.post('/api/daily-boost', async (req, res) => {
         }
         const now = new Date();
         const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
-        const actionKey = `daily_boost_slot_${slotIndex}`;
+        const actionKey = `daily_boost_slot_${slotIdx}`;
         const actionRes = await client.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [uid, actionKey]);
         const lastPerformed = actionRes.rows[0]?.last_performed_at;
         // DETAILED LOGGING for debugging (commented for production)
@@ -2447,13 +2483,13 @@ app.post('/api/daily-boost', async (req, res) => {
         const newCharge = maxCap;
         const boostAmount = maxCap - (slot.current_charge || 0);
         await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [uid, actionKey, Date.now()]);
-        await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [newCharge, uid, slotIndex]);
+        await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [newCharge, uid, slotIdx]);
         await client.query('COMMIT');
         res.json({ ok: true, newCharge, boostAmount });
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -2481,7 +2517,7 @@ app.post('/api/admin/reset-daily-boost', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // ADMIN: Get user's unopened boxes
@@ -2506,7 +2542,7 @@ app.get('/api/admin/user-boxes', isAdmin, async (req, res) => {
         res.json({ boxes: boxesRes.rows });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // ADMIN: Delete a specific box from user's inventory
@@ -2537,7 +2573,7 @@ app.post('/api/admin/delete-user-box', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // Applixir S2S Callback
@@ -2554,15 +2590,21 @@ app.get('/api/applixir-callback', async (req, res) => {
         if (!userRes.rows[0])
             return res.status(404).send('User not found');
         const wsIdx = Number(req.query.custom);
-        if (!isNaN(wsIdx) && wsIdx >= 0 && wsIdx <= 2) {
+        if (Number.isInteger(wsIdx) && wsIdx >= 0 && wsIdx <= 5) {
             const rowRes = await db.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [userId, wsIdx]);
             const row = rowRes.rows[0];
             if (row && row.item_id) {
-                const upgRes = await db.query('SELECT power_capacity FROM upgrades WHERE id = $1', [row.item_id]);
-                const maxCap = upgRes.rows[0]?.power_capacity || 1000;
-                await db.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, userId, wsIdx]);
+                const nowCb = new Date();
+                const startOfDay = new Date(Date.UTC(nowCb.getUTCFullYear(), nowCb.getUTCMonth(), nowCb.getUTCDate())).getTime();
                 const actionKey = `reward_ad_slot_${wsIdx}`;
-                await db.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [userId, actionKey, Date.now()]);
+                const actionRes = await db.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [userId, actionKey]);
+                const lastPerformed = actionRes.rows[0]?.last_performed_at;
+                if (!lastPerformed || Number(lastPerformed) < startOfDay) {
+                    const upgRes = await db.query('SELECT power_capacity FROM upgrades WHERE id = $1', [row.item_id]);
+                    const maxCap = upgRes.rows[0]?.power_capacity || 1000;
+                    await db.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, userId, wsIdx]);
+                    await db.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [userId, actionKey, Date.now()]);
+                }
             }
         }
         res.send('OK');
@@ -2572,32 +2614,56 @@ app.get('/api/applixir-callback', async (req, res) => {
     }
 });
 app.post('/api/workshop/recharge', async (req, res) => {
-    const { wsIdx } = req.body;
-    if (!req.userId || wsIdx === undefined)
-        return res.status(400).json({ error: 'Campos ausentes' });
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
+    const wsIdx = Number(req.body?.wsIdx);
+    if (!Number.isInteger(wsIdx) || wsIdx < 0 || wsIdx > 5) {
+        return res.status(400).json({ error: 'Índice de bancada inválido.' });
+    }
     const uid = req.userId;
     const client = await db.connect();
     try {
+        await client.query('BEGIN');
         const slotRes = await client.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, wsIdx]);
         const slot = slotRes.rows[0];
-        if (!slot || !slot.item_id)
-            return res.status(404).json({ error: 'Nenhum carregador neste slot' });
+        if (!slot || !slot.item_id) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Nenhum carregador neste slot.' });
+        }
+        const now = new Date();
+        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
+        const actionKey = `instant_recharge_slot_${wsIdx}`;
+        const actionRes = await client.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [uid, actionKey]);
+        const lastPerformed = actionRes.rows[0]?.last_performed_at;
+        if (lastPerformed && Number(lastPerformed) >= startOfDay) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({
+                error: 'O limite diário de recarga instantânea nesta bancada já foi utilizado. Volte amanhã (UTC) ou use o boost diário / anúncio.'
+            });
+        }
         const upgRes = await client.query('SELECT power_capacity FROM upgrades WHERE id = $1', [slot.item_id]);
         const maxCap = upgRes.rows[0]?.power_capacity || 1000;
+        await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [uid, actionKey, Date.now()]);
         await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, uid, wsIdx]);
+        await client.query('COMMIT');
         res.json({ ok: true, newCharge: maxCap });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        await client.query('ROLLBACK');
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
     }
 });
 app.post('/api/reward-ad', async (req, res) => {
-    const { wsIdx } = req.body || {};
-    if (!req.userId || wsIdx === undefined)
+    const { wsIdx: wsIdxRaw } = req.body || {};
+    if (!req.userId || wsIdxRaw === undefined)
         return res.status(400).json({ error: 'Missing fields' });
+    const wsIdx = Number(wsIdxRaw);
+    if (!Number.isInteger(wsIdx) || wsIdx < 0 || wsIdx > 5) {
+        return res.status(400).json({ error: 'Índice de bancada inválido.' });
+    }
     const uid = req.userId;
     if (!uid)
         return res.status(404).json({ error: 'User not found' });
@@ -2630,7 +2696,7 @@ app.post('/api/reward-ad', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -3098,7 +3164,7 @@ app.post('/api/deposit/verify', async (req, res) => {
     }
     catch (e) {
         console.error('[DepositVerify]', e);
-        res.status(500).json({ error: 'Erro ao validar transação: ' + e.message });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao validar transação.');
     }
 });
 app.get('/api/web3-settings', async (req, res) => {
@@ -3137,7 +3203,7 @@ app.get('/api/web3-settings', async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/web3-settings', isAdmin, async (req, res) => {
@@ -3182,7 +3248,7 @@ app.post('/api/web3-settings', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -3232,7 +3298,7 @@ app.get('/api/economy-settings', async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/economy-settings', isAdmin, async (req, res) => {
@@ -3271,7 +3337,7 @@ app.post('/api/economy-settings', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -3310,7 +3376,7 @@ app.get('/api/nfts', async (req, res) => {
         })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/nfts/receive', isAdmin, async (req, res) => {
@@ -3335,7 +3401,7 @@ app.post('/api/nfts/receive', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/nfts/send', async (req, res) => {
@@ -3361,7 +3427,7 @@ app.post('/api/nfts/send', async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- ACCESS LEVELS ---
@@ -3388,7 +3454,7 @@ app.get('/api/access-levels', async (req, res) => {
         res.json(levels);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/access-levels', isAdmin, async (req, res) => {
@@ -3436,7 +3502,7 @@ app.post('/api/access-levels', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[POST /api/access-levels] Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -3689,7 +3755,7 @@ app.post('/api/server-room/bulk-batteries', async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[server-room/bulk-batteries]', e);
-        res.status(500).json({ error: e.message || 'Erro interno' });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno.');
     }
     finally {
         client.release();
@@ -3750,7 +3816,7 @@ app.post('/api/server-room/room-coins', async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[server-room/room-coins]', e);
-        res.status(500).json({ error: e.message || 'Erro interno' });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno.');
     }
     finally {
         client.release();
@@ -3786,7 +3852,7 @@ app.get('/api/rig-rooms', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/rig-rooms', isAdmin, async (req, res) => {
@@ -3858,7 +3924,7 @@ app.post('/api/rig-rooms', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -3943,7 +4009,7 @@ app.get('/api/my-rig-rooms/:email', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/rig-rooms/purchase-slot', async (req, res) => {
@@ -4025,7 +4091,7 @@ app.post('/api/rig-rooms/purchase-slot', async (req, res) => {
             /* ignore */
         }
         console.error('[rig-rooms/purchase-slot]', e);
-        res.status(500).json({ ok: false, error: e.message });
+        sendInternalErrorShape(res, 'rig-rooms/purchase-slot', e, { ok: false }, 'Erro ao comprar slot.');
     }
     finally {
         client.release();
@@ -4113,7 +4179,7 @@ app.post('/api/loot-boxes', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[POST /api/loot-boxes] Fail:', e);
-        res.status(500).json({ error: 'Falha ao processar banco de dados: ' + e.message });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Falha ao processar o pedido.');
     }
     finally {
         client.release();
@@ -4145,7 +4211,7 @@ app.get('/api/news', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4158,7 +4224,7 @@ app.post('/api/news', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/news/:id', isAdmin, async (req, res) => {
@@ -4167,7 +4233,7 @@ app.delete('/api/news/:id', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/news-fee', async (req, res) => {
@@ -4177,7 +4243,7 @@ app.get('/api/news-fee', async (req, res) => {
         res.json({ feeUsdc: row ? Number(row.value) || 0 : 0 });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/news-fee', isAdmin, async (req, res) => {
@@ -4188,7 +4254,7 @@ app.post('/api/news-fee', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/news-expire-days', async (req, res) => {
@@ -4198,7 +4264,7 @@ app.get('/api/news-expire-days', async (req, res) => {
         res.json({ days: row ? Number(row.value) || 0 : 0 });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/news-expire-days', isAdmin, async (req, res) => {
@@ -4209,7 +4275,7 @@ app.post('/api/news-expire-days', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- TRANSPARENCY (pools / tesouraria — jogadores + admin) ---
@@ -4445,7 +4511,7 @@ app.get('/api/player-news/pending', isAdmin, async (req, res) => {
         res.json(rowsRes.rows.map(r => ({ id: r.id, userId: r.user_id, username: r.username, email: r.email, text: r.text, link: r.link ?? undefined, status: r.status, createdAt: r.created_at })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/player-news/submit', async (req, res) => {
@@ -4481,7 +4547,7 @@ app.post('/api/player-news/submit', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4507,7 +4573,7 @@ app.post('/api/player-news/approve', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4526,340 +4592,7 @@ app.post('/api/player-news/reject', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-// --- SUPORTE (tickets com anexos foto/vídeo) ---
-app.post('/api/support/submit', authenticateToken, (req, res, next) => {
-    uploadSupport.array('files', 5)(req, res, (err) => {
-        if (err) {
-            const msg = err.message || 'Erro no upload';
-            return res.status(400).json({ error: msg });
-        }
-        next();
-    });
-}, async (req, res) => {
-    const uid = req.userId;
-    if (!uid)
-        return res.status(401).json({ error: 'Não autenticado' });
-    const subjectRaw = req.body?.subject != null ? String(req.body.subject) : '';
-    const messageRaw = req.body?.message != null ? String(req.body.message) : '';
-    const subject = subjectRaw.trim().slice(0, 180);
-    const message = messageRaw.trim().slice(0, 8000);
-    if (subject.length < 3)
-        return res.status(400).json({ error: 'Assunto demasiado curto (mín. 3 caracteres).' });
-    if (message.length < 10)
-        return res.status(400).json({ error: 'Mensagem demasiado curta (mín. 10 caracteres).' });
-    const files = Array.isArray(req.files) ? req.files : [];
-    const attachments = [];
-    for (const f of files) {
-        if (!f || !f.filename)
-            continue;
-        const ext = path.extname(f.filename).toLowerCase();
-        if (!SUPPORT_ALLOWED_EXT.has(ext))
-            continue;
-        attachments.push({
-            url: `/img/${f.filename}`,
-            originalName: String(f.originalname || f.filename).slice(0, 200),
-            mime: String(f.mimetype || '').slice(0, 120),
-        });
-    }
-    const id = crypto.randomUUID();
-    const now = Date.now();
-    try {
-        await db.query(`INSERT INTO support_tickets (id, user_id, subject, message, attachments, status, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, 'open', $6)`, [id, uid, subject, message, JSON.stringify(attachments), now]);
-        await appendGameActivityLog(db, uid, 'support_ticket_submit', { ticketId: id, attachmentCount: attachments.length });
-        res.json({ ok: true, id });
-    }
-    catch (e) {
-        console.error('[POST /api/support/submit]', e);
-        res.status(500).json({ error: 'Erro ao registar o pedido.' });
-    }
-});
-app.get('/api/support/my-tickets', authenticateToken, async (req, res) => {
-    const uid = req.userId;
-    if (!uid)
-        return res.status(401).json({ error: 'Não autenticado' });
-    try {
-        const rowsRes = await db.query(`SELECT t.id, t.subject, t.status, t.created_at,
-              (SELECT COUNT(*)::int FROM support_ticket_replies r WHERE r.ticket_id = t.id) AS admin_reply_count,
-              COALESCE((SELECT MAX(r.created_at) FROM support_ticket_replies r WHERE r.ticket_id = t.id), 0) AS last_admin_at,
-              COALESCE((SELECT MAX(p.created_at) FROM support_ticket_player_replies p WHERE p.ticket_id = t.id), 0) AS last_player_at
-       FROM support_tickets t
-       WHERE t.user_id = $1
-       ORDER BY t.created_at DESC
-       LIMIT 100`, [uid]);
-        const tickets = rowsRes.rows.map((r) => {
-            const createdAt = Number(r.created_at) || 0;
-            const lastAdmin = Number(r.last_admin_at) || 0;
-            const lastPlayer = Number(r.last_player_at) || 0;
-            const lastActivityAt = Math.max(createdAt, lastAdmin, lastPlayer);
-            return {
-                id: r.id,
-                subject: r.subject,
-                status: r.status,
-                createdAt,
-                adminReplyCount: r.admin_reply_count ?? 0,
-                lastActivityAt,
-            };
-        });
-        res.json({ tickets });
-    }
-    catch (e) {
-        console.error('[GET /api/support/my-tickets]', e);
-        res.status(500).json({ error: 'Erro ao listar pedidos.' });
-    }
-});
-app.get('/api/support/tickets/:ticketId', authenticateToken, async (req, res) => {
-    const uid = req.userId;
-    if (!uid)
-        return res.status(401).json({ error: 'Não autenticado' });
-    const ticketId = String(req.params.ticketId || '').trim().slice(0, 80);
-    if (!ticketId)
-        return res.status(400).json({ error: 'Pedido inválido.' });
-    try {
-        const tRes = await db.query(`SELECT id, user_id, subject, message, attachments, status, created_at FROM support_tickets WHERE id = $1`, [ticketId]);
-        const t = tRes.rows[0];
-        if (!t || Number(t.user_id) !== Number(uid)) {
-            return res.status(404).json({ error: 'Pedido não encontrado.' });
-        }
-        const adminRes = await db.query(`SELECT r.id, r.message, r.attachments, r.created_at, u.username AS admin_username
-       FROM support_ticket_replies r
-       JOIN users u ON u.id = r.admin_user_id
-       WHERE r.ticket_id = $1
-       ORDER BY r.created_at ASC`, [ticketId]);
-        const playerRes = await db.query(`SELECT id, message, attachments, created_at FROM support_ticket_player_replies WHERE ticket_id = $1 ORDER BY created_at ASC`, [ticketId]);
-        res.json({
-            ticket: {
-                id: t.id,
-                subject: t.subject,
-                message: t.message,
-                attachments: Array.isArray(t.attachments) ? t.attachments : [],
-                status: t.status,
-                createdAt: Number(t.created_at) || 0,
-            },
-            adminReplies: adminRes.rows.map((r) => ({
-                id: r.id,
-                adminUsername: r.admin_username,
-                message: r.message,
-                attachments: Array.isArray(r.attachments) ? r.attachments : [],
-                createdAt: Number(r.created_at) || 0,
-            })),
-            playerReplies: playerRes.rows.map((r) => ({
-                id: r.id,
-                message: r.message,
-                attachments: Array.isArray(r.attachments) ? r.attachments : [],
-                createdAt: Number(r.created_at) || 0,
-            })),
-        });
-    }
-    catch (e) {
-        console.error('[GET /api/support/tickets/:ticketId]', e);
-        res.status(500).json({ error: 'Erro ao carregar o pedido.' });
-    }
-});
-app.post('/api/support/tickets/:ticketId/reply', authenticateToken, (req, res, next) => {
-    uploadSupport.array('files', 5)(req, res, (err) => {
-        if (err) {
-            const msg = err.message || 'Erro no upload';
-            return res.status(400).json({ error: msg });
-        }
-        next();
-    });
-}, async (req, res) => {
-    const uid = req.userId;
-    if (!uid)
-        return res.status(401).json({ error: 'Não autenticado' });
-    const ticketId = String(req.params.ticketId || '').trim().slice(0, 80);
-    if (!ticketId)
-        return res.status(400).json({ error: 'Pedido inválido.' });
-    const messageRaw = req.body?.message != null ? String(req.body.message) : '';
-    const message = messageRaw.trim().slice(0, 8000);
-    const files = Array.isArray(req.files) ? req.files : [];
-    if (message.length < 3 && files.length === 0) {
-        return res.status(400).json({ error: 'Escreve uma mensagem (mín. 3 caracteres) ou anexa ficheiros.' });
-    }
-    const attachments = [];
-    for (const f of files) {
-        if (!f || !f.filename)
-            continue;
-        const ext = path.extname(f.filename).toLowerCase();
-        if (!SUPPORT_ALLOWED_EXT.has(ext))
-            continue;
-        attachments.push({
-            url: `/img/${f.filename}`,
-            originalName: String(f.originalname || f.filename).slice(0, 200),
-            mime: String(f.mimetype || '').slice(0, 120),
-        });
-    }
-    try {
-        const tRes = await db.query(`SELECT id, user_id, status FROM support_tickets WHERE id = $1`, [ticketId]);
-        const t = tRes.rows[0];
-        if (!t || Number(t.user_id) !== Number(uid)) {
-            return res.status(404).json({ error: 'Pedido não encontrado.' });
-        }
-        if (String(t.status) !== 'open') {
-            return res.status(403).json({
-                error: 'Este pedido está arquivado. Só podes ver a conversa. Abre um novo pedido para falar connosco de novo.',
-            });
-        }
-        const replyId = crypto.randomUUID();
-        const now = Date.now();
-        await db.query(`INSERT INTO support_ticket_player_replies (id, ticket_id, user_id, message, attachments, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6)`, [replyId, ticketId, uid, message, JSON.stringify(attachments), now]);
-        await appendGameActivityLog(db, uid, 'support_ticket_player_reply', {
-            ticketId,
-            replyId,
-            attachmentCount: attachments.length,
-        });
-        res.json({ ok: true, id: replyId });
-    }
-    catch (e) {
-        console.error('[POST /api/support/tickets/:ticketId/reply]', e);
-        res.status(500).json({ error: 'Erro ao enviar a mensagem.' });
-    }
-});
-app.get('/api/admin/support-tickets', isAdmin, async (req, res) => {
-    try {
-        const limit = Math.min(300, Math.max(1, parseInt(String(req.query.limit || '100'), 10) || 100));
-        const rowsRes = await db.query(`SELECT t.id, t.user_id, t.subject, t.message, t.attachments, t.status, t.created_at,
-              u.username, u.email
-       FROM support_tickets t
-       JOIN users u ON u.id = t.user_id
-       ORDER BY t.created_at DESC
-       LIMIT $1`, [limit]);
-        const ids = rowsRes.rows.map((r) => r.id);
-        const repliesByTicket = {};
-        const playerRepliesByTicket = {};
-        if (ids.length > 0) {
-            const repRes = await db.query(`SELECT r.id, r.ticket_id, r.admin_user_id, r.message, r.attachments, r.created_at,
-                au.username AS admin_username
-         FROM support_ticket_replies r
-         JOIN users au ON au.id = r.admin_user_id
-         WHERE r.ticket_id = ANY($1::text[])
-         ORDER BY r.created_at ASC`, [ids]);
-            for (const row of repRes.rows) {
-                const tid = row.ticket_id;
-                if (!repliesByTicket[tid])
-                    repliesByTicket[tid] = [];
-                const att = Array.isArray(row.attachments) ? row.attachments : [];
-                repliesByTicket[tid].push({
-                    id: row.id,
-                    adminUserId: row.admin_user_id,
-                    adminUsername: row.admin_username,
-                    message: row.message,
-                    attachments: att,
-                    createdAt: Number(row.created_at) || 0,
-                });
-            }
-            const prRes = await db.query(`SELECT id, ticket_id, message, attachments, created_at
-         FROM support_ticket_player_replies
-         WHERE ticket_id = ANY($1::text[])
-         ORDER BY created_at ASC`, [ids]);
-            for (const row of prRes.rows) {
-                const tid = row.ticket_id;
-                if (!playerRepliesByTicket[tid])
-                    playerRepliesByTicket[tid] = [];
-                playerRepliesByTicket[tid].push({
-                    id: row.id,
-                    message: row.message,
-                    attachments: Array.isArray(row.attachments) ? row.attachments : [],
-                    createdAt: Number(row.created_at) || 0,
-                });
-            }
-        }
-        const rows = rowsRes.rows.map((r) => ({
-            id: r.id,
-            userId: r.user_id,
-            username: r.username,
-            email: r.email,
-            subject: r.subject,
-            message: r.message,
-            attachments: Array.isArray(r.attachments) ? r.attachments : [],
-            status: r.status,
-            createdAt: Number(r.created_at) || 0,
-            replies: repliesByTicket[r.id] || [],
-            playerReplies: playerRepliesByTicket[r.id] || [],
-        }));
-        res.json({ tickets: rows });
-    }
-    catch (e) {
-        console.error('[GET /api/admin/support-tickets]', e);
-        res.status(500).json({ error: e.message });
-    }
-});
-app.post('/api/admin/support-tickets/status', isAdmin, async (req, res) => {
-    const { id, status } = req.body || {};
-    if (!id || typeof id !== 'string')
-        return res.status(400).json({ error: 'id obrigatório.' });
-    const st = status === 'archived' ? 'archived' : 'open';
-    try {
-        const r = await db.query('UPDATE support_tickets SET status = $1 WHERE id = $2 RETURNING id', [st, id]);
-        if (!r.rows[0])
-            return res.status(404).json({ error: 'Ticket não encontrado.' });
-        res.json({ ok: true });
-    }
-    catch (e) {
-        console.error('[POST /api/admin/support-tickets/status]', e);
-        res.status(500).json({ error: e.message });
-    }
-});
-app.post('/api/admin/support-tickets/reply', isAdmin, (req, res, next) => {
-    uploadSupportReply.array('files', 5)(req, res, (err) => {
-        if (err) {
-            const msg = err.message || 'Erro no upload';
-            return res.status(400).json({ error: msg });
-        }
-        next();
-    });
-}, async (req, res) => {
-    const adminId = req.userId;
-    if (!adminId)
-        return res.status(401).json({ error: 'Não autenticado' });
-    const ticketIdRaw = req.body?.ticketId != null ? String(req.body.ticketId) : '';
-    const ticketId = ticketIdRaw.trim().slice(0, 80);
-    if (!ticketId)
-        return res.status(400).json({ error: 'ticketId obrigatório.' });
-    const messageRaw = req.body?.message != null ? String(req.body.message) : '';
-    const message = messageRaw.trim().slice(0, 8000);
-    const files = Array.isArray(req.files) ? req.files : [];
-    if (message.length < 3 && files.length === 0) {
-        return res.status(400).json({ error: 'Escreva uma mensagem (mín. 3 caracteres) ou anexe ficheiros.' });
-    }
-    const attachments = [];
-    for (const f of files) {
-        if (!f || !f.filename)
-            continue;
-        const ext = path.extname(f.filename).toLowerCase();
-        if (!SUPPORT_ALLOWED_EXT.has(ext))
-            continue;
-        attachments.push({
-            url: `/img/${f.filename}`,
-            originalName: String(f.originalname || f.filename).slice(0, 200),
-            mime: String(f.mimetype || '').slice(0, 120),
-        });
-    }
-    try {
-        const tRes = await db.query('SELECT id, user_id FROM support_tickets WHERE id = $1', [ticketId]);
-        const t = tRes.rows[0];
-        if (!t)
-            return res.status(404).json({ error: 'Ticket não encontrado.' });
-        const replyId = crypto.randomUUID();
-        const now = Date.now();
-        await db.query(`INSERT INTO support_ticket_replies (id, ticket_id, admin_user_id, message, attachments, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6)`, [replyId, ticketId, adminId, message, JSON.stringify(attachments), now]);
-        await appendGameActivityLog(db, t.user_id, 'support_ticket_admin_reply', {
-            ticketId,
-            replyId,
-            adminUserId: adminId,
-            attachmentCount: attachments.length,
-        });
-        res.json({ ok: true, id: replyId });
-    }
-    catch (e) {
-        console.error('[POST /api/admin/support-tickets/reply]', e);
-        res.status(500).json({ error: 'Erro ao registar a resposta.' });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- SEASON PASSES ---
@@ -4889,7 +4622,7 @@ app.get('/api/season-passes', async (req, res) => {
         res.json(passes);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/season-passes/:passId/purchases', isAdmin, async (req, res) => {
@@ -4911,7 +4644,7 @@ app.get('/api/season-passes/:passId/purchases', isAdmin, async (req, res) => {
         })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/season-passes/:passId/purchases/:userId', isAdmin, async (req, res) => {
@@ -4924,7 +4657,7 @@ app.delete('/api/season-passes/:passId/purchases/:userId', isAdmin, async (req, 
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/season-passes', isAdmin, async (req, res) => {
@@ -4967,7 +4700,7 @@ app.post('/api/season-passes', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4985,7 +4718,7 @@ app.get('/api/season-purchases/:email', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/season-pass/purchase', async (req, res) => {
@@ -5044,7 +4777,7 @@ app.post('/api/season-pass/purchase', async (req, res) => {
         console.error(`[Purchase] ❌ ERROR during purchase, rolling back:`, e.message);
         await client.query('ROLLBACK');
         console.log(`[Purchase] Transaction ROLLED BACK`);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -5082,7 +4815,7 @@ app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- USERS ---
@@ -5223,7 +4956,7 @@ app.get('/api/users', isAdmin, async (req, res) => {
         res.json({ users, total, pages: Math.ceil(total / limit), levels: lvRes.rows });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/users/map', isAdmin, async (req, res) => {
@@ -5245,7 +4978,7 @@ app.get('/api/admin/users/map', isAdmin, async (req, res) => {
         res.json(resRows.rows);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- ADVANCED REFERRALS ---
@@ -5255,7 +4988,7 @@ app.get('/api/admin/referral-models', isAdmin, async (req, res) => {
         res.json(rows.rows);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/referral-models', isAdmin, async (req, res) => {
@@ -5276,7 +5009,7 @@ app.post('/api/admin/referral-models', isAdmin, async (req, res) => {
         }
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/referral-models/:id', isAdmin, async (req, res) => {
@@ -5285,7 +5018,7 @@ app.delete('/api/admin/referral-models/:id', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/access-level-referral-assignments', isAdmin, async (req, res) => {
@@ -5297,7 +5030,7 @@ app.get('/api/admin/access-level-referral-assignments', isAdmin, async (req, res
         }, {}));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/access-level-referral-assignments', isAdmin, async (req, res) => {
@@ -5318,7 +5051,7 @@ app.post('/api/admin/access-level-referral-assignments', isAdmin, async (req, re
     }
     catch (e) {
         await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -5456,7 +5189,7 @@ app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('[DashStats] Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/update-permissions', isAdmin, async (req, res) => {
@@ -5538,7 +5271,7 @@ app.get('/api/leaderboard', async (req, res) => {
         })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- REFERRALS ---
@@ -5553,7 +5286,7 @@ app.get('/api/referrals/:email', async (req, res) => {
         res.json(rowsRes.rows.map(r => r.referred_username));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/referrals/claim-code', async (req, res) => {
@@ -5597,7 +5330,7 @@ app.post('/api/referrals/claim-code', async (req, res) => {
     catch (e) {
         if (client)
             await client.query('ROLLBACK');
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -5641,7 +5374,7 @@ app.post('/api/referrals/claim-reward', async (req, res) => {
         if (client)
             await client.query('ROLLBACK');
         console.error('[ClaimReward] Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -5661,7 +5394,7 @@ app.get('/api/wheel/config', async (req, res) => {
         res.json(items);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // Admin Routes for Wheel
@@ -5678,7 +5411,7 @@ app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
         res.json(items);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- MINING COINS ---
@@ -5722,7 +5455,7 @@ app.get('/api/mining-coins', async (req, res) => {
     catch (e) {
         if (client)
             client.release();
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/mining-coins', isAdmin, async (req, res) => {
@@ -5800,7 +5533,7 @@ app.post('/api/mining-coins', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[SaveMiningCoin] Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -5908,7 +5641,7 @@ app.post('/api/login', async (req, res) => {
     }
     catch (e) {
         console.error('[Login]', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/session', async (req, res) => {
@@ -5962,7 +5695,7 @@ app.get('/api/session', async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/auth/refresh', async (req, res) => handleJwtRefresh(req, res, db, parseCookies));
@@ -6011,7 +5744,7 @@ app.post('/api/session', async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/load-game', async (req, res) => {
@@ -6117,8 +5850,7 @@ app.get('/api/load-game', async (req, res) => {
         }
     }
     catch (e) {
-        if (!res.headersSent)
-            res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 async function markServerUpdate(uid) {
@@ -6136,7 +5868,7 @@ app.put('/api/users/block', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.put('/api/user', async (req, res) => {
@@ -6309,8 +6041,7 @@ app.put('/api/user', async (req, res) => {
         if (e.code === 'EMAIL_POLICY') {
             return res.status(400).json({ ok: false, error: e.message });
         }
-        const errorMessage = e.message || 'Erro interno no servidor durante o registro.';
-        res.status(500).json({ error: errorMessage, stack: process.env.NODE_ENV === 'development' ? e.stack : undefined });
+        sendInternalErrorSafeMessage(res, '[UserUpdate]', e, 'Erro interno no servidor durante o registro.');
     }
     finally {
         if (client)
@@ -6399,7 +6130,7 @@ app.delete('/api/user/:email', isAdmin, async (req, res) => {
         res.json(result);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/bulk-delete', isAdmin, async (req, res) => {
@@ -6420,7 +6151,7 @@ app.post('/api/admin/bulk-delete', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[Admin] Bulk delete failed:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -6464,7 +6195,7 @@ app.post('/api/admin/bulk-gift', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[Admin] Bulk gift failed:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -6680,9 +6411,7 @@ app.get('/api/game-state/:email', async (req, res) => {
         console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
     }
     catch (e) {
-        const safe = sanitizeApiMessage(e instanceof Error ? e.message : String(e), 240);
-        console.error(`[GameState] Error: ${safe}`);
-        res.status(500).json({ error: safe });
+        sendInternalErrorSafeMessage(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
     }
 });
 const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
@@ -6855,7 +6584,9 @@ app.post('/api/save-game', async (req, res) => {
             if (gs.dailyActions) {
                 if (typeof gs.dailyActions !== 'object' || Array.isArray(gs.dailyActions)) {
                     await client.query('ROLLBACK');
-                    return res.status(400).json({ error: 'dailyActions inválido.' });
+                    return res.status(400).json({
+                        error: 'O formato dos dados diários (oficina) está incorrecto. Recarregue a página (F5).'
+                    });
                 }
                 const dv = validateDailyActionsForSave(gs.dailyActions, effectiveAdminOverride, Date.now());
                 if (!dv.ok) {
@@ -6873,7 +6604,9 @@ app.post('/api/save-game', async (req, res) => {
         if (changes.stock !== undefined && changes.stock !== null) {
             if (typeof changes.stock !== 'object' || Array.isArray(changes.stock)) {
                 await client.query('ROLLBACK');
-                return res.status(400).json({ error: 'stock inválido.' });
+                return res.status(400).json({
+                    error: 'O inventário foi enviado num formato inválido. Recarregue a página (F5).'
+                });
             }
             const sv = await validateStockForSave(client, changes.stock);
             if (!sv.ok) {
@@ -6890,7 +6623,9 @@ app.post('/api/save-game', async (req, res) => {
         if (changes.unopenedBoxes !== undefined && changes.unopenedBoxes !== null) {
             if (typeof changes.unopenedBoxes !== 'object' || Array.isArray(changes.unopenedBoxes)) {
                 await client.query('ROLLBACK');
-                return res.status(400).json({ error: 'unopenedBoxes inválido.' });
+                return res.status(400).json({
+                    error: 'A lista de caixas foi enviada num formato inválido. Recarregue a página (F5).'
+                });
             }
             const bv = await validateUnopenedBoxesForSave(client, changes.unopenedBoxes);
             if (!bv.ok) {
@@ -6907,7 +6642,9 @@ app.post('/api/save-game', async (req, res) => {
         if (changes.storedBatteries) {
             if (!Array.isArray(changes.storedBatteries)) {
                 await client.query('ROLLBACK');
-                return res.status(400).json({ error: 'storedBatteries inválido.' });
+                return res.status(400).json({
+                    error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
+                });
             }
             const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
             if (!batVal.ok) {
@@ -7086,20 +6823,53 @@ app.post('/api/save-game', async (req, res) => {
             }
         }
         if (changes.workshopSlots) {
-            const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge FROM workshop_slots WHERE user_id = $1', [uid]);
+            const wVal = await validateWorkshopSlotsPayloadForSave(client, changes.workshopSlots, {
+                adminOverride: effectiveAdminOverride
+            });
+            if (!wVal.ok) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: wVal.error });
+            }
+            const workshopNorm = wVal.normalized;
+            const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge, slot_charges FROM workshop_slots WHERE user_id = $1', [uid]);
             const existingSlots = {};
-            existingSlotsRes.rows.forEach(r => {
+            existingSlotsRes.rows.forEach((r) => {
                 existingSlots[r.slot_index] = r;
             });
-            // Pre-load upgrades for workshop validation
-            const workshopItemIds = changes.workshopSlots.map(w => w?.itemId).filter(id => !!id);
-            const existingItemIds = Object.values(existingSlots).map(s => s.item_id).filter(id => !!id);
-            const allWorkshopTargetIds = [...new Set([...workshopItemIds, ...existingItemIds])];
+            const workshopItemIds = workshopNorm.map((w) => w?.itemId).filter((id) => !!id);
+            const slotRefIds = [];
+            for (const w of workshopNorm) {
+                if (w?.slotItemIds) {
+                    for (const sid of Object.values(w.slotItemIds)) {
+                        if (typeof sid === 'string' && sid)
+                            slotRefIds.push(sid);
+                    }
+                }
+            }
+            const existingItemIds = Object.values(existingSlots)
+                .map((s) => s.item_id)
+                .filter((id) => typeof id === 'string' && !!id);
+            const allWorkshopTargetIds = [...new Set([...workshopItemIds, ...existingItemIds, ...slotRefIds])];
             const workshopUpgradesMap = new Map();
             if (allWorkshopTargetIds.length > 0) {
-                const upRes = await client.query('SELECT id, type, base_production FROM upgrades WHERE id = ANY($1)', [allWorkshopTargetIds]);
-                upRes.rows.forEach(u => workshopUpgradesMap.set(u.id, u));
+                const upRes = await client.query('SELECT id, type, category, base_production, power_capacity FROM upgrades WHERE id = ANY($1::text[])', [allWorkshopTargetIds]);
+                upRes.rows.forEach((u) => workshopUpgradesMap.set(u.id, u));
             }
+            const capSlotCharges = (charges, slotItemIds) => {
+                if (!slotItemIds)
+                    return { ...charges };
+                const out = { ...charges };
+                for (const key of Object.keys(out)) {
+                    const iid = slotItemIds[key];
+                    if (!iid)
+                        continue;
+                    const defB = workshopUpgradesMap.get(String(iid));
+                    const maxB = Number(defB?.power_capacity);
+                    if (Number.isFinite(maxB) && maxB >= 0 && out[key] > maxB)
+                        out[key] = maxB;
+                }
+                return out;
+            };
             const wsUserIds = [];
             const wsSlotIdxs = [];
             const wsItemIds = [];
@@ -7108,23 +6878,34 @@ app.post('/api/save-game', async (req, res) => {
             const wsSlotCharges = [];
             const wsSlotItemIds = [];
             const wsInstalledAts = [];
-            let validInstalledAt = Date.now();
-            for (let i = 0; i < changes.workshopSlots.length; i++) {
-                const w = changes.workshopSlots[i];
+            for (let i = 0; i < workshopNorm.length; i++) {
+                const w = workshopNorm[i];
                 const existing = existingSlots[i];
                 if (w && w.itemId) {
+                    const defStruct = workshopUpgradesMap.get(String(w.itemId));
+                    const maxCapStruct = Number(defStruct?.power_capacity);
+                    const isNewOrChanged = !existing || !existing.item_id || String(existing.item_id) !== String(w.itemId);
                     let finalCharge = w.currentCharge || 0;
                     let finalSlotCharges = w.slotCharges ? { ...w.slotCharges } : {};
-                    validInstalledAt = Date.now();
-                    if (!existing || !existing.item_id || existing.item_id !== w.itemId) {
+                    let internalPayload = w.internalSlots && Object.keys(w.internalSlots).length ? { ...w.internalSlots } : {};
+                    let slotItemIdsPayload = w.slotItemIds && Object.keys(w.slotItemIds).length ? { ...w.slotItemIds } : null;
+                    let validInstalledAt = Date.now();
+                    if (isNewOrChanged) {
                         console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
                         saveActivityLogs.push({ action: 'workshop_place', meta: { slotIndex: i, itemId: w.itemId } });
+                        if (!effectiveAdminOverride) {
+                            finalCharge = 0;
+                            finalSlotCharges = {};
+                            internalPayload = {};
+                            slotItemIdsPayload = null;
+                        }
                     }
-                    if (existing && existing.item_id === w.itemId) {
-                        // 1. Preserve highest progress for individual battery slots
+                    else if (existing && existing.item_id === w.itemId) {
                         if (existing.slot_charges) {
                             try {
-                                const dbSlotCharges = typeof existing.slot_charges === 'string' ? JSON.parse(existing.slot_charges) : existing.slot_charges;
+                                const dbSlotCharges = typeof existing.slot_charges === 'string'
+                                    ? JSON.parse(existing.slot_charges)
+                                    : existing.slot_charges;
                                 for (const [sid, dbVal] of Object.entries(dbSlotCharges)) {
                                     if (finalSlotCharges[sid] !== undefined && Number(dbVal) > Number(finalSlotCharges[sid])) {
                                         finalSlotCharges[sid] = Number(dbVal);
@@ -7135,20 +6916,22 @@ app.post('/api/save-game', async (req, res) => {
                                 console.warn(`[SaveGame] Error parsing existing slot_charges for slot ${i}:`, e instanceof Error ? e.message : String(e));
                             }
                         }
-                        // 2. Preserve highest internal charge (unless frontend is lower, which might happen if used, but chargers only drain to batteries)
-                        // Actually, server 'computeProgress' is the primary authority for internal_charge draining.
                         if (Number(existing.current_charge) > finalCharge) {
                             finalCharge = Number(existing.current_charge);
                         }
                         validInstalledAt = Number(existing.installed_at || Date.now());
                     }
+                    if (Number.isFinite(maxCapStruct) && maxCapStruct > 0) {
+                        finalCharge = Math.min(finalCharge, maxCapStruct);
+                    }
+                    finalSlotCharges = capSlotCharges(finalSlotCharges, slotItemIdsPayload);
                     wsUserIds.push(uid);
                     wsSlotIdxs.push(i);
                     wsItemIds.push(w.itemId);
-                    wsInternalStates.push(w.internalSlots ? JSON.stringify(w.internalSlots) : null);
+                    wsInternalStates.push(Object.keys(internalPayload).length ? JSON.stringify(internalPayload) : null);
                     wsCharges.push(finalCharge);
                     wsSlotCharges.push(JSON.stringify(finalSlotCharges));
-                    wsSlotItemIds.push(w.slotItemIds ? JSON.stringify(w.slotItemIds) : null);
+                    wsSlotItemIds.push(slotItemIdsPayload ? JSON.stringify(slotItemIdsPayload) : null);
                     wsInstalledAts.push(validInstalledAt);
                 }
                 else {
@@ -7156,19 +6939,12 @@ app.post('/api/save-game', async (req, res) => {
                         console.log(`[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`);
                         saveActivityLogs.push({ action: 'workshop_dismantle', meta: { slotIndex: i, itemId: existing.item_id } });
                         const itemDef = workshopUpgradesMap.get(String(existing.item_id));
-                        if (itemDef && itemDef.type === 'charger') {
-                            if (Number(existing.current_charge) > 0.001)
-                                throw new Error("Não é possível remover um carregador com carga.");
-                            /*
-                            const installedAt = Number(existing.installed_at || 0);
-                            if (installedAt > 0) {
-                              const instDate = new Date(installedAt);
-                              const midnight = new Date(instDate);
-                              midnight.setDate(midnight.getDate() + 1);
-                              midnight.setHours(0, 0, 0, 0);
-                              if (Date.now() < midnight.getTime()) throw new Error("Este carregador ainda está travado até 00:00.");
+                        if (itemDef && String(itemDef.type).toLowerCase() === 'charger') {
+                            if (Number(existing.current_charge) > 0.001) {
+                                throw Object.assign(new Error('Não é possível remover um carregador com carga.'), {
+                                    workshopClientError: true
+                                });
                             }
-                            */
                         }
                     }
                     await client.query('UPDATE workshop_slots SET item_id = NULL, installed_at = 0 WHERE user_id = $1 AND slot_index = $2', [uid, i]);
@@ -7221,8 +6997,12 @@ app.post('/api/save-game', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
+        const err = e;
+        if (err && err.workshopClientError && typeof err.message === 'string') {
+            return res.status(400).json({ error: err.message });
+        }
         console.error('[SaveGame] CRITICAL ERROR:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
     }
     finally {
         client.release();
@@ -7239,7 +7019,7 @@ app.get('/api/admin/backup-settings', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/backup-settings', isAdmin, async (req, res) => {
@@ -7250,14 +7030,14 @@ app.post('/api/admin/backup-settings', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // Start scheduler (give DB a moment to be ready if needed, though db.query usually handles pool)
 setTimeout(async () => {
     // Only run background tasks on the designated worker
     if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
-        startScheduledSqlBackups(backupModel);
+        startScheduledSqlBackups(backupModel, { pool: db });
         await ensureAdminPermissionsColumn();
         await ensureSystemNewsAdColumns();
     }
@@ -7298,7 +7078,7 @@ app.get('/api/admin/recall-scan', isAdmin, async (req, res) => {
         res.json({ ok: true, summary, totalUsersChecked: totalUsers });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -7385,7 +7165,7 @@ app.post('/api/admin/recall-all-players-items', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('[RecallAll] Erro critico no fluxo:', e);
-        res.status(500).json({ ok: false, error: 'Erro no fluxo: ' + e.message, report });
+        sendInternalErrorShape(res, 'RecallAll', e, { ok: false, report }, 'Erro no fluxo. Consulta o relatório em anexo.');
     }
     finally {
         client.release();
@@ -7411,7 +7191,7 @@ app.post('/api/admin/impersonate', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/stop-impersonate', async (req, res) => {
@@ -7427,7 +7207,7 @@ app.post('/api/admin/stop-impersonate', async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/stats/top-deposits', async (req, res) => {
@@ -7436,7 +7216,7 @@ app.get('/api/stats/top-deposits', async (req, res) => {
         res.json(resRows.rows.map(r => ({ username: r.username, email: r.email, totalUsdcDeposited: r.total })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/stats/top-withdrawals', async (req, res) => {
@@ -7445,7 +7225,7 @@ app.get('/api/stats/top-withdrawals', async (req, res) => {
         res.json(resRows.rows.map(r => ({ username: r.username, email: r.email, totalCryptoWithdrawn: r.total })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
@@ -7459,7 +7239,7 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
@@ -7524,7 +7304,7 @@ app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Security Stats Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -7539,7 +7319,7 @@ app.post('/api/admin/security/blacklist', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/security/blacklist/:ip', isAdmin, async (req, res) => {
@@ -7549,7 +7329,7 @@ app.delete('/api/admin/security/blacklist/:ip', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
@@ -7610,7 +7390,7 @@ app.get('/api/admin/market/listings', isAdmin, async (req, res) => {
         }));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- PROMO CODES ---
@@ -7640,7 +7420,7 @@ app.get('/api/admin/promo-codes', isAdmin, async (req, res) => {
         res.json(enriched);
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) => {
@@ -7662,7 +7442,7 @@ app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) 
         })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
@@ -7674,7 +7454,7 @@ app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/promo-codes/:code', isAdmin, async (req, res) => {
@@ -7685,7 +7465,7 @@ app.delete('/api/admin/promo-codes/:code', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.put('/api/admin/promo-codes/:code/toggle', isAdmin, async (req, res) => {
@@ -7696,7 +7476,7 @@ app.put('/api/admin/promo-codes/:code/toggle', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // O backend agora é apenas API. O frontend é servido separadamente.
@@ -7712,7 +7492,7 @@ app.post('/api/admin/ranking-exclusion', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 // --- GEMINI PROXY ENDPOINTS ---
@@ -7797,7 +7577,7 @@ app.get('/api/mining/coins', async (req, res) => {
     }
     catch (e) {
         console.error(e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/mining/coins', isAdmin, async (req, res) => {
@@ -7890,7 +7670,7 @@ name = EXCLUDED.name, symbol = EXCLUDED.symbol, network_hashrate = EXCLUDED.netw
     }
     catch (e) {
         console.error('Failed to save mining coin:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/mining/coins/:id', isAdmin, async (req, res) => {
@@ -7900,7 +7680,7 @@ app.delete('/api/mining/coins/:id', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 /** Redefinição por email: envia link sem exigir carteira (resposta uniforme para não enumerar contas). */
@@ -8028,7 +7808,7 @@ app.get('/api/exchange-settings', async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/exchange-settings', isAdmin, async (req, res) => {
@@ -8056,7 +7836,7 @@ app.post('/api/exchange-settings', isAdmin, async (req, res) => {
         }
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/exchange/sell', async (req, res) => {
@@ -8215,7 +7995,7 @@ app.post('/api/withdraw', async (req, res) => {
         if (client)
             await client.query('ROLLBACK');
         console.error('[Withdraw] Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -8251,7 +8031,7 @@ app.get('/api/admin/withdrawals', isAdmin, async (req, res) => {
         })));
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/withdrawals/status', isAdmin, async (req, res) => {
@@ -8291,7 +8071,7 @@ app.post('/api/admin/withdrawals/status', isAdmin, async (req, res) => {
         if (client)
             await client.query('ROLLBACK');
         console.error('[AdminWithdrawStatus] Error:', e);
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -8419,12 +8199,12 @@ const calculateHashratesAndRanking = async () => {
         // Update Legacy Globals (for existing endpoints)
         miningRuntimeStats.globalNetworkHashrates.clear();
         for (const [cid, val] of Object.entries(coinTotals)) {
-            miningRuntimeStats.globalNetworkHashrates.set(cid, val);
+            miningRuntimeStats.globalNetworkHashrates.set(cid, Number(val) || 0);
         }
         miningRuntimeStats.globalActiveMiners = totalActiveUsers;
         miningRuntimeStats.globalActiveMinersByCoin.clear();
         for (const [cid, val] of Object.entries(activeMinersByCoin)) {
-            miningRuntimeStats.globalActiveMinersByCoin.set(cid, val);
+            miningRuntimeStats.globalActiveMinersByCoin.set(cid, Number(val) || 0);
         }
         const duration = Date.now() - start;
         if (duration > 1000) {
@@ -8472,7 +8252,7 @@ app.get('/api/admin/ranking', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ error: e.message });
+        sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
 const startServer = async () => {
@@ -8524,6 +8304,7 @@ const startServer = async () => {
             console.log('[DB] PostgreSQL initialized');
         }
         await ensureP2pMarketListingSchema();
+        await ensureSupportTicketSchema();
     }
     catch (e) {
         console.error('[DB] Failed to initialize PostgreSQL:', e);

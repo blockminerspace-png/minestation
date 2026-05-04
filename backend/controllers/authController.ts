@@ -13,6 +13,7 @@ import {
   updateUserPolygonAndAccess
 } from '../models/authModel.js';
 import { insertDeviceFingerprintLog, sanitizeDeviceFingerprint } from '../models/deviceFingerprintModel.js';
+import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type AuthControllerDeps = {
   pool: Pool;
@@ -148,8 +149,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
         referredBy: u.referred_by
       });
     } catch (e: unknown) {
-      console.error('[Login]', e);
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Erro' });
+      sendInternalErrorSafeMessage(res, 'POST /api/login', e, 'Erro ao iniciar sessão.');
     }
   });
 
@@ -164,7 +164,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       const userLvlIds = await listUserAccessLevelIds(pool, u.id as string | number, u.access_level_id);
       res.json(buildSessionUserJson(u, s, userLvlIds));
     } catch (e: unknown) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Erro' });
+      sendInternalErrorSafeMessage(res, 'GET /api/session', e, 'Erro ao carregar sessão.');
     }
   });
 
@@ -188,7 +188,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       await updateUserPolygonAndAccess(pool, s.user_id, polygonWallet, accessLevelId);
       res.json({ ok: true });
     } catch (e: unknown) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Erro' });
+      sendInternalErrorSafeMessage(res, 'POST /api/session', e, 'Erro ao atualizar sessão.');
     }
   });
 }

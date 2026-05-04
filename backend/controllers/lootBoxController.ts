@@ -12,6 +12,7 @@ import {
   bodyLootBoxId,
   bodyOptionalDiscardQty
 } from '../validation/lootBoxValidation.js';
+import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type LootBoxAdminDeps = {
   pool: Pool;
@@ -43,7 +44,7 @@ function uidNum(req: Request): number | null {
 export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDeps): void {
   const { pool, grantAdminUpgradeRewards, appendGameActivityLog } = deps;
 
-  app.get('/api/loot-boxes', async (_req: Request, res: Response) => {
+  app.get('/api/loot-boxes', async (req: Request, res: Response) => {
     try {
       const boxesRes = await pool.query(
         'SELECT * FROM loot_boxes ORDER BY COALESCE(is_active, 1) DESC, trigger ASC, name ASC, id ASC'
@@ -101,7 +102,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       );
       res.json(resp);
     } catch (e: unknown) {
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Erro ao listar caixas.' });
+      sendInternalErrorSafeMessage(res, req.originalUrl || 'loot-box', e, 'Erro ao listar caixas.');
     }
   });
 
@@ -138,7 +139,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       const boxCount = boxCountRes.rows[0] as { qty: number } | undefined;
       if (!boxCount || boxCount.qty < 1) {
         await client.query('ROLLBACK');
-        res.status(400).json({ error: 'No boxes available' });
+        res.status(400).json({ error: 'Não tens caixas deste tipo no inventário.' });
         return;
       }
 
@@ -146,7 +147,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       const boxDef = boxDefRes.rows[0] as { name: string; trigger?: string } | undefined;
       if (!boxDef) {
         await client.query('ROLLBACK');
-        res.status(404).json({ error: 'Box definition not found' });
+        res.status(404).json({ error: 'Caixa não encontrada.' });
         return;
       }
 
@@ -278,11 +279,11 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         | { trigger: string; price: number | string; name: string }
         | undefined;
       if (!box) {
-        res.status(404).json({ error: 'Box not found' });
+        res.status(404).json({ error: 'Caixa não encontrada.' });
         return;
       }
       if (box.trigger !== 'shop' && box.trigger !== 'shop_once' && box.trigger !== 'special') {
-        res.status(400).json({ error: 'Box not for sale' });
+        res.status(400).json({ error: 'Esta caixa não está à venda na loja.' });
         return;
       }
 
@@ -294,6 +295,18 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
 
       await client.query('BEGIN');
 
+      const itemsCheck = await client.query(
+        'SELECT 1 FROM loot_box_items WHERE box_id = $1 LIMIT 1',
+        [boxId]
+      );
+      if (!itemsCheck.rowCount) {
+        await client.query('ROLLBACK');
+        res.status(400).json({
+          error: 'Esta caixa não tem prémios configurados e não pode ser vendida. Contacte o suporte.'
+        });
+        return;
+      }
+
       if (box.trigger === 'shop_once') {
         try {
           await client.query(
@@ -304,7 +317,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
           const code = insErr && typeof insErr === 'object' && 'code' in insErr ? (insErr as { code?: string }).code : '';
           if (code === '23505') {
             await client.query('ROLLBACK');
-            res.status(400).json({ error: 'Already purchased' });
+            res.status(400).json({ error: 'Esta caixa de compra única já foi resgatada.' });
             return;
           }
           throw insErr;
@@ -319,7 +332,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       const bal = Number(gs?.usdc) || 0;
       if (bal < price) {
         await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Insufficient funds' });
+        res.status(400).json({ error: 'Saldo USDC insuficiente.' });
         return;
       }
 
@@ -329,7 +342,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       );
       if (payRes.rowCount === 0) {
         await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Insufficient funds' });
+        res.status(400).json({ error: 'Saldo USDC insuficiente.' });
         return;
       }
 
@@ -532,7 +545,7 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
         /* ignore */
       }
       console.error('[LootBoxAdminDelete] Error:', e);
-      res.status(500).json({ error: e instanceof Error ? e.message : 'Falha ao apagar caixa.' });
+      sendInternalErrorSafeMessage(res, req.originalUrl || 'loot-box', e, 'Falha ao apagar caixa.');
     } finally {
       client.release();
     }

@@ -14,6 +14,7 @@ import {
 } from '../models/registrationValidation.js';
 import { EmailPolicyError, getUserIdByEmail, IpLimitError } from '../models/userModel.js';
 import { insertDeviceFingerprintLog, sanitizeDeviceFingerprint } from '../models/deviceFingerprintModel.js';
+import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type UserRegistrationDeps = {
   pool: Pool;
@@ -400,11 +401,12 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
       if (pg.code === 'EMAIL_POLICY') {
         return res.status(400).json({ ok: false, error: pg.message });
       }
-      const errorMessage = pg.message || 'Erro interno no servidor durante o registro.';
-      res.status(500).json({
-        error: errorMessage,
-        stack: process.env.NODE_ENV === 'development' ? pg.stack : undefined
-      });
+      sendInternalErrorSafeMessage(
+        res,
+        'PUT /api/user',
+        e,
+        'Erro interno no servidor durante o registro.'
+      );
     } finally {
       client.release();
     }

@@ -20,7 +20,10 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
   const loadSettings = async () => {
     try {
       const s = await getExchangeSettings();
-      setSettings(s);
+      setSettings({
+        minExchangeAmount: Math.max(0, Number(s.minExchangeAmount) || 0),
+        exchangeFeePercent: Math.max(0, Math.min(100, Number(s.exchangeFeePercent) || 0)),
+      });
     } catch (err) {
       console.error("Failed to load exchange settings", err);
     }
@@ -52,7 +55,7 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
               <div className="bg-gradient-to-br from-amber-500/10 to-orange-500/10 dark:from-amber-900/40 dark:to-orange-900/40 border border-amber-200 dark:border-amber-800/50 rounded-xl p-3 flex flex-col items-center justify-center text-center shadow-sm">
                 <span className="text-[10px] font-bold text-amber-600 dark:text-amber-400 uppercase tracking-widest mb-1 font-sans">Piso mínimo (USDC)</span>
                 <span className="text-2xl font-black text-slate-800 dark:text-white leading-none font-mono">
-                  ${settings.minExchangeAmount.toFixed(2)} <span className="text-xs font-bold text-slate-500">USDC</span>
+                  ${formatMoney(settings.minExchangeAmount)} <span className="text-xs font-bold text-slate-500">USDC</span>
                 </span>
               </div>
 
@@ -77,7 +80,9 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
                 const est = bal * c.usdcRate;
                 const fee = settings ? est * (settings.exchangeFeePercent / 100) : 0;
                 const net = est - fee;
-                const isBelowMin = settings ? est < settings.minExchangeAmount : false;
+                const minUsdc = settings?.minExchangeAmount ?? 0;
+                const isBelowMin =
+                  !!settings && minUsdc > 0 && bal > 0 && est < minUsdc;
 
                 return (
                   <div key={c.id} className="bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded p-2 flex flex-col gap-2">

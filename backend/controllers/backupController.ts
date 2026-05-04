@@ -88,17 +88,80 @@ export async function createScheduledSqlBackupOnce(m: BackupModelApi): Promise<{
   return { filename: fn, path: dest, bytes: st.size };
 }
 
+/** Chaves fixas para `pg_try_advisory_lock` — evita dump duplicado com várias réplicas / processos. */
+const AUTO_SQL_BACKUP_LOCK_K1 = 0x4d53;
+const AUTO_SQL_BACKUP_LOCK_K2 = 0x6270;
+
+function parseAutoBackupLocalClock(): { hour: number; minute: number } {
+  const hour = Math.min(23, Math.max(0, parseInt(process.env.BACKUP_AUTO_LOCAL_HOUR || '0', 10) || 0));
+  const minute = Math.min(59, Math.max(0, parseInt(process.env.BACKUP_AUTO_LOCAL_MINUTE || '0', 10) || 0));
+  return { hour, minute };
+}
+
+/** Tempo até a próxima ocorrência de `hour:minute` no relógio local do processo (TZ do servidor). */
+export function msUntilNextLocalClockRun(nowMs: number = Date.now()): number {
+  const now = new Date(nowMs);
+  const { hour, minute } = parseAutoBackupLocalClock();
+  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
+  if (target.getTime() <= now.getTime()) {
+    target.setDate(target.getDate() + 1);
+  }
+  return Math.max(1000, target.getTime() - now.getTime());
+}
+
+export type ScheduledSqlBackupOptions = {
+  /** Pool Postgres: usado para advisory lock (uma só instância corre o dump). */
+  pool?: Pool;
+};
+
 /**
- * Agenda backup SQL completo a cada 24h (worker BACKGROUND / ALL).
+ * Agenda um único `pg_dump` automático por dia, à hora local do servidor (default 00:00).
+ * Com `pool`, só um processo entre réplicas executa (advisory lock na mesma BD).
  */
-export function startScheduledSqlBackups(backupModel: BackupModelApi): void {
+export function startScheduledSqlBackups(backupModel: BackupModelApi, opts?: ScheduledSqlBackupOptions): void {
   if (process.env.BACKUP_DISABLE_AUTO === '1' || String(process.env.BACKUP_DISABLE_AUTO).toLowerCase() === 'true') {
     console.log('[Backup] Backups automáticos SQL desativados (BACKUP_DISABLE_AUTO).');
     return;
   }
-  const intervalMs = 24 * 60 * 60 * 1000;
-  const firstDelay = Math.max(60_000, parseInt(process.env.BACKUP_AUTO_FIRST_DELAY_MS || '300000', 10) || 300000);
+  const pool = opts?.pool;
+  const { hour, minute } = parseAutoBackupLocalClock();
+
   const tick = async (): Promise<void> => {
+    if (pool) {
+      const client = await pool.connect();
+      try {
+        const lockRes = await client.query('SELECT pg_try_advisory_lock($1::integer, $2::integer) AS ok', [
+          AUTO_SQL_BACKUP_LOCK_K1,
+          AUTO_SQL_BACKUP_LOCK_K2,
+        ]);
+        const got = lockRes.rows[0]?.ok === true;
+        if (!got) {
+          console.log('[Backup] Dump SQL automático ignorado (outro processo detém o lock).');
+          return;
+        }
+        try {
+          const r = await createScheduledSqlBackupOnce(backupModel);
+          console.log(`[Backup] Dump SQL automático: ${sanitizeForLog(r.filename)} (${r.bytes} bytes)`);
+        } catch (e) {
+          console.error('[Backup] Falha no dump SQL automático:', sanitizeForLog(toErrorMessage(e), 200));
+        } finally {
+          try {
+            await client.query('SELECT pg_advisory_unlock($1::integer, $2::integer)', [
+              AUTO_SQL_BACKUP_LOCK_K1,
+              AUTO_SQL_BACKUP_LOCK_K2,
+            ]);
+          } catch (unlockErr) {
+            console.error('[Backup] Falha ao libertar advisory lock:', sanitizeForLog(toErrorMessage(unlockErr), 200));
+          }
+        }
+      } catch (e) {
+        console.error('[Backup] Falha ao adquirir lock / conectar para dump automático:', sanitizeForLog(toErrorMessage(e), 200));
+      } finally {
+        client.release();
+      }
+      return;
+    }
+
     try {
       const r = await createScheduledSqlBackupOnce(backupModel);
       console.log(`[Backup] Dump SQL automático: ${sanitizeForLog(r.filename)} (${r.bytes} bytes)`);
@@ -106,9 +169,25 @@ export function startScheduledSqlBackups(backupModel: BackupModelApi): void {
       console.error('[Backup] Falha no dump SQL automático:', sanitizeForLog(toErrorMessage(e), 200));
     }
   };
-  setTimeout(() => void tick(), firstDelay);
-  setInterval(() => void tick(), intervalMs);
-  console.log(`[Backup] Agendado pg_dump SQL a cada 24h (primeira execução em ${Math.round(firstDelay / 1000)}s).`);
+
+  const scheduleLoop = (): void => {
+    const delay = msUntilNextLocalClockRun();
+    const nextAt = new Date(Date.now() + delay);
+    const nextLocal = nextAt.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'medium' });
+    console.log(
+      `[Backup] Dump SQL automático: diariamente às ${String(hour).padStart(2, '0')}:${String(
+        minute
+      ).padStart(2, '0')} (relógio local do processo / TZ do servidor). Próxima: ${nextLocal} (daqui ~${Math.round(delay / 60000)} min).`
+    );
+    setTimeout(() => {
+      void (async () => {
+        await tick();
+        scheduleLoop();
+      })();
+    }, delay);
+  };
+
+  scheduleLoop();
 }
 
 /**

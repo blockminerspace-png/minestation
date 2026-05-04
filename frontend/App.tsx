@@ -44,6 +44,7 @@ import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, Acc
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
 import { MarketNews } from './components/MarketNews';
+import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
 import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale, Sparkles, Battery, LifeBuoy } from 'lucide-react';
@@ -298,6 +299,8 @@ export default function App() {
   const [saveTrigger, setSaveTrigger] = useState(0);
   const [verticalAds, setVerticalAds] = useState<SystemNews[]>([]);
   const [bulkBatteryNotice, setBulkBatteryNotice] = useState<{ title: string; message: string } | null>(null);
+  const [hardwareShopNotice, setHardwareShopNotice] = useState<UiNotice | null>(null);
+  const [luckyBoxNotice, setLuckyBoxNotice] = useState<UiNotice | null>(null);
   /** Passa código à Roleta após resgate em Caixas (consumido pelo `RoletaPage`). */
   const [roletaBootstrap, setRoletaBootstrap] = useState<{ v: number; code: string } | null>(null);
 
@@ -854,39 +857,67 @@ export default function App() {
 
     const tc = Number(totalCost);
     if (!Number.isFinite(tc) || tc <= 0) {
-      alert('Valor da compra inválido.');
+      setHardwareShopNotice({
+        variant: 'error',
+        title: 'Lojinha Miner',
+        message: 'Valor da compra inválido.'
+      });
       return;
     }
     let recomputed = 0;
     for (const [id, rawQty] of Object.entries(cart)) {
       const q = Math.floor(Number(rawQty));
       if (!Number.isFinite(q) || q < 1) {
-        alert('Quantidade inválida no carrinho.');
+        setHardwareShopNotice({
+          variant: 'error',
+          title: 'Lojinha Miner',
+          message: 'Quantidade inválida no carrinho.'
+        });
         return;
       }
       const u = gameUpgrades.find((x) => x.id === id);
       if (!u) {
-        alert('Item desconhecido no carrinho.');
+        setHardwareShopNotice({
+          variant: 'error',
+          title: 'Lojinha Miner',
+          message: 'Item desconhecido no carrinho.'
+        });
         return;
       }
       recomputed += u.baseCost * q;
     }
     if (Math.abs(recomputed - tc) > 1e-5) {
-      alert('O total não confere com os itens. Atualize a página e tente de novo.');
+      setHardwareShopNotice({
+        variant: 'error',
+        title: 'Lojinha Miner',
+        message: 'O total não confere com os itens. Recarrega a página (F5) e tenta de novo.'
+      });
       return;
     }
 
     if (gameState.usdc < tc) {
-      alert("Saldo insuficiente!");
+      setHardwareShopNotice({
+        variant: 'error',
+        title: 'Lojinha Miner',
+        message: 'Saldo USDC insuficiente na reserva.'
+      });
       return;
     }
 
     const res = await buyUpgrades(user.email, cart);
     if (res.ok) {
-      handleReloadGameState();
-      alert("Compra realizada com sucesso!");
+      await handleReloadGameState();
+      setHardwareShopNotice({
+        variant: 'success',
+        title: 'Lojinha Miner',
+        message: 'Compra realizada com sucesso! O teu estoque foi actualizado.'
+      });
     } else {
-      alert(res.error || "Erro ao realizar compra.");
+      setHardwareShopNotice({
+        variant: 'error',
+        title: 'Lojinha Miner',
+        message: res.error || 'Erro ao realizar compra.'
+      });
     }
   }, [user, gameState.usdc, gameUpgrades, handleReloadGameState]);
 
@@ -2041,13 +2072,21 @@ export default function App() {
     if (!box) return;
 
     if (!Number.isFinite(box.price) || box.price <= 0) {
-      alert("Esta caixa não está à venda (preço inválido). Contacte o suporte.");
+      setLuckyBoxNotice({
+        variant: 'error',
+        title: 'Caixas da Sorte',
+        message: 'Esta caixa não está à venda (preço inválido). Contacta o suporte.'
+      });
       return;
     }
 
     // Optimistic check
     if (gameState.usdc < box.price) {
-      alert("Saldo insuficiente!");
+      setLuckyBoxNotice({
+        variant: 'error',
+        title: 'Caixas da Sorte',
+        message: 'Saldo USDC insuficiente na reserva.'
+      });
       return;
     }
 
@@ -2064,11 +2103,18 @@ export default function App() {
     const res = await buyLootBox(user.email, boxId);
 
     if (res.ok) {
-      // Refresh logical state from server to ensure sync
-      handleReloadGameState();
-      alert("Caixa comprada com sucesso!");
+      await handleReloadGameState();
+      setLuckyBoxNotice({
+        variant: 'success',
+        title: 'Caixas da Sorte',
+        message: 'Caixa comprada com sucesso! O inventário de caixas foi actualizado.'
+      });
     } else {
-      alert(res.error || "Erro ao comprar caixa.");
+      setLuckyBoxNotice({
+        variant: 'error',
+        title: 'Caixas da Sorte',
+        message: res.error || 'Erro ao comprar a caixa.'
+      });
     }
   };
 
@@ -2115,7 +2161,11 @@ export default function App() {
       });
       return { rewards: res.rewards };
     } else {
-      alert(res.error || "Erro ao abrir caixa.");
+      setLuckyBoxNotice({
+        variant: 'error',
+        title: 'Caixas da Sorte',
+        message: res.error || 'Erro ao abrir a caixa.'
+      });
       return null;
     }
   };
@@ -2712,6 +2762,17 @@ export default function App() {
             />
           </Suspense>
         )}
+
+        <UiNoticeModal
+          notice={hardwareShopNotice}
+          onClose={() => setHardwareShopNotice(null)}
+          overlayZClassName="z-[140]"
+        />
+        <UiNoticeModal
+          notice={luckyBoxNotice}
+          onClose={() => setLuckyBoxNotice(null)}
+          overlayZClassName="z-[140]"
+        />
 
         {bulkBatteryNotice && (
           <div

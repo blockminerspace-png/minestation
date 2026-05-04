@@ -833,7 +833,13 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                         <div className="grid grid-cols-2 gap-3">
                             <div>
                                 <label className="text-xs uppercase text-slate-500 font-bold">Senha</label>
-                                <input type="text" value={editProfileForm.password} onChange={e => setEditProfileForm({ ...editProfileForm, password: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono" />
+                                <input
+                                    type="password"
+                                    autoComplete="new-password"
+                                    value={editProfileForm.password}
+                                    onChange={(e) => setEditProfileForm({ ...editProfileForm, password: e.target.value })}
+                                    className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono"
+                                />
                             </div>
                             <div>
                                 <label className="text-xs uppercase text-slate-500 font-bold">Carteira (Polygon)</label>
