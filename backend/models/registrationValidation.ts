@@ -54,7 +54,27 @@ const DISPOSABLE_EMAIL_DOMAINS = new Set([
 
 export type PolicyResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Limite do **formulário de novo cadastro** (UI / política pública).
+ * Login, recuperação e APIs de email usam o mesmo teto (`EMAIL_ADDRESS_MAX_LENGTH`).
+ */
+export const SIGNUP_EMAIL_MAX_TOTAL = 35;
+
+/** Endereço completo: mesmo teto que o cadastro (política do produto). */
+export const EMAIL_ADDRESS_MAX_LENGTH = 35;
+
+export const USERNAME_MIN = 3;
+export const USERNAME_MAX = 35;
+export const PASSWORD_MIN = 8;
+/** Política pública: senha entre 8 e 10 caracteres (cadastro, login, recuperação, perfil). */
+export const PASSWORD_MAX = 10;
+/** Código de indicação introduzido no registo (outro utilizador). */
+export const REFERRAL_CODE_MAX = 40;
+
 export function assertPublicSignupEmailAllowed(normalizedEmail: string): PolicyResult {
+  if (normalizedEmail.length > SIGNUP_EMAIL_MAX_TOTAL) {
+    return { ok: false, error: 'E-mail demasiado longo.' };
+  }
   const at = normalizedEmail.lastIndexOf('@');
   if (at < 1 || at === normalizedEmail.length - 1) {
     return { ok: false, error: 'E-mail inválido.' };
@@ -82,10 +102,7 @@ export function assertPublicSignupEmailAllowed(normalizedEmail: string): PolicyR
   };
 }
 
-const USERNAME_RE = /^[a-zA-Z0-9_-]{3,24}$/;
-const PASSWORD_MIN = 8;
-const PASSWORD_MAX = 128;
-const REFERRAL_CODE_MAX = 64;
+const USERNAME_RE = new RegExp(`^[a-zA-Z0-9_-]{${USERNAME_MIN},${USERNAME_MAX}}$`);
 
 export type UsernameValidation = { ok: true; username: string } | { ok: false; error: string };
 
@@ -95,8 +112,11 @@ export function validateSignupUsername(raw: unknown): UsernameValidation {
     return { ok: false, error: 'Nome de utilizador é obrigatório.' };
   }
   const trimmed = raw.trim();
-  if (trimmed.length < 3 || trimmed.length > 24) {
-    return { ok: false, error: 'O nome de utilizador deve ter entre 3 e 24 caracteres.' };
+  if (trimmed.length < USERNAME_MIN || trimmed.length > USERNAME_MAX) {
+    return {
+      ok: false,
+      error: `O nome de utilizador deve ter entre ${USERNAME_MIN} e ${USERNAME_MAX} caracteres.`
+    };
   }
   if (/[<>'"&`{}\[\]\\/;]/.test(trimmed) || /script/i.test(trimmed)) {
     return { ok: false, error: 'O nome de utilizador contém caracteres não permitidos.' };
@@ -121,18 +141,105 @@ export function validateSignupPassword(raw: unknown, required: boolean): Passwor
     return { ok: false, error: `A palavra-passe deve ter pelo menos ${PASSWORD_MIN} caracteres.` };
   }
   if (raw.length > PASSWORD_MAX) {
-    return { ok: false, error: 'Palavra-passe demasiado longa.' };
+    return {
+      ok: false,
+      error: `Palavra-passe demasiado longa (máximo ${PASSWORD_MAX} caracteres).`
+    };
   }
   return { ok: true };
 }
 
-export function sanitizeOptionalReferralCode(raw: unknown): string | null {
-  if (raw == null || raw === '') return null;
-  if (typeof raw !== 'string') return null;
+/** Login: email e senha preenchidos, com mensagens distintas. */
+export function validateLoginFieldsPresent(rawEmail: unknown, rawPassword: unknown): PolicyResult {
+  const emailStr = typeof rawEmail === 'string' ? rawEmail : '';
+  const passwordStr = typeof rawPassword === 'string' ? rawPassword : '';
+  const hasEmail = emailStr.trim().length > 0;
+  const hasPassword = passwordStr.length > 0;
+  if (!hasEmail && !hasPassword) {
+    return { ok: false, error: 'Indique o email e a palavra-passe.' };
+  }
+  if (!hasEmail) {
+    return { ok: false, error: 'Indique o email.' };
+  }
+  if (!hasPassword) {
+    return { ok: false, error: 'Indique a palavra-passe.' };
+  }
+  return { ok: true };
+}
+
+/** Login: apenas limites e forma básica (sem whitelist de domínio do cadastro). */
+export function validateLoginEmail(raw: unknown): PolicyResult {
+  if (raw == null || typeof raw !== 'string') {
+    return { ok: false, error: 'Indique o email.' };
+  }
+  const normalized = raw.trim().toLowerCase();
+  if (!normalized) {
+    return { ok: false, error: 'Indique o email.' };
+  }
+  if (normalized.length > EMAIL_ADDRESS_MAX_LENGTH) {
+    return { ok: false, error: `O email pode ter no máximo ${EMAIL_ADDRESS_MAX_LENGTH} caracteres.` };
+  }
+  const at = normalized.lastIndexOf('@');
+  if (at < 1 || at === normalized.length - 1) {
+    return { ok: false, error: 'Email inválido.' };
+  }
+  const local = normalized.slice(0, at);
+  const domain = normalized.slice(at + 1);
+  if (!local || local.length > 64 || !domain || domain.includes('..') || domain.startsWith('.') || domain.endsWith('.')) {
+    return { ok: false, error: 'Email inválido.' };
+  }
+  if (/[<>'"\\]/.test(local) || /[<>'"\\]/.test(domain)) {
+    return { ok: false, error: 'Email contém caracteres não permitidos.' };
+  }
+  return { ok: true };
+}
+
+/** Login: limites de tamanho antes do bcrypt (alinhado com cadastro). */
+export function validateLoginPassword(raw: unknown): PolicyResult {
+  if (raw == null || typeof raw !== 'string') {
+    return { ok: false, error: 'Indique a palavra-passe.' };
+  }
+  if (raw.length < PASSWORD_MIN) {
+    return {
+      ok: false,
+      error: `Palavra-passe demasiado curta (mínimo ${PASSWORD_MIN} caracteres).`
+    };
+  }
+  if (raw.length > PASSWORD_MAX) {
+    return {
+      ok: false,
+      error: `Palavra-passe demasiado longa (máximo ${PASSWORD_MAX} caracteres).`
+    };
+  }
+  return { ok: true };
+}
+
+export type ReferralCodeValidation = { ok: true; code: string | null } | { ok: false; error: string };
+
+export function validateOptionalReferralCodeInput(raw: unknown): ReferralCodeValidation {
+  if (raw == null || raw === '') return { ok: true, code: null };
+  if (typeof raw !== 'string') {
+    return { ok: false, error: 'Código de indicação inválido.' };
+  }
   const t = raw.trim();
-  if (!t || t.length > REFERRAL_CODE_MAX) return null;
-  if (/[<>'"&`\\]/.test(t)) return null;
-  return t;
+  if (!t) return { ok: true, code: null };
+  if (t.length > REFERRAL_CODE_MAX) {
+    return {
+      ok: false,
+      error: `O código de indicação pode ter no máximo ${REFERRAL_CODE_MAX} caracteres.`
+    };
+  }
+  if (/[<>'"&`\\]/.test(t)) {
+    return { ok: false, error: 'O código de indicação contém caracteres não permitidos.' };
+  }
+  return { ok: true, code: t };
+}
+
+/** Compatível com fluxos que ignoram código inválido em vez de falhar. */
+export function sanitizeOptionalReferralCode(raw: unknown): string | null {
+  const r = validateOptionalReferralCodeInput(raw);
+  if (!r.ok) return null;
+  return r.code;
 }
 
 export function validateOptionalPolygonWallet(raw: unknown): string | null | { error: string } {

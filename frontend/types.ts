@@ -292,6 +292,8 @@ export interface User {
   email: string;
   password?: string;
   isAdmin?: boolean;
+  /** Acesso total às rotas admin (API); operadores com só `adminPermissions` ficam restritos. */
+  isSuperAdmin?: boolean;
   polygonWallet?: string; // Web3 Wallet Address
   isBlocked?: boolean; // If true, user cannot login
   accessLevelId?: string; // Linked AccessLevel ID
@@ -443,6 +445,8 @@ export interface PromoCode {
   type: 'per_player' | 'global_once' | 'roleta_player_1x' | 'roleta_global_1x';
   isActive: boolean;
   createdAt: number;
+  /** Unix ms — após esta data o código não pode ser resgatado (opcional). */
+  expiresAt?: number;
   redemptionsCount?: number;
 }
 
@@ -500,10 +504,20 @@ export interface AccessLog {
   created_at: number;
 }
 
+/** Utilizador cuja conta coincide com o IP banido (registo ou histórico de login). */
+export interface BlacklistLinkedUser {
+  id: number;
+  username: string;
+  email: string;
+  /** `registro` = registration_ip; `hist_login` = user_history_ips */
+  vias: string[];
+}
+
 export interface BlacklistEntry {
   ip: string;
   reason?: string;
   added_at: number;
+  linkedUsers?: BlacklistLinkedUser[];
 }
 
 export interface SecurityStats {

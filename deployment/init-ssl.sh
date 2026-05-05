@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configurações
-DOMAIN="test.genesisdao.tech"
+DOMAIN="genesisdao.tech"
 EMAIL="blockminer.space@gmail.com" # Ajuste se necessário
 
 echo "### Iniciando solicitação de certificado SSL para $DOMAIN..."

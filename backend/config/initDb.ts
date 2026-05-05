@@ -14,6 +14,7 @@ export const initDb = async () => {
         email TEXT UNIQUE NOT NULL,
         password TEXT,
         is_admin INTEGER DEFAULT 0,
+        is_super_admin INTEGER NOT NULL DEFAULT 0,
         polygon_wallet TEXT,
         is_blocked INTEGER DEFAULT 0,
         access_level_id TEXT,
@@ -511,6 +512,10 @@ export const initDb = async () => {
           ALTER TABLE promo_codes ADD COLUMN admin_upgrade_id TEXT;
         END IF;
 
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='promo_codes' AND column_name='expires_at') THEN
+          ALTER TABLE promo_codes ADD COLUMN expires_at BIGINT;
+        END IF;
+
         ALTER TABLE promo_codes ALTER COLUMN loot_box_id DROP NOT NULL;
 
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='promo_code_redemptions' AND column_name='reward_granted') THEN
@@ -699,6 +704,14 @@ export const initDb = async () => {
       );
       CREATE INDEX IF NOT EXISTS idx_admin_access_logs_ip ON admin_access_logs(ip);
       CREATE INDEX IF NOT EXISTS idx_admin_access_logs_created_at ON admin_access_logs(created_at);
+
+      CREATE TABLE IF NOT EXISTS security_threat_scores (
+        ip TEXT PRIMARY KEY,
+        score INTEGER NOT NULL DEFAULT 0,
+        window_start BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_security_threat_scores_updated ON security_threat_scores(updated_at);
     `);
 
     await client.query(`
@@ -809,6 +822,15 @@ export const initDb = async () => {
         /* JSON inválido — não alterar */
       }
     }
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS wheel_paid_pending (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        won_item_id TEXT NOT NULL,
+        charged_usdc DOUBLE PRECISION NOT NULL DEFAULT 1,
+        rolled_at BIGINT NOT NULL
+      );
+    `);
 
     await client.query('COMMIT');
     console.log('PostgreSQL schema initialized successfully.');

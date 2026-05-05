@@ -50,7 +50,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const [totalUsersCount, setTotalUsersCount] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [limit] = useState(50);
-    const [subTab, setSubTab] = useState<'users' | 'access_levels' | 'admin_upgrades' | 'referrals' | 'ranking' | 'advanced_referrals'>('users');
+    const [subTab, setSubTab] = useState<'users' | 'admin_staff' | 'access_levels' | 'admin_upgrades' | 'referrals' | 'ranking' | 'advanced_referrals'>('users');
     const [sortBy, setSortBy] = useState<string>('creation');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
     const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -110,6 +110,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const [permissionsUser, setPermissionsUser] = useState<User | null>(null);
     const [adminPermsForm, setAdminPermsForm] = useState({
         isAdmin: false,
+        isSuperAdmin: false,
         permissions: [] as string[]
     });
     const [isSavingPerms, setIsSavingPerms] = useState(false);
@@ -136,7 +137,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const loadUsers = async (page: number, search: string) => {
         setIsLoadingUsers(true);
         try {
-            const data = await getUsers(page, limit, search, sortBy, sortDir, filterStatus, filterLevel);
+            const data = await getUsers(page, limit, search, sortBy, sortDir, filterStatus, filterLevel, subTab === 'admin_staff');
             setPaginatedUsers(data.users);
             setTotalPages(data.pages);
             setTotalUsersCount(data.total);
@@ -247,40 +248,44 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
 
     useEffect(() => {
         if (!jumpToUser || !onJumpToUserHandled) return;
-        if (!userMap || userMap.length === 0) return;
 
         const { userId, email, username } = jumpToUser;
         const em = email.trim().toLowerCase();
-        const row = userMap.find((u: { id?: unknown; email?: string }) => {
-            const rawId = u.id;
-            const id = typeof rawId === 'number' ? rawId : parseInt(String(rawId ?? ''), 10);
-            if (Number.isFinite(id) && id === userId) return true;
-            if (String(u.email || '').toLowerCase() === em) return true;
-            return false;
-        });
-
-        const u: User = row
-            ? {
-                  id: String(row.id),
-                  username: row.username || username,
-                  email: String(row.email || email).toLowerCase(),
-                  polygonWallet: row.polygonWallet,
-                  accessLevelId: 'normal',
-                  accessLevelIds: [],
-              }
-            : {
-                  id: String(userId),
-                  username: username || em.split('@')[0] || 'jogador',
-                  email: em,
-                  accessLevelId: 'normal',
-                  accessLevelIds: [],
-              };
+        if (!em) {
+            onJumpToUserHandled();
+            return;
+        }
 
         setSubTab('users');
         let cancelled = false;
         void (async () => {
             try {
-                await applyUserToEditor(u);
+                /** Mesma linha que a lista/pesquisa de Utilizadores — o mapa leve não traz níveis de acesso nem flags. */
+                const data = await getUsers(1, 50, em, 'creation', 'asc', 'all', 'all');
+                if (cancelled) return;
+                const exactEmail = data.users.filter((u) => String(u.email || '').trim().toLowerCase() === em);
+                const byId =
+                    Number.isFinite(userId) && userId > 0
+                        ? data.users.find((u) => {
+                              const raw = u.id as unknown;
+                              const id = typeof raw === 'number' ? raw : parseInt(String(raw ?? ''), 10);
+                              return Number.isFinite(id) && id === userId;
+                          })
+                        : undefined;
+                const full = exactEmail.length > 0 ? exactEmail[0] : byId;
+                if (!full) {
+                    alert(
+                        'Não foi encontrado este jogador na lista de utilizadores (dados incompletos ou email do ticket diferente do registo). Abre o perfil pela pesquisa em Utilizadores.'
+                    );
+                    return;
+                }
+                const normalized: User = {
+                    ...full,
+                    id: full.id != null && String(full.id).trim() !== '' ? String(full.id) : String(userId > 0 ? userId : ''),
+                    username: full.username || username || em.split('@')[0] || 'jogador',
+                    email: String(full.email || em).toLowerCase(),
+                };
+                await applyUserToEditor(normalized);
             } catch (e) {
                 console.error('[AdminUsers] jumpToUser failed', e);
                 alert('Não foi possível abrir o perfil deste jogador.');
@@ -291,7 +296,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         return () => {
             cancelled = true;
         };
-    }, [jumpToUser, userMap, onJumpToUserHandled, applyUserToEditor]);
+    }, [jumpToUser, onJumpToUserHandled, applyUserToEditor]);
 
     if (!userMap || userMap.length === 0) {
         console.log('[AdminUsers] Waiting for data...', { userMap: !!userMap, userMapLength: userMap?.length });
@@ -305,9 +310,15 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     }
 
 
+    /** Conceder/editar/remover admin — só super (API: POST /api/admin/update-permissions é rota `super`). */
+    const canManageAdminAccounts = !!user?.isSuperAdmin;
+
+    /** Email/senha de outro admin: só super (alinhado com PUT /api/user). */
+    const actorIsSuperForCreds = !!user?.isSuperAdmin;
+
     const isAllowed = (perm: string) => {
         if (!user) return false;
-        if (user.email.toLowerCase() === 'kellyreg@gmail.com') return true; // Super admin
+        if (user.isSuperAdmin) return true;
         if (user.adminPermissions === null || user.adminPermissions === undefined) return true; // Default to allow if not explicitly restricted
         if (!Array.isArray(user.adminPermissions)) return true; // If not array, default to allow
         return !!user.isAdmin && user.adminPermissions.includes(perm);
@@ -329,6 +340,21 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         if (!newEmail) {
             alert('Email não pode ficar vazio.');
             return;
+        }
+
+        const editingOtherAdmin =
+            !!selectedUser.isAdmin &&
+            String((selectedUser.email || '').trim().toLowerCase()) !== String((user?.email || '').trim().toLowerCase());
+        if (editingOtherAdmin && !actorIsSuperForCreds) {
+            const origEmail = (selectedUser.email || '').trim().toLowerCase();
+            if (newEmail.toLowerCase() !== origEmail) {
+                alert('Apenas super administradores podem alterar o email de outras contas administrador.');
+                return;
+            }
+            if (editProfileForm.password && editProfileForm.password.trim().length > 0) {
+                alert('Apenas super administradores podem alterar a senha de outras contas administrador.');
+                return;
+            }
         }
 
         const payload: User = {
@@ -380,6 +406,14 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
 
     const handleDeleteUser = async () => {
         if (!selectedUser) return;
+        if (
+            selectedUser.isAdmin &&
+            !canManageAdminAccounts &&
+            selectedUserDbId(selectedUser) !== selectedUserDbId(user ?? null)
+        ) {
+            alert('Apenas super administradores podem excluir outras contas administrador.');
+            return;
+        }
         const ok = window.confirm(`Tem certeza que deseja excluir o usuário ${selectedUser.email}? Esta ação remove todos os dados vinculados.`);
         if (!ok) return;
         const res = await deleteUser(selectedUser.email);
@@ -448,11 +482,27 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         }
     };
 
+    const normalizeAdminPermissionsForForm = (p: unknown): string[] => {
+        if (p == null) return [];
+        if (Array.isArray(p)) return p.filter((x): x is string => typeof x === 'string');
+        if (typeof p === 'object') {
+            return Object.entries(p as Record<string, unknown>)
+                .filter(([, v]) => v === true || v === 1)
+                .map(([k]) => k);
+        }
+        return [];
+    };
+
     const handleOpenPermissions = (u: User) => {
+        if (!canManageAdminAccounts) {
+            window.alert('Apenas super administradores podem conceder ou alterar contas de administrador.');
+            return;
+        }
         setPermissionsUser(u);
         setAdminPermsForm({
             isAdmin: !!u.isAdmin,
-            permissions: u.adminPermissions || []
+            isSuperAdmin: !!u.isSuperAdmin,
+            permissions: normalizeAdminPermissionsForForm(u.adminPermissions)
         });
         setShowPermissionsModal(true);
     };
@@ -460,7 +510,12 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const handleSavePermissions = async () => {
         if (!permissionsUser) return;
         setIsSavingPerms(true);
-        const res = await updateAdminPermissions(permissionsUser.email, adminPermsForm.isAdmin, adminPermsForm.permissions);
+        const res = await updateAdminPermissions(
+            permissionsUser.email,
+            adminPermsForm.isAdmin,
+            adminPermsForm.permissions,
+            adminPermsForm.isAdmin ? adminPermsForm.isSuperAdmin : false
+        );
         setIsSavingPerms(false);
 
         if (res.ok) {
@@ -760,6 +815,16 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
 
 
     if (selectedUser) {
+        const lockAdminEmailPassword =
+            !!selectedUser.isAdmin &&
+            !actorIsSuperForCreds &&
+            String((selectedUser.email || '').trim().toLowerCase()) !== String((user?.email || '').trim().toLowerCase());
+
+        const canDeleteSelectedUser =
+            !selectedUser.isAdmin ||
+            canManageAdminAccounts ||
+            selectedUserDbId(selectedUser) === selectedUserDbId(user ?? null);
+
         return (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-in fade-in slide-in-from-right-4">
                 <div className="lg:col-span-2">
@@ -779,8 +844,19 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                         ) : (
                             <button onClick={handleToggleBlock} className="bg-red-600 text-white px-3 py-1 rounded text-xs font-bold">BLOQUEAR</button>
                         )}
-                        <button onClick={handleDeleteUser} className="bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1 ml-2"><Trash2 size={12} /> EXCLUIR</button>
+                        {canDeleteSelectedUser ? (
+                            <button onClick={handleDeleteUser} className="bg-red-700 hover:bg-red-600 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1 ml-2"><Trash2 size={12} /> EXCLUIR</button>
+                        ) : (
+                            <span className="text-[10px] text-slate-500 font-bold ml-2 max-w-[140px] text-right leading-tight">
+                                Exclusão de admin: só super
+                            </span>
+                        )}
                     </div>
+                    {lockAdminEmailPassword && (
+                        <p className="text-xs text-amber-500/90 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2 mb-3">
+                            Esta conta é administrador: apenas um <strong>super administrador</strong> pode alterar o email ou a senha aqui. Podes editar níveis, username e carteira.
+                        </p>
+                    )}
                     <div className="space-y-3">
                         <div className="grid grid-cols-2 gap-3">
                             <div className="col-span-2">
@@ -828,7 +904,13 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                         </div>
                         <div>
                             <label className="text-xs uppercase text-slate-500 font-bold">Email</label>
-                            <input type="text" value={editProfileForm.email} onChange={e => setEditProfileForm({ ...editProfileForm, email: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" />
+                            <input
+                                type="text"
+                                readOnly={lockAdminEmailPassword}
+                                value={editProfileForm.email}
+                                onChange={e => setEditProfileForm({ ...editProfileForm, email: e.target.value })}
+                                className={`w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm ${lockAdminEmailPassword ? 'opacity-60 cursor-not-allowed' : ''}`}
+                            />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div>
@@ -836,9 +918,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                 <input
                                     type="password"
                                     autoComplete="new-password"
+                                    readOnly={lockAdminEmailPassword}
                                     value={editProfileForm.password}
                                     onChange={(e) => setEditProfileForm({ ...editProfileForm, password: e.target.value })}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono"
+                                    placeholder={lockAdminEmailPassword ? '—' : 'Nova senha (opcional)'}
+                                    className={`w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono ${lockAdminEmailPassword ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 />
                             </div>
                             <div>
@@ -1292,8 +1376,16 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         <>
             <div className="animate-in fade-in slide-in-from-right-4">
                 <div className="flex gap-2 mb-4 border-b border-slate-700 pb-2">
-                    <button onClick={() => setSubTab('users')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'users' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
+                    <button onClick={() => { setCurrentPage(1); setSubTab('users'); }} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'users' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                         Gestão de Usuários
+                    </button>
+                    <button
+                        onClick={() => { setCurrentPage(1); setSubTab('admin_staff'); }}
+                        className={`px-3 py-2 text-sm font-bold uppercase rounded inline-flex items-center gap-1.5 ${subTab === 'admin_staff' ? 'bg-red-700 text-white' : 'text-slate-400 hover:text-white'}`}
+                        title="Contas com acesso ao painel admin (operador ou super)"
+                    >
+                        <Shield size={14} className={subTab === 'admin_staff' ? 'text-white' : 'text-red-400'} />
+                        Admins
                     </button>
                     <button onClick={() => setSubTab('access_levels')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'access_levels' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                         Níveis de Acesso
@@ -1312,11 +1404,19 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                     </button>
                 </div>
 
-                {subTab === 'users' && isAllowed('users') && (
+                {(subTab === 'users' || subTab === 'admin_staff') && isAllowed('users') && (
                     <div className="bg-slate-800 border border-slate-700 rounded-xl p-6">
                         <div className="flex justify-between items-center mb-6">
                             <h3 className="text-white font-bold flex items-center gap-2">
-                                <Users size={20} className="text-amber-500" /> Lista de Usuários
+                                {subTab === 'admin_staff' ? (
+                                    <>
+                                        <Shield size={20} className="text-red-500" /> Administradores
+                                    </>
+                                ) : (
+                                    <>
+                                        <Users size={20} className="text-amber-500" /> Lista de Usuários
+                                    </>
+                                )}
                             </h3>
                             <div className="flex items-center gap-3">
                                 {selectedEmails.size > 0 && (
@@ -1413,6 +1513,9 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                         <th className="px-4 py-3 cursor-pointer hover:text-white" onClick={() => handleSort('accessLevel')}>
                                             <div className="flex items-center gap-1">Nível {sortConfig.key === 'accessLevel' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                         </th>
+                                        {subTab === 'admin_staff' && (
+                                            <th className="px-4 py-3 text-slate-500 uppercase text-xs font-bold">Função</th>
+                                        )}
                                         <th className="px-4 py-3 cursor-pointer hover:text-white" onClick={() => handleSort('username')}>
                                             <div className="flex items-center gap-1">Username {sortConfig.key === 'username' && (sortConfig.direction === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />)}</div>
                                         </th>
@@ -1448,6 +1551,15 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                                 )}
                                             </td>
                                             <td className="px-4 py-3 text-slate-300">{accessLevels.find(l => l.id === u.accessLevelId)?.name || 'N/A'}</td>
+                                            {subTab === 'admin_staff' && (
+                                                <td className="px-4 py-3">
+                                                    {u.isSuperAdmin ? (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-1 rounded border border-amber-600/60 text-amber-300 bg-amber-950/40">Super admin</span>
+                                                    ) : (
+                                                        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase px-2 py-1 rounded border border-red-800/60 text-red-300 bg-red-950/30">Admin</span>
+                                                    )}
+                                                </td>
+                                            )}
                                             <td className="px-4 py-3 font-bold text-white">{u.username}</td>
                                             <td className="px-4 py-3 text-slate-400">{u.email}</td>
                                             <td className="px-4 py-3 text-right">
@@ -1478,13 +1590,21 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                                         <LogIn size={14} />
                                                     </button>
                                                 )}
+                                                {canManageAdminAccounts && (
                                                 <button
                                                     onClick={() => handleOpenPermissions(u)}
                                                     className={`px-3 py-1 rounded text-xs font-bold inline-flex items-center justify-center ml-2 border transition-colors ${u.isAdmin ? 'bg-red-600/20 border-red-600 text-red-500 hover:bg-red-600/30' : 'bg-slate-700 hover:bg-slate-600 border-slate-600 text-white'}`}
-                                                    title="Acesso Admin"
+                                                    title={
+                                                        u.isAdmin
+                                                            ? u.isSuperAdmin
+                                                                ? 'Super admin — editar ou remover acesso'
+                                                                : 'Operador admin — editar separadores ou remover acesso'
+                                                            : 'Conceder acesso admin'
+                                                    }
                                                 >
                                                     <Shield size={14} className={u.isAdmin ? 'animate-pulse' : ''} />
                                                 </button>
+                                                )}
                                             </td>
                                         </tr>
                                     ))}
@@ -1495,7 +1615,8 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                         {/* Pagination Controls */}
                         <div className="flex justify-between items-center mt-6 pt-6 border-t border-slate-700">
                             <div className="text-sm text-slate-400">
-                                Mostrando <span className="text-white font-bold">{paginatedUsers.length}</span> de <span className="text-white font-bold">{totalUsersCount}</span> usuários
+                                Mostrando <span className="text-white font-bold">{paginatedUsers.length}</span> de <span className="text-white font-bold">{totalUsersCount}</span>{' '}
+                                {subTab === 'admin_staff' ? 'administradores' : 'usuários'}
                             </div>
                             <div className="flex items-center gap-2">
                                 <button
@@ -2265,12 +2386,36 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                     <div className="text-xs text-slate-500 uppercase tracking-wider">Habilitar funções de backend</div>
                                 </div>
                                 <button
-                                    onClick={() => setAdminPermsForm({ ...adminPermsForm, isAdmin: !adminPermsForm.isAdmin })}
+                                    onClick={() => {
+                                        const next = !adminPermsForm.isAdmin;
+                                        setAdminPermsForm({
+                                            ...adminPermsForm,
+                                            isAdmin: next,
+                                            isSuperAdmin: next ? adminPermsForm.isSuperAdmin : false
+                                        });
+                                    }}
                                     className={`w-14 h-7 rounded-full relative transition-colors duration-300 ${adminPermsForm.isAdmin ? 'bg-red-600' : 'bg-slate-700'}`}
                                 >
                                     <div className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all duration-300 ${adminPermsForm.isAdmin ? 'left-8' : 'left-1'}`} />
                                 </button>
                             </div>
+
+                            {adminPermsForm.isAdmin && (
+                                <div className="flex items-center justify-between bg-slate-900/50 p-4 rounded-xl border border-amber-900/40">
+                                    <div>
+                                        <div className="font-bold text-white">Super administrador</div>
+                                        <div className="text-xs text-slate-500 uppercase tracking-wider">Acesso total às rotas da API (ignora mapa de separadores)</div>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        onClick={() => setAdminPermsForm({ ...adminPermsForm, isSuperAdmin: !adminPermsForm.isSuperAdmin })}
+                                        className={`w-14 h-7 rounded-full relative transition-colors duration-300 ${adminPermsForm.isSuperAdmin ? 'bg-amber-600' : 'bg-slate-700'}`}
+                                        title="Apenas contas com este modo podem alterar permissões de outros admins e rotas sensíveis"
+                                    >
+                                        <div className={`absolute top-1 w-5 h-5 rounded-full bg-white transition-all duration-300 ${adminPermsForm.isSuperAdmin ? 'left-8' : 'left-1'}`} />
+                                    </button>
+                                </div>
+                            )}
 
                             {adminPermsForm.isAdmin && (
                                 <div className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
@@ -2295,6 +2440,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                             { id: 'games', label: 'Mini-Games' },
                                             { id: 'security', label: 'Segurança (multi-contas, IPs, atividade no jogo)' },
                                             { id: 'support', label: 'Suporte (tickets dos jogadores)' },
+                                            { id: 'partners', label: 'Parceiros YouTube (aprovar vídeos)' },
                                             { id: 'backup', label: 'Backups e Database' },
                                         ].map((p: any) => (
                                             <button

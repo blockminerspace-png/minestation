@@ -5,10 +5,12 @@ import {
   assertPublicSignupEmailAllowed,
   getConflictingUserIdByEmail,
   getConflictingUserIdByUsername,
-  sanitizeOptionalReferralCode,
+  EMAIL_ADDRESS_MAX_LENGTH,
+  SIGNUP_EMAIL_MAX_TOTAL,
   validateAccessLevelIdsArray,
   validateOptionalAccessLevelId,
   validateOptionalPolygonWallet,
+  validateOptionalReferralCodeInput,
   validateSignupPassword,
   validateSignupUsername
 } from '../models/registrationValidation.js';
@@ -70,7 +72,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         }
 
         if (normalizedEmail.length > 0) {
-          if (!normalizedEmail.includes('@') || normalizedEmail.length > 254) {
+          if (!normalizedEmail.includes('@') || normalizedEmail.length > EMAIL_ADDRESS_MAX_LENGTH) {
             return res.status(400).json({ error: 'E-mail inválido.' });
           }
           const emailTaken = await getConflictingUserIdByEmail(pool, normalizedEmail, uid);
@@ -94,7 +96,13 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         }
         accessLevelForDb = typeof al === 'string' ? al : u.accessLevelId ?? null;
 
-        referredByForDb = sanitizeOptionalReferralCode(u.referredBy);
+        {
+          const ref = validateOptionalReferralCodeInput(u.referredBy);
+          if (!ref.ok) {
+            return res.status(400).json({ error: ref.error });
+          }
+          referredByForDb = ref.code;
+        }
 
         if (Array.isArray(u.accessLevelIds)) {
           const av = validateAccessLevelIdsArray(u.accessLevelIds);
@@ -106,7 +114,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         if (!u.email) {
           return res.status(400).json({ error: 'Email é obrigatório para o registro.' });
         }
-        if (!normalizedEmail.includes('@') || normalizedEmail.length > 254) {
+        if (!normalizedEmail.includes('@') || normalizedEmail.length > SIGNUP_EMAIL_MAX_TOTAL) {
           return res.status(400).json({ error: 'E-mail inválido.' });
         }
 
@@ -153,7 +161,13 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         }
         accessLevelForDb = typeof al === 'string' ? al : null;
 
-        referredByForDb = sanitizeOptionalReferralCode(u.referredBy);
+        {
+          const ref = validateOptionalReferralCodeInput(u.referredBy);
+          if (!ref.ok) {
+            return res.status(400).json({ error: ref.error });
+          }
+          referredByForDb = ref.code;
+        }
 
         if (!existing) {
           const ev = assertPublicSignupEmailAllowed(normalizedEmail);
@@ -186,9 +200,26 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         usernameForDb = nickname;
       }
 
-      await client.query('BEGIN');
+      let allowAccessLevelFromBody = !req.userId;
+      if (req.userId) {
+        const gateRes = await pool.query('SELECT COALESCE(is_admin,0) AS a FROM users WHERE id = $1', [req.userId]);
+        allowAccessLevelFromBody = !!gateRes.rows[0]?.a;
+      }
+      if (!allowAccessLevelFromBody) {
+        const curLv = await pool.query('SELECT access_level_id FROM users WHERE id = $1', [uid]);
+        accessLevelForDb = curLv.rows[0]?.access_level_id ?? null;
+      }
 
       const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
+      if (hasPassword) {
+        const pv = validateSignupPassword(u.password, true);
+        if (!pv.ok) {
+          return res.status(400).json({ error: pv.error });
+        }
+      }
+
+      await client.query('BEGIN');
+
       if (hasPassword) {
         const hashedPassword = await bcrypt.hash(u.password as string, 10);
         await client.query(
@@ -210,14 +241,14 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         );
       }
 
-      if (accessLevelForDb) {
+      if (allowAccessLevelFromBody && accessLevelForDb) {
         await client.query(
           'INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING',
           [uid, accessLevelForDb, Date.now()]
         );
       }
 
-      if (Array.isArray(u.accessLevelIds)) {
+      if (allowAccessLevelFromBody && Array.isArray(u.accessLevelIds)) {
         const av = validateAccessLevelIdsArray(u.accessLevelIds);
         if (!av.ok) {
           throw new Error(av.error);

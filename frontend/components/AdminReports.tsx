@@ -1,12 +1,16 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { RefreshCw, ExternalLink, Eye, Copy, ArrowRight, Filter, ChevronLeft, ChevronRight, Calendar, User, Mail, Pencil, Download, Search, X as CloseIcon, Calculator, LayoutList, Wallet, Plus, Trash2, Save, Settings } from 'lucide-react';
 import { PlayerCalculator } from './PlayerCalculator';
 import { User as UserType, MiningCoin, Upgrade } from '../types';
-import { getWalletLabels, saveWalletLabel, getMiningCoins, getUpgrades, saveMiningCoin, deleteMiningCoin, getAdminTreasuryTokenTxs } from '../services/api';
+import { getWalletLabels, saveWalletLabel, getMiningCoins, getUpgrades, saveMiningCoin, deleteMiningCoin, getAdminTreasuryTokenTxs, getWeb3Settings } from '../services/api';
 
 import { AdminManualWithdrawals } from './AdminManualWithdrawals';
 
-const TREASURY_WALLET = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
+/** Fallback se `web3_deposit_wallet` estiver vazio nas settings */
+const TREASURY_WALLET_FALLBACK = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
+const TREASURY_WALLET_LEGACY = '0x2c386Bf962339B497d5EC6A0EdB255D30004F3B6';
+/** Carteira antiga — fase lançamento (USDC Polygon). */
+const TREASURY_WALLET_LEGACY_LAUNCH = '0x33d2406707e5e4b314d15784e73bb08f0c46db42';
 
 interface Transaction {
     hash: string;
@@ -22,17 +26,64 @@ interface Transaction {
 
 interface AdminReportsProps {
     users?: UserType[];
+    /** Operador admin (não super): só Transações USDC; sem calculadora nem saques manuais. */
+    currentUser?: UserType | null;
 }
 
-export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
+/** Início do dia local (YYYY-MM-DD) em segundos UNIX */
+function ymdStartOfDaySeconds(ymd: string): number | null {
+    if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+    const [y, m, d] = ymd.split('-').map(Number);
+    if (!y || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return Math.floor(new Date(y, m - 1, d, 0, 0, 0, 0).getTime() / 1000);
+}
+
+/** Fim do dia local (YYYY-MM-DD) em segundos UNIX */
+function ymdEndOfDaySeconds(ymd: string): number | null {
+    if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+    const [y, m, d] = ymd.split('-').map(Number);
+    if (!y || m < 1 || m > 12 || d < 1 || d > 31) return null;
+    return Math.floor(new Date(y, m - 1, d, 23, 59, 59, 999).getTime() / 1000);
+}
+
+const EXPORT_PAGE_SIZE = 1000;
+const MAX_EXPORT_API_PAGES = 80;
+const EXPORT_PAGE_DELAY_MS = 120;
+
+export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentUser = null }) => {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(false);
+    const [csvExportBusy, setCsvExportBusy] = useState<'none' | 'full' | 'filtered'>('none');
     const [error, setError] = useState<string | null>(null);
     const [page, setPage] = useState(1);
     const [limit] = useState(20);
     const [filterPeriod, setFilterPeriod] = useState<'all' | 'day' | 'year'>('all');
     const [searchTerm, setSearchTerm] = useState(() => localStorage.getItem('adminReportsSearchTerm') || '');
     const [subtab, setSubtab] = useState<'transactions' | 'calculator' | 'withdrawals'>(() => (localStorage.getItem('adminReportsSubtab') as any) || 'transactions');
+
+    const reportsOperatorRestricted = !!(currentUser?.isAdmin && !currentUser?.isSuperAdmin);
+
+    useEffect(() => {
+        if (!reportsOperatorRestricted) return;
+        if (subtab === 'calculator' || subtab === 'withdrawals') {
+            setSubtab('transactions');
+            localStorage.setItem('adminReportsSubtab', 'transactions');
+        }
+    }, [reportsOperatorRestricted, subtab]);
+    const [treasurySource, setTreasurySource] = useState<'registered' | 'legacy' | 'legacy_launch'>(() => {
+        const s = localStorage.getItem('adminReportsTreasurySource');
+        if (s === 'legacy') return 'legacy';
+        if (s === 'legacy_launch') return 'legacy_launch';
+        return 'registered';
+    });
+    /** Carteira de depósito nas settings Web3 (Polygon USDC); fallback só se não houver cadastro válido */
+    const [registeredTreasury, setRegisteredTreasury] = useState<string>(TREASURY_WALLET_FALLBACK);
+    const treasuryWallet =
+        treasurySource === 'legacy'
+            ? TREASURY_WALLET_LEGACY
+            : treasurySource === 'legacy_launch'
+              ? TREASURY_WALLET_LEGACY_LAUNCH
+              : registeredTreasury;
 
     const [miningCoins, setMiningCoins] = useState<MiningCoin[]>([]);
     const [upgrades, setUpgrades] = useState<Upgrade[]>([]);
@@ -56,7 +107,8 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
 
     // Filters & Toggles
     const [showEmail, setShowEmail] = useState(false);
-    const [startDate, setStartDate] = useState(() => localStorage.getItem('adminReportsStartDate') || '2025-12-16'); // Default set to start of data
+    const [startDate, setStartDate] = useState(() => localStorage.getItem('adminReportsStartDate') || '2025-12-16');
+    const [endDate, setEndDate] = useState(() => localStorage.getItem('adminReportsEndDate') || '');
 
     // Wallet Labels
     const [walletLabels, setWalletLabels] = useState<Record<string, string>>({});
@@ -75,10 +127,19 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
     useEffect(() => {
         loadLabels();
         loadCalcData();
+        void getWeb3Settings().then((s) => {
+            const w = s?.depositWallet?.trim();
+            if (w && /^0x[a-fA-F0-9]{40}$/.test(w)) {
+                setRegisteredTreasury(w);
+            } else {
+                setRegisteredTreasury(TREASURY_WALLET_FALLBACK);
+            }
+        });
     }, []);
 
     const handleSaveCoin = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (reportsOperatorRestricted) return;
         if (!editingCoin || !editingCoin.name || !editingCoin.symbol) return;
 
         setIsSavingCoin(true);
@@ -99,6 +160,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
     };
 
     const handleDeleteCoin = async (id: string) => {
+        if (reportsOperatorRestricted) return;
         if (!window.confirm("Tem certeza que deseja excluir esta moeda? Esta ação não pode ser desfeita.")) return;
         try {
             const res = await deleteMiningCoin(id);
@@ -114,6 +176,10 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
 
 
     const handleEditLabel = async (address: string) => {
+        if (reportsOperatorRestricted) {
+            alert('Apenas super administradores podem editar rótulos de carteiras (configuração Web3).');
+            return;
+        }
         const current = walletLabels[address.toLowerCase()] || '';
         const newLabel = window.prompt(`Nomear carteira ${address}:`, current);
         if (newLabel !== null && newLabel !== current) {
@@ -122,11 +188,11 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
         }
     };
 
-    const fetchTransactions = async () => {
+    const fetchTransactions = useCallback(async () => {
         setLoading(true);
         setError(null);
         try {
-            const raw = (await getAdminTreasuryTokenTxs(page, limit)) as Record<string, unknown>;
+            const raw = (await getAdminTreasuryTokenTxs(page, limit, treasuryWallet)) as Record<string, unknown>;
             const statusVal = raw?.status != null ? String(raw.status) : '';
             const message = typeof raw?.message === 'string' ? raw.message : '';
             const result = raw?.result;
@@ -161,11 +227,11 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, limit, treasuryWallet]);
 
     useEffect(() => {
-        fetchTransactions();
-    }, [page]);
+        void fetchTransactions();
+    }, [fetchTransactions]);
 
     // Helpers
     const truncateMiddle = (text: string, startChars: number = 6, endChars: number = 4) => {
@@ -184,37 +250,43 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
         return users.find(u => u.polygonWallet?.toLowerCase() === normalizedAddr);
     };
 
+    const applyClientTxFilters = useCallback(
+        (txs: Transaction[]) => {
+            let out = txs;
+            const startTs = ymdStartOfDaySeconds(startDate);
+            if (startTs != null) {
+                out = out.filter(tx => parseInt(tx.timeStamp, 10) >= startTs);
+            }
+            const endTs = ymdEndOfDaySeconds(endDate);
+            if (endTs != null) {
+                out = out.filter(tx => parseInt(tx.timeStamp, 10) <= endTs);
+            }
+            if (searchTerm.trim()) {
+                const term = searchTerm.toLowerCase().trim();
+                out = out.filter(tx => {
+                    const isIncoming = tx.to.toLowerCase() === treasuryWallet.toLowerCase();
+                    const counterPartyAddr = isIncoming ? tx.from : tx.to;
+                    const userMatch = users.find(u => u.polygonWallet?.toLowerCase() === counterPartyAddr.toLowerCase());
+                    const label = walletLabels[counterPartyAddr.toLowerCase()] || '';
+                    return (
+                        (userMatch && userMatch.username.toLowerCase().includes(term)) ||
+                        (userMatch && userMatch.email.toLowerCase().includes(term)) ||
+                        counterPartyAddr.toLowerCase().includes(term) ||
+                        label.toLowerCase().includes(term) ||
+                        tx.hash.toLowerCase().includes(term)
+                    );
+                });
+            }
+            return out;
+        },
+        [startDate, endDate, searchTerm, users, walletLabels, treasuryWallet]
+    );
+
     // Derived Data
-    const filteredTransactions = useMemo(() => {
-        let txs = transactions;
-
-        // Date Filter
-        if (startDate) {
-            const startTimestamp = new Date(startDate).getTime() / 1000;
-            txs = txs.filter(tx => parseInt(tx.timeStamp) >= startTimestamp);
-        }
-
-        // Search Filter
-        if (searchTerm.trim()) {
-            const term = searchTerm.toLowerCase().trim();
-            txs = txs.filter(tx => {
-                const isIncoming = tx.to.toLowerCase() === TREASURY_WALLET.toLowerCase();
-                const counterPartyAddr = isIncoming ? tx.from : tx.to;
-                const user = resolveUser(counterPartyAddr);
-                const label = walletLabels[counterPartyAddr.toLowerCase()] || '';
-
-                return (
-                    (user && user.username.toLowerCase().includes(term)) ||
-                    (user && user.email.toLowerCase().includes(term)) ||
-                    counterPartyAddr.toLowerCase().includes(term) ||
-                    label.toLowerCase().includes(term) ||
-                    tx.hash.toLowerCase().includes(term)
-                );
-            });
-        }
-
-        return txs;
-    }, [transactions, startDate, searchTerm, users, walletLabels]);
+    const filteredTransactions = useMemo(
+        () => applyClientTxFilters(transactions),
+        [transactions, applyClientTxFilters]
+    );
 
     const getGroupedTransactions = () => {
         if (filterPeriod === 'all') return { 'Todas as Transações': filteredTransactions };
@@ -232,51 +304,101 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
         return groups;
     };
 
-    const exportToCSV = () => {
-        if (filteredTransactions.length === 0) return;
+    const buildCsvFromTransactions = useCallback(
+        (txs: Transaction[]) => {
+            const headers = ['Data', 'Hash', 'Usuario', 'Email', 'Carteira', 'Label', 'Tipo', 'Valor (USDC)'];
+            const rows = txs.map(tx => {
+                const isIncoming = tx.to.toLowerCase() === treasuryWallet.toLowerCase();
+                const counterPartyAddr = isIncoming ? tx.from : tx.to;
+                const userMatch = users.find(u => u.polygonWallet?.toLowerCase() === counterPartyAddr.toLowerCase());
+                const label = walletLabels[counterPartyAddr.toLowerCase()] || '';
+                const amount = parseFloat(tx.value) / 1000000;
+                return [
+                    formatDate(tx.timeStamp),
+                    tx.hash,
+                    userMatch ? userMatch.username : 'Desconhecido',
+                    userMatch ? userMatch.email : '',
+                    counterPartyAddr,
+                    label,
+                    isIncoming ? 'ENTRADA' : 'SAIDA',
+                    amount.toFixed(2)
+                ];
+            });
+            return [headers.join(','), ...rows.map(row => row.map(field => `"${String(field).replace(/"/g, '""')}"`).join(','))].join('\n');
+        },
+        [treasuryWallet, walletLabels, users]
+    );
 
-        const headers = ['Data', 'Hash', 'Usuario', 'Email', 'Carteira', 'Label', 'Tipo', 'Valor (USDC)'];
-
-        const rows = filteredTransactions.map(tx => {
-            const isIncoming = tx.to.toLowerCase() === TREASURY_WALLET.toLowerCase();
-            const counterPartyAddr = isIncoming ? tx.from : tx.to;
-            const user = resolveUser(counterPartyAddr);
-            const label = walletLabels[counterPartyAddr.toLowerCase()] || '';
-            const amount = parseFloat(tx.value) / 1000000;
-
-            return [
-                formatDate(tx.timeStamp),
-                tx.hash,
-                user ? user.username : 'Desconhecido',
-                user ? user.email : '',
-                counterPartyAddr,
-                label,
-                isIncoming ? 'ENTRADA' : 'SAIDA',
-                amount.toFixed(2)
-            ];
-        });
-
-        const csvContent = [
-            headers.join(','),
-            ...rows.map(row => row.map(field => `"${field}"`).join(','))
-        ].join('\n');
-
+    const triggerCsvDownload = (csvContent: string, filenameBase: string) => {
         const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
         link.setAttribute('href', url);
-        link.setAttribute('download', `transacoes_usdc_${new Date().toISOString().split('T')[0]}.csv`);
+        link.setAttribute('download', `${filenameBase}_${new Date().toISOString().split('T')[0]}.csv`);
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
+        URL.revokeObjectURL(url);
     };
+
+    const fetchAllTreasuryPagesForExport = useCallback(async (): Promise<Transaction[]> => {
+        const merged: Transaction[] = [];
+        const seen = new Set<string>();
+        for (let p = 1; p <= MAX_EXPORT_API_PAGES; p++) {
+            const raw = (await getAdminTreasuryTokenTxs(p, EXPORT_PAGE_SIZE, treasuryWallet)) as Record<string, unknown>;
+            const st = raw?.status != null ? String(raw.status) : '';
+            if (st !== '1' || !Array.isArray(raw.result)) break;
+            const batch = raw.result as Transaction[];
+            for (const tx of batch) {
+                const h = (tx.hash || '').toLowerCase();
+                if (h && seen.has(h)) continue;
+                if (h) seen.add(h);
+                merged.push(tx);
+            }
+            if (batch.length < EXPORT_PAGE_SIZE) break;
+            if (p < MAX_EXPORT_API_PAGES) {
+                await new Promise(r => setTimeout(r, EXPORT_PAGE_DELAY_MS));
+            }
+        }
+        return merged;
+    }, [treasuryWallet]);
+
+    const csvExportLockRef = useRef(false);
+    const handleExportCsv = useCallback(
+        async (mode: 'full' | 'filtered') => {
+            if (csvExportLockRef.current) return;
+            csvExportLockRef.current = true;
+            setCsvExportBusy(mode);
+            try {
+                const all = await fetchAllTreasuryPagesForExport();
+                const slice = mode === 'full' ? all : applyClientTxFilters(all);
+                if (slice.length === 0) {
+                    alert(
+                        mode === 'full'
+                            ? 'Não foi possível obter transações para exportar.'
+                            : 'Nenhuma transação corresponde aos filtros (datas / busca) nos dados obtidos.'
+                    );
+                    return;
+                }
+                const tag = mode === 'full' ? 'transacoes_usdc_completo' : 'transacoes_usdc_filtrado';
+                triggerCsvDownload(buildCsvFromTransactions(slice), tag);
+            } catch (e) {
+                console.error('Export CSV:', e);
+                alert(e instanceof Error ? e.message : 'Erro ao exportar CSV.');
+            } finally {
+                csvExportLockRef.current = false;
+                setCsvExportBusy('none');
+            }
+        },
+        [fetchAllTreasuryPagesForExport, applyClientTxFilters, buildCsvFromTransactions]
+    );
 
     const groupedData = getGroupedTransactions();
 
     return (
         <div className="space-y-6 flex flex-col h-full">
             {/* SUBTAB NAVIGATION */}
-            <div className="flex items-center gap-2 border-b border-slate-700 pb-3">
+            <div className="flex flex-wrap items-center gap-2 border-b border-slate-700 pb-3">
                 <button
                     onClick={() => {
                         setSubtab('transactions');
@@ -287,30 +409,39 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                     <LayoutList size={16} />
                     Transações USDC
                 </button>
-                <button
-                    onClick={() => {
-                        setSubtab('calculator');
-                        localStorage.setItem('adminReportsSubtab', 'calculator');
-                    }}
-                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'calculator' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
-                >
-                    <Calculator size={16} />
-                    Calculadora Mining
-                </button>
-                <button
-                    onClick={() => {
-                        setSubtab('withdrawals');
-                        localStorage.setItem('adminReportsSubtab', 'withdrawals');
-                    }}
-                    className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'withdrawals' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
-                >
-                    <Wallet size={16} />
-                    Saques Manuais
-                </button>
+                {!reportsOperatorRestricted && (
+                    <>
+                        <button
+                            onClick={() => {
+                                setSubtab('calculator');
+                                localStorage.setItem('adminReportsSubtab', 'calculator');
+                            }}
+                            className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'calculator' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
+                        >
+                            <Calculator size={16} />
+                            Calculadora Mining
+                        </button>
+                        <button
+                            onClick={() => {
+                                setSubtab('withdrawals');
+                                localStorage.setItem('adminReportsSubtab', 'withdrawals');
+                            }}
+                            className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'withdrawals' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
+                        >
+                            <Wallet size={16} />
+                            Saques Manuais
+                        </button>
+                    </>
+                )}
+                {reportsOperatorRestricted && (
+                    <span className="text-[10px] text-slate-500 uppercase font-bold border border-slate-700 rounded px-2 py-1">
+                        Operador: apenas transações USDC
+                    </span>
+                )}
             </div>
 
 
-            {subtab === 'calculator' && (
+            {subtab === 'calculator' && !reportsOperatorRestricted && (
                 <div className="flex-1 overflow-auto custom-scrollbar flex flex-col gap-6">
                     <div className="flex items-center justify-between px-6 py-2 bg-slate-800/30 rounded-lg border border-slate-700/50">
                         <div className="flex items-center gap-2">
@@ -606,7 +737,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
             )}
 
 
-            {subtab === 'withdrawals' && (
+            {subtab === 'withdrawals' && !reportsOperatorRestricted && (
                 <div className="flex-1 overflow-auto custom-scrollbar">
                     <AdminManualWithdrawals />
                 </div>
@@ -619,16 +750,58 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                     <div className="px-6 py-5 border-b border-slate-800 flex items-center justify-between bg-slate-900 rounded-td-xl rounded-tr-xl flex-wrap gap-4">
                         <div>
                             <h2 className="text-xl font-bold text-white mb-1">Transações de USDC</h2>
+                            <div className="flex flex-wrap items-center gap-2 mt-2 mb-2">
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setTreasurySource('registered');
+                                        localStorage.setItem('adminReportsTreasurySource', 'registered');
+                                        setPage(1);
+                                    }}
+                                    className={`px-3 py-1.5 text-xs font-bold rounded border transition-colors ${treasurySource === 'registered' ? 'bg-amber-600/25 text-white border-amber-600/60' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}`}
+                                >
+                                    Carteira cadastrada (recebe depósitos)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setTreasurySource('legacy');
+                                        localStorage.setItem('adminReportsTreasurySource', 'legacy');
+                                        setPage(1);
+                                    }}
+                                    className={`px-3 py-1.5 text-xs font-bold rounded border transition-colors ${treasurySource === 'legacy' ? 'bg-amber-600/25 text-white border-amber-600/60' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}`}
+                                >
+                                    Carteira antiga (depósito)
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setTreasurySource('legacy_launch');
+                                        localStorage.setItem('adminReportsTreasurySource', 'legacy_launch');
+                                        setPage(1);
+                                    }}
+                                    className={`px-3 py-1.5 text-xs font-bold rounded border transition-colors ${treasurySource === 'legacy_launch' ? 'bg-amber-600/25 text-white border-amber-600/60' : 'bg-slate-800 text-slate-400 border-slate-700 hover:text-white'}`}
+                                >
+                                    Carteira Antiga (Lançamento)
+                                </button>
+                            </div>
                             <div className="text-xs text-slate-500 font-mono flex items-center gap-2">
-                                Carteira: {truncateMiddle(TREASURY_WALLET, 10, 8)}
-                                <Copy size={12} className="cursor-pointer hover:text-white" />
+                                Carteira: {truncateMiddle(treasuryWallet, 10, 8)}
+                                <button
+                                    type="button"
+                                    className="p-0.5 rounded text-slate-500 hover:text-white"
+                                    aria-label="Copiar endereço da carteira"
+                                    onClick={() => void navigator.clipboard.writeText(treasuryWallet)}
+                                >
+                                    <Copy size={12} />
+                                </button>
                             </div>
                         </div>
 
                         <div className="flex items-center gap-4 flex-wrap">
                             {/* Controls */}
-                            <div className="flex items-center gap-2 bg-slate-800 p-1.5 rounded border border-slate-700">
-                                <span className="text-xs font-bold text-slate-400 px-2">A partir de:</span>
+                            <div className="flex items-center gap-2 flex-wrap bg-slate-800 p-1.5 rounded border border-slate-700">
+                                <span className="text-xs font-bold text-slate-400 px-1">De:</span>
                                 <input
                                     type="date"
                                     value={startDate}
@@ -639,15 +812,54 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                     }}
                                     className="bg-slate-900 text-white text-xs px-2 py-1 rounded border border-slate-700 outline-none focus:border-amber-500"
                                 />
+                                <span className="text-xs font-bold text-slate-400 px-1">até</span>
+                                <input
+                                    type="date"
+                                    value={endDate}
+                                    onChange={(e) => {
+                                        const val = e.target.value;
+                                        setEndDate(val);
+                                        if (val) localStorage.setItem('adminReportsEndDate', val);
+                                        else localStorage.removeItem('adminReportsEndDate');
+                                    }}
+                                    className="bg-slate-900 text-white text-xs px-2 py-1 rounded border border-slate-700 outline-none focus:border-amber-500"
+                                />
+                                {endDate ? (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setEndDate('');
+                                            localStorage.removeItem('adminReportsEndDate');
+                                        }}
+                                        className="text-[10px] font-bold text-slate-500 hover:text-amber-400 px-1"
+                                    >
+                                        sem data fim
+                                    </button>
+                                ) : null}
                             </div>
 
-                            <button
-                                onClick={exportToCSV}
-                                className="flex items-center gap-2 px-3 py-1.5 text-xs font-bold rounded border bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40 transition-colors"
-                            >
-                                <Download size={14} />
-                                Exportar Excel
-                            </button>
+                            <div className="flex items-center gap-1 flex-wrap">
+                                <button
+                                    type="button"
+                                    disabled={csvExportBusy !== 'none'}
+                                    onClick={() => void handleExportCsv('full')}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold rounded border bg-emerald-900/20 text-emerald-400 border-emerald-900/50 hover:bg-emerald-900/40 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Todas as transações obtidas da API (ignora datas e busca)"
+                                >
+                                    <Download size={14} className={csvExportBusy === 'full' ? 'animate-pulse' : ''} />
+                                    {csvExportBusy === 'full' ? 'A exportar…' : 'CSV completo'}
+                                </button>
+                                <button
+                                    type="button"
+                                    disabled={csvExportBusy !== 'none'}
+                                    onClick={() => void handleExportCsv('filtered')}
+                                    className="flex items-center gap-1.5 px-2.5 py-1.5 text-[11px] font-bold rounded border bg-slate-800 text-slate-200 border-slate-600 hover:bg-slate-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="Aplica De/até e a caixa de busca ao conjunto obtido da API"
+                                >
+                                    <Download size={14} className={csvExportBusy === 'filtered' ? 'animate-pulse' : ''} />
+                                    {csvExportBusy === 'filtered' ? 'A exportar…' : 'CSV filtros'}
+                                </button>
+                            </div>
 
                             <button
                                 onClick={() => setShowEmail(!showEmail)}
@@ -743,7 +955,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                         </thead>
                                         <tbody className="divide-y divide-slate-800/50">
                                             {groupTxs.map((tx) => {
-                                                const isIncoming = tx.to.toLowerCase() === TREASURY_WALLET.toLowerCase();
+                                                const isIncoming = tx.to.toLowerCase() === treasuryWallet.toLowerCase();
                                                 // FORMAT: USDC uses 6 decimals
                                                 const amount = parseFloat(tx.value) / 1000000;
                                                 const counterPartyAddr = isIncoming ? tx.from : tx.to;
@@ -776,13 +988,15 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                                                                     ) : (
                                                                         <span className="text-slate-600 italic text-[11px]">-</span>
                                                                     )}
-                                                                    <button
-                                                                        onClick={() => handleEditLabel(counterPartyAddr)}
-                                                                        className="opacity-0 group-hover/edit:opacity-100 text-slate-500 hover:text-white transition-opacity"
-                                                                        title="Nomear carteira"
-                                                                    >
-                                                                        <Pencil size={12} />
-                                                                    </button>
+                                                                    {!reportsOperatorRestricted && (
+                                                                        <button
+                                                                            onClick={() => handleEditLabel(counterPartyAddr)}
+                                                                            className="opacity-0 group-hover/edit:opacity-100 text-slate-500 hover:text-white transition-opacity"
+                                                                            title="Nomear carteira"
+                                                                        >
+                                                                            <Pencil size={12} />
+                                                                        </button>
+                                                                    )}
                                                                 </div>
                                                             )}
                                                         </td>
@@ -816,7 +1030,17 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [] }) => {
                             <div className="text-center py-16 text-slate-500 flex flex-col items-center gap-2">
                                 <Filter size={32} className="opacity-20" />
                                 <p>Nenhuma transação encontrada no período.</p>
-                                {startDate && <p className="text-xs">Filtro: após {new Date(startDate).toLocaleDateString()}</p>}
+                                {(startDate || endDate) && (
+                                    <p className="text-xs">
+                                        Filtro:{' '}
+                                        {startDate ? `de ${new Date(startDate + 'T12:00:00').toLocaleDateString('pt-BR')}` : ''}
+                                        {endDate
+                                            ? ` até ${new Date(endDate + 'T12:00:00').toLocaleDateString('pt-BR')}`
+                                            : startDate
+                                              ? ' (sem limite final)'
+                                              : ''}
+                                    </p>
+                                )}
                             </div>
                         )}
 

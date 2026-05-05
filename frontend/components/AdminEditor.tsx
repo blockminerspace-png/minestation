@@ -8,7 +8,17 @@ interface AdminEditorProps {
     onUpdateGameUpgrades?: (upgrades: Upgrade[]) => Promise<void> | void;
 }
 
+const IMG_UPLOAD_FOLDERS = [
+    { id: '', label: 'uploads (dinâmico)' },
+    { id: 'miner', label: 'miner' },
+    { id: 'moedas', label: 'moedas' },
+    { id: 'carregadores', label: 'carregadores' },
+    { id: 'baterias', label: 'baterias' },
+    { id: 'favicon', label: 'favicon' }
+] as const;
+
 export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdateGameUpgrades }) => {
+    const [imageUploadFolder, setImageUploadFolder] = useState<string>('');
     const [editItemMode, setEditItemMode] = useState<boolean>(false);
     const [editorFilter, setEditorFilter] = useState<string>('all');
     const [itemForm, setItemForm] = useState<Partial<Upgrade>>({
@@ -27,10 +37,12 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
         reader.onload = async () => {
             const dataUrl = reader.result as string;
             try {
+                const body: Record<string, string> = { dataUrl, originalName: file.name };
+                if (imageUploadFolder) body.assetFolder = imageUploadFolder;
                 const res = await fetch('/api/upload-image', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ dataUrl, originalName: file.name })
+                    body: JSON.stringify(body)
                 });
                 const payload = await res.json();
                 if (payload && payload.path) {
@@ -143,12 +155,22 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                             <div className="flex justify-between items-center border-b border-slate-700 pb-2 mb-4">
                                 <h3 className="text-xl font-bold text-white">{itemForm.id ? `Editando: ${itemForm.name}` : 'Criar Novo Item'}</h3>
 
-                                <div className="flex items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
                                     {itemForm.image && (
                                         <div className={`w-12 ${itemForm.type === 'infrastructure' ? 'h-16' : 'h-12'} rounded overflow-hidden border border-slate-600 bg-black shrink-0`}>
                                             <img src={itemForm.image} alt="Preview" className={`w-full h-full ${itemForm.type === 'infrastructure' ? 'object-contain' : 'object-cover'}`} />
                                         </div>
                                     )}
+                                    <select
+                                        value={imageUploadFolder}
+                                        onChange={(e) => setImageUploadFolder(e.target.value)}
+                                        className="text-xs bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white max-w-[11rem]"
+                                        title="Destino no servidor (só admin grava em subpastas canónicas)"
+                                    >
+                                        {IMG_UPLOAD_FOLDERS.map((o) => (
+                                            <option key={o.id || 'uploads'} value={o.id}>{o.label}</option>
+                                        ))}
+                                    </select>
                                     <input
                                         type="file"
                                         accept="image/png,image/gif,image/jpeg"

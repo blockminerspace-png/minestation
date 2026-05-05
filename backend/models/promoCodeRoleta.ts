@@ -1,4 +1,16 @@
 import type { PoolClient } from 'pg';
+import { RoletaAppError } from '../validation/roletaValidation.js';
+
+/** `expires_at` em ms UNIX; 0 ou ausente = sem expiração. */
+export function throwIfPromoCodeExpired(row: { expires_at?: unknown }, serverNowMs: number): void {
+  const raw = row.expires_at;
+  if (raw == null) return;
+  const exp = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(exp) || exp <= 0) return;
+  if (serverNowMs > exp) {
+    throw new RoletaAppError('Código expirado.', 400);
+  }
+}
 
 export function promoTypeLiteralIsRoleta(type: unknown): boolean {
   return typeof type === 'string' && type.startsWith('roleta_');

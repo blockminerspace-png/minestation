@@ -40,7 +40,7 @@ app.use(helmet({
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
-            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "cdnjs.cloudflare.com"], // unsafe-eval necessário para algumas libs web3
+            scriptSrc: ["'self'", "'unsafe-inline'", "'unsafe-eval'", "cdnjs.cloudflare.com", "https://www.googletagmanager.com"], // unsafe-eval necessário para algumas libs web3; GTM/GA4
             styleSrc: ["'self'", "'unsafe-inline'"],
             imgSrc: ["'self'", "data:", "blob:"],
             connectSrc: ["'self'", "ws:", "wss:", "http:", "https:"], // Permitir RPCs externos e WebSockets

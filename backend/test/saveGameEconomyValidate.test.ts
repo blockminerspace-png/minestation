@@ -1,9 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   SAVE_GAME_ITEM_ID_RE,
   isClientDailyActionKey,
   isAdminDailyActionKey,
   validateDailyActionsForSave,
+  validateStockForSave,
 } from '../lib/saveGameEconomyValidate.js';
 
 describe('saveGameEconomyValidate', () => {
@@ -58,5 +59,28 @@ describe('saveGameEconomyValidate', () => {
     const now = 1_700_000_000_000;
     const r = validateDailyActionsForSave({ reward_ad_slot_0: now + 2 * 86400000 }, false, now);
     expect(r).toMatchObject({ ok: false });
+  });
+
+  it('validateStockForSave rejeita chave inválida e devolve samples (sem query à BD)', async () => {
+    const client = { query: vi.fn() };
+    const r = await validateStockForSave(client as never, { 'item com espaço': 1 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('invalid_key');
+      expect(r.samples.some((s) => s.includes(' '))).toBe(true);
+    }
+    expect(client.query).not.toHaveBeenCalled();
+  });
+
+  it('validateStockForSave unknown_item após SELECT', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValue({ rows: [{ id: 'known_a' }], rowCount: 1 })
+    };
+    const r = await validateStockForSave(client as never, { known_a: 1, ghost_item: 2 });
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.reason).toBe('unknown_item');
+      expect(r.samples).toContain('ghost_item');
+    }
   });
 });

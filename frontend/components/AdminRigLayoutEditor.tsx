@@ -1,6 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Upgrade, RigLayout, SlotLayout } from '../types';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
+
+const IMG_UPLOAD_FOLDERS = [
+    { id: '', label: 'uploads (dinâmico)' },
+    { id: 'miner', label: 'miner' },
+    { id: 'moedas', label: 'moedas' },
+    { id: 'carregadores', label: 'carregadores' },
+    { id: 'baterias', label: 'baterias' },
+    { id: 'favicon', label: 'favicon' }
+] as const;
 import { Move, Plus, Trash2, Cpu, Battery, Plug, Zap, Save, AlertCircle, Power, Cog, Coins, Activity, BarChart3, Terminal, RefreshCw, PlayCircle } from 'lucide-react';
 
 interface AdminRigLayoutEditorProps {
@@ -16,6 +25,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
     const [resizingIdx, setResizingIdx] = useState<number | null>(null);
     const [isResizingCanvas, setIsResizingCanvas] = useState<boolean>(false);
     const [tempImage, setTempImage] = useState<string | null>(null);
+    const [imageUploadFolder, setImageUploadFolder] = useState<string>('miner');
     const canvasRef = useRef<HTMLDivElement>(null);
 
     const racks = gameUpgrades.filter(u => u.type === 'infrastructure' || u.type === 'charger');
@@ -99,10 +109,12 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                 const height = img.height;
 
                 try {
+                    const body: Record<string, string> = { dataUrl, originalName: file.name };
+                    if (imageUploadFolder) body.assetFolder = imageUploadFolder;
                     const res = await fetch('/api/upload-image', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ dataUrl, originalName: file.name })
+                        body: JSON.stringify(body)
                     });
                     const payload = await res.json();
                     if (payload && payload.path) {
@@ -368,6 +380,16 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                         <div className="pt-4 border-t border-slate-700 space-y-2">
                             <h3 className="font-bold text-slate-400 text-xs uppercase tracking-wider">Skin da Rig</h3>
                             <div className="flex flex-col gap-2">
+                                <select
+                                    value={imageUploadFolder}
+                                    onChange={(e) => setImageUploadFolder(e.target.value)}
+                                    className="text-xs bg-slate-900 border border-slate-600 rounded px-2 py-1 text-white"
+                                    title="Pasta em /img/… (só admin)"
+                                >
+                                    {IMG_UPLOAD_FOLDERS.map((o) => (
+                                        <option key={o.id || 'uploads'} value={o.id}>{o.label}</option>
+                                    ))}
+                                </select>
                                 <input
                                     type="file"
                                     accept="image/*"

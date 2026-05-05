@@ -5,8 +5,9 @@ import { MiningCoin } from '../../types';
 
 type TokenCfg = { name: string; contract: string; payoutWallet: string; minAmount?: number; minWithdrawalUsdc?: number; feePercent?: number; disabled?: boolean };
 
+type Web3WithdrawProps = { readOnly?: boolean };
 
-export const Web3Withdraw: React.FC = () => {
+export const Web3Withdraw: React.FC<Web3WithdrawProps> = ({ readOnly = false }) => {
   const [payoutWallet, setPayoutWallet] = useState('');
   const [withdrawTokens, setWithdrawTokens] = useState<TokenCfg[]>([]);
   const [miningCoins, setMiningCoins] = useState<MiningCoin[]>([]);
@@ -167,6 +168,7 @@ export const Web3Withdraw: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (readOnly) return;
     setSaving(true);
     const s = await getWeb3Settings();
     await setWeb3Settings({
@@ -179,6 +181,7 @@ export const Web3Withdraw: React.FC = () => {
   };
 
   const updateTokenCfg = (name: string, field: keyof TokenCfg, value: any) => {
+    if (readOnly) return;
     setWithdrawTokens(prev => {
       const exists = prev.find(t => t.name === name);
       if (exists) {
@@ -207,18 +210,21 @@ export const Web3Withdraw: React.FC = () => {
         <p className="text-xs text-slate-400 mb-3">Defina a carteira padrão para pagamentos (pode ser alterada por moeda abaixo).</p>
 
         <div className="flex items-center gap-2 mb-2">
-          <button onClick={handleConnectPayoutWallet} className="bg-green-900/30 hover:bg-green-900/50 border border-green-700 text-green-300 text-xs font-bold px-3 py-2 rounded transition-colors flex items-center gap-2">
-            <Wallet size={14} /> Conectar carteira
-          </button>
+          {!readOnly && (
+            <button onClick={handleConnectPayoutWallet} className="bg-green-900/30 hover:bg-green-900/50 border border-green-700 text-green-300 text-xs font-bold px-3 py-2 rounded transition-colors flex items-center gap-2">
+              <Wallet size={14} /> Conectar carteira
+            </button>
+          )}
           {payoutWallet && <span className="text-[10px] font-mono text-slate-400 truncate bg-slate-900 px-2 py-1 rounded border border-slate-700">{payoutWallet}</span>}
         </div>
 
         <input
           type="text"
+          readOnly={readOnly}
           value={payoutWallet}
           onChange={(e) => setPayoutWallet(e.target.value)}
           placeholder="0x..."
-          className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm focus:border-green-500 outline-none"
+          className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm focus:border-green-500 outline-none ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
         />
       </div>
 
@@ -259,6 +265,7 @@ export const Web3Withdraw: React.FC = () => {
                           <input
                             type="checkbox"
                             className="sr-only peer"
+                            disabled={readOnly}
                             checked={!cfg.disabled}
                             onChange={(e) => updateTokenCfg(coin.symbol, 'disabled', !e.target.checked)}
                           />
@@ -286,45 +293,50 @@ export const Web3Withdraw: React.FC = () => {
                     <div className="md:col-span-2">
                       <div className="flex items-center justify-between mb-1">
                         <label className="text-[10px] text-slate-500 font-bold block uppercase">Carteira de Pagamento ({coin.symbol})</label>
-                        <button
-                          onClick={async () => {
-                            const addr = await connectWallet(coin.symbol);
-                            if (addr) updateTokenCfg(coin.symbol, 'payoutWallet', addr);
-                          }}
-                          className="text-[10px] text-green-400 hover:text-green-300 font-bold flex items-center gap-1 transition-colors"
-                        >
-                          <Wallet size={10} /> Conectar Individual
-                        </button>
+                        {!readOnly && (
+                          <button
+                            onClick={async () => {
+                              const addr = await connectWallet(coin.symbol);
+                              if (addr) updateTokenCfg(coin.symbol, 'payoutWallet', addr);
+                            }}
+                            className="text-[10px] text-green-400 hover:text-green-300 font-bold flex items-center gap-1 transition-colors"
+                          >
+                            <Wallet size={10} /> Conectar Individual
+                          </button>
+                        )}
                       </div>
                       <input
                         type="text"
+                        readOnly={readOnly}
                         value={cfg.payoutWallet}
                         onChange={(e) => updateTokenCfg(coin.symbol, 'payoutWallet', e.target.value)}
                         placeholder={payoutWallet || "0x..."}
-                        className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs font-mono focus:border-green-500/50 outline-none"
+                        className={`w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs font-mono focus:border-green-500/50 outline-none ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                       />
                     </div>
                     <div>
                       <label className="text-[10px] text-slate-500 font-bold block mb-1 uppercase">Contrato (Opcional Token)</label>
                       <input
                         type="text"
+                        readOnly={readOnly}
                         value={cfg.contract}
                         onChange={(e) => updateTokenCfg(coin.symbol, 'contract', e.target.value)}
                         placeholder="Vazio para moeda nativa"
-                        className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs font-mono"
+                        className={`w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs font-mono ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                       />
                     </div>
                     <div>
                       <label className="text-[10px] text-slate-500 font-bold block mb-1">SAQUE MÍN. (USDC)</label>
                       <input
                         type="number"
+                        readOnly={readOnly}
                         value={typeof cfg.minWithdrawalUsdc === 'number' ? String(cfg.minWithdrawalUsdc) : ''}
                         onChange={(e) => {
                           const v = parseFloat(e.target.value);
                           updateTokenCfg(coin.symbol, 'minWithdrawalUsdc', isNaN(v) ? undefined : Math.max(0, v));
                         }}
                         placeholder="Ex: 5.00"
-                        className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs"
+                        className={`w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                       />
                       {cfg.minWithdrawalUsdc && coin.priceUSD > 0 && (
                         <span className="text-[9px] text-amber-500 mt-1 block">
@@ -336,13 +348,14 @@ export const Web3Withdraw: React.FC = () => {
                       <label className="text-[10px] text-slate-500 font-bold block mb-1">TAXA DE SAQUE (%)</label>
                       <input
                         type="number"
+                        readOnly={readOnly}
                         value={typeof cfg.feePercent === 'number' ? String(cfg.feePercent) : ''}
                         onChange={(e) => {
                           const v = parseFloat(e.target.value);
                           updateTokenCfg(coin.symbol, 'feePercent', isNaN(v) ? undefined : Math.max(0, v));
                         }}
                         placeholder="Ex: 1.5"
-                        className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs"
+                        className={`w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                       />
                     </div>
 
@@ -354,21 +367,23 @@ export const Web3Withdraw: React.FC = () => {
         </div>
       </div>
 
-      <div className="flex justify-end gap-3 sticky bottom-4 z-10">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className={`px-6 py-2 rounded-lg text-sm font-bold border shadow-lg transition-all flex items-center gap-2 ${saving ? 'bg-slate-700 text-slate-400 border-slate-700' : 'bg-green-600 text-white border-green-500 hover:bg-green-500 hover:scale-105 active:scale-95'}`}
-        >
-          {saving ? <RefreshCw size={16} className="animate-spin" /> : <ShieldCheck size={18} />}
-          {saving ? 'SALVANDO...' : 'SALVAR TODAS AS CONFIGURAÇÕES'}
-        </button>
-        {savedAt && (
-          <div className="bg-slate-900 border border-green-500/30 text-green-400 text-[10px] px-3 py-2 rounded-lg flex items-center shadow-md">
-            CONFIGURAÇÕES ATUALIZADAS!
-          </div>
-        )}
-      </div>
+      {!readOnly && (
+        <div className="flex justify-end gap-3 sticky bottom-4 z-10">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className={`px-6 py-2 rounded-lg text-sm font-bold border shadow-lg transition-all flex items-center gap-2 ${saving ? 'bg-slate-700 text-slate-400 border-slate-700' : 'bg-green-600 text-white border-green-500 hover:bg-green-500 hover:scale-105 active:scale-95'}`}
+          >
+            {saving ? <RefreshCw size={16} className="animate-spin" /> : <ShieldCheck size={18} />}
+            {saving ? 'SALVANDO...' : 'SALVAR TODAS AS CONFIGURAÇÕES'}
+          </button>
+          {savedAt && (
+            <div className="bg-slate-900 border border-green-500/30 text-green-400 text-[10px] px-3 py-2 rounded-lg flex items-center shadow-md">
+              CONFIGURAÇÕES ATUALIZADAS!
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

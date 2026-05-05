@@ -25,6 +25,7 @@ import {
   updateSupportTicketStatus
 } from '../models/supportTicketModel.js';
 import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { compressUploadedMulterFiles } from '../lib/compressMediaAsset.js';
 
 const SUPPORT_UPLOAD_MAX = 12 * 1024 * 1024;
 export const SUPPORT_ALLOWED_EXT = new Set([
@@ -166,6 +167,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
         res.status(400).json({ error: 'Mensagem demasiado curta (mín. 10 caracteres).' });
         return;
       }
+      await compressUploadedMulterFiles(req.files as Express.Multer.File[] | undefined);
       const { list: attachments } = buildAttachmentsFromFiles(req.files as Express.Multer.File[] | undefined);
       const id = crypto.randomUUID();
       const now = Date.now();
@@ -301,6 +303,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
         });
         return;
       }
+      await compressUploadedMulterFiles(files);
       const { list: attachments } = buildAttachmentsFromFiles(files);
       try {
         const tRes = await getTicketForPlayerAction(pool, ticketId);
@@ -461,6 +464,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
         });
         return;
       }
+      await compressUploadedMulterFiles(files);
       const { list: attachments } = buildAttachmentsFromFiles(files);
       try {
         const tRes = await getTicketForAdminReply(pool, ticketId);

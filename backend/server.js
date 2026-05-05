@@ -12,13 +12,15 @@ import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { GoogleGenAI } from "@google/genai";
 import bcrypt from 'bcryptjs';
-import multer from 'multer';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import db from './dist/config/db.js';
 import { startMiningYieldCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { UI_DISPLAY_LABEL_KEY_SET } from './dist/config/uiDisplayLabelKeys.js';
+import { allowsAdminRouteAccess, permissionTabSetFromDbJson, resolveAdminRouteRequirement } from './dist/utils/adminRouteAuth.js';
+import { resolveIsSuperAdminFromUserRow, LEGACY_SUPER_ADMIN_EMAILS } from './dist/utils/legacySuperAdmin.js';
+import { attachSecurityThreatResponseObserver, startSecurityThreatObserverBackgroundScan } from './dist/utils/securityThreatObserver.js';
 import { initDb } from './dist/config/initDb.js';
 import { sendResetEmail } from './dist/utils/mailer.js';
 import { getJwtAuthConfig, createResolveAuthMiddleware, issueJwtAuthCookies, handleJwtRefresh, revokeJwtRefreshForUser, clearAuthCookies } from './dist/src/auth/index.js';
@@ -26,6 +28,7 @@ import { registerDeviceFingerprintAdminRoutes } from './dist/controllers/deviceF
 import { registerP2pMarketRoutes } from './dist/controllers/p2pMarketController.js';
 import { registerLootBoxPlayerRoutes, registerLootBoxAdminRoutes } from './dist/controllers/lootBoxController.js';
 import { registerRoletaPlayerRoutes } from './dist/controllers/roletaController.js';
+import { fetchWheelPrizesForApiConfig } from './dist/models/roletaModel.js';
 import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemController.js';
 import { runBulkRoomBattery, isValidRoomId } from './dist/lib/roomBatteryBulk.js';
 import { loadUserStock, loadUserStoredBatteries, loadUserPlacedRacksWithSlots, loadUpgradesWithCompat, persistStockStoredBatteriesPlacedRacks } from './dist/lib/serverRoomPersistence.js';
@@ -34,9 +37,14 @@ import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
 import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controllers/backupController.js';
 import { createSupportTicketUploadMiddlewares, registerSupportTicketRoutes } from './dist/controllers/supportTicketController.js';
+import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
+import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
 import { sendInternalError, sendInternalErrorSafeMessage, sendInternalErrorShape } from './dist/utils/apiErrorResponse.js';
 import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
-import { validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, validateWorkshopSlotsPayloadForSave } from './dist/lib/saveGameEconomyValidate.js';
+import { ActivityThrottleMaps, resolveActivityThrottleConfig } from './dist/lib/activityThrottle.js';
+import { mountImageStaticMiddleware, registerImageAssetRoutes, runImageRootStartupOrganizeIfEnabled } from './dist/controllers/imageAssetController.js';
+import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from './dist/lib/saveGameEconomyValidate.js';
+import { validateLoginEmail, validateLoginFieldsPresent, validateLoginPassword, validateSignupPassword, validateSignupUsername, validateOptionalPolygonWallet, validateOptionalAccessLevelId, validateOptionalReferralCodeInput, validateAccessLevelIdsArray, EMAIL_ADDRESS_MAX_LENGTH, SIGNUP_EMAIL_MAX_TOTAL } from './dist/models/registrationValidation.js';
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
     console.error('[Fatal] Unhandled Rejection at:', promise, 'reason:', reason);
@@ -48,6 +56,227 @@ process.on('uncaughtException', (err) => {
 });
 const WORKER_ROLE = process.env.WORKER_ROLE || 'ALL';
 console.log(`[Worker ${process.pid}] Started with Role: ${WORKER_ROLE}`);
+/** Por defeito só BACKGROUND/ALL agendam o sweep (cluster-safe). `DEPOSIT_SWEEP_ALL_WORKERS=1` repete em todos os workers (comportamento antigo). */
+function shouldScheduleDepositSweep() {
+    const v = String(process.env.DEPOSIT_SWEEP_ALL_WORKERS || '').trim().toLowerCase();
+    if (v === '1' || v === 'true' || v === 'yes')
+        return true;
+    return WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL';
+}
+function isValidSaveGameItemId(value) {
+    return typeof value === 'string' && SAVE_GAME_ITEM_ID_RE.test(value);
+}
+const LEGACY_TEMP_PARSED_CTE = `
+      WITH parsed AS (
+        SELECT u.id AS temp_id,
+               btrim(substring(u.description FROM 'original=([^ ]+) email=')) AS orig_id
+        FROM upgrades u
+        WHERE (u.category = 'legacy-temp' OR u.type = 'legacy-temp')
+          AND u.description IS NOT NULL
+          AND u.description LIKE '%original=%'
+          AND u.description LIKE '% email=%'
+      ),
+      pairs AS (
+        SELECT s.user_id, s.item_id AS temp_id, s.qty, p.orig_id
+        FROM stock s
+        INNER JOIN parsed p ON p.temp_id = s.item_id
+        INNER JOIN upgrades r ON r.id = p.orig_id
+        WHERE length(p.orig_id) > 0
+          AND p.orig_id ~ '^[a-zA-Z0-9_.-]{1,200}$'
+          AND r.id NOT LIKE 'temp_legacy\\_%' ESCAPE '\\'
+          AND NOT (COALESCE(r.category, '') = 'legacy-temp' AND COALESCE(r.type, '') = 'legacy-temp')
+      )`;
+/** Stock órfão / legacy-temp: tenta voltar ao upgrade real antes de criar placeholder. */
+async function ensureStockItemIdsSane() {
+    const client = await db.connect();
+    let mergeN = 0;
+    let delN = 0;
+    let moveN = 0;
+    try {
+        // 1a) Placeholder legacy-temp → somar qty na linha real já existente e apagar temporários
+        await client.query('BEGIN');
+        const mergeRes = await client.query(`
+      ${LEGACY_TEMP_PARSED_CTE},
+      inc AS (
+        SELECT user_id, orig_id, SUM(qty)::bigint AS add_qty
+        FROM pairs
+        WHERE EXISTS (SELECT 1 FROM stock x WHERE x.user_id = pairs.user_id AND x.item_id = pairs.orig_id)
+        GROUP BY user_id, orig_id
+      )
+      UPDATE stock s
+      SET qty = s.qty + inc.add_qty
+      FROM inc
+      WHERE s.user_id = inc.user_id AND s.item_id = inc.orig_id
+    `);
+        mergeN = mergeRes.rowCount ?? 0;
+        const delMerged = await client.query(`
+      ${LEGACY_TEMP_PARSED_CTE}
+      DELETE FROM stock s
+      USING pairs
+      WHERE s.user_id = pairs.user_id AND s.item_id = pairs.temp_id
+        AND EXISTS (SELECT 1 FROM stock x WHERE x.user_id = pairs.user_id AND x.item_id = pairs.orig_id)
+    `);
+        delN = delMerged.rowCount ?? 0;
+        await client.query('COMMIT');
+    }
+    catch (e) {
+        try {
+            await client.query('ROLLBACK');
+        }
+        catch {
+            /* ignore */
+        }
+        console.warn('[Migration] legacy-temp merge:', e instanceof Error ? e.message : String(e));
+    }
+    finally {
+        client.release();
+    }
+    // 1b) Restantes: sem linha em stock para orig_id — agrega vários temp para um único (evita PK duplicada)
+    try {
+        const moveCandidates = await db.query(`
+      SELECT s.user_id, s.item_id AS temp_id, s.qty, p.orig_id
+      FROM stock s
+      INNER JOIN (
+        SELECT u.id AS temp_id,
+               btrim(substring(u.description FROM 'original=([^ ]+) email=')) AS orig_id
+        FROM upgrades u
+        WHERE (u.category = 'legacy-temp' OR u.type = 'legacy-temp')
+          AND u.description IS NOT NULL
+          AND u.description LIKE '%original=%'
+          AND u.description LIKE '% email=%'
+      ) p ON p.temp_id = s.item_id
+      INNER JOIN upgrades r ON r.id = p.orig_id
+      WHERE length(p.orig_id) > 0
+        AND p.orig_id ~ '^[a-zA-Z0-9_.-]{1,200}$'
+        AND r.id NOT LIKE 'temp_legacy\\_%' ESCAPE '\\'
+        AND NOT (COALESCE(r.category, '') = 'legacy-temp' AND COALESCE(r.type, '') = 'legacy-temp')
+        AND NOT EXISTS (SELECT 1 FROM stock x WHERE x.user_id = s.user_id AND x.item_id = p.orig_id)
+    `);
+        const groups = new Map();
+        for (const row of moveCandidates.rows) {
+            const userId = Number(row.user_id);
+            const origId = String(row.orig_id || '');
+            const tempId = String(row.temp_id || '');
+            const qty = Number(row.qty) || 0;
+            const k = `${userId}|${origId}`;
+            if (!groups.has(k))
+                groups.set(k, { userId, origId, temps: [] });
+            groups.get(k).temps.push({ tempId, qty });
+        }
+        for (const g of groups.values()) {
+            const totalQty = g.temps.reduce((a, t) => a + t.qty, 0);
+            const ex = await db.query('SELECT qty FROM stock WHERE user_id = $1 AND item_id = $2', [g.userId, g.origId]);
+            if (ex.rows[0]) {
+                await db.query('UPDATE stock SET qty = qty + $1 WHERE user_id = $2 AND item_id = $3', [
+                    totalQty,
+                    g.userId,
+                    g.origId
+                ]);
+                for (const t of g.temps) {
+                    await db.query('DELETE FROM stock WHERE user_id = $1 AND item_id = $2', [g.userId, t.tempId]);
+                    moveN += 1;
+                }
+            }
+            else if (g.temps.length > 0) {
+                const first = g.temps[0];
+                await db.query('UPDATE stock SET item_id = $1, qty = $2 WHERE user_id = $3 AND item_id = $4', [
+                    g.origId,
+                    totalQty,
+                    g.userId,
+                    first.tempId
+                ]);
+                moveN += 1;
+                for (let i = 1; i < g.temps.length; i += 1) {
+                    await db.query('DELETE FROM stock WHERE user_id = $1 AND item_id = $2', [g.userId, g.temps[i].tempId]);
+                    moveN += 1;
+                }
+            }
+        }
+        if (mergeN + delN + moveN > 0) {
+            console.log(`[Migration] stock legacy-temp curado: merge ${mergeN}, del ${delN}, move ${moveN}`);
+        }
+    }
+    catch (e) {
+        console.warn('[Migration] legacy-temp move:', e instanceof Error ? e.message : String(e));
+    }
+    try {
+        // 2) item_id com espaços → id canónico se existir upgrade e não houver colisão de PK
+        const trimRes = await db.query(`
+      UPDATE stock s
+      SET item_id = btrim(s.item_id::text)
+      FROM upgrades g
+      WHERE g.id = btrim(s.item_id::text)
+        AND s.item_id IS NOT NULL
+        AND btrim(s.item_id::text) <> s.item_id::text
+        AND NOT EXISTS (
+          SELECT 1 FROM stock s2
+          WHERE s2.user_id = s.user_id
+            AND s2.item_id = btrim(s.item_id::text)
+            AND (s2.user_id::text || '|' || s2.item_id::text) IS DISTINCT FROM (s.user_id::text || '|' || s.item_id::text)
+        )
+    `);
+        if ((trimRes.rowCount ?? 0) > 0) {
+            console.log(`[Migration] stock trim item_id: ${trimRes.rowCount} linha(s).`);
+        }
+        // 3) Remover upgrades placeholder já sem stock nem compat racks
+        const orphanRes = await db.query(`
+      DELETE FROM upgrades u
+      WHERE (u.category = 'legacy-temp' OR u.type = 'legacy-temp')
+        AND u.id LIKE 'temp_legacy\\_%' ESCAPE '\\'
+        AND NOT EXISTS (SELECT 1 FROM stock s WHERE s.item_id = u.id)
+        AND NOT EXISTS (SELECT 1 FROM upgrade_compat_racks c WHERE c.upgrade_id = u.id)
+    `);
+        if ((orphanRes.rowCount ?? 0) > 0) {
+            console.log(`[Migration] upgrades legacy-temp órfãos removidos: ${orphanRes.rowCount}`);
+        }
+        const brokenRes = await db.query(`SELECT s.user_id, s.item_id, s.qty, u.email
+         FROM stock s
+         LEFT JOIN users u ON u.id = s.user_id
+         LEFT JOIN upgrades g ON g.id = btrim(COALESCE(s.item_id, '')::text)
+        WHERE s.item_id IS NULL
+           OR btrim(COALESCE(s.item_id, '')::text) = ''
+           OR btrim(s.item_id::text) !~ '^[a-zA-Z0-9_.-]{1,200}$'
+           OR g.id IS NULL
+        ORDER BY s.user_id, s.item_id NULLS FIRST`);
+        if ((brokenRes.rowCount ?? 0) === 0)
+            return;
+        let seq = 0;
+        for (const row of brokenRes.rows) {
+            seq += 1;
+            const original = typeof row.item_id === 'string' ? row.item_id : '';
+            const normalizedOriginal = original.trim() || 'sem-id';
+            const slug = normalizedOriginal
+                .toLowerCase()
+                .replace(/[^a-z0-9_.-]+/g, '-')
+                .replace(/^-+|-+$/g, '')
+                .slice(0, 80) || 'sem-id';
+            const tempId = `temp_legacy_${row.user_id}_${seq}_${slug}`.slice(0, 200);
+            const label = `Item temporario recuperado #${row.user_id}-${seq}`;
+            const desc = `Placeholder criado automaticamente para preservar inventario legado. original=${normalizedOriginal} email=${String(row.email || '').slice(0, 120)}`;
+            await db.query(`INSERT INTO upgrades (
+          id, name, category, type, base_cost, base_production, power_consumption, power_capacity,
+          multiplier, slots_capacity, ai_slots_capacity, description, icon, status, is_nft, nft_contract,
+          nft_token_id, max_global_stock, image, reward_wh, layout, sell_in_hardware_market,
+          sell_in_black_market, is_active, total_sold
+        ) VALUES (
+          $1, $2, 'legacy-temp', 'legacy-temp', 0, 0, 0, 0,
+          0, 0, 0, $3, '', 'temporary', 0, NULL,
+          NULL, 0, '', 0, NULL, 0,
+          0, 1, 0
+        )
+        ON CONFLICT (id) DO NOTHING`, [tempId, label, desc]);
+            await db.query(`UPDATE stock
+            SET item_id = $1
+          WHERE user_id = $2
+            AND qty = $3
+            AND COALESCE(item_id, '') = COALESCE($4, '')`, [tempId, row.user_id, row.qty, row.item_id]);
+        }
+        console.log(`[Migration] stock saneamento (placeholders novos): ${brokenRes.rowCount ?? 0} registro(s).`);
+    }
+    catch (e) {
+        console.warn('[Migration] ensureStockItemIdsSane failed:', e instanceof Error ? e.message : String(e));
+    }
+}
 /** Painel admin — sub-aba "Textos da interface"; incluir em todas as listas de permissões (array). */
 function ensureAdminSettingsLabelsInPermissions(permissions) {
     if (!Array.isArray(permissions))
@@ -56,14 +285,28 @@ function ensureAdminSettingsLabelsInPermissions(permissions) {
         return permissions;
     return [...permissions, 'settings:labels'];
 }
-/** Resposta API: admins em formato array/objeto recebem sempre `settings:labels` (compat. front antigo + DB). */
+/** Aba "Parceiros" (moderação de vídeos) — incluir por defeito em todos os admins com lista explícita. */
+function ensureAdminPartnersTabInPermissions(permissions) {
+    if (!Array.isArray(permissions))
+        return permissions;
+    if (permissions.includes('partners'))
+        return permissions;
+    return [...permissions, 'partners'];
+}
+/** Converte legado em objeto `{ tab: true }` para lista de IDs (o painel admin só usa arrays). */
+function adminPermissionsObjectToTabIds(perms) {
+    if (!perms || typeof perms !== 'object' || Array.isArray(perms))
+        return [];
+    return Object.keys(perms).filter((k) => perms[k] === true || perms[k] === 1);
+}
+/** Resposta API: admins recebem sempre `string[]` (compat. DB antigo em objeto + front atual). */
 function normalizeAdminPermissionsForApi(isAdmin, perms) {
     if (!isAdmin || perms == null)
         return perms;
     if (Array.isArray(perms))
-        return ensureAdminSettingsLabelsInPermissions(perms);
+        return ensureAdminPartnersTabInPermissions(ensureAdminSettingsLabelsInPermissions(perms));
     if (typeof perms === 'object')
-        return { ...perms, 'settings:labels': true };
+        return ensureAdminPartnersTabInPermissions(ensureAdminSettingsLabelsInPermissions(adminPermissionsObjectToTabIds(perms)));
     return perms;
 }
 // MIGRATION: Ensure tables exist
@@ -128,6 +371,40 @@ ensureTables();
  * Tem de correr em TODOS os workers (ex.: WORKER_ROLE=API em cluster), porque initDb/ensureTables
  * só correm em BACKGROUND ou ALL — sem isto a BD nunca recebia buyer_paid_usdc.
  */
+/** Coluna is_super_admin + backfill único: admins atuais passam a super (acesso total API). */
+const ensureAdminSuperAdminSchema = async () => {
+    try {
+        await db.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin INTEGER NOT NULL DEFAULT 0`);
+        const once = await db.query(`SELECT 1 FROM app_cache WHERE key = $1`, ['admin_super_admin_backfill_v1']);
+        if (once.rowCount === 0) {
+            await db.query(`UPDATE users SET is_super_admin = 1 WHERE is_admin = 1`);
+            await db.query(`INSERT INTO app_cache (key, value, updated_at) VALUES ($1, $2::jsonb, NOW()) ON CONFLICT (key) DO NOTHING`, ['admin_super_admin_backfill_v1', JSON.stringify({ v: 1 })]);
+        }
+        if (LEGACY_SUPER_ADMIN_EMAILS.length > 0) {
+            await db.query(`UPDATE users SET is_super_admin = 1 WHERE is_admin = 1 AND LOWER(TRIM(email::text)) = ANY($1::text[])`, [LEGACY_SUPER_ADMIN_EMAILS]);
+        }
+    }
+    catch (e) {
+        console.warn('[Migration] is_super_admin:', e instanceof Error ? e.message : String(e));
+    }
+};
+/** Pontuação por IP para o observador de ameaças (todos os workers — API incluída). */
+const ensureSecurityThreatObserverSchema = async () => {
+    try {
+        await db.query(`
+      CREATE TABLE IF NOT EXISTS security_threat_scores (
+        ip TEXT PRIMARY KEY,
+        score INTEGER NOT NULL DEFAULT 0,
+        window_start BIGINT NOT NULL,
+        updated_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_security_threat_scores_updated ON security_threat_scores(updated_at);
+    `);
+    }
+    catch (e) {
+        console.warn('[Migration] security_threat_scores:', e instanceof Error ? e.message : String(e));
+    }
+};
 const ensureP2pMarketListingSchema = async () => {
     try {
         await db.query(`ALTER TABLE player_listings ADD COLUMN IF NOT EXISTS buyer_paid_usdc double precision`);
@@ -582,6 +859,30 @@ const checkIsAdmin = async (uid) => {
         return false;
     }
 };
+async function loadAdminGateContext(userId) {
+    try {
+        const uRes = await db.query('SELECT is_admin, email, COALESCE(is_super_admin, 0) AS is_super_admin, admin_permissions FROM users WHERE id = $1', [userId]);
+        const row = uRes.rows[0];
+        if (!row || !row.is_admin)
+            return null;
+        let parsedPm = null;
+        try {
+            parsedPm = row.admin_permissions ? JSON.parse(row.admin_permissions) : null;
+        }
+        catch {
+            parsedPm = null;
+        }
+        return {
+            isSuperAdmin: resolveIsSuperAdminFromUserRow(row),
+            tabSet: permissionTabSetFromDbJson(parsedPm),
+            rawAdminPermissions: parsedPm
+        };
+    }
+    catch (e) {
+        console.error('[loadAdminGateContext]', e);
+        return null;
+    }
+}
 /** Normaliza origem para bater com o header `Origin` do browser (sem barra final). */
 function normalizeCorsOrigin(raw) {
     if (raw == null || typeof raw !== 'string')
@@ -610,7 +911,12 @@ function buildCorsOriginSet() {
     add(primaryPublic);
     for (const part of String(process.env.CORS_ALLOWED_ORIGINS || '').split(','))
         add(part);
-    ['https://test.genesisdao.tech'].forEach(add);
+    [
+        'https://genesisdao.tech',
+        'https://test.genesisdao.tech',
+        'https://minestation.tech',
+        'https://test.minestation.tech'
+    ].forEach(add);
     return s;
 }
 const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
@@ -620,7 +926,7 @@ const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
         process.env.SITE_URL ||
         process.env.VITE_APP_URL ||
         '') || '(nenhuma)';
-    console.log(`[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, test.genesisdao.tech)`);
+    console.log(`[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, genesisdao.tech, test.genesisdao.tech, minestation.tech, test.minestation.tech)`);
 }
 /** Eventos de jogo para auditoria no admin (não falha o fluxo principal). */
 async function appendGameActivityLog(q, userId, action, meta) {
@@ -672,7 +978,6 @@ const isAdmin = async (req, res, next) => {
         console.log(`[AdminCheck] IP: ${ip}, URL: ${req.originalUrl}`);
     }
     const logAccess = async (details) => {
-        // Optimization: Skip logging for frequent polling endpoints to reduce I/O
         if (req.url.includes('/api/admin/dashboard-stats') || req.url.includes('/api/system/time')) {
             return;
         }
@@ -686,46 +991,43 @@ const isAdmin = async (req, res, next) => {
             console.error('[AdminAudit] Failed to log:', e.message);
         }
     };
-    if (req.userId) {
-        if (await checkIsAdmin(req.userId)) {
-            const uRes = await db.query('SELECT admin_permissions FROM users WHERE id = $1', [req.userId]);
-            req.adminPermissions = uRes.rows[0]?.admin_permissions ? JSON.parse(uRes.rows[0].admin_permissions) : null;
-            return next();
-        }
-        await logAccess(`User ID ${req.userId} attempted admin access without permissions`);
-        return res.status(403).json({ error: 'Acesso negado' });
-    }
-    const sid = parseCookies(req).sid;
-    if (!sid) {
-        // Audit log for unauthorized admin access
-        const fromUser = await isIpFromUser(ip);
-        await logAccess(`No session cookie provided. IsKnownUser: ${fromUser}`);
-        // SECURITY: Auto-ban logic for unknown crawlers could be added here, 
-        // but per user rules, we preserve registered users.
-        return res.status(401).json({ error: 'Não autenticado' });
-    }
+    let uidForAdmin = req.userId;
     try {
-        const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
-        const s = sRes.rows[0];
-        if (!s) {
-            console.warn(`[isAdmin] Blocked (IP: ${ip}): Session ${sid} not found in DB`);
-            await logAccess(`Invalid session ID: ${sid}`);
-            return res.status(401).json({ error: 'Sessão inválida' });
+        if (!uidForAdmin) {
+            const sid = parseCookies(req).sid;
+            if (!sid) {
+                const fromUser = await isIpFromUser(ip);
+                await logAccess(`No session cookie provided. IsKnownUser: ${fromUser}`);
+                return res.status(401).json({ error: 'Não autenticado' });
+            }
+            const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
+            const s = sRes.rows[0];
+            if (!s) {
+                console.warn(`[isAdmin] Blocked (IP: ${ip}): Session ${sid} not found in DB`);
+                await logAccess(`Invalid session ID: ${sid}`);
+                return res.status(401).json({ error: 'Sessão inválida' });
+            }
+            if (Number(s.expires_at) < Date.now()) {
+                console.warn(`[isAdmin] Blocked (IP: ${ip}): Session ${sid} expired`);
+                await logAccess(`Expired session: ${sid}`);
+                return res.status(401).json({ error: 'Sessão expirada' });
+            }
+            uidForAdmin = s.user_id;
+            req.userId = s.user_id;
         }
-        if (Number(s.expires_at) < Date.now()) {
-            console.warn(`[isAdmin] Blocked (IP: ${ip}): Session ${sid} expired`);
-            await logAccess(`Expired session: ${sid}`);
-            return res.status(401).json({ error: 'Sessão expirada' });
-        }
-        const uRes = await db.query('SELECT is_admin, admin_permissions FROM users WHERE id = $1', [s.user_id]);
-        const row = uRes.rows[0];
-        if (!row || !row.is_admin) {
-            console.warn(`[isAdmin] Blocked (IP: ${ip}): User ${s.user_id} is not admin`);
-            await logAccess(`User ID ${s.user_id} is not an admin`);
+        const ctx = await loadAdminGateContext(uidForAdmin);
+        if (!ctx) {
+            await logAccess(`User ID ${uidForAdmin} attempted admin access without admin flag`);
             return res.status(403).json({ error: 'Acesso negado' });
         }
-        req.userId = s.user_id;
-        req.adminPermissions = row.admin_permissions ? JSON.parse(row.admin_permissions) : null;
+        req.isSuperAdmin = ctx.isSuperAdmin;
+        req.adminPermissions = ctx.rawAdminPermissions;
+        const pathOnly = String(req.originalUrl || req.url || '').split('?')[0];
+        const rule = resolveAdminRouteRequirement(req.method || 'GET', pathOnly);
+        if (!allowsAdminRouteAccess(ctx.isSuperAdmin, ctx.tabSet, rule)) {
+            await logAccess(`Permissão admin negada: user=${uidForAdmin} path=${pathOnly}`);
+            return res.status(403).json({ error: 'Permissão insuficiente para esta operação.' });
+        }
         next();
     }
     catch (e) {
@@ -743,7 +1045,10 @@ async function resolveAdminUserIdFromWsUpgradeRequest(req) {
         const s = sRes.rows[0];
         if (!s || Number(s.expires_at) < Date.now())
             return null;
-        if (!(await checkIsAdmin(s.user_id)))
+        const ctx = await loadAdminGateContext(s.user_id);
+        if (!ctx)
+            return null;
+        if (!allowsAdminRouteAccess(ctx.isSuperAdmin, ctx.tabSet, { kind: 'tab', tab: 'dashboard' }))
             return null;
         return s.user_id;
     }
@@ -779,29 +1084,7 @@ try {
     fs.mkdirSync(IMG_UPLOADS_DIR, { recursive: true });
 }
 catch { /* ignore */ }
-// Configure Multer for ad uploads
-const adStorage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, IMG_UPLOADS_DIR);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const ext = path.extname(file.originalname);
-        cb(null, 'ad-' + uniqueSuffix + ext);
-    }
-});
-const uploadAd = multer({
-    storage: adStorage,
-    limits: { fileSize: 5 * 1024 * 1024 }, // 5MB limit
-    fileFilter: (req, file, cb) => {
-        const allowed = ['.png', '.jpg', '.jpeg', '.gif'];
-        const ext = path.extname(file.originalname).toLowerCase();
-        if (allowed.includes(ext))
-            cb(null, true);
-        else
-            cb(new Error('Formato de arquivo não permitido'));
-    }
-});
+runImageRootStartupOrganizeIfEnabled(IMG_DIR);
 const { uploadSupport, uploadSupportReply } = createSupportTicketUploadMiddlewares(IMG_UPLOADS_DIR);
 // Número de proxies à frente do Node (ex.: 1 = só Nginx; 2 = Cloudflare + Nginx). Evita trust proxy=true,
 // que confia em todos os hops e pode distorcer req.ip. Ajuste TRUST_PROXY_HOPS no .env se o IP real vier errado.
@@ -842,8 +1125,27 @@ app.use(helmet({
         useDefaults: true,
         directives: {
             "default-src": ["'self'"],
-            "script-src": ["'self'", "'unsafe-inline'", "'unsafe-eval'", "https://cdn.applixir.com"],
-            "connect-src": ["'self'", "https://cdn.applixir.com", "https://*.googleapis.com", "https://api.etherscan.io"],
+            "script-src": [
+                "'self'",
+                "'unsafe-inline'",
+                "'unsafe-eval'",
+                "https://cdn.applixir.com",
+                "https://static.cloudflareinsights.com",
+                "https://www.googletagmanager.com",
+                "https://www.google-analytics.com",
+                "https://*.googletagmanager.com"
+            ],
+            "connect-src": [
+                "'self'",
+                "https://cdn.applixir.com",
+                "https://*.googleapis.com",
+                "https://api.etherscan.io",
+                "https://www.google-analytics.com",
+                "https://www.googletagmanager.com",
+                "https://analytics.google.com",
+                "https://region1.google-analytics.com",
+                "https://stats.g.doubleclick.net"
+            ],
             "img-src": ["'self'", "data:", "https:", "http:"],
             "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
             "font-src": ["'self'", "https://fonts.gstatic.com"],
@@ -936,6 +1238,11 @@ const passwordResetRequestLimiter = rateLimit({
 });
 app.use('/api/', limiter);
 app.use('/api/login', authLimiter);
+attachSecurityThreatResponseObserver(app, {
+    pool: db,
+    backupModel,
+    getClientIp
+});
 app.use(express.json({ limit: '5mb' })); // Reduzido o limite para 5MB por segurança
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
 const jwtAllowLegacySession = process.env.JWT_ALLOW_LEGACY_SESSION !== '0' &&
@@ -948,10 +1255,10 @@ app.use((req, res, next) => {
     }
     next();
 });
-// Uploads primeiro (volume em produção); depois assets em img/ vindos da imagem Docker.
-app.use('/img', express.static(IMG_UPLOADS_DIR));
-app.use('/img', express.static(IMG_DIR));
+mountImageStaticMiddleware(app, IMG_UPLOADS_DIR, IMG_DIR);
 // --- Moved utilities below ---
+/** Reduz writes em `users.last_active_at` e `user_history_ips` (hot path em todo pedido autenticado). Por worker. */
+const activityThrottleMaps = new ActivityThrottleMaps(resolveActivityThrottleConfig());
 // Activity tracking (utilizador já resolvido por JWT ou sessão legacy)
 app.use(async (req, res, next) => {
     if (!req.userId)
@@ -959,17 +1266,29 @@ app.use(async (req, res, next) => {
     try {
         const now = Date.now();
         const ip = getClientIp(req);
-        await db.query('UPDATE users SET last_active_at = $1 WHERE id = $2', [now, req.userId]);
+        const uid = req.userId;
+        if (typeof uid !== 'number' || uid <= 0)
+            return next();
+        const writeLastActive = activityThrottleMaps.shouldWriteLastActive(uid, now);
+        const writeHistoryIp = activityThrottleMaps.shouldWriteHistoryIp(uid, ip, now);
+        activityThrottleMaps.prune(now);
+        if (writeLastActive) {
+            await db.query('UPDATE users SET last_active_at = $1 WHERE id = $2', [now, uid]);
+            activityThrottleMaps.markLastActiveWritten(uid, now);
+        }
         const sid = parseCookies(req).sid;
         if (sid) {
             const seenThrottle = now - 45000;
             await db.query('UPDATE sessions SET last_seen_at = $1 WHERE session_id = $2 AND (last_seen_at < $3 OR last_seen_at = 0)', [now, sid, seenThrottle]);
         }
-        await db.query(`
+        if (writeHistoryIp) {
+            await db.query(`
       INSERT INTO user_history_ips (user_id, ip, last_used_at) 
       VALUES ($1, $2, $3) 
       ON CONFLICT (user_id, ip) DO UPDATE SET last_used_at = $3
-    `, [req.userId, ip, now]);
+    `, [uid, ip, now]);
+            activityThrottleMaps.markHistoryIpWritten(uid, ip, now);
+        }
     }
     catch (e) { /* ignore */ }
     next();
@@ -1007,6 +1326,18 @@ registerSupportTicketRoutes(app, {
     uploadSupport,
     uploadSupportReply,
     appendGameActivityLog
+});
+registerPartnerYoutubeRoutes(app, {
+    pool: db,
+    authenticateToken,
+    isAdmin,
+    appendGameActivityLog
+});
+registerImageAssetRoutes(app, {
+    pool: db,
+    isAdmin,
+    imgDir: IMG_DIR,
+    uploadsDir: IMG_UPLOADS_DIR
 });
 const PLAYER_ACTIVITY_ACTIONS = new Set(['room_battery_smart', 'room_battery_bulk_equip', 'room_battery_remove_all']);
 function sanitizePlayerActivityMeta(raw) {
@@ -1153,8 +1484,8 @@ app.post('/api/charging-history/log', authenticateToken, async (req, res) => {
 // --- Moved middlewares below ---
 app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
     try {
-        const r = await db.query('SELECT * FROM wheel_prizes');
-        res.json(r.rows);
+        const items = await fetchWheelPrizesForApiConfig(db);
+        res.json(items);
     }
     catch (e) {
         console.error(e);
@@ -1544,7 +1875,29 @@ app.get('/api/admin/etherscan/treasury-token-txs', isAdmin, async (req, res) => 
     const page = Math.min(100, Math.max(1, parseInt(String(req.query.page ?? '1'), 10) || 1));
     const offset = Math.min(1000, Math.max(1, parseInt(String(req.query.offset ?? '20'), 10) || 20));
     const USDC = '0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359';
-    const treasury = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
+    const fallbackTreasury = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a'.toLowerCase();
+    const legacyTreasury = '0x2c386Bf962339B497d5EC6A0EdB255D30004F3B6'.toLowerCase();
+    /** Carteira antiga — fase lançamento (Relatórios admin). */
+    const legacyLaunchTreasury = '0x33d2406707e5e4b314d15784e73bb08f0c46db42'.toLowerCase();
+    let configuredTreasury = '';
+    try {
+        const cfg = await db.query("SELECT value FROM settings WHERE key = 'web3_deposit_wallet' LIMIT 1");
+        const raw = cfg.rows[0]?.value;
+        if (typeof raw === 'string') {
+            const t = raw.trim().toLowerCase();
+            if (/^0x[a-f0-9]{40}$/.test(t))
+                configuredTreasury = t;
+        }
+    }
+    catch (e) {
+        console.error('[treasury-token-txs] settings read', e);
+    }
+    const primaryTreasury = configuredTreasury || fallbackTreasury;
+    const allowed = new Set([legacyTreasury, legacyLaunchTreasury, primaryTreasury]);
+    const requested = String(req.query.address ?? '').trim().toLowerCase();
+    const treasury = requested.length === 42 && requested.startsWith('0x') && allowed.has(requested)
+        ? requested
+        : primaryTreasury;
     const url = `https://api.etherscan.io/v2/api?chainid=137&module=account&action=tokentx&contractaddress=${USDC}&address=${treasury}&page=${page}&offset=${offset}&startblock=0&endblock=99999999&sort=desc&apikey=${encodeURIComponent(apiKey)}`;
     try {
         const ac = new AbortController();
@@ -2079,7 +2432,9 @@ app.get('/api/upgrades', async (req, res) => {
             if (uRes.rows[0]?.is_admin)
                 isAdminUser = true;
         }
-        const query = isAdminUser ? 'SELECT * FROM upgrades' : 'SELECT * FROM upgrades WHERE is_active = 1';
+        const query = isAdminUser
+            ? "SELECT * FROM upgrades WHERE id !~ '^temp_legacy_' AND (category IS DISTINCT FROM 'legacy-temp')"
+            : 'SELECT * FROM upgrades WHERE is_active = 1';
         const rowsRes = await db.query(query);
         const rows = rowsRes.rows;
         const compatRowsRes = await db.query('SELECT * FROM upgrade_compat_racks');
@@ -2175,8 +2530,13 @@ app.post('/api/upgrades', isAdmin, async (req, res) => {
             }
         }
         // 3. Delete items that are no longer present (SAFE DELETE)
+        const legacyProtectRes = await client.query(`SELECT id FROM upgrades WHERE id ~ '^temp_legacy_' OR category = 'legacy-temp'`);
+        const protectedUpgradeIds = new Set(legacyProtectRes.rows.map((r) => r.id));
         for (const id of existingIds) {
             if (!incomingIds.has(id)) {
+                if (protectedUpgradeIds.has(id)) {
+                    continue;
+                }
                 try {
                     // Identify constraints before deleting? No, try/catch is safer for race conditions
                     // Force delete references in compat table first (optimization)
@@ -2338,29 +2698,6 @@ app.post('/api/upgrades/buy', async (req, res) => {
     finally {
         client.release();
     }
-});
-app.post('/api/upload-image', (req, res) => {
-    const { dataUrl, originalName } = req.body || {};
-    if (!dataUrl || typeof dataUrl !== 'string') {
-        return res.status(400).json({ error: 'Missing dataUrl' });
-    }
-    const match = dataUrl.match(/^data:(image\/png|image\/gif|image\/jpeg);base64,(.+)$/);
-    if (!match) {
-        return res.status(400).json({ error: 'Only PNG/GIF/JPEG data URLs are allowed' });
-    }
-    const mime = match[1];
-    const b64 = match[2];
-    const ext = mime === 'image/png' ? '.png' : (mime === 'image/gif' ? '.gif' : '.jpg');
-    const safeBase = (originalName || 'image').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'image';
-    const filename = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeBase}${ext}`;
-    const filePath = path.join(IMG_UPLOADS_DIR, filename);
-    try {
-        fs.writeFileSync(filePath, Buffer.from(b64, 'base64'));
-    }
-    catch (e) {
-        return res.status(500).json({ error: 'Failed to write file' });
-    }
-    return res.json({ path: `/img/${filename}` });
 });
 async function fetchMonetizationSettingsObject() {
     const applixirEnabledRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_enabled'");
@@ -2576,34 +2913,55 @@ app.post('/api/admin/delete-user-box', isAdmin, async (req, res) => {
         sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
-// Applixir S2S Callback
+function timingSafeSecretEqual(provided, expected) {
+    if (typeof provided !== 'string' || typeof expected !== 'string')
+        return false;
+    const a = Buffer.from(provided, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length === 0 || a.length !== b.length)
+        return false;
+    return crypto.timingSafeEqual(a, b);
+}
+// Applixir S2S Callback — preferir header (evita segredo em URL / logs de proxy); query mantida por compatibilidade.
 app.get('/api/applixir-callback', async (req, res) => {
-    const { userId, secretKey } = req.query;
+    const { userId } = req.query;
     try {
         const dbSecretRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_callback_secret'");
-        const dbSecret = dbSecretRes.rows[0]?.value || '';
-        if (secretKey !== dbSecret)
+        const dbSecret = String(dbSecretRes.rows[0]?.value || '');
+        if (!dbSecret)
+            return res.status(503).send('Callback not configured');
+        const hdrRaw = req.headers['x-applixir-callback-secret'] ||
+            req.headers['x-applixir-secret'] ||
+            req.headers['x-callback-secret'];
+        const hdr = typeof hdrRaw === 'string' ? hdrRaw.trim() : '';
+        const q = req.query.secretKey;
+        const fromQuery = typeof q === 'string' ? q : Array.isArray(q) ? String(q[0] ?? '') : '';
+        const provided = hdr || fromQuery;
+        if (!timingSafeSecretEqual(provided, dbSecret))
             return res.status(403).send('Invalid Secret');
         if (!userId)
             return res.status(400).send('Missing userId');
-        const userRes = await db.query('SELECT * FROM users WHERE id = $1', [userId]);
+        const userIdNum = parseInt(String(userId), 10);
+        if (!Number.isFinite(userIdNum) || userIdNum < 1)
+            return res.status(400).send('Invalid userId');
+        const userRes = await db.query('SELECT * FROM users WHERE id = $1', [userIdNum]);
         if (!userRes.rows[0])
             return res.status(404).send('User not found');
         const wsIdx = Number(req.query.custom);
         if (Number.isInteger(wsIdx) && wsIdx >= 0 && wsIdx <= 5) {
-            const rowRes = await db.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [userId, wsIdx]);
+            const rowRes = await db.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [userIdNum, wsIdx]);
             const row = rowRes.rows[0];
             if (row && row.item_id) {
                 const nowCb = new Date();
                 const startOfDay = new Date(Date.UTC(nowCb.getUTCFullYear(), nowCb.getUTCMonth(), nowCb.getUTCDate())).getTime();
                 const actionKey = `reward_ad_slot_${wsIdx}`;
-                const actionRes = await db.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [userId, actionKey]);
+                const actionRes = await db.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [userIdNum, actionKey]);
                 const lastPerformed = actionRes.rows[0]?.last_performed_at;
                 if (!lastPerformed || Number(lastPerformed) < startOfDay) {
                     const upgRes = await db.query('SELECT power_capacity FROM upgrades WHERE id = $1', [row.item_id]);
                     const maxCap = upgRes.rows[0]?.power_capacity || 1000;
-                    await db.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, userId, wsIdx]);
-                    await db.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [userId, actionKey, Date.now()]);
+                    await db.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, userIdNum, wsIdx]);
+                    await db.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [userIdNum, actionKey, Date.now()]);
                 }
             }
         }
@@ -3405,6 +3763,8 @@ app.post('/api/nfts/receive', isAdmin, async (req, res) => {
     }
 });
 app.post('/api/nfts/send', async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
     const { contract, tokenId, fromAddress, toAddress } = req.body || {};
     try {
         const contractsRowRes = await db.query("SELECT value FROM settings WHERE key = 'web3_nft_contracts'");
@@ -3419,11 +3779,24 @@ app.post('/api/nfts/send', async (req, res) => {
             return res.status(400).json({ error: 'Missing fields' });
         if (!allowed.some(c => c.toLowerCase() === contract.toLowerCase()))
             return res.status(403).json({ error: 'Contract not allowed' });
+        const fromNorm = String(fromAddress).trim().toLowerCase();
+        const toNorm = String(toAddress).trim().toLowerCase();
+        if (!/^0x[a-f0-9]{40}$/.test(fromNorm) || !/^0x[a-f0-9]{40}$/.test(toNorm)) {
+            return res.status(400).json({ error: 'Endereço inválido (use 0x + 40 hex).' });
+        }
+        if (fromNorm === toNorm)
+            return res.status(400).json({ error: 'Origem e destino não podem ser iguais.' });
+        const walletRow = await db.query("SELECT lower(trim(COALESCE(polygon_wallet::text, ''))) AS w FROM users WHERE id = $1", [req.userId]);
+        const userWallet = String(walletRow.rows[0]?.w || '');
+        if (!userWallet || userWallet !== fromNorm) {
+            return res.status(403).json({ error: 'A carteira de origem deve ser a Polygon associada ao teu perfil.' });
+        }
         const rowRes = await db.query('SELECT owner_address FROM nft_items WHERE contract_address = $1 AND token_id = $2', [contract, tokenId]);
         const row = rowRes.rows[0];
-        if (!row || row.owner_address !== fromAddress)
+        const rowOwner = String(row?.owner_address ?? '').trim().toLowerCase();
+        if (!row || rowOwner !== fromNorm)
             return res.status(400).json({ error: 'Not owner' });
-        await db.query('UPDATE nft_items SET owner_address = $1 WHERE contract_address = $2 AND token_id = $3', [toAddress, contract, tokenId]);
+        await db.query('UPDATE nft_items SET owner_address = $1 WHERE contract_address = $2 AND token_id = $3', [toNorm, contract, tokenId]);
         res.json({ ok: true });
     }
     catch (e) {
@@ -3935,7 +4308,7 @@ app.get('/api/my-rig-rooms/:email', async (req, res) => {
         if (!req.userId)
             return res.status(401).json({ error: 'Não autenticado' });
         const email = String(req.params.email || '').trim().toLowerCase();
-        if (!email || email.length > 254 || /[\x00-\x1f<>]/.test(email)) {
+        if (!email || email.length > EMAIL_ADDRESS_MAX_LENGTH || /[\x00-\x1f<>]/.test(email)) {
             return res.status(400).json({ error: 'Email inválido' });
         }
         const uidRes = await db.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [email]);
@@ -4488,23 +4861,6 @@ app.post('/api/admin/display-labels', isAdmin, async (req, res) => {
         client.release();
     }
 });
-// AD IMAGE UPLOAD
-app.post('/api/admin/upload-ad', isAdmin, (req, res) => {
-    console.log('[Upload] Starting upload process...');
-    uploadAd.single('image')(req, res, (err) => {
-        if (err) {
-            console.error('[Upload] Multer Error:', err);
-            return res.status(400).json({ error: 'Erro no upload: ' + err.message });
-        }
-        if (!req.file) {
-            console.log('[Upload] No file received');
-            return res.status(400).json({ error: 'Nenhum arquivo enviado' });
-        }
-        console.log('[Upload] Success:', req.file.filename);
-        const imageUrl = `/img/${req.file.filename}`;
-        res.json({ ok: true, imageUrl });
-    });
-});
 app.get('/api/player-news/pending', isAdmin, async (req, res) => {
     try {
         const rowsRes = await db.query('SELECT p.id, p.user_id, p.text, p.link, p.status, p.created_at, u.username, u.email FROM player_news_submissions p JOIN users u ON u.id = p.user_id WHERE p.status = $1 ORDER BY p.created_at DESC', ['pending']);
@@ -4516,8 +4872,14 @@ app.get('/api/player-news/pending', isAdmin, async (req, res) => {
 });
 app.post('/api/player-news/submit', async (req, res) => {
     const { email, text, link } = req.body || {};
-    if (!email || !text)
+    const PLAYER_NEWS_TEXT_MAX = 500;
+    const PLAYER_NEWS_LINK_MAX = 2048;
+    const textTrimmed = typeof text === 'string' ? text.trim().slice(0, PLAYER_NEWS_TEXT_MAX) : '';
+    if (!email || !textTrimmed)
         return res.status(400).json({ error: 'Missing fields' });
+    const linkForDb = link != null && typeof link === 'string' && link.trim()
+        ? link.trim().slice(0, PLAYER_NEWS_LINK_MAX)
+        : null;
     const client = await db.connect();
     try {
         const uid = await getUserIdByEmail(email, req.ip);
@@ -4539,7 +4901,7 @@ app.post('/api/player-news/submit', async (req, res) => {
         if (fee > 0)
             await client.query('UPDATE game_states SET usdc = usdc - $1 WHERE user_id = $2', [fee, uid]);
         await client.query('DELETE FROM player_news_submissions WHERE user_id = $1', [uid]);
-        await client.query('INSERT INTO player_news_submissions (id,user_id,text,link,status,created_at) VALUES ($1,$2,$3,$4,$5,$6)', [crypto.randomUUID(), uid, text, link ?? null, 'pending', Date.now()]);
+        await client.query('INSERT INTO player_news_submissions (id,user_id,text,link,status,created_at) VALUES ($1,$2,$3,$4,$5,$6)', [crypto.randomUUID(), uid, textTrimmed, linkForDb, 'pending', Date.now()]);
         await client.query('COMMIT');
         const finalGsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
         const newBal = finalGsRes.rows[0]?.usdc ?? 0;
@@ -4707,12 +5069,20 @@ app.post('/api/season-passes', isAdmin, async (req, res) => {
     }
 });
 app.get('/api/season-purchases/:email', async (req, res) => {
-    const email = String(req.params.email || '').toLowerCase();
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
+    const email = String(req.params.email || '').trim().toLowerCase();
+    if (!email || email.length > EMAIL_ADDRESS_MAX_LENGTH || /[\x00-\x1f<>]/.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+    }
     try {
-        const uidRes = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+        const uidRes = await db.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [email]);
         if (!uidRes.rowCount)
             return res.status(404).json({ error: 'Usuário não encontrado' });
         const uid = uidRes.rows[0].id;
+        if (Number(uid) !== Number(req.userId)) {
+            return res.status(403).json({ error: 'Acesso negado' });
+        }
         const rowsRes = await db.query('SELECT pass_id, season_id, purchased_at FROM season_purchases WHERE user_id = $1', [uid]);
         const list = rowsRes.rows.map(r => ({ passId: r.pass_id, seasonId: r.season_id, purchasedAt: r.purchased_at }));
         res.json(list);
@@ -4828,10 +5198,15 @@ app.get('/api/users', isAdmin, async (req, res) => {
         const sortDir = req.query.sortDir === 'desc' ? 'DESC' : 'ASC';
         const filterStatus = req.query.filterStatus || 'all';
         const filterLevel = req.query.filterLevel || 'all';
+        const filterAdminsRaw = req.query.filterAdmins;
+        const filterAdminsOnly = filterAdminsRaw === '1' || String(filterAdminsRaw || '').toLowerCase() === 'true';
         const offset = (page - 1) * limit;
         let whereConditions = [];
         let params = [];
         let paramIdx = 1;
+        if (filterAdminsOnly) {
+            whereConditions.push(`u.is_admin = 1`);
+        }
         // Search Filter
         if (search) {
             whereConditions.push(`(LOWER(u.username) LIKE $${paramIdx} OR LOWER(u.email) LIKE $${paramIdx} OR LOWER(u.polygon_wallet) LIKE $${paramIdx})`);
@@ -4917,6 +5292,11 @@ app.get('/api/users', isAdmin, async (req, res) => {
             username: r.username,
             email: r.email,
             isAdmin: !!r.is_admin,
+            isSuperAdmin: resolveIsSuperAdminFromUserRow({
+                is_super_admin: r.is_super_admin,
+                is_admin: r.is_admin,
+                email: r.email
+            }),
             polygonWallet: r.polygon_wallet ?? undefined,
             isBlocked: !!r.is_blocked,
             accessLevelId: r.access_level_id ?? undefined,
@@ -5177,15 +5557,18 @@ async function computeAdminDashboardStatsUncached() {
 let dashboardStatsCache = null;
 let lastDashboardFetch = 0;
 const DASHBOARD_CACHE_TTL = 10000; // 10 seconds cache
-app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
+async function getAdminDashboardStatsCached() {
     const now = Date.now();
     if (dashboardStatsCache && (now - lastDashboardFetch < DASHBOARD_CACHE_TTL)) {
-        return res.json(dashboardStatsCache);
+        return dashboardStatsCache;
     }
+    dashboardStatsCache = await computeAdminDashboardStatsUncached();
+    lastDashboardFetch = Date.now();
+    return dashboardStatsCache;
+}
+app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
     try {
-        dashboardStatsCache = await computeAdminDashboardStatsUncached();
-        lastDashboardFetch = Date.now();
-        res.json(dashboardStatsCache);
+        res.json(await getAdminDashboardStatsCached());
     }
     catch (e) {
         console.error('[DashStats] Error:', e);
@@ -5193,28 +5576,37 @@ app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
     }
 });
 app.post('/api/admin/update-permissions', isAdmin, async (req, res) => {
-    const { email, isAdmin: targetIsAdmin, permissions } = req.body;
-    if (!email)
+    const { email, isAdmin: targetIsAdmin, permissions, isSuperAdmin: targetSuperRaw } = req.body;
+    const emailNorm = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    if (!emailNorm)
         return res.status(400).json({ error: 'Email obrigatório' });
     try {
         let permsJson = null;
+        const hasSuperInBody = Object.prototype.hasOwnProperty.call(req.body, 'isSuperAdmin');
+        let superVal = 0;
         if (targetIsAdmin) {
-            if (Array.isArray(permissions)) {
-                permsJson = JSON.stringify(ensureAdminSettingsLabelsInPermissions(permissions));
-            }
-            else if (permissions && typeof permissions === 'object') {
-                const o = { ...permissions };
-                o['settings:labels'] = true;
-                permsJson = JSON.stringify(o);
+            if (hasSuperInBody) {
+                superVal = !!targetSuperRaw ? 1 : 0;
             }
             else {
-                permsJson = JSON.stringify(ensureAdminSettingsLabelsInPermissions([]));
+                const prev = await db.query('SELECT COALESCE(is_super_admin, 0) AS is_super_admin, COALESCE(is_admin, 0) AS is_admin, email FROM users WHERE LOWER(TRIM(email)) = $1 LIMIT 1', [emailNorm]);
+                const prow = prev.rows[0];
+                superVal = prow && resolveIsSuperAdminFromUserRow(prow) ? 1 : 0;
             }
         }
-        else if (permissions != null) {
-            permsJson = JSON.stringify(permissions);
+        if (targetIsAdmin) {
+            if (Array.isArray(permissions)) {
+                permsJson = JSON.stringify(ensureAdminPartnersTabInPermissions(ensureAdminSettingsLabelsInPermissions(permissions)));
+            }
+            else if (permissions && typeof permissions === 'object') {
+                const tabIds = adminPermissionsObjectToTabIds(permissions);
+                permsJson = JSON.stringify(ensureAdminPartnersTabInPermissions(ensureAdminSettingsLabelsInPermissions(tabIds)));
+            }
+            else {
+                permsJson = JSON.stringify(ensureAdminPartnersTabInPermissions(ensureAdminSettingsLabelsInPermissions([])));
+            }
         }
-        await db.query('UPDATE users SET is_admin = $1, admin_permissions = $2 WHERE email = $3', [targetIsAdmin ? 1 : 0, permsJson, email]);
+        await db.query('UPDATE users SET is_admin = $1, admin_permissions = $2, is_super_admin = $3 WHERE LOWER(TRIM(email)) = $4', [targetIsAdmin ? 1 : 0, permsJson, superVal, emailNorm]);
         res.json({ ok: true });
     }
     catch (e) {
@@ -5276,12 +5668,20 @@ app.get('/api/leaderboard', async (req, res) => {
 });
 // --- REFERRALS ---
 app.get('/api/referrals/:email', async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
+    const email = String(req.params.email || '').trim().toLowerCase();
+    if (!email || email.length > EMAIL_ADDRESS_MAX_LENGTH || /[\x00-\x1f<>]/.test(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+    }
     try {
-        const email = String(req.params.email || '').toLowerCase();
-        const uidRes = await db.query('SELECT id FROM users WHERE email = $1', [email]);
+        const uidRes = await db.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [email]);
         if (!uidRes.rowCount)
             return res.status(404).json({ error: 'Usuário não encontrado' });
         const uid = uidRes.rows[0].id;
+        if (Number(uid) !== Number(req.userId)) {
+            return res.status(403).json({ error: 'Acesso negado' });
+        }
         const rowsRes = await db.query('SELECT referred_username FROM referrals WHERE user_id = $1 ORDER BY id ASC', [uid]);
         res.json(rowsRes.rows.map(r => r.referred_username));
     }
@@ -5293,8 +5693,15 @@ app.post('/api/referrals/claim-code', async (req, res) => {
     const { code } = req.body || {};
     if (!req.userId)
         return res.status(401).json({ error: 'Não autenticado' });
-    if (!code)
+    if (code == null || (typeof code === 'string' && !code.trim())) {
         return res.status(400).json({ error: 'Parâmetros inválidos' });
+    }
+    const codeCheck = validateOptionalReferralCodeInput(code);
+    if (!codeCheck.ok)
+        return res.status(400).json({ error: codeCheck.error });
+    if (!codeCheck.code)
+        return res.status(400).json({ error: 'Parâmetros inválidos' });
+    const codeNormalized = codeCheck.code;
     const client = await db.connect();
     try {
         const uid = req.userId;
@@ -5304,14 +5711,14 @@ app.post('/api/referrals/claim-code', async (req, res) => {
             return res.status(400).json({ error: 'Usuário não encontrado' });
         if (current.referred_by)
             return res.status(400).json({ error: 'Código já vinculado' });
-        const referrerRes = await client.query('SELECT id FROM users WHERE referral_code = $1', [code]);
+        const referrerRes = await client.query('SELECT id FROM users WHERE referral_code = $1', [codeNormalized]);
         const referrer = referrerRes.rows[0];
         if (!referrer)
             return res.status(400).json({ error: 'Código inválido' });
         if (referrer.id === uid)
             return res.status(400).json({ error: 'Você não pode usar seu próprio código' });
         await client.query('BEGIN');
-        await client.query('UPDATE users SET referred_by = $1 WHERE id = $2', [code, uid]);
+        await client.query('UPDATE users SET referred_by = $1 WHERE id = $2', [codeNormalized, uid]);
         await client.query('INSERT INTO referrals (user_id, referred_username) VALUES ($1, $2) ON CONFLICT DO NOTHING', [referrer.id, current.username]);
         // Grant Referee Reward (Receiver) - AUTOMATICALLY when claiming code
         const gsRes = await client.query('SELECT referral_bonus_claimed FROM game_states WHERE user_id = $1', [uid]);
@@ -5383,31 +5790,7 @@ app.post('/api/referrals/claim-reward', async (req, res) => {
 });
 app.get('/api/wheel/config', async (req, res) => {
     try {
-        const r = await db.query('SELECT * FROM wheel_prizes ORDER BY id ASC');
-        const items = r.rows.map(row => ({
-            id: row.id,
-            label: row.label,
-            color: row.color,
-            weight: Number(row.weight),
-            itemId: row.item_id // Optional link
-        }));
-        res.json(items);
-    }
-    catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
-    }
-});
-// Admin Routes for Wheel
-app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
-    try {
-        const r = await db.query('SELECT * FROM wheel_prizes ORDER BY id ASC');
-        const items = r.rows.map(row => ({
-            id: row.id,
-            label: row.label,
-            color: row.color,
-            weight: Number(row.weight),
-            itemId: row.item_id
-        }));
+        const items = await fetchWheelPrizesForApiConfig(db);
         res.json(items);
     }
     catch (e) {
@@ -5541,41 +5924,50 @@ app.post('/api/mining-coins', isAdmin, async (req, res) => {
 });
 app.post('/api/login', async (req, res) => {
     const { email, password } = req.body || {};
-    if (!email || !password)
-        return res.status(400).json({ error: 'Missing credentials' });
+    const emailStr = typeof email === 'string' ? email : '';
+    const passwordStr = typeof password === 'string' ? password : '';
+    const present = validateLoginFieldsPresent(email, password);
+    if (!present.ok)
+        return res.status(400).json({ error: present.error });
+    const emailCheck = validateLoginEmail(emailStr);
+    if (!emailCheck.ok)
+        return res.status(400).json({ error: emailCheck.error });
+    const passwordCheck = validateLoginPassword(passwordStr);
+    if (!passwordCheck.ok)
+        return res.status(400).json({ error: passwordCheck.error });
     try {
-        const normalizedEmail = (email || '').toLowerCase();
-        const uRes = await db.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
+        const normalizedEmail = emailStr.trim().toLowerCase();
+        const uRes = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [normalizedEmail]);
         let u = uRes.rows[0];
         if (!u) {
-            await bcrypt.compare(password, '$2b$10$abcdefghijklmnopqrstuvwxyz123456');
-            return res.status(401).json({ error: 'Credenciais inválidas.' });
+            await bcrypt.compare(passwordStr, '$2b$10$abcdefghijklmnopqrstuvwxyz123456');
+            return res.status(401).json({ error: 'E-mail ou palavra-passe incorretos.' });
         }
         if (u.is_blocked)
             return res.status(403).json({ error: 'Este usuário está bloqueado.' });
         if (!u.password) {
-            const hashedPassword = await bcrypt.hash(password, 10);
+            const hashedPassword = await bcrypt.hash(passwordStr, 10);
             await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, u.id]);
             u.password = hashedPassword;
         }
         let isMatch = false;
         if (u.password && (u.password.startsWith('$2a$') || u.password.startsWith('$2b$'))) {
             try {
-                isMatch = await bcrypt.compare(password, u.password);
+                isMatch = await bcrypt.compare(passwordStr, u.password);
             }
             catch (bcError) {
                 console.error('[Login] bcrypt:', bcError.message || bcError);
             }
         }
         else {
-            if (u.password === password) {
+            if (u.password === passwordStr) {
                 isMatch = true;
-                const hashedPassword = await bcrypt.hash(password, 10);
+                const hashedPassword = await bcrypt.hash(passwordStr, 10);
                 await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, u.id]);
             }
         }
         if (!isMatch) {
-            return res.status(401).json({ error: 'Credenciais inválidas (Senha incorreta).' });
+            return res.status(401).json({ error: 'E-mail ou palavra-passe incorretos.' });
         }
         // SINCRONIZAÇÃO E LOG DE IP
         const currentIp = getClientIp(req);
@@ -5630,6 +6022,11 @@ app.post('/api/login', async (req, res) => {
             email: u.email,
             username: u.username,
             isAdmin: !!u.is_admin,
+            isSuperAdmin: resolveIsSuperAdminFromUserRow({
+                is_super_admin: u.is_super_admin,
+                is_admin: u.is_admin,
+                email: u.email
+            }),
             isBlocked: !!u.is_blocked,
             adminPermissions: adminPerms,
             polygonWallet: u.polygon_wallet,
@@ -5684,6 +6081,11 @@ app.get('/api/session', async (req, res) => {
             username: u.username,
             email: u.email,
             isAdmin: !!u.is_admin,
+            isSuperAdmin: resolveIsSuperAdminFromUserRow({
+                is_super_admin: u.is_super_admin,
+                is_admin: u.is_admin,
+                email: u.email
+            }),
             adminPermissions: adminPerms,
             isBlocked: !!u.is_blocked,
             polygonWallet: u.polygon_wallet,
@@ -5734,13 +6136,9 @@ app.post('/api/session', async (req, res) => {
         }
         if (!uid)
             return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
-        const { polygonWallet, accessLevelId } = req.body;
+        const { polygonWallet } = req.body || {};
         if (polygonWallet !== undefined)
             await db.query('UPDATE users SET polygon_wallet = $1 WHERE id = $2', [polygonWallet, uid]);
-        if (accessLevelId !== undefined) {
-            await db.query('UPDATE users SET access_level_id = $1 WHERE id = $2', [accessLevelId, uid]);
-            await db.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [uid, accessLevelId, Date.now()]);
-        }
         res.json({ ok: true });
     }
     catch (e) {
@@ -5763,11 +6161,15 @@ app.get('/api/load-game', async (req, res) => {
         const workshopRes = await db.query('SELECT * FROM workshop_slots WHERE user_id = $1 ORDER BY slot_index', [uid]);
         const dailyRes = await db.query('SELECT action_key, last_performed_at FROM daily_actions WHERE user_id = $1', [uid]);
         const claimedRes = await db.query('SELECT box_id FROM player_claimed_boxes WHERE user_id = $1', [uid]);
-        const userRefRes = await db.query('SELECT referred_by, username FROM users WHERE id = $1', [uid]);
+        const userRefRes = await db.query('SELECT referred_by, username, email FROM users WHERE id = $1', [uid]);
         const u = userRefRes.rows[0];
         const gs = gsRes.rows[0] || { usdc: 0, start_time: Date.now(), claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: Date.now() };
         const stock = {};
-        stockRes.rows.forEach(r => { stock[r.item_id] = r.qty; });
+        stockRes.rows.forEach(r => {
+            if (!isValidSaveGameItemId(r.item_id))
+                return;
+            stock[r.item_id] = r.qty;
+        });
         const unopenedBoxes = {};
         boxRes.rows.forEach(r => { unopenedBoxes[r.box_id] = r.qty; });
         const storedBatteries = batRes.rows.map(r => ({ id: r.id, itemId: r.item_id, currentCharge: r.current_charge }));
@@ -5801,13 +6203,19 @@ app.get('/api/load-game', async (req, res) => {
                 workshopSlots[w.slot_index] = {
                     id: `ws_${uid}_${w.slot_index}`,
                     itemId: w.item_id,
-                    internalSlots: w.internal_state ? JSON.parse(w.internal_state) : {},
+                    internalSlots: safeWorkshopJsonObject(w.internal_state, 'workshop_slots.internal_state', uid),
                     currentCharge: w.current_charge ?? 0,
-                    slotCharges: w.slot_charges ? JSON.parse(w.slot_charges) : {},
-                    slotItemIds: w.slot_item_ids ? JSON.parse(w.slot_item_ids) : {}
+                    slotCharges: safeWorkshopJsonObject(w.slot_charges, 'workshop_slots.slot_charges', uid),
+                    slotItemIds: safeWorkshopJsonObject(w.slot_item_ids, 'workshop_slots.slot_item_ids', uid)
                 };
             }
         });
+        try {
+            await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(db, String(userRefRes.rows[0]?.email || ''), workshopSlots);
+        }
+        catch (e) {
+            console.warn('[load-game] enrich workshop slotItemIds:', e instanceof Error ? e.message : String(e));
+        }
         const coinBalances = {};
         coinRes.rows.forEach(c => { coinBalances[c.coin_id] = c.amount; });
         const dailyActions = {};
@@ -5873,7 +6281,9 @@ app.put('/api/users/block', isAdmin, async (req, res) => {
 });
 app.put('/api/user', async (req, res) => {
     const u = req.body;
-    const normalizedEmail = (u.email || '').toLowerCase();
+    const normalizedEmail = String(u.email || '')
+        .toLowerCase()
+        .trim();
     console.log(`[UserUpdate] Payload received for email: ${normalizedEmail}, userId: ${req.userId}`);
     const client = await db.connect();
     try {
@@ -5926,50 +6336,139 @@ app.put('/api/user', async (req, res) => {
                     return res.status(400).json({ ok: false, error: ev.error });
                 }
             }
-            uid = await getUserIdByEmail(normalizedEmail, req.ip);
+            if (!normalizedEmail.includes('@') || normalizedEmail.length > SIGNUP_EMAIL_MAX_TOTAL) {
+                return res.status(400).json({ error: 'E-mail inválido.' });
+            }
+            uid = await getUserIdByEmail(normalizedEmail, getClientIp(req));
+        }
+        const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
+        if (req.userId) {
+            const actRes = await db.query('SELECT COALESCE(is_admin,0) AS is_admin, COALESCE(is_super_admin,0) AS is_super_admin, email FROM users WHERE id = $1', [req.userId]);
+            const actorIsAdmin = !!actRes.rows[0]?.is_admin;
+            const actorIsSuper = actRes.rows[0]
+                ? resolveIsSuperAdminFromUserRow(actRes.rows[0])
+                : false;
+            if (actorIsAdmin) {
+                const tgtRes = await db.query('SELECT COALESCE(is_admin,0) AS is_admin, LOWER(TRIM(COALESCE(email, \'\'))) AS cur_email FROM users WHERE id = $1', [uid]);
+                const targetIsAdmin = !!tgtRes.rows[0]?.is_admin;
+                const curEmail = String(tgtRes.rows[0]?.cur_email || '');
+                const nextEmail = String(normalizedEmail || '').trim().toLowerCase();
+                const emailChanging = nextEmail !== curEmail;
+                const editingOther = Number(req.userId) !== Number(uid);
+                if (targetIsAdmin && editingOther && !actorIsSuper) {
+                    if (hasPassword) {
+                        return res.status(403).json({
+                            error: 'Apenas super administradores podem alterar a senha de outras contas administrador.'
+                        });
+                    }
+                    if (emailChanging) {
+                        return res.status(403).json({
+                            error: 'Apenas super administradores podem alterar o email de outras contas administrador.'
+                        });
+                    }
+                }
+            }
+        }
+        let allowAccessLevelFromBody = !req.userId;
+        if (req.userId) {
+            const gateRes = await db.query('SELECT COALESCE(is_admin,0) AS a FROM users WHERE id = $1', [req.userId]);
+            allowAccessLevelFromBody = !!gateRes.rows[0]?.a;
+        }
+        let accessLevelIdForUpdate = u.accessLevelId ?? null;
+        if (!allowAccessLevelFromBody) {
+            const curLv = await db.query('SELECT access_level_id FROM users WHERE id = $1', [uid]);
+            accessLevelIdForUpdate = curLv.rows[0]?.access_level_id ?? null;
+        }
+        else if (u.accessLevelId != null && String(u.accessLevelId).trim() !== '') {
+            const al = validateOptionalAccessLevelId(u.accessLevelId);
+            if (al && typeof al === 'object' && 'error' in al) {
+                return res.status(400).json({ error: al.error });
+            }
+            if (typeof al === 'string') {
+                accessLevelIdForUpdate = al;
+            }
+        }
+        let usernameForUpdate = u.username;
+        if (!req.userId) {
+            const userVu = validateSignupUsername(u.username);
+            if (!userVu.ok) {
+                return res.status(400).json({ error: userVu.error });
+            }
+            usernameForUpdate = userVu.username;
+        }
+        else if (typeof u.username === 'string' && u.username.trim() !== '') {
+            const userVu = validateSignupUsername(u.username);
+            if (!userVu.ok) {
+                return res.status(400).json({ error: userVu.error });
+            }
+            usernameForUpdate = userVu.username;
+        }
+        if (hasPassword) {
+            const pv = validateSignupPassword(u.password, true);
+            if (!pv.ok) {
+                return res.status(400).json({ error: pv.error });
+            }
+        }
+        const pwc = validateOptionalPolygonWallet(u.polygonWallet);
+        if (pwc && typeof pwc === 'object' && 'error' in pwc) {
+            return res.status(400).json({ error: pwc.error });
+        }
+        const polygonForUpdate = typeof pwc === 'string' ? pwc : u.polygonWallet ?? null;
+        const refVal = validateOptionalReferralCodeInput(u.referredBy);
+        if (!refVal.ok) {
+            return res.status(400).json({ error: refVal.error });
+        }
+        const referredByForUpdate = refVal.code;
+        let accessLevelIdsValidated = null;
+        if (allowAccessLevelFromBody && Array.isArray(u.accessLevelIds)) {
+            const av = validateAccessLevelIdsArray(u.accessLevelIds);
+            if (!av.ok) {
+                return res.status(400).json({ error: av.error });
+            }
+            accessLevelIdsValidated = av.ids;
         }
         await client.query('BEGIN');
         // Update User
-        const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
         if (hasPassword) {
             const hashedPassword = await bcrypt.hash(u.password, 10);
-            await client.query('UPDATE users SET username=$1, email=$2, password=$3, polygon_wallet=$4, access_level_id=$5, referred_by=$6 WHERE id = $7', [u.username, normalizedEmail, hashedPassword, u.polygonWallet ?? null, u.accessLevelId ?? null, u.referredBy ?? null, uid]);
+            await client.query('UPDATE users SET username=$1, email=$2, password=$3, polygon_wallet=$4, access_level_id=$5, referred_by=$6 WHERE id = $7', [usernameForUpdate, normalizedEmail, hashedPassword, polygonForUpdate, accessLevelIdForUpdate, referredByForUpdate, uid]);
         }
         else {
-            await client.query('UPDATE users SET username=$1, email=$2, polygon_wallet=$3, access_level_id=$4, referred_by=$5 WHERE id = $6', [u.username, normalizedEmail, u.polygonWallet ?? null, u.accessLevelId ?? null, u.referredBy ?? null, uid]);
+            await client.query('UPDATE users SET username=$1, email=$2, polygon_wallet=$3, access_level_id=$4, referred_by=$5 WHERE id = $6', [usernameForUpdate, normalizedEmail, polygonForUpdate, accessLevelIdForUpdate, referredByForUpdate, uid]);
         }
-        if (u.accessLevelId) {
-            await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [uid, u.accessLevelId, Date.now()]);
+        if (allowAccessLevelFromBody && accessLevelIdForUpdate) {
+            await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [uid, accessLevelIdForUpdate, Date.now()]);
         }
-        if (Array.isArray(u.accessLevelIds)) {
+        if (allowAccessLevelFromBody && accessLevelIdsValidated) {
             // Sincronizar múltiplos níveis
             await client.query('DELETE FROM user_access_levels WHERE user_id = $1', [uid]);
-            for (const alid of u.accessLevelIds) {
+            for (const alid of accessLevelIdsValidated) {
                 await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [uid, alid, Date.now()]);
             }
             // Garantir que o nível primário esteja incluído se definido
-            if (u.accessLevelId) {
-                await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [uid, u.accessLevelId, Date.now()]);
+            if (accessLevelIdForUpdate) {
+                await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [uid, accessLevelIdForUpdate, Date.now()]);
             }
         }
         // Handle Referral
-        if (u.referredBy) {
+        const clientIpReferral = getClientIp(req);
+        if (referredByForUpdate) {
             // Find referrer (Case insensitive)
-            const refRes = await client.query('SELECT id, access_level_id FROM users WHERE LOWER(referral_code) = LOWER($1)', [u.referredBy]);
+            const refRes = await client.query('SELECT id, access_level_id FROM users WHERE LOWER(referral_code) = LOWER($1)', [referredByForUpdate]);
             const ref = refRes.rows[0];
-            if (ref && u.username) {
+            if (ref && usernameForUpdate) {
                 // PREVENÇÃO DE AUTO-INDICAÇÃO: Verificar IP de registro e histórico
                 const referrerRes = await client.query('SELECT registration_ip FROM users WHERE id = $1', [ref.id]);
                 const referrerRegIp = referrerRes.rows[0]?.registration_ip;
                 // Verificar se o IP atual já foi usado pelo indicador no histórico
-                const historyCheck = await client.query('SELECT 1 FROM user_history_ips WHERE user_id = $1 AND ip = $2', [ref.id, req.ip]);
-                if ((referrerRegIp && referrerRegIp === req.ip) || historyCheck.rowCount > 0) {
-                    console.warn(`[Referral] Bloqueada tentativa de auto-indicação. IP ${req.ip} vinculado ao indicador ID: ${ref.id}`);
+                const historyCheck = await client.query('SELECT 1 FROM user_history_ips WHERE user_id = $1 AND ip = $2', [ref.id, clientIpReferral]);
+                if ((referrerRegIp && referrerRegIp === clientIpReferral) || historyCheck.rowCount > 0) {
+                    console.warn(`[Referral] Bloqueada tentativa de auto-indicação. IP ${clientIpReferral} vinculado ao indicador ID: ${ref.id}`);
                     throw new Error('Auto-indicação não permitida. Você não pode usar seu próprio código de indicação em contas do mesmo IP.');
                 }
                 else {
                     // Link referral (Idempotent)
-                    const refInsert = await client.query('INSERT INTO referrals (user_id, referred_username) VALUES ($1, $2) ON CONFLICT (user_id, referred_username) DO NOTHING', [ref.id, u.username]);
+                    const refInsert = await client.query('INSERT INTO referrals (user_id, referred_username) VALUES ($1, $2) ON CONFLICT (user_id, referred_username) DO NOTHING', [ref.id, usernameForUpdate]);
                     if (refInsert.rowCount > 0) {
                         // Check for Advanced Referral Model
                         const alId = ref.access_level_id || 'normal';
@@ -6079,6 +6578,22 @@ async function deleteUserByEmail(email, client) {
             return { ok: false, error: 'Utilizador não encontrado.' };
         }
         const { id: uid, username, polygon_wallet: wallet } = userRes.rows[0];
+        // FKs sem ON DELETE CASCADE (bloqueiam DELETE em users se não limpar antes)
+        await dbClient.query('DELETE FROM support_ticket_replies WHERE admin_user_id = $1', [uid]);
+        await dbClient.query('DELETE FROM support_tickets WHERE user_id = $1', [uid]);
+        await dbClient.query('DELETE FROM p2p_market_trade_history WHERE buyer_id = $1 OR seller_id = $1', [uid]);
+        await dbClient.query('UPDATE sessions SET original_user_id = NULL WHERE original_user_id = $1', [uid]);
+        try {
+            await dbClient.query('UPDATE partner_youtube_submissions SET reviewed_by = NULL WHERE reviewed_by = $1', [uid]);
+            await dbClient.query('UPDATE partner_youtube_creator_profiles SET updated_by = NULL WHERE updated_by = $1', [uid]);
+            await dbClient.query('UPDATE partner_youtube_manual_allowlist SET added_by = NULL WHERE added_by = $1', [uid]);
+            await dbClient.query('DELETE FROM partner_youtube_manual_allowlist WHERE user_id = $1', [uid]);
+        }
+        catch (partnerErr) {
+            const code = partnerErr && typeof partnerErr === 'object' && 'code' in partnerErr ? partnerErr.code : '';
+            if (code !== '42P01')
+                throw partnerErr;
+        }
         // Delete in child-to-parent order
         await dbClient.query('DELETE FROM sessions WHERE user_id = $1', [uid]);
         await dbClient.query('DELETE FROM referrals WHERE user_id = $1', [uid]);
@@ -6126,6 +6641,22 @@ async function deleteUserByEmail(email, client) {
 }
 app.delete('/api/user/:email', isAdmin, async (req, res) => {
     try {
+        const trimmed = String(req.params.email || '').trim();
+        const lower = trimmed.toLowerCase();
+        if (!lower) {
+            return res.status(400).json({ ok: false, error: 'Email inválido.' });
+        }
+        if (!req.isSuperAdmin) {
+            const admChk = await db.query('SELECT id, COALESCE(is_admin,0) AS is_admin FROM users WHERE lower(trim(email::text)) = $1', [lower]);
+            const actorId = Number(req.userId);
+            const blocksOtherAdmin = admChk.rows.some((row) => !!row.is_admin && Number(row.id) !== actorId);
+            if (blocksOtherAdmin) {
+                return res.status(403).json({
+                    ok: false,
+                    error: 'Apenas super administradores podem excluir outras contas administrador.'
+                });
+            }
+        }
         const result = await deleteUserByEmail(req.params.email, null);
         res.json(result);
     }
@@ -6201,6 +6732,23 @@ app.post('/api/admin/bulk-gift', isAdmin, async (req, res) => {
         client.release();
     }
 });
+/** Evita 500 em GET /api/game-state quando JSON da oficina na BD está truncado ou inválido. */
+function safeWorkshopJsonObject(raw, label, userId) {
+    if (raw == null || raw === '')
+        return {};
+    if (typeof raw !== 'string')
+        return {};
+    try {
+        const v = JSON.parse(raw);
+        if (!v || typeof v !== 'object' || Array.isArray(v))
+            return {};
+        return v;
+    }
+    catch {
+        console.warn(`[GameState] JSON inválido em ${label} (user ${userId})`);
+        return {};
+    }
+}
 // --- GAME STATE ---
 app.get('/api/game-state/:email', async (req, res) => {
     let email = req.params.email;
@@ -6229,19 +6777,15 @@ app.get('/api/game-state/:email', async (req, res) => {
         if (!u)
             return res.status(404).json({ error: 'User not found' });
         const now = Date.now();
-        console.log(`[GameState] Start for ${uid} at ${now}`);
         const t0 = performance.now();
         const progressRes = await computeProgressForUser(db, uid, now, !isAdminEdit);
         const t1 = performance.now();
-        console.log(`[GameState] computeProgress took ${(t1 - t0).toFixed(2)}ms`);
         if (!progressRes.ok) {
             const safeMsg = sanitizeApiMessage(progressRes.error, 240);
             console.warn(`[GameState] computeProgress failed uid=${uid}: ${safeMsg}`);
             return res.status(500).json({ error: safeMsg });
         }
         const offlineMined = progressRes.offlineMined || {};
-        // OPTIMIZATION: Parallelize independent DB queries
-        console.log(`[GameState] Starting Parallel DB Queries...`);
         const [gsRes, stockRes, unopenedBoxesRes, storedBatteriesRes, placedRacksRes, workshopSlotsRes, coinBalancesRes, dailyActionsRes, playerListingsRes, claimedBoxesRes] = await Promise.all([
             db.query('SELECT * FROM game_states WHERE user_id = $1', [uid]),
             db.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]),
@@ -6255,10 +6799,13 @@ app.get('/api/game-state/:email', async (req, res) => {
             db.query('SELECT box_id FROM player_claimed_boxes WHERE user_id = $1', [uid])
         ]);
         const t2 = performance.now();
-        console.log(`[GameState] DB Queries took ${(t2 - t1).toFixed(2)}ms`);
         const gs = gsRes.rows[0] || { usdc: 0, start_time: now, claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: now, black_market_balance: 0, server_updated_at: 0 };
         const stock = {};
-        stockRes.rows.forEach(r => { stock[r.item_id] = r.qty; });
+        stockRes.rows.forEach(r => {
+            if (!isValidSaveGameItemId(r.item_id))
+                return;
+            stock[r.item_id] = r.qty;
+        });
         const unopenedBoxes = {};
         unopenedBoxesRes.rows.forEach(r => { unopenedBoxes[r.box_id] = r.qty; });
         const storedBatteries = storedBatteriesRes.rows.map(r => ({ id: r.id, itemId: r.item_id, currentCharge: r.current_charge }));
@@ -6325,14 +6872,20 @@ app.get('/api/game-state/:email', async (req, res) => {
                 workshopSlots[w.slot_index] = {
                     id: `ws_${uid}_${w.slot_index}`,
                     itemId: w.item_id,
-                    internalSlots: w.internal_state ? JSON.parse(w.internal_state) : {},
+                    internalSlots: safeWorkshopJsonObject(w.internal_state, 'workshop_slots.internal_state', uid),
                     currentCharge: w.current_charge ?? 0,
-                    slotCharges: w.slot_charges ? JSON.parse(w.slot_charges) : {},
-                    slotItemIds: w.slot_item_ids ? JSON.parse(w.slot_item_ids) : {},
+                    slotCharges: safeWorkshopJsonObject(w.slot_charges, 'workshop_slots.slot_charges', uid),
+                    slotItemIds: safeWorkshopJsonObject(w.slot_item_ids, 'workshop_slots.slot_item_ids', uid),
                     installedAt: Number(w.installed_at || 0)
                 };
             }
         });
+        try {
+            await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(db, String(u.email || ''), workshopSlots);
+        }
+        catch (e) {
+            console.warn('[game-state] enrich workshop slotItemIds:', e instanceof Error ? e.message : String(e));
+        }
         const nftRoomIdsForGet = await resolveNftAutoArmario1OnlyRoomIds(db);
         const hadNftAutoViolations = placedRacks.some((r) => nftRoomIdsForGet.has(normalizePlacedRackRoomId(r.roomId)) &&
             r.itemId &&
@@ -6388,7 +6941,7 @@ app.get('/api/game-state/:email', async (req, res) => {
                 fixClient.release();
             }
         }
-        res.json({
+        const payload = {
             usdc: gs.usdc,
             startTime: Number(gs.start_time),
             lastUpdatedAt: Number(gs.last_updated_at),
@@ -6406,9 +6959,12 @@ app.get('/api/game-state/:email', async (req, res) => {
             claimedBoxes,
             serverUpdatedAt: gs.server_updated_at || 0,
             offlineMined
-        });
+        };
         const t3 = performance.now();
-        console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
+        if ((t3 - t0) >= 400) {
+            console.warn(`[GameState] slow uid=${uid} total=${(t3 - t0).toFixed(2)}ms progress=${(t1 - t0).toFixed(2)}ms db=${(t2 - t1).toFixed(2)}ms`);
+        }
+        res.json(payload);
     }
     catch (e) {
         sendInternalErrorSafeMessage(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
@@ -6504,7 +7060,8 @@ app.post('/api/save-game', async (req, res) => {
                 effectiveAdminOverride = true;
                 // If admin provided a targetEmail, switch context to that user
                 if (targetEmail) {
-                    const tUserRes = await client.query('SELECT id FROM users WHERE email = $1', [targetEmail]);
+                    const te = String(targetEmail).trim().toLowerCase();
+                    const tUserRes = await client.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [te]);
                     if (tUserRes.rows[0]) {
                         uid = tUserRes.rows[0].id;
                     }
@@ -6611,6 +7168,8 @@ app.post('/api/save-game', async (req, res) => {
             const sv = await validateStockForSave(client, changes.stock);
             if (!sv.ok) {
                 await client.query('ROLLBACK');
+                const samplesJson = JSON.stringify(sv.samples || []).slice(0, 900);
+                console.warn(`[SaveGame] stock_validation_fail userId=${uid} reason=${sv.reason} sampleCount=${(sv.samples || []).length} keyCount=${Object.keys(changes.stock).length} samples=${samplesJson}`);
                 return res.status(400).json({ error: sv.error });
             }
             if (sv.itemIds.length > 0) {
@@ -6831,10 +7390,26 @@ app.post('/api/save-game', async (req, res) => {
                 return res.status(400).json({ error: wVal.error });
             }
             const workshopNorm = wVal.normalized;
-            const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge, slot_charges FROM workshop_slots WHERE user_id = $1', [uid]);
+            const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge, slot_charges, slot_item_ids FROM workshop_slots WHERE user_id = $1', [uid]);
             const existingSlots = {};
             existingSlotsRes.rows.forEach((r) => {
-                existingSlots[r.slot_index] = r;
+                let parsed_slot_item_ids = {};
+                if (r.slot_item_ids) {
+                    try {
+                        const raw = r.slot_item_ids;
+                        const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                        if (o && typeof o === 'object' && !Array.isArray(o)) {
+                            for (const [k, v] of Object.entries(o)) {
+                                if (typeof v === 'string' && v.trim())
+                                    parsed_slot_item_ids[k] = v.trim();
+                            }
+                        }
+                    }
+                    catch {
+                        parsed_slot_item_ids = {};
+                    }
+                }
+                existingSlots[r.slot_index] = { ...r, parsed_slot_item_ids };
             });
             const workshopItemIds = workshopNorm.map((w) => w?.itemId).filter((id) => !!id);
             const slotRefIds = [];
@@ -6844,6 +7419,15 @@ app.post('/api/save-game', async (req, res) => {
                         if (typeof sid === 'string' && sid)
                             slotRefIds.push(sid);
                     }
+                }
+            }
+            for (const row of Object.values(existingSlots)) {
+                const p = row?.parsed_slot_item_ids;
+                if (!p)
+                    continue;
+                for (const v of Object.values(p)) {
+                    if (typeof v === 'string' && v.trim())
+                        slotRefIds.push(v.trim());
                 }
             }
             const existingItemIds = Object.values(existingSlots)
@@ -6884,23 +7468,30 @@ app.post('/api/save-game', async (req, res) => {
                 if (w && w.itemId) {
                     const defStruct = workshopUpgradesMap.get(String(w.itemId));
                     const maxCapStruct = Number(defStruct?.power_capacity);
-                    const isNewOrChanged = !existing || !existing.item_id || String(existing.item_id) !== String(w.itemId);
+                    // Só limpar bancada interna quando o jogador troca o modelo na BD — não quando é a
+                    // primeira persistência (linha inexistente ou slot vazio), senão o save apaga as
+                    // baterias que já vinham no payload do cliente.
+                    const hadItemInDb = !!existing &&
+                        existing.item_id != null &&
+                        String(String(existing.item_id).trim()) !== '';
+                    const structureIdChanged = hadItemInDb && String(existing.item_id) !== String(w.itemId);
+                    const isFirstPersistOfSlot = !hadItemInDb;
                     let finalCharge = w.currentCharge || 0;
                     let finalSlotCharges = w.slotCharges ? { ...w.slotCharges } : {};
                     let internalPayload = w.internalSlots && Object.keys(w.internalSlots).length ? { ...w.internalSlots } : {};
                     let slotItemIdsPayload = w.slotItemIds && Object.keys(w.slotItemIds).length ? { ...w.slotItemIds } : null;
                     let validInstalledAt = Date.now();
-                    if (isNewOrChanged) {
+                    if (isFirstPersistOfSlot || structureIdChanged) {
                         console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
                         saveActivityLogs.push({ action: 'workshop_place', meta: { slotIndex: i, itemId: w.itemId } });
-                        if (!effectiveAdminOverride) {
-                            finalCharge = 0;
-                            finalSlotCharges = {};
-                            internalPayload = {};
-                            slotItemIdsPayload = null;
-                        }
                     }
-                    else if (existing && existing.item_id === w.itemId) {
+                    if (structureIdChanged && !effectiveAdminOverride) {
+                        finalCharge = 0;
+                        finalSlotCharges = {};
+                        internalPayload = {};
+                        slotItemIdsPayload = null;
+                    }
+                    else if (hadItemInDb && String(existing.item_id) === String(w.itemId)) {
                         if (existing.slot_charges) {
                             try {
                                 const dbSlotCharges = typeof existing.slot_charges === 'string'
@@ -6920,6 +7511,20 @@ app.post('/api/save-game', async (req, res) => {
                             finalCharge = Number(existing.current_charge);
                         }
                         validInstalledAt = Number(existing.installed_at || Date.now());
+                        const dbSlotItemMap = existing
+                            .parsed_slot_item_ids;
+                        if (dbSlotItemMap && Object.keys(dbSlotItemMap).length > 0 && Object.keys(internalPayload).length > 0) {
+                            const merged = { ...(slotItemIdsPayload || {}) };
+                            let touched = false;
+                            for (const k of Object.keys(internalPayload)) {
+                                if (!merged[k] && dbSlotItemMap[k]) {
+                                    merged[k] = String(dbSlotItemMap[k]);
+                                    touched = true;
+                                }
+                            }
+                            if (touched && Object.keys(merged).length > 0)
+                                slotItemIdsPayload = merged;
+                        }
                     }
                     if (Number.isFinite(maxCapStruct) && maxCapStruct > 0) {
                         finalCharge = Math.min(finalCharge, maxCapStruct);
@@ -7038,6 +7643,7 @@ setTimeout(async () => {
     // Only run background tasks on the designated worker
     if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
         startScheduledSqlBackups(backupModel, { pool: db });
+        startSecurityThreatObserverBackgroundScan(db, backupModel, { intervalMs: 120000 });
         await ensureAdminPermissionsColumn();
         await ensureSystemNewsAdColumns();
     }
@@ -7289,17 +7895,66 @@ app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
       ORDER BY created_at DESC 
       LIMIT 100
     `);
-        // 5. IP Blacklist
+        // 5. IP Blacklist (+ utilizadores com mesmo IP em registo ou histórico de login)
         const blacklistRes = await client.query(`
       SELECT * FROM ip_blacklist 
       ORDER BY added_at DESC
     `);
+        const blRows = blacklistRes.rows;
+        const ipKeys = [
+            ...new Set(blRows
+                .map((r) => String(r.ip ?? '').trim())
+                .filter((x) => x.length > 0))
+        ];
+        const linkedByIpNorm = new Map();
+        if (ipKeys.length > 0) {
+            const linkRes = await client.query(`WITH ips AS (SELECT DISTINCT unnest($1::text[]) AS raw_ip)
+         SELECT lower(trim(ips.raw_ip::text)) AS ip_norm, u.id, u.username::text AS username, u.email::text AS email, 'registro'::text AS via
+         FROM ips
+         INNER JOIN users u ON u.registration_ip IS NOT NULL
+           AND lower(trim(u.registration_ip::text)) = lower(trim(ips.raw_ip::text))
+         UNION ALL
+         SELECT lower(trim(ips.raw_ip::text)), u.id, u.username::text, u.email::text, 'hist_login'::text
+         FROM ips
+         INNER JOIN user_history_ips h ON lower(trim(h.ip::text)) = lower(trim(ips.raw_ip::text))
+         INNER JOIN users u ON u.id = h.user_id`, [ipKeys]);
+            for (const row of linkRes.rows) {
+                const k = String(row.ip_norm || '').trim().toLowerCase();
+                if (!k)
+                    continue;
+                if (!linkedByIpNorm.has(k))
+                    linkedByIpNorm.set(k, []);
+                const arr = linkedByIpNorm.get(k);
+                const idNum = Number(row.id);
+                let ex = arr.find((x) => x.id === idNum);
+                if (!ex) {
+                    ex = {
+                        id: idNum,
+                        username: String(row.username || ''),
+                        email: String(row.email || ''),
+                        vias: []
+                    };
+                    arr.push(ex);
+                }
+                const via = String(row.via || '');
+                if (via && !ex.vias.includes(via))
+                    ex.vias.push(via);
+            }
+        }
+        const blacklistOut = blRows.map((row) => {
+            const ipStr = String(row.ip ?? '').trim();
+            const norm = ipStr.trim().toLowerCase();
+            return {
+                ...row,
+                linkedUsers: linkedByIpNorm.get(norm) || []
+            };
+        });
         res.json({
             multiAccounts: multiAccountsRes.rows,
             historyMultiAccounts: historyMultiAccountsRes.rows,
             suspectedAutoReferrals: suspectedAutoRefsRes.rows,
             accessLogs: accessLogsRes.rows,
-            blacklist: blacklistRes.rows
+            blacklist: blacklistOut
         });
     }
     catch (e) {
@@ -7413,6 +8068,9 @@ app.get('/api/admin/promo-codes', isAdmin, async (req, res) => {
                 adminUpgradeId: p.admin_upgrade_id,
                 isActive: !!p.is_active,
                 createdAt: Number(p.created_at),
+                expiresAt: p.expires_at != null && Number.isFinite(Number(p.expires_at)) && Number(p.expires_at) > 0
+                    ? Number(p.expires_at)
+                    : undefined,
                 redemptionsCount: parseInt(redsRes.rows[0].count),
                 lastRedemptions: lastRedsRes.rows.map(r => ({ userName: r.user_name, redeemedAt: Number(r.redeemed_at) }))
             };
@@ -7446,15 +8104,66 @@ app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) 
     }
 });
 app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
-    const { code, lootBoxId, upgradeId, adminUpgradeId, type } = req.body || {};
+    const { code, lootBoxId, upgradeId, adminUpgradeId, type, expiresAt } = req.body || {};
     if (!code || (!lootBoxId && !upgradeId && !adminUpgradeId))
         return res.status(400).json({ error: 'Faltam campos (é necessário uma caixa, um upgrade ou um pacote)' });
+    const now = Date.now();
+    let expMs = null;
+    if (expiresAt != null && expiresAt !== '') {
+        const n = typeof expiresAt === 'number' ? expiresAt : parseInt(String(expiresAt), 10);
+        if (Number.isFinite(n) && n > now) {
+            const max = now + 10 * 365 * 24 * 60 * 60 * 1000;
+            expMs = Math.min(Math.floor(n), Math.floor(max));
+        }
+    }
     try {
-        await db.query('INSERT INTO promo_codes (code, loot_box_id, upgrade_id, admin_upgrade_id, type, is_active, created_at) VALUES ($1,$2,$3,$4,$5,1,$6) ON CONFLICT (code) DO UPDATE SET loot_box_id = $2, upgrade_id = $3, admin_upgrade_id = $4, type = $5', [code, lootBoxId || null, upgradeId || null, adminUpgradeId || null, type || 'per_player', Date.now()]);
+        await db.query(`INSERT INTO promo_codes (code, loot_box_id, upgrade_id, admin_upgrade_id, type, is_active, created_at, expires_at)
+       VALUES ($1,$2,$3,$4,$5,1,$6,$7)
+       ON CONFLICT (code) DO UPDATE SET
+         loot_box_id = EXCLUDED.loot_box_id,
+         upgrade_id = EXCLUDED.upgrade_id,
+         admin_upgrade_id = EXCLUDED.admin_upgrade_id,
+         type = EXCLUDED.type,
+         expires_at = COALESCE(EXCLUDED.expires_at, promo_codes.expires_at)`, [code, lootBoxId || null, upgradeId || null, adminUpgradeId || null, type || 'per_player', now, expMs]);
         res.json({ ok: true });
     }
     catch (e) {
         sendInternalError(res, req.originalUrl || 'api', e);
+    }
+});
+app.post('/api/admin/promo-codes/bulk-delete', isAdmin, async (req, res) => {
+    const raw = req.body?.codes;
+    if (!Array.isArray(raw) || raw.length === 0) {
+        return res.status(400).json({ error: 'Lista de códigos vazia ou inválida.' });
+    }
+    const codes = raw
+        .map((c) => String(c || '').trim().toUpperCase())
+        .filter((c) => /^[A-Z0-9_-]{4,40}$/.test(c));
+    if (codes.length === 0) {
+        return res.status(400).json({ error: 'Nenhum código válido para apagar.' });
+    }
+    if (codes.length > 2000) {
+        return res.status(400).json({ error: 'Máximo 2000 códigos por pedido.' });
+    }
+    const client = await db.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query('DELETE FROM promo_code_redemptions WHERE code = ANY($1::text[])', [codes]);
+        const del = await client.query('DELETE FROM promo_codes WHERE code = ANY($1::text[])', [codes]);
+        await client.query('COMMIT');
+        res.json({ ok: true, deleted: del.rowCount ?? 0 });
+    }
+    catch (e) {
+        try {
+            await client.query('ROLLBACK');
+        }
+        catch {
+            /* ignore */
+        }
+        sendInternalError(res, req.originalUrl || 'api', e);
+    }
+    finally {
+        client.release();
     }
 });
 app.delete('/api/admin/promo-codes/:code', isAdmin, async (req, res) => {
@@ -7582,8 +8291,9 @@ app.get('/api/mining/coins', async (req, res) => {
 });
 app.post('/api/mining/coins', isAdmin, async (req, res) => {
     const c = req.body;
-    if (!c.name || !c.symbol)
-        return res.status(400).json({ error: 'Name and Symbol are required' });
+    if (!c.name || !c.symbol) {
+        return res.status(400).json({ error: 'Nome e símbolo da moeda são obrigatórios.' });
+    }
     const parseMiningNumeric = (v, fallback) => {
         if (typeof v === 'number' && Number.isFinite(v))
             return v;
@@ -7614,6 +8324,10 @@ app.post('/api/mining/coins', isAdmin, async (req, res) => {
         const priceUSD = (() => {
             const p = parseMiningNumeric(c.priceUSD, NaN);
             return Number.isFinite(p) && p >= 0 ? p : 1;
+        })();
+        const usdcRateVal = (() => {
+            const u = parseMiningNumeric(c.usdcRate, NaN);
+            return Number.isFinite(u) && u >= 0 ? u : priceUSD;
         })();
         const difficulty = Math.max(1, parseMiningNumeric(c.difficulty, 1));
         const multiplier = Math.max(1, parseMiningNumeric(c.multiplier, 1));
@@ -7690,7 +8404,7 @@ app.post('/api/request-password-reset', passwordResetRequestLimiter, async (req,
         ok: true,
         message: 'Se existir uma conta com este email, enviámos um link para redefinir a senha.'
     };
-    if (!raw || raw.length > 254) {
+    if (!raw || raw.length > EMAIL_ADDRESS_MAX_LENGTH) {
         return res.status(400).json({ error: 'Indique um email válido.' });
     }
     const emailRx = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -7707,7 +8421,9 @@ app.post('/api/request-password-reset', passwordResetRequestLimiter, async (req,
         const resetPayload = JSON.stringify({ email, expiry: timestamp + 60 * 60 * 1000 });
         const signature = crypto.createHmac('sha256', process.env.JWT_SECRET || 'secret').update(resetPayload).digest('hex');
         const resetToken = Buffer.from(resetPayload).toString('base64') + '.' + signature;
-        await sendResetEmail(email, resetToken, { validityMinutes: 60 });
+        void sendResetEmail(email, resetToken, { validityMinutes: 60 }).catch((mailErr) => {
+            console.error('[request-password-reset] envio SMTP:', mailErr instanceof Error ? mailErr.message : mailErr);
+        });
         return res.json(genericOk);
     }
     catch (e) {
@@ -7716,30 +8432,46 @@ app.post('/api/request-password-reset', passwordResetRequestLimiter, async (req,
     }
 });
 // PASSWORD RECOVERY BY WALLET (legado; o fluxo principal é por email)
-app.post('/api/verify-recovery-wallet', async (req, res) => {
+app.post('/api/verify-recovery-wallet', passwordResetRequestLimiter, async (req, res) => {
     const { email, walletAddress } = req.body;
     if (!email || !walletAddress)
         return res.status(400).json({ error: 'Dados incompletos' });
+    const emailNorm = String(email).trim().toLowerCase();
+    const emailCheck = validateLoginEmail(emailNorm);
+    if (!emailCheck.ok) {
+        return res.status(400).json({ error: emailCheck.error });
+    }
+    const walletStr = String(walletAddress).trim();
+    const wv = validateOptionalPolygonWallet(walletStr);
+    if (wv && typeof wv === 'object' && 'error' in wv) {
+        return res.status(400).json({ error: wv.error });
+    }
+    /** Resposta uniforme — evita enumeração de emails / estado da conta. */
+    const recoveryDenied = {
+        ok: false,
+        error: 'Não foi possível verificar a recuperação com os dados indicados.'
+    };
     try {
-        const r = await db.query('SELECT username, polygon_wallet FROM users WHERE email = $1', [email]);
+        const r = await db.query('SELECT email, username, polygon_wallet FROM users WHERE lower(email) = lower($1)', [emailNorm]);
         if (r.rows.length === 0)
-            return res.status(404).json({ error: 'Email não encontrado.' });
+            return res.status(403).json(recoveryDenied);
         const user = r.rows[0];
+        const accountEmail = String(user.email || emailNorm);
         const storedWallet = user.polygon_wallet;
         if (!storedWallet) {
-            return res.status(403).json({ error: 'Esta conta não possui uma carteira vinculada para recuperação.' });
+            return res.status(403).json(recoveryDenied);
         }
         // Case-insensitive comparison
-        if (storedWallet.toLowerCase() !== walletAddress.toLowerCase()) {
-            return res.status(403).json({ error: 'A carteira informada não corresponde à carteira vinculada a esta conta.' });
+        if (storedWallet.toLowerCase() !== walletStr.toLowerCase()) {
+            return res.status(403).json(recoveryDenied);
         }
         // Success - Generate simple temporary token
         const timestamp = Date.now();
-        const resetPayload = JSON.stringify({ email, walletAddress, expiry: timestamp + 600000 }); // 10 mins
+        const resetPayload = JSON.stringify({ email: accountEmail, walletAddress: walletStr, expiry: timestamp + 600000 }); // 10 mins
         const signature = crypto.createHmac('sha256', process.env.JWT_SECRET || 'secret').update(resetPayload).digest('hex');
         const resetToken = Buffer.from(resetPayload).toString('base64') + '.' + signature;
         res.json({ ok: true, resetToken });
-        sendResetEmail(email, resetToken, { validityMinutes: 10 }).catch(err => {
+        sendResetEmail(accountEmail, resetToken, { validityMinutes: 10 }).catch(err => {
             console.error('[Mailer Error] Falha ao enviar e-mail:', err.message);
         });
     }
@@ -7752,8 +8484,9 @@ app.post('/api/reset-password-secure', async (req, res) => {
     const { resetToken, newPassword } = req.body;
     if (!resetToken || !newPassword)
         return res.status(400).json({ error: 'Dados incompletos' });
-    if (newPassword.length < 4)
-        return res.status(400).json({ error: 'Senha muito curta' });
+    const pv = validateSignupPassword(newPassword, true);
+    if (!pv.ok)
+        return res.status(400).json({ error: pv.error });
     try {
         const [payloadB64, signature] = resetToken.split('.');
         if (!payloadB64 || !signature)
@@ -8220,9 +8953,15 @@ const calculateHashratesAndRanking = async () => {
     }
 };
 // Start Timers for New Logic
-// Depósitos pendentes: todos os processos (API só / cluster); o crédito continua idempotente com lock por tx.
-setInterval(sweepPendingDepositsOnce, 90000);
-setTimeout(sweepPendingDepositsOnce, 8000);
+// Depósitos pendentes: por defeito só BACKGROUND/ALL (ver `shouldScheduleDepositSweep` / DEPOSIT_SWEEP_ALL_WORKERS).
+if (shouldScheduleDepositSweep()) {
+    setInterval(sweepPendingDepositsOnce, 90000);
+    setTimeout(sweepPendingDepositsOnce, 8000);
+    console.log(`[DepositSweep] agendado (pid=${process.pid}, role=${WORKER_ROLE})`);
+}
+else {
+    console.log(`[DepositSweep] omitido neste processo (pid=${process.pid}, role=${WORKER_ROLE}). Defina DEPOSIT_SWEEP_ALL_WORKERS=1 para replicar em todos os workers.`);
+}
 if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
     // OPTIMIZATION: Increased from 10s to 60s to reduce CPU load
     setInterval(calculateHashratesAndRanking, 60000);
@@ -8287,6 +9026,7 @@ const startServer = async () => {
             await ensureTotalSoldColumn();
             await ensureUsdcDefault();
             await ensureUserLevels(); // Restore levels (Moved from top-level)
+            await ensureStockItemIdsSane();
             async function ensureShowInExchangeColumn() {
                 try {
                     const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name='mining_coins' AND column_name='show_in_exchange'");
@@ -8304,7 +9044,10 @@ const startServer = async () => {
             console.log('[DB] PostgreSQL initialized');
         }
         await ensureP2pMarketListingSchema();
+        await ensureAdminSuperAdminSchema();
+        await ensureSecurityThreatObserverSchema();
         await ensureSupportTicketSchema();
+        await ensurePartnerYoutubeSchema(db);
     }
     catch (e) {
         console.error('[DB] Failed to initialize PostgreSQL:', e);
@@ -8355,7 +9098,7 @@ const startServer = async () => {
                             if (ws.readyState !== 1)
                                 return;
                             try {
-                                const data = await computeAdminDashboardStatsUncached();
+                                const data = await getAdminDashboardStatsCached();
                                 ws.send(JSON.stringify({ type: 'admin_dashboard', event: 'stats', data }));
                             }
                             catch (e) {

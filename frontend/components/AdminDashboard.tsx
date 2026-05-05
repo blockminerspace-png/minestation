@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { User, Upgrade, PlacedRack } from '../types';
 import { Users, Zap, Database, Activity, Clock, Trophy, DollarSign, Download, EyeOff, Eye } from 'lucide-react';
-import { getGameState, getTopWithdrawalsByCoin, getMiningCoins, getAdminDashboardStats, toggleRankingExclusion, getAdminTreasuryTokenTxs } from '../services/api';
+import { getGameState, getTopWithdrawalsByCoin, getMiningCoins, getAdminDashboardStats, toggleRankingExclusion, getAdminTreasuryTokenTxs, getWeb3Settings } from '../services/api';
 
 interface AdminDashboardProps {
     users: User[];
@@ -108,18 +108,46 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
         if (now - lastEthFetchRef.current < 60000) return;
         try {
             const savedStartDate = localStorage.getItem('adminReportsStartDate') || '2025-12-16';
-            const startDateTimestamp = Math.floor(new Date(savedStartDate).getTime() / 1000);
-            const TREASURY_WALLET = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
-            const apiData = (await getAdminTreasuryTokenTxs(1, 1000)) as {
+            const savedEndDate = localStorage.getItem('adminReportsEndDate') || '';
+            const parseYmdStartSec = (ymd: string) => {
+                const m = /^\d{4}-\d{2}-\d{2}$/.exec(ymd);
+                if (!m) return 0;
+                const [y, mo, d] = ymd.split('-').map(Number);
+                return Math.floor(new Date(y, mo - 1, d, 0, 0, 0, 0).getTime() / 1000);
+            };
+            const parseYmdEndSec = (ymd: string) => {
+                if (!ymd || !/^\d{4}-\d{2}-\d{2}$/.test(ymd)) return null;
+                const [y, mo, d] = ymd.split('-').map(Number);
+                return Math.floor(new Date(y, mo - 1, d, 23, 59, 59, 999).getTime() / 1000);
+            };
+            const startDateTimestamp = parseYmdStartSec(savedStartDate);
+            const endDateTimestamp = parseYmdEndSec(savedEndDate);
+            const web3 = await getWeb3Settings();
+            const dw = web3?.depositWallet?.trim();
+            /** Só totais on-chain para a carteira de depósito cadastrada em Web3 (settings). Sem cadastro válido, não misturar legado/fallback. */
+            if (!dw || !/^0x[a-fA-F0-9]{40}$/.test(dw)) {
+                if (chainDepositSnapshotRef.current != null) {
+                    chainDepositSnapshotRef.current = null;
+                    const dash = await getAdminDashboardStats();
+                    if (dash) applyServerDashboard(dash);
+                }
+                lastEthFetchRef.current = now;
+                return;
+            }
+            const depositWalletLower = dw.toLowerCase();
+            const apiRes = (await getAdminTreasuryTokenTxs(1, 1000, dw)) as {
                 status?: string | number;
                 result?: any[] | string;
                 message?: string;
             };
-            const st = apiData.status != null ? String(apiData.status) : '';
-            if (st !== '1' || !Array.isArray(apiData.result)) return;
-            const validTxs = apiData.result.filter((tx: any) => {
-                return tx.to.toLowerCase() === TREASURY_WALLET.toLowerCase() &&
-                    parseInt(tx.timeStamp, 10) >= startDateTimestamp;
+            const rows =
+                apiRes.status != null && String(apiRes.status) === '1' && Array.isArray(apiRes.result) ? apiRes.result : [];
+            const validTxs = rows.filter((tx: any) => {
+                if (String(tx.to || '').toLowerCase() !== depositWalletLower) return false;
+                const ts = parseInt(tx.timeStamp, 10);
+                if (ts < startDateTimestamp) return false;
+                if (endDateTimestamp != null && ts > endDateTimestamp) return false;
+                return true;
             });
             const totalRaw = validTxs.reduce((acc: number, tx: any) => acc + parseFloat(tx.value), 0);
             const realTotalUSDC = totalRaw / 1000000;
@@ -157,7 +185,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
         catch (err) {
             console.error('Dashboard USDC Fetch Error:', err);
         }
-    }, [users]);
+    }, [users, applyServerDashboard]);
 
     useEffect(() => {
         let mounted = true;
@@ -300,14 +328,14 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                     {stats.depositDisplayMode === 'chain' ? (
                         <p className="text-[11px] text-slate-500 mt-2 leading-snug">
                             <span className="text-emerald-400/90 font-semibold">On-chain</span>
-                            {' — '}soma de transferências USDC (Polygon) para a tesouraria, filtradas pela data em Relatórios.
+                            {' — '}soma de transferências USDC (Polygon) para a carteira de depósito cadastrada em Web3, filtradas pelas datas em Relatórios.
                             {' '}
                             <span className="text-slate-400">No jogo (BD): {formatMoney(stats.dbTotalDeposited)}</span>
                         </p>
                     ) : (
                         <p className="text-[11px] text-slate-500 mt-2 leading-snug">
                             Soma de <span className="text-slate-400">total_usdc_deposited</span> na base (registo interno do jogo).
-                            Quando a API Etherscan responde, mostramos também o total da tesouraria na cadeia.
+                            Com carteira de depósito Web3 válida e Etherscan, mostramos também o total recebido nessa carteira na cadeia.
                         </p>
                     )}
                 </div>

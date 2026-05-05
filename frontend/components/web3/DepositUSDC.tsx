@@ -2,7 +2,9 @@ import React, { useEffect, useState } from 'react';
 import { Wallet, Hexagon } from 'lucide-react';
 import { getWeb3Settings, setWeb3Settings } from '../../services/api';
 
-export const Web3Deposit: React.FC = () => {
+type Web3DepositProps = { readOnly?: boolean };
+
+export const Web3Deposit: React.FC<Web3DepositProps> = ({ readOnly = false }) => {
   const [depositWallet, setDepositWallet] = useState('');
   const [depositTokenContract, setDepositTokenContract] = useState('');
   const [depositTokenContractBnb, setDepositTokenContractBnb] = useState('');
@@ -61,6 +63,7 @@ export const Web3Deposit: React.FC = () => {
   };
 
   const handleSave = async () => {
+    if (readOnly) return;
     setSaving(true);
     const s = await getWeb3Settings();
     await setWeb3Settings({
@@ -87,15 +90,18 @@ export const Web3Deposit: React.FC = () => {
         </div>
         <p className="text-xs text-slate-400 mb-3">Endereço para onde USDC será enviado quando jogadores depositarem.</p>
         <div className="flex items-center gap-2 mb-2">
-          <button onClick={handleConnectDepositWallet} className="bg-amber-900/30 hover:bg-amber-900/50 border border-amber-700 text-amber-300 text-xs font-bold px-3 py-2 rounded transition-colors">Conectar carteira</button>
+          {!readOnly && (
+            <button onClick={handleConnectDepositWallet} className="bg-amber-900/30 hover:bg-amber-900/50 border border-amber-700 text-amber-300 text-xs font-bold px-3 py-2 rounded transition-colors">Conectar carteira</button>
+          )}
           {depositWallet && <span className="text-[10px] font-mono text-slate-400 truncate">{depositWallet}</span>}
         </div>
         <input
           type="text"
+          readOnly={readOnly}
           value={depositWallet}
           onChange={(e) => setDepositWallet(e.target.value)}
           placeholder="0x..."
-          className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm"
+          className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
         />
         <div className="mt-4">
           <div className="flex items-center gap-2 mb-2">
@@ -104,15 +110,17 @@ export const Web3Deposit: React.FC = () => {
           </div>
           <input
             type="text"
+            readOnly={readOnly}
             value={depositTokenContract}
             onChange={(e) => setDepositTokenContract(e.target.value)}
             placeholder="0x... (Polygon)"
-            className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm"
+            className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
           />
           <div className="flex items-center gap-2 mt-1">
             <input
               type="checkbox"
               id="poly_disable"
+              disabled={readOnly}
               checked={depositPolygonDisabled}
               onChange={(e) => setDepositPolygonDisabled(e.target.checked)}
               className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500"
@@ -126,15 +134,17 @@ export const Web3Deposit: React.FC = () => {
           </div>
           <input
             type="text"
+            readOnly={readOnly}
             value={depositTokenContractBnb}
             onChange={(e) => setDepositTokenContractBnb(e.target.value)}
             placeholder="0x... (BNB Chain)"
-            className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm"
+            className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
           />
           <div className="flex items-center gap-2 mt-1">
             <input
               type="checkbox"
               id="bnb_disable"
+              disabled={readOnly}
               checked={depositBnbDisabled}
               onChange={(e) => setDepositBnbDisabled(e.target.checked)}
               className="rounded border-slate-600 bg-slate-900 text-yellow-500 focus:ring-yellow-500"
@@ -148,15 +158,17 @@ export const Web3Deposit: React.FC = () => {
           </div>
           <input
             type="text"
+            readOnly={readOnly}
             value={depositTokenContractBase}
             onChange={(e) => setDepositTokenContractBase(e.target.value)}
             placeholder="0x... (BASE)"
-            className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm"
+            className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
           />
           <div className="flex items-center gap-2 mt-1">
             <input
               type="checkbox"
               id="base_disable"
+              disabled={readOnly}
               checked={depositBaseDisabled}
               onChange={(e) => setDepositBaseDisabled(e.target.checked)}
               className="rounded border-slate-600 bg-slate-900 text-amber-500 focus:ring-amber-500"
@@ -170,29 +182,32 @@ export const Web3Deposit: React.FC = () => {
                 type="number"
                 min={0}
                 step={0.001}
+                readOnly={readOnly}
                 value={typeof minDepositUsdc === 'number' ? String(minDepositUsdc) : ''}
                 onChange={(e) => {
                   const v = parseFloat(e.target.value);
                   setMinDepositUsdc(isNaN(v) ? '' : Math.max(0, v));
                 }}
                 placeholder="0.001"
-                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm"
+                className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
               />
             </div>
           </div>
         </div>
       </div>
 
-      <div className="flex justify-end">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className={`px-4 py-2 rounded text-sm font-bold border transition-colors ${saving ? 'bg-slate-700 text-slate-400 border-slate-700' : 'bg-amber-900/30 text-amber-300 border-amber-700 hover:bg-amber-900/50'}`}
-        >
-          {saving ? 'Salvando...' : 'Salvar Configurações'}
-        </button>
-        {savedAt && <span className="text-[10px] text-slate-500 ml-3 self-center">Salvo</span>}
-      </div>
+      {!readOnly && (
+        <div className="flex justify-end">
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className={`px-4 py-2 rounded text-sm font-bold border transition-colors ${saving ? 'bg-slate-700 text-slate-400 border-slate-700' : 'bg-amber-900/30 text-amber-300 border-amber-700 hover:bg-amber-900/50'}`}
+          >
+            {saving ? 'Salvando...' : 'Salvar Configurações'}
+          </button>
+          {savedAt && <span className="text-[10px] text-slate-500 ml-3 self-center">Salvo</span>}
+        </div>
+      )}
     </div>
   );
 };

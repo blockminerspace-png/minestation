@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
       ...(isDev
         ? {
             // Nunca `true`: fora desta lista o Vite recusa o Host (evita `vite dev` aberto na Internet).
-            allowedHosts: ['localhost', '127.0.0.1', 'test.genesisdao.tech'],
+            allowedHosts: ['localhost', '127.0.0.1', 'genesisdao.tech', 'test.genesisdao.tech'],
           }
         : {}),
       proxy: {
@@ -42,6 +42,7 @@ export default defineConfig(({ mode }) => {
     },
     plugins: [react()],
     build: {
+      sourcemap: false,
       chunkSizeWarningLimit: 1000,
       rollupOptions: {
         output: {

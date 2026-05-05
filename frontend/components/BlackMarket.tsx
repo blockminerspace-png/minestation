@@ -168,6 +168,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
       }, 450);
     };
 
+    let listingsRefreshTimer: number | null = null;
     const refresh = async () => {
       const list = await getMarketListings();
       setMarketListings(list);
@@ -175,6 +176,15 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
         const custody = await getCustodyListings();
         setCustodyListings(custody as CustodyListingRow[]);
       }
+    };
+
+    /** Evita N pedidos /api/market/listings em rajada (vários eventos WS → 502 na origem). */
+    const scheduleListingsRefresh = () => {
+      if (listingsRefreshTimer !== null) window.clearTimeout(listingsRefreshTimer);
+      listingsRefreshTimer = window.setTimeout(() => {
+        listingsRefreshTimer = null;
+        void refresh();
+      }, 400);
     };
 
     const handleWsMessage = (ev: MessageEvent) => {
@@ -185,7 +195,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
         return;
       }
       if (payload.type !== 'market') return;
-      void refresh();
+      scheduleListingsRefresh();
       if (payload.event && payload.event !== 'hello') {
         scheduleGameSync();
       }
@@ -220,6 +230,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
       stopped = true;
       document.removeEventListener('visibilitychange', onVis);
       if (debounceTimer !== null) window.clearTimeout(debounceTimer);
+      if (listingsRefreshTimer !== null) window.clearTimeout(listingsRefreshTimer);
       try {
         ws?.close();
       } catch {

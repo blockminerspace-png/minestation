@@ -9,13 +9,33 @@ interface InventoryViewProps {
     upgrades: Upgrade[];
 }
 
+/** Placeholder legacy-temp: mostrar o item real se o id original existir na lista de upgrades. */
+function resolveStockDisplayUpgrade(
+    stockItemId: string,
+    upgrade: Upgrade | undefined,
+    allUpgrades: Upgrade[]
+): Upgrade | undefined {
+    if (!upgrade?.name) return upgrade;
+    const isLegacy =
+        upgrade.category === 'legacy-temp' &&
+        (upgrade.type as string) === 'legacy-temp';
+    if (!isLegacy || !upgrade.description) return upgrade;
+    const m = upgrade.description.match(/original=([^\s]+)\s+email=/);
+    const origId = m?.[1];
+    if (!origId) return upgrade;
+    const real = allUpgrades.find((u) => u.id === origId);
+    if (!real?.name) return upgrade;
+    return { ...real, description: real.description, id: stockItemId };
+}
+
 export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatteries = [], upgrades }) => {
     // Filter items that we actually have in stock
     const ownedItems = (Object.entries(stock) as [string, number][])
         .filter(([_, count]) => count > 0)
         .map(([id, count]) => {
             const upgrade = upgrades.find(u => u.id === id);
-            return { ...upgrade, count, id }; // keep id and count, spread upgrade details
+            const display = resolveStockDisplayUpgrade(id, upgrade, upgrades);
+            return { ...display, count, id }; // id = chave no save (pode ser temp_legacy_*)
         })
         .filter(item => item.name); // Ensure upgrade exists in constants
 

@@ -2,7 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { getExchangeSettings, setExchangeSettings } from '../services/api';
 import { Save, RefreshCcw, DollarSign, Percent } from 'lucide-react';
 
-export const AdminExchange: React.FC = () => {
+type AdminExchangeProps = { readOnly?: boolean };
+
+export const AdminExchange: React.FC<AdminExchangeProps> = ({ readOnly = false }) => {
     const [minAmount, setMinAmount] = useState<string>('');
     const [feePercent, setFeePercent] = useState<string>('');
     const [loading, setLoading] = useState(false);
@@ -20,6 +22,7 @@ export const AdminExchange: React.FC = () => {
     };
 
     const handleSave = async () => {
+        if (readOnly) return;
         const min = parseFloat(minAmount.toString().replace(',', '.'));
         const fee = parseFloat(feePercent.toString().replace(',', '.'));
 
@@ -66,9 +69,10 @@ export const AdminExchange: React.FC = () => {
                                 type="number"
                                 step="0.1"
                                 min="0"
+                                readOnly={readOnly}
                                 value={minAmount}
                                 onChange={(e) => setMinAmount(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono focus:border-yellow-500 outline-none"
+                                className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono focus:border-yellow-500 outline-none ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                             />
                         </div>
                         <p className="text-xs text-slate-500 mt-2">Valor mínimo bruto em USDC que o jogador deve atingir para converter.</p>
@@ -84,25 +88,28 @@ export const AdminExchange: React.FC = () => {
                                 step="0.1"
                                 min="0"
                                 max="100"
+                                readOnly={readOnly}
                                 value={feePercent}
                                 onChange={(e) => setFeePercent(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono focus:border-yellow-500 outline-none"
+                                className={`w-full bg-slate-900 border border-slate-600 rounded p-2 text-white font-mono focus:border-yellow-500 outline-none ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                             />
                         </div>
                         <p className="text-xs text-slate-500 mt-2">Porcentagem retida pelo sistema em cada transação.</p>
                     </div>
                 </div>
 
-                <div className="flex justify-end pt-4 border-t border-slate-700">
-                    <button
-                        onClick={handleSave}
-                        disabled={loading}
-                        className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-500 text-white px-6 py-2 rounded font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                        {loading ? <RefreshCcw size={18} className="animate-spin" /> : <Save size={18} />}
-                        SALVAR ALTERAÇÕES
-                    </button>
-                </div>
+                {!readOnly && (
+                    <div className="flex justify-end pt-4 border-t border-slate-700">
+                        <button
+                            onClick={handleSave}
+                            disabled={loading}
+                            className="flex items-center gap-2 bg-yellow-600 hover:bg-yellow-500 text-white px-6 py-2 rounded font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {loading ? <RefreshCcw size={18} className="animate-spin" /> : <Save size={18} />}
+                            SALVAR ALTERAÇÕES
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

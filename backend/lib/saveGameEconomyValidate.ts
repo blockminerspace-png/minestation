@@ -1,4 +1,4 @@
-import type { PoolClient } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 
 /** Alinhado a `RACK_ID_RE` no servidor — IDs de item / instância. */
 export const SAVE_GAME_ITEM_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
@@ -52,47 +52,90 @@ export function isAdminDailyActionKey(key: string): boolean {
   return /^[a-zA-Z0-9_.:-]+$/.test(key);
 }
 
+const STOCK_VALIDATE_LOG_SAMPLES = 24;
+
+/**
+ * Diagnóstico de falhas ao gravar `stock` (save-game). Causas típicas:
+ * - `invalid_key`: chave fora do padrão (espaços, `__proto__`, merge de objetos errado, estado corrompido no cliente).
+ * - `bad_qty`: quantidade NaN/negativa/fora do limite após dessincronização ou bug de UI.
+ * - `unknown_item`: ID que não existe em `upgrades` (item apagado no admin ou cliente desatualizado).
+ */
+export type ValidateStockForSaveResult =
+  | { ok: true; itemIds: string[]; qtys: number[] }
+  | {
+      ok: false;
+      error: string;
+      reason: 'too_many_keys' | 'invalid_key' | 'bad_qty' | 'unknown_item';
+      /** Chaves ou IDs de exemplo (nunca o inventário completo). */
+      samples: string[];
+      meta?: { keyCount?: number };
+    };
+
 export async function validateStockForSave(
   client: PoolClient,
   stock: Record<string, unknown>
-): Promise<{ ok: true; itemIds: string[]; qtys: number[] } | { ok: false; error: string }> {
+): Promise<ValidateStockForSaveResult> {
   const keys = Object.keys(stock);
   if (keys.length > MAX_STOCK_KEYS) {
     return {
       ok: false,
       error:
-        'O inventário enviado é demasiado grande para guardar de uma vez. Recarregue a página (F5) e tente outra vez; se repetir, contacte o suporte.'
+        'O inventário enviado é demasiado grande para guardar de uma vez. Recarregue a página (F5) e tente outra vez; se repetir, contacte o suporte.',
+      reason: 'too_many_keys',
+      samples: [],
+      meta: { keyCount: keys.length }
     };
   }
-  const itemIds: string[] = [];
-  const qtys: number[] = [];
+
+  const invalidKeys: string[] = [];
   for (const k of keys) {
     const itemId = String(k);
-    if (!SAVE_GAME_ITEM_ID_RE.test(itemId)) {
-      return {
-        ok: false,
-        error:
-          'O inventário contém um identificador de peça inválido. Recarregue a página (F5) para sincronizar com o servidor.'
-      };
-    }
+    if (!SAVE_GAME_ITEM_ID_RE.test(itemId)) invalidKeys.push(itemId);
+  }
+  if (invalidKeys.length > 0) {
+    return {
+      ok: false,
+      error:
+        'O inventário contém um identificador de peça inválido. Recarregue a página (F5) para sincronizar com o servidor.',
+      reason: 'invalid_key',
+      samples: invalidKeys.slice(0, STOCK_VALIDATE_LOG_SAMPLES)
+    };
+  }
+
+  const itemIds: string[] = [];
+  const qtys: number[] = [];
+  const badQtyKeys: string[] = [];
+  for (const k of keys) {
+    const itemId = String(k);
     const q = parseIntQty(stock[k]);
     if (q === null || q < 0 || q > MAX_STOCK_QTY) {
-      return {
-        ok: false,
-        error:
-          'Uma ou mais quantidades no inventário são inválidas (número demasiado grande ou não numérico). Recarregue a página (F5).'
-      };
+      badQtyKeys.push(itemId);
+      continue;
     }
     itemIds.push(itemId);
     qtys.push(q);
   }
-  if (itemIds.length === 0) return { ok: true, itemIds: [], qtys: [] };
-  const chk = await client.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [itemIds]);
-  if (chk.rowCount !== itemIds.length) {
+  if (badQtyKeys.length > 0) {
     return {
       ok: false,
       error:
-        'O inventário inclui peças que o servidor não reconhece (podem ter sido removidas do jogo ou o teu cliente está desatualizado). Recarregue a página (F5).'
+        'Uma ou mais quantidades no inventário são inválidas (número demasiado grande ou não numérico). Recarregue a página (F5).',
+      reason: 'bad_qty',
+      samples: badQtyKeys.slice(0, STOCK_VALIDATE_LOG_SAMPLES)
+    };
+  }
+
+  if (itemIds.length === 0) return { ok: true, itemIds: [], qtys: [] };
+  const chk = await client.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [itemIds]);
+  if ((chk.rowCount ?? 0) !== itemIds.length) {
+    const have = new Set((chk.rows as Array<{ id: string }>).map((x) => String(x.id)));
+    const missing = itemIds.filter((id) => !have.has(id));
+    return {
+      ok: false,
+      error:
+        'O inventário inclui peças que o servidor não reconhece (podem ter sido removidas do jogo ou o teu cliente está desatualizado). Recarregue a página (F5).',
+      reason: 'unknown_item',
+      samples: missing.slice(0, STOCK_VALIDATE_LOG_SAMPLES)
     };
   }
   return { ok: true, itemIds, qtys };
@@ -498,4 +541,94 @@ export async function validateWorkshopSlotsPayloadForSave(
   }
 
   return { ok: true, normalized: staged };
+}
+
+function isPlainObjectRecord(x: unknown): x is Record<string, unknown> {
+  return !!x && typeof x === 'object' && !Array.isArray(x);
+}
+
+/**
+ * Preenche `slotItemIds` em slots da oficina quando há instância em `internalSlots` mas falta o
+ * `battery_item_id` (estado legado após saves que corromperam `slot_item_ids`). Usa o último
+ * registo em `charging_history` por `battery_instance_id`.
+ */
+export async function enrichWorkshopSlotsSlotItemIdsFromChargingHistory(
+  client: Pool | PoolClient,
+  userEmail: string,
+  workshopSlots: unknown[]
+): Promise<void> {
+  const email = String(userEmail || '').trim();
+  if (!email) return;
+
+  const orphans: string[] = [];
+  for (const ws of workshopSlots) {
+    if (!ws || !isPlainObjectRecord(ws)) continue;
+    const intRaw = ws.internalSlots;
+    const sidRaw = ws.slotItemIds;
+    if (!isPlainObjectRecord(intRaw)) continue;
+    const sidMap = isPlainObjectRecord(sidRaw) ? sidRaw : {};
+    for (const [slotId, instId] of Object.entries(intRaw)) {
+      const existingSid = sidMap[slotId];
+      if (existingSid !== undefined && existingSid !== null && String(existingSid).trim() !== '') {
+        continue;
+      }
+      if (instId === undefined || instId === null) continue;
+      const clean = String(instId).trim();
+      if (clean.length < 20) continue;
+      if (!SAVE_GAME_ITEM_ID_RE.test(clean)) continue;
+      orphans.push(clean);
+    }
+  }
+  if (orphans.length === 0) return;
+
+  const uniq = [...new Set(orphans)];
+  try {
+    const histRes = await client.query(
+      `SELECT DISTINCT ON (battery_instance_id) battery_instance_id, battery_item_id
+       FROM charging_history
+       WHERE user_email = $1
+         AND battery_instance_id = ANY($2::text[])
+         AND battery_item_id IS NOT NULL
+         AND BTRIM(battery_item_id::text) <> ''
+       ORDER BY battery_instance_id, timestamp DESC`,
+      [email, uniq]
+    );
+    const resolve = new Map<string, string>();
+    for (const row of histRes.rows as Array<{ battery_instance_id: string; battery_item_id: string }>) {
+      const bid = String(row.battery_instance_id || '').trim();
+      const iid = String(row.battery_item_id || '').trim();
+      if (bid && iid) resolve.set(bid, iid);
+    }
+    if (resolve.size === 0) return;
+
+    for (const ws of workshopSlots) {
+      if (!ws || !isPlainObjectRecord(ws)) continue;
+      const intRaw = ws.internalSlots;
+      if (!isPlainObjectRecord(intRaw)) continue;
+      const sidRaw = ws.slotItemIds;
+      const nextMap: Record<string, string> = isPlainObjectRecord(sidRaw)
+        ? Object.fromEntries(
+            Object.entries(sidRaw)
+              .filter(([, v]) => v != null && String(v).trim() !== '')
+              .map(([k, v]) => [k, String(v).trim()])
+          )
+        : {};
+      let changed = false;
+      for (const [slotId, instId] of Object.entries(intRaw)) {
+        if (instId === undefined || instId === null) continue;
+        const clean = String(instId).trim();
+        const itemIdGuess = resolve.get(clean);
+        if (!itemIdGuess) continue;
+        if (nextMap[slotId] && nextMap[slotId].trim() !== '') continue;
+        nextMap[slotId] = itemIdGuess;
+        changed = true;
+      }
+      if (changed) ws.slotItemIds = nextMap;
+    }
+  } catch (e) {
+    console.warn(
+      '[enrichWorkshopSlotsSlotItemIdsFromChargingHistory]',
+      e instanceof Error ? e.message : String(e)
+    );
+  }
 }

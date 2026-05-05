@@ -56,6 +56,9 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
     const [selectedBundle, setSelectedBundle] = useState<AdminUpgrade | null>(null);
     const [editBundleMode, setEditBundleMode] = useState<boolean>(false);
     const [generatingCode, setGeneratingCode] = useState<boolean>(false);
+    /** Dias até expirar a partir da geração; vazio = sem limite */
+    const [promoValidityDays, setPromoValidityDays] = useState<string>('');
+    const [deletingAllCodes, setDeletingAllCodes] = useState(false);
     const [activeTab, setActiveTab] = useState<string>('all');
 
     const loadRedemptions = async (boxId: string) => {
@@ -244,6 +247,15 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
             type: promoType
         };
 
+        const days = parseInt(String(promoValidityDays).trim(), 10);
+        if (promoValidityDays.trim() !== '' && (!Number.isFinite(days) || days < 1 || days > 3650)) {
+            alert('Validade inválida: use dias entre 1 e 3650 ou deixe em branco para sem expiração.');
+            return;
+        }
+        if (promoValidityDays.trim() !== '' && Number.isFinite(days) && days >= 1) {
+            payload.expiresAt = Date.now() + days * 24 * 60 * 60 * 1000;
+        }
+
         if (effectiveRewardType === 'bundle') {
             if (!effectiveRewardId && !isBundleMode) {
                 alert("Selecione um pacote primeiro!");
@@ -288,6 +300,40 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
             console.error(e);
         } finally {
             setGeneratingCode(false);
+        }
+    };
+
+    const handleDeleteAllVisibleCodes = async () => {
+        if (boxCodes.length === 0) {
+            alert('Não há códigos nesta lista.');
+            return;
+        }
+        if (!window.confirm(`Apagar ${boxCodes.length} código(s) desta vista? Isto remove também o histórico de resgates associado a esses códigos.`)) {
+            return;
+        }
+        setDeletingAllCodes(true);
+        try {
+            const res = await fetch('/api/admin/promo-codes/bulk-delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ codes: boxCodes.map((c) => c.code) })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok) {
+                if (editBundleMode && selectedBundle) {
+                    await loadBoxCodes(undefined, selectedBundle.id);
+                } else {
+                    await loadBoxCodes(boxForm.id || '');
+                }
+                alert(`Removidos ${typeof data.deleted === 'number' ? data.deleted : boxCodes.length} código(s).`);
+            } else {
+                alert((data as { error?: string }).error || 'Erro ao apagar códigos.');
+            }
+        } catch (e) {
+            alert('Erro de conexão ao apagar códigos.');
+            console.error(e);
+        } finally {
+            setDeletingAllCodes(false);
         }
     };
 
@@ -560,6 +606,23 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                     <div className="bg-slate-900/50 p-4 rounded-xl border border-orange-500/20">
                                         <div className="flex flex-col md:flex-row gap-4 items-end mb-4">
                                             <div className="flex-1 w-full space-y-4">
+                                                <div className="flex flex-wrap items-end gap-3">
+                                                    <div className="min-w-[10rem]">
+                                                        <label className="text-[10px] text-slate-500 font-bold block mb-1 uppercase">Válido após gerar</label>
+                                                        <select
+                                                            value={promoValidityDays}
+                                                            onChange={(e) => setPromoValidityDays(e.target.value)}
+                                                            className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs"
+                                                        >
+                                                            <option value="">Sem expiração</option>
+                                                            <option value="1">1 dia</option>
+                                                            <option value="7">7 dias</option>
+                                                            <option value="30">30 dias</option>
+                                                            <option value="90">90 dias</option>
+                                                            <option value="365">1 ano</option>
+                                                        </select>
+                                                    </div>
+                                                </div>
                                                 <div>
                                                     {/* Hidden complex state logic handled by the single dropdown below */}
                                                     <label className="text-[10px] text-slate-500 font-bold block mb-1 uppercase">Tipo de Código / Recompensa</label>
@@ -644,13 +707,23 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                     )}
                                                 </div>
                                             </div>
-                                            <button
-                                                onClick={handleGenerateCode}
-                                                disabled={generatingCode}
-                                                className={`w-full md:w-auto bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-orange-600/20 ${generatingCode ? 'opacity-50 cursor-not-allowed' : ''}`}
-                                            >
-                                                <Plus size={14} /> {generatingCode ? 'GERANDO...' : 'GERAR CÓDIGO'}
-                                            </button>
+                                            <div className="flex flex-col gap-2 w-full md:w-auto shrink-0">
+                                                <button
+                                                    onClick={handleGenerateCode}
+                                                    disabled={generatingCode || deletingAllCodes}
+                                                    className={`w-full md:w-auto bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-orange-600/20 ${generatingCode || deletingAllCodes ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                                >
+                                                    <Plus size={14} /> {generatingCode ? 'GERANDO...' : 'GERAR CÓDIGO'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => void handleDeleteAllVisibleCodes()}
+                                                    disabled={generatingCode || deletingAllCodes || boxCodes.length === 0}
+                                                    className="w-full md:w-auto text-[10px] font-bold uppercase tracking-wide py-2 px-3 rounded border border-red-900/60 text-red-300 bg-red-950/30 hover:bg-red-900/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                                                >
+                                                    {deletingAllCodes ? 'A apagar…' : `Apagar todos (${boxCodes.length})`}
+                                                </button>
+                                            </div>
                                         </div>
 
                                         <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
@@ -681,6 +754,11 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                         <div className="flex items-center gap-1 text-[10px] text-slate-500 font-bold">
                                                             <Users size={12} className="text-slate-600" /> RESGATES: {(c as any).redemptionsCount || 0}
                                                         </div>
+                                                        {c.expiresAt != null && c.expiresAt > 0 && (
+                                                            <span className="text-[9px] font-bold text-rose-300/90 border border-rose-900/40 bg-rose-950/30 px-2 py-0.5 rounded">
+                                                                Expira {new Date(c.expiresAt).toLocaleString('pt-BR')}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     <div className="flex items-center gap-2">
                                                         <button
@@ -819,6 +897,21 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                 <div className="bg-slate-900/50 p-4 rounded-xl border border-orange-500/20">
                                     <div className="flex flex-col md:flex-row gap-4 items-end mb-4">
                                         <div className="flex-1 w-full space-y-4">
+                                            <div className="min-w-[10rem] max-w-xs">
+                                                <label className="text-[10px] text-slate-500 font-bold block mb-1 uppercase">Válido após gerar</label>
+                                                <select
+                                                    value={promoValidityDays}
+                                                    onChange={(e) => setPromoValidityDays(e.target.value)}
+                                                    className="w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs"
+                                                >
+                                                    <option value="">Sem expiração</option>
+                                                    <option value="1">1 dia</option>
+                                                    <option value="7">7 dias</option>
+                                                    <option value="30">30 dias</option>
+                                                    <option value="90">90 dias</option>
+                                                    <option value="365">1 ano</option>
+                                                </select>
+                                            </div>
                                             <div>
                                                 <label className="text-[10px] text-slate-500 font-bold block mb-1 uppercase">Tipo de Código</label>
                                                 <select
@@ -831,12 +924,23 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                 </select>
                                             </div>
                                         </div>
-                                        <button
-                                            onClick={handleGenerateCode}
-                                            className="w-full lg:w-auto bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-orange-600/20"
-                                        >
-                                            <Plus size={14} /> GERAR CÓDIGO
-                                        </button>
+                                        <div className="flex flex-col gap-2 w-full lg:w-auto shrink-0">
+                                            <button
+                                                onClick={handleGenerateCode}
+                                                disabled={generatingCode || deletingAllCodes}
+                                                className={`w-full lg:w-auto bg-orange-600 hover:bg-orange-500 text-white font-bold py-2 px-6 h-10 rounded text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all active:scale-95 shadow-lg shadow-orange-600/20 ${generatingCode || deletingAllCodes ? 'opacity-50 cursor-not-allowed' : ''}`}
+                                            >
+                                                <Plus size={14} /> GERAR CÓDIGO
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleDeleteAllVisibleCodes()}
+                                                disabled={generatingCode || deletingAllCodes || boxCodes.length === 0}
+                                                className="w-full lg:w-auto text-[10px] font-bold uppercase tracking-wide py-2 px-3 rounded border border-red-900/60 text-red-300 bg-red-950/30 hover:bg-red-900/40 disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                {deletingAllCodes ? 'A apagar…' : `Apagar todos (${boxCodes.length})`}
+                                            </button>
+                                        </div>
                                     </div>
 
                                     <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar pr-2">
@@ -859,6 +963,11 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                     <div className="flex items-center gap-1 text-[10px] text-slate-500 font-bold">
                                                         <Users size={12} className="text-slate-600" /> RESGATES: {(c as any).redemptionsCount || 0}
                                                     </div>
+                                                    {c.expiresAt != null && c.expiresAt > 0 && (
+                                                        <span className="text-[9px] font-bold text-rose-300/90 border border-rose-900/40 bg-rose-950/30 px-2 py-0.5 rounded">
+                                                            Expira {new Date(c.expiresAt).toLocaleString('pt-BR')}
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     <button

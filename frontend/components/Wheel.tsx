@@ -1,146 +1,219 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useId } from 'react';
+import { Sparkles } from 'lucide-react';
 import { WheelItem } from '../types';
 
 interface WheelProps {
-    items: WheelItem[];
-    mustSpin: boolean;
-    targetWinner: WheelItem | null;
-    onStopSpinning: () => void;
+  items: WheelItem[];
+  mustSpin: boolean;
+  targetWinner: WheelItem | null;
+  onStopSpinning: () => void;
 }
 
 const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpinning }) => {
-    const [rotation, setRotation] = useState(0);
-    const totalWeight = items.reduce((a, b) => a + b.weight, 0);
+  const ptrGradId = `wp-${useId().replace(/:/g, '')}`;
+  const [rotation, setRotation] = useState(0);
+  const totalWeight = useMemo(
+    () => Math.max(1e-9, items.reduce((a, b) => a + Math.max(0, Number(b.weight) || 0), 0)),
+    [items]
+  );
 
-    // Calculate gradients for the wheel segments
-    const gradientParts: string[] = [];
-    let currentDeg = 0;
-    // We map segments to render them via conic-gradient
-    if (items.length > 0) {
-        items.forEach(item => {
-            const deg = (item.weight / totalWeight) * 360;
-            // Use item color or fallback
-            const color = item.color || '#334155';
-            gradientParts.push(`${color} ${currentDeg}deg ${currentDeg + deg}deg`);
-            currentDeg += deg;
-        });
-    } else {
-        gradientParts.push('#334155 0deg 360deg'); // Empty gray wheel
-    }
+  const gradientParts: string[] = [];
+  let currentDeg = 0;
+  if (items.length > 0) {
+    items.forEach((item) => {
+      const deg = (Math.max(0, Number(item.weight) || 0) / totalWeight) * 360;
+      const color = item.color || '#334155';
+      gradientParts.push(`${color} ${currentDeg}deg ${currentDeg + deg}deg`);
+      currentDeg += deg;
+    });
+  } else {
+    gradientParts.push('#334155 0deg 360deg');
+  }
 
-    const backgroundStyle = `conic-gradient(${gradientParts.join(', ')})`;
+  const backgroundStyle = `conic-gradient(${gradientParts.join(', ')})`;
+  const n = Math.max(1, items.length);
+  const sliceDeg = 360 / n;
+  /** Linhas finas entre fatias (girar com o disco). */
+  const sliceDividers =
+    items.length > 0
+      ? `repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg ${sliceDeg - 0.75}deg, rgba(15,23,42,0.5) ${sliceDeg - 0.75}deg ${sliceDeg}deg)`
+      : undefined;
 
-    useEffect(() => {
-        if (mustSpin && targetWinner && items.length > 0) {
-            // 1. Calculate target angle for the winner
-            let winnerStart = 0;
-            let winnerSize = 0;
-            for (const item of items) {
-                const deg = (item.weight / totalWeight) * 360;
-                if (item.id === targetWinner.id) {
-                    winnerSize = deg;
-                    break;
-                }
-                winnerStart += deg;
-            }
-
-            // The winner segment center
-            const winnerCenter = winnerStart + (winnerSize / 2);
-
-            // We want the winnerCenter to align with the pointer at 0deg (top).
-            // Since CSS rotates clockwise, to bring a generic angle X to 0, we rotate by (360 - X).
-            // We also add extra spins (e.g. 5 full variances = 1800deg) for effect.
-            const extraSpins = 1800; // 5 * 360
-            const targetRotation = extraSpins + (360 - winnerCenter);
-
-            // Advance from current rotation to the next target
-            // Ensure we always spin forward significantly
-            const currentMod = rotation % 360;
-            const dist = targetRotation - currentMod;
-            const finalRotation = rotation + dist + (dist < 0 ? 360 : 0);
-
-            setRotation(finalRotation);
-
-            const timer = setTimeout(() => {
-                onStopSpinning();
-            }, 3000);
-            return () => clearTimeout(timer);
+  useEffect(() => {
+    if (mustSpin && targetWinner && items.length > 0) {
+      let winnerStart = 0;
+      let winnerSize = 0;
+      for (const item of items) {
+        const deg = (Math.max(0, Number(item.weight) || 0) / totalWeight) * 360;
+        if (item.id === targetWinner.id) {
+          winnerSize = deg;
+          break;
         }
-    }, [mustSpin, targetWinner, items, onStopSpinning]);
+        winnerStart += deg;
+      }
 
-    return (
-        <div className="relative mx-auto aspect-square w-[min(22rem,calc(100vw-1.25rem))] max-w-sm flex items-center justify-center font-sans transition-all sm:w-[min(22rem,calc(100vw-2.5rem))]">
-            {/* Pointer — alinhado à paleta do site */}
-            <div
-                className="absolute left-1/2 z-20 -translate-x-1/2"
-                style={{ top: 'clamp(-1.35rem, -4vw, -0.85rem)' }}
-            >
-                <div
-                    className="h-0 w-0 border-l-[14px] border-l-transparent border-r-[14px] border-r-transparent border-t-[26px] border-t-amber-400 drop-shadow-[0_3px_6px_rgba(0,0,0,0.55)]"
-                    style={{ filter: 'drop-shadow(0 0 8px rgba(251,191,36,0.45))' }}
-                />
-            </div>
+      const winnerCenter = winnerStart + winnerSize / 2;
+      const extraSpins = 1800;
+      const targetRotation = extraSpins + (360 - winnerCenter);
 
-            {/* Moldura + disco: fundo (com clip) à parte dos rótulos para não cortar o texto na borda */}
+      const currentMod = rotation % 360;
+      const dist = targetRotation - currentMod;
+      const finalRotation = rotation + dist + (dist < 0 ? 360 : 0);
+
+      setRotation(finalRotation);
+
+      const timer = setTimeout(() => {
+        onStopSpinning();
+      }, 3000);
+      return () => clearTimeout(timer);
+    }
+    // rotation omitido de propósito: só reage a novo giro (mustSpin/targetWinner/items).
+  }, [mustSpin, targetWinner, items, onStopSpinning, totalWeight]);
+
+  return (
+    <div
+      className="relative mx-auto aspect-square w-[min(25rem,calc(100vw-1rem))] max-w-md flex items-center justify-center font-sans transition-all sm:w-[min(26rem,calc(100vw-2rem))]"
+      role="img"
+      aria-label="Roleta de prémios"
+    >
+      {/* Brilho exterior */}
+      <div
+        className="pointer-events-none absolute -inset-3 rounded-full bg-gradient-to-b from-amber-500/20 via-orange-600/10 to-transparent blur-2xl sm:-inset-4"
+        aria-hidden
+      />
+
+      {/* Ponteiro (SVG único por instância para evitar colisão de gradient id) */}
+      <div
+        className="absolute left-1/2 z-30 -translate-x-1/2 drop-shadow-[0_6px_16px_rgba(0,0,0,0.7)]"
+        style={{ top: 'clamp(-1.75rem, -5vw, -1.1rem)' }}
+        aria-hidden
+      >
+        <svg width="44" height="48" viewBox="0 0 44 48" className="mx-auto block">
+          <defs>
+            <linearGradient id={ptrGradId} x1="0%" y1="0%" x2="0%" y2="100%">
+              <stop offset="0%" stopColor="#fef08a" />
+              <stop offset="40%" stopColor="#f59e0b" />
+              <stop offset="100%" stopColor="#92400e" />
+            </linearGradient>
+          </defs>
+          <path
+            d="M22 2 L40 42 Q22 36 4 42 Z"
+            fill={`url(#${ptrGradId})`}
+            stroke="rgba(15,23,42,0.7)"
+            strokeWidth="1.35"
+            strokeLinejoin="round"
+          />
+          <circle cx="22" cy="36" r="4" fill="#0f172a" stroke="#fcd34d" strokeWidth="1" />
+        </svg>
+      </div>
+
+      {/* Moldura dupla */}
+      <div
+        className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-400/50 via-amber-700/35 to-slate-950 p-[7px] shadow-[0_20px_50px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.12)] ring-1 ring-black/50 sm:p-[8px]"
+        aria-hidden
+      >
+        <div className="h-full w-full rounded-full bg-gradient-to-b from-slate-900 via-slate-950 to-black p-[3px] shadow-inner">
+          <div
+            className="relative h-full w-full rounded-full border border-slate-800/90 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
+            style={{
+              transform: `rotate(${rotation}deg)`,
+              transition: 'transform 4000ms cubic-bezier(0.2, 0.82, 0.15, 1)',
+              willChange: 'transform'
+            }}
+          >
+            {/* Disco de cor */}
             <div
-                className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-500/40 via-orange-600/30 to-slate-900 p-[6px] shadow-[0_12px_40px_rgba(0,0,0,0.5),inset_0_1px_0_rgba(255,255,255,0.08)]"
-                aria-hidden
-            >
+              className="absolute inset-0 z-0 overflow-hidden rounded-full shadow-[inset_0_0_36px_rgba(0,0,0,0.5)]"
+              style={{
+                background: items.length > 0 ? backgroundStyle : '#1e293b'
+              }}
+            />
+            {/* Vinheta + brilho interno */}
+            <div
+              className="pointer-events-none absolute inset-0 z-[1] rounded-full"
+              style={{
+                background:
+                  'radial-gradient(circle at 35% 28%, rgba(255,255,255,0.14) 0%, transparent 42%), radial-gradient(circle at 50% 50%, transparent 48%, rgba(0,0,0,0.35) 100%)'
+              }}
+            />
+            {/* Divisores */}
+            {sliceDividers ? (
+              <div
+                className="pointer-events-none absolute inset-0 z-[2] rounded-full"
+                style={{ background: sliceDividers }}
+              />
+            ) : null}
+
+            {items.map((item, index) => {
+              let startDeg = 0;
+              for (let i = 0; i < index; i++) {
+                const w = Math.max(0, Number(items[i].weight));
+                startDeg += (w / totalWeight) * 360;
+              }
+              const wCur = Math.max(0, Number(item.weight));
+              const sliceAngle = (wCur / totalWeight) * 360;
+              const midDeg = startDeg + sliceAngle / 2;
+              const halfSlice = Math.min(sliceAngle / 2, 89);
+              const chordFactor = Math.sin((halfSlice * Math.PI) / 180);
+              const maxLabelPx = Math.min(220, Math.max(104, 72 + chordFactor * 165));
+
+              return (
                 <div
-                    className="relative h-full w-full rounded-full border border-slate-900/90"
-                    style={{
-                        transform: `rotate(${rotation}deg)`,
-                        transition: 'transform 4000ms cubic-bezier(0.2, 0.8, 0.2, 1)',
-                        willChange: 'transform'
-                    }}
+                  key={`${item.id}-${index}`}
+                  className="pointer-events-none absolute z-[3] overflow-visible"
+                  style={{
+                    left: '50%',
+                    bottom: '50%',
+                    width: `${maxLabelPx}px`,
+                    height: '50%',
+                    transformOrigin: '50% 100%',
+                    /** Um único transform: pivô no centro da roda (base do braço). */
+                    transform: `translateX(-50%) rotate(${midDeg}deg)`
+                  }}
                 >
-                    <div
-                        className="absolute inset-0 z-0 overflow-hidden rounded-full shadow-[inset_0_0_28px_rgba(0,0,0,0.45)]"
-                        style={{
-                            background: items.length > 0 ? backgroundStyle : '#1e293b'
-                        }}
-                    />
-                    {/* Raios a partir do centro: texto horizontal, dentro do círculo (sem clip nos rótulos) */}
-                    {items.map((item, index) => {
-                        let startDeg = 0;
-                        for (let i = 0; i < index; i++) {
-                            startDeg += (items[i].weight / totalWeight) * 360;
-                        }
-                        const sliceDeg = (item.weight / totalWeight) * 360;
-                        const midDeg = startDeg + sliceDeg / 2;
-
-                        return (
-                            <div
-                                key={item.id}
-                                className="pointer-events-none absolute bottom-1/2 left-1/2 z-[1] flex h-[50%] w-0 origin-bottom"
-                                style={{ transform: `translateX(-50%) rotate(${midDeg}deg)` }}
-                            >
-                                <div className="relative flex w-[8.5rem] max-w-[38vw] -translate-x-1/2 flex-col items-center justify-end self-center pb-[22%] sm:w-[9.25rem] sm:max-w-[40vw] sm:pb-[20%]">
-                                    <span
-                                        title={item.label}
-                                        className="line-clamp-3 w-full hyphens-auto break-words rounded-md border border-white/15 bg-black/60 px-1.5 py-1 text-center font-sans text-[8.5px] font-semibold leading-[1.2] text-white shadow-md backdrop-blur-sm sm:text-[9.5px]"
-                                        style={{
-                                            transform: `rotate(${-midDeg}deg)`,
-                                            textShadow: '0 1px 2px rgba(0,0,0,0.95)'
-                                        }}
-                                    >
-                                        {item.label}
-                                    </span>
-                                </div>
-                            </div>
-                        );
-                    })}
+                  {/*
+                    Braço vai do centro (base) à borda (topo). Rótulo junto à borda: top % baixo.
+                  */}
+                  <div className="absolute left-0 right-0 top-[5%] flex justify-center sm:top-[4%]">
+                    <span
+                      title={item.label}
+                      className="line-clamp-2 max-h-[3.6rem] rounded-lg border border-white/25 bg-slate-950/90 px-2.5 py-1.5 text-center font-sans text-[10px] font-semibold leading-snug tracking-tight text-white shadow-[0_4px_16px_rgba(0,0,0,0.5)] backdrop-blur-md sm:max-h-[4rem] sm:px-3 sm:py-2 sm:text-[11px] sm:leading-snug"
+                      style={{
+                        width: `${maxLabelPx}px`,
+                        minWidth: `${maxLabelPx}px`,
+                        maxWidth: `${maxLabelPx}px`,
+                        transform: `rotate(${-midDeg}deg)`,
+                        textShadow: '0 1px 3px rgba(0,0,0,0.92)',
+                        overflowWrap: 'break-word',
+                        wordBreak: 'normal'
+                      }}
+                    >
+                      {item.label}
+                    </span>
+                  </div>
                 </div>
-            </div>
-
-            {/* Centro */}
-            <div className="pointer-events-none absolute z-[15] flex h-[4.5rem] w-[4.5rem] items-center justify-center rounded-full border-[3px] border-amber-900/40 bg-gradient-to-br from-slate-700 via-slate-800 to-slate-950 shadow-[inset_0_2px_12px_rgba(0,0,0,0.55),0_8px_20px_rgba(0,0,0,0.5),0_0_0_1px_rgba(251,191,36,0.12)] sm:h-20 sm:w-20">
-                <span className="text-xl sm:text-2xl" aria-hidden>
-                    🎰
-                </span>
-            </div>
+              );
+            })}
+          </div>
         </div>
-    );
+      </div>
+
+      {/* Centro */}
+      <div className="pointer-events-none absolute z-20 flex h-[4.75rem] w-[4.75rem] items-center justify-center sm:h-[5.25rem] sm:w-[5.25rem]">
+        <div
+          className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-500/25 to-orange-600/10 blur-md"
+          aria-hidden
+        />
+        <div className="relative flex h-full w-full items-center justify-center rounded-full border-2 border-amber-500/35 bg-gradient-to-br from-slate-600 via-slate-800 to-slate-950 shadow-[inset_0_2px_14px_rgba(0,0,0,0.55),0_10px_28px_rgba(0,0,0,0.55),0_0_0_1px_rgba(251,191,36,0.2)] ring-2 ring-slate-950/80">
+          <Sparkles
+            className="h-8 w-8 text-amber-200 drop-shadow-[0_0_10px_rgba(251,191,36,0.45)] sm:h-9 sm:w-9"
+            strokeWidth={2}
+            aria-hidden
+          />
+        </div>
+      </div>
+    </div>
+  );
 };
 
 export default Wheel;

@@ -21,6 +21,7 @@ import {
   type SupportTicketReplyRow,
   type SupportTicketAttachment,
 } from '../services/api';
+import { SUPPORT_TICKET_MESSAGE_MAX } from '../constants/formLimits';
 import type { GameUserActivityEntry } from '../types';
 import { formatUserActivityMeta, ACTIVITY_LOG_FILTER_GROUPS, filterUserActivityLogs } from '../utils/adminUserActivityLog';
 import { safeSupportAttachmentHref } from '../utils/supportAttachmentUrls';
@@ -610,7 +611,7 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                           value={replyMessage}
                           onChange={(e) => setReplyMessage(e.target.value)}
                           rows={4}
-                          maxLength={8000}
+                          maxLength={SUPPORT_TICKET_MESSAGE_MAX}
                           placeholder="Texto da resposta (mín. 3 caracteres se não enviar anexos)"
                           className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40 resize-y"
                         />

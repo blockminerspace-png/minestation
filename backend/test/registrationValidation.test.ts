@@ -4,6 +4,15 @@ import {
   validateSignupUsername,
   validateSignupPassword,
   sanitizeOptionalReferralCode,
+  validateLoginEmail,
+  validateLoginFieldsPresent,
+  validateLoginPassword,
+  validateOptionalReferralCodeInput,
+  REFERRAL_CODE_MAX,
+  EMAIL_ADDRESS_MAX_LENGTH,
+  PASSWORD_MAX,
+  PASSWORD_MIN,
+  USERNAME_MAX,
   validateOptionalPolygonWallet,
   validateOptionalAccessLevelId,
   validateAccessLevelIdsArray,
@@ -19,7 +28,8 @@ describe('registrationValidation', () => {
 
   it('validateSignupUsername', () => {
     expect(validateSignupUsername('ab').ok).toBe(false);
-    expect(validateSignupUsername('valid_user-1').ok).toBe(true);
+    expect(validateSignupUsername('user_ab-1').ok).toBe(true);
+    expect(validateSignupUsername('a'.repeat(USERNAME_MAX + 1)).ok).toBe(false);
     expect(validateSignupUsername('<script>').ok).toBe(false);
   });
 
@@ -27,11 +37,39 @@ describe('registrationValidation', () => {
     expect(validateSignupPassword(undefined, false).ok).toBe(true);
     expect(validateSignupPassword('short', true).ok).toBe(false);
     expect(validateSignupPassword('longenough', true).ok).toBe(true);
+    expect(validateSignupPassword('x'.repeat(PASSWORD_MAX + 1), true).ok).toBe(false);
   });
 
   it('sanitizeOptionalReferralCode', () => {
     expect(sanitizeOptionalReferralCode(null)).toBeNull();
     expect(sanitizeOptionalReferralCode('  ok  ')).toBe('ok');
+    expect(sanitizeOptionalReferralCode('a'.repeat(REFERRAL_CODE_MAX + 1))).toBeNull();
+  });
+
+  it('validateOptionalReferralCodeInput rejects long or bad chars', () => {
+    expect(validateOptionalReferralCodeInput('x'.repeat(REFERRAL_CODE_MAX + 1)).ok).toBe(false);
+    expect(validateOptionalReferralCodeInput("ab'cd").ok).toBe(false);
+    expect(validateOptionalReferralCodeInput('  ok  ')).toEqual({ ok: true, code: 'ok' });
+  });
+
+  it('validateLoginEmail', () => {
+    expect(validateLoginEmail('a@gmail.com').ok).toBe(true);
+    expect(validateLoginEmail('').ok).toBe(false);
+    expect(validateLoginEmail('x'.repeat(EMAIL_ADDRESS_MAX_LENGTH + 1)).ok).toBe(false);
+  });
+
+  it('validateLoginFieldsPresent', () => {
+    expect(validateLoginFieldsPresent('', '').ok).toBe(false);
+    expect(validateLoginFieldsPresent(' ', '').ok).toBe(false);
+    expect(validateLoginFieldsPresent('a@b.co', '').ok).toBe(false);
+    expect(validateLoginFieldsPresent('', 'secret').ok).toBe(false);
+    expect(validateLoginFieldsPresent('a@b.co', 'secret').ok).toBe(true);
+  });
+
+  it('validateLoginPassword length', () => {
+    expect(validateLoginPassword('x'.repeat(PASSWORD_MAX)).ok).toBe(true);
+    expect(validateLoginPassword('x'.repeat(PASSWORD_MAX + 1)).ok).toBe(false);
+    expect(validateLoginPassword('x'.repeat(PASSWORD_MIN - 1)).ok).toBe(false);
   });
 
   it('validateOptionalPolygonWallet', () => {

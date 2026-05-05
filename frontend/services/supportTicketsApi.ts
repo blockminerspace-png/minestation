@@ -2,16 +2,37 @@
  * API de tickets de suporte (isolado de api.ts para deploy simples: copiar este ficheiro + reexports em api.ts).
  */
 const API_BASE = '/api';
+const SESSION_HINT_KEY = 'genesis_has_session';
 
 let refreshInFlight: Promise<boolean> | null = null;
 
+function getSessionHint(): boolean {
+  try {
+    return window.localStorage.getItem(SESSION_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setSessionHint(enabled: boolean): void {
+  try {
+    if (enabled) window.localStorage.setItem(SESSION_HINT_KEY, '1');
+    else window.localStorage.removeItem(SESSION_HINT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 async function tryRefreshSessionOnce(): Promise<boolean> {
+  if (!getSessionHint()) return false;
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
       const res = await fetch(`${API_BASE}/auth/refresh`, { method: 'POST', credentials: 'include' });
+      if (!res.ok) setSessionHint(false);
       return res.ok;
     } catch {
+      setSessionHint(false);
       return false;
     } finally {
       refreshInFlight = null;

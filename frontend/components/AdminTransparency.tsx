@@ -7,6 +7,7 @@ import {
   adminUpdateTransparencyEntry,
   getTransparency
 } from '../services/api';
+import { TRANSPARENCY_BODY_MAX, TRANSPARENCY_LINK_MAX, TRANSPARENCY_TITLE_MAX } from '../constants/formLimits';
 
 const CATS: { id: TransparencyCategory; label: string }[] = [
   { id: 'pool', label: 'Pool / tesouraria' },
@@ -179,7 +180,7 @@ export const AdminTransparency: React.FC = () => {
               className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
-              maxLength={300}
+              maxLength={TRANSPARENCY_TITLE_MAX}
             />
           </label>
           <label className="block text-xs text-slate-400 md:col-span-2">
@@ -188,7 +189,7 @@ export const AdminTransparency: React.FC = () => {
               className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white min-h-[100px]"
               value={form.body}
               onChange={(e) => setForm({ ...form, body: e.target.value })}
-              maxLength={8000}
+              maxLength={TRANSPARENCY_BODY_MAX}
             />
           </label>
           <label className="block text-xs text-slate-400">
@@ -206,6 +207,7 @@ export const AdminTransparency: React.FC = () => {
               className="mt-1 w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
               value={form.linkUrl}
               onChange={(e) => setForm({ ...form, linkUrl: e.target.value })}
+              maxLength={TRANSPARENCY_LINK_MAX}
               placeholder="https://…"
             />
           </label>

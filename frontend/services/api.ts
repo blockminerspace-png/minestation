@@ -2,16 +2,37 @@ import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Setting
 import { GAME_NAV_LABEL_KEYS } from '../constants/gameNavLabels';
 
 const base = '/api';
+const SESSION_HINT_KEY = 'genesis_has_session';
 
 let refreshInFlight: Promise<boolean> | null = null;
 
+function getSessionHint(): boolean {
+  try {
+    return window.localStorage.getItem(SESSION_HINT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function setSessionHint(enabled: boolean): void {
+  try {
+    if (enabled) window.localStorage.setItem(SESSION_HINT_KEY, '1');
+    else window.localStorage.removeItem(SESSION_HINT_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 async function tryRefreshSessionOnce(): Promise<boolean> {
+  if (!getSessionHint()) return false;
   if (refreshInFlight) return refreshInFlight;
   refreshInFlight = (async () => {
     try {
       const res = await fetch(`${base}/auth/refresh`, { method: 'POST', credentials: 'include' });
+      if (!res.ok) setSessionHint(false);
       return res.ok;
     } catch {
+      setSessionHint(false);
       return false;
     } finally {
       refreshInFlight = null;
@@ -26,7 +47,8 @@ function shouldSkipAuthRefreshRetry(url: string): boolean {
     u.includes('/auth/refresh') ||
     u.includes('/login') ||
     u.includes('/logout') ||
-    u.includes('/password-reset')
+    u.includes('/password-reset') ||
+    u.includes('/request-password-reset')
   );
 }
 
@@ -61,11 +83,243 @@ export async function logPlayerActivity(
   }
 }
 
+export type PartnerYoutubeVideoPublic = {
+  id: string;
+  title: string;
+  youtubeUrl: string;
+  youtubeVideoId: string;
+  description?: string;
+  createdAt: number;
+  approvedAt?: number;
+  username: string;
+  /** Dono do vídeo (perfil vitrine editável no admin). */
+  userId?: number;
+  partnerChannelUrl?: string;
+  partnerAvatarUrl?: string;
+};
+
+export type PartnerYoutubeMySubmission = {
+  id: string;
+  title: string;
+  youtubeUrl: string;
+  youtubeVideoId: string;
+  description?: string;
+  status: string;
+  createdAt: number;
+  reviewedAt?: number;
+  rejectReason?: string;
+};
+
+export async function getPartnerYoutubeVideosPublic(
+  limit = 24,
+  offset = 0
+): Promise<{ videos: PartnerYoutubeVideoPublic[] }> {
+  try {
+    const q = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    const res = await apiFetch(`${base}/partner-videos/public?${q.toString()}`);
+    const data = (await res.json().catch(() => ({}))) as { videos?: PartnerYoutubeVideoPublic[] };
+    if (!res.ok) return { videos: [] };
+    return { videos: Array.isArray(data.videos) ? data.videos : [] };
+  } catch {
+    return { videos: [] };
+  }
+}
+
+export async function getPartnerYoutubeMyContext(): Promise<{
+  isPartner: boolean;
+  canSubmitToday: boolean;
+  submissionsToday: number;
+  submissions: PartnerYoutubeMySubmission[];
+}> {
+  try {
+    const res = await apiFetch(`${base}/partner-videos/my`);
+    const data = (await res.json().catch(() => ({}))) as {
+      isPartner?: boolean;
+      canSubmitToday?: boolean;
+      submissionsToday?: number;
+      submissions?: PartnerYoutubeMySubmission[];
+    };
+    if (!res.ok) {
+      return { isPartner: false, canSubmitToday: false, submissionsToday: 0, submissions: [] };
+    }
+    return {
+      isPartner: !!data.isPartner,
+      canSubmitToday: !!data.canSubmitToday,
+      submissionsToday: Number(data.submissionsToday) || 0,
+      submissions: Array.isArray(data.submissions) ? data.submissions : []
+    };
+  } catch {
+    return { isPartner: false, canSubmitToday: false, submissionsToday: 0, submissions: [] };
+  }
+}
+
+export async function submitPartnerYoutubeVideo(payload: {
+  title: string;
+  youtubeUrl: string;
+  description?: string;
+}): Promise<{ ok: boolean; error?: string; code?: string; id?: string; status?: string }> {
+  try {
+    const res = await apiFetch(`${base}/partner-videos/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      code?: string;
+      id?: string;
+      status?: string;
+    };
+    if (!res.ok) {
+      return { ok: false, error: data.error || `HTTP ${res.status}`, code: data.code };
+    }
+    return { ok: true, id: data.id, status: data.status };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+export type AdminPartnerYoutubeRow = {
+  id: string;
+  userId: number;
+  username: string;
+  email: string;
+  title: string;
+  youtubeUrl: string;
+  youtubeVideoId: string;
+  description?: string;
+  status: string;
+  createdAt: number;
+  reviewedAt?: number;
+  reviewedBy?: number | null;
+  rejectReason?: string;
+};
+
+export type AdminPartnerYoutubePartnerRow = {
+  userId: number;
+  username: string;
+  email: string;
+  approvedCount: number;
+  channelUrl: string;
+  avatarUrl: string;
+  allowlisted?: boolean;
+};
+
+export async function getAdminPartnerYoutubePartners(): Promise<{ partners: AdminPartnerYoutubePartnerRow[] }> {
+  const res = await apiFetch(`${base}/admin/partner-youtube-partners`);
+  const data = (await res.json().catch(() => ({}))) as { partners?: AdminPartnerYoutubePartnerRow[]; error?: string };
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return { partners: Array.isArray(data.partners) ? data.partners : [] };
+}
+
+export async function postAdminPartnerYoutubeAllowlist(payload: {
+  userId?: number;
+  username?: string;
+}): Promise<{ ok: boolean; inserted?: boolean; userId?: number; error?: string }> {
+  const res = await apiFetch(`${base}/admin/partner-youtube-allowlist`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    inserted?: boolean;
+    userId?: number;
+    error?: string;
+  };
+  if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+  return { ok: !!data.ok, inserted: data.inserted, userId: data.userId };
+}
+
+export async function deleteAdminPartnerYoutubeAllowlist(userId: number): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${base}/admin/partner-youtube-allowlist/${encodeURIComponent(String(userId))}`, {
+    method: 'DELETE'
+  });
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+  return { ok: !!data.ok };
+}
+
+export async function getAdminPartnerYoutubeSubmissions(
+  status: 'all' | 'pending' | 'approved' | 'rejected' = 'all'
+): Promise<{ submissions: AdminPartnerYoutubeRow[] }> {
+  const q = status === 'all' ? '' : `?status=${encodeURIComponent(status)}`;
+  const res = await apiFetch(`${base}/admin/partner-videos${q}`);
+  const data = (await res.json().catch(() => ({}))) as { submissions?: AdminPartnerYoutubeRow[] };
+  if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
+  return { submissions: Array.isArray(data.submissions) ? data.submissions : [] };
+}
+
+export async function adminApprovePartnerYoutube(id: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${base}/admin/partner-videos/${encodeURIComponent(id)}/approve`, { method: 'POST' });
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+  return { ok: !!data.ok };
+}
+
+export async function adminRejectPartnerYoutube(
+  id: string,
+  reason?: string
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${base}/admin/partner-videos/${encodeURIComponent(id)}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason: reason || '' })
+  });
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+  return { ok: !!data.ok };
+}
+
+export async function adminDeletePartnerYoutube(id: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await apiFetch(`${base}/admin/partner-videos/${encodeURIComponent(id)}`, { method: 'DELETE' });
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+  return { ok: !!data.ok };
+}
+
+export async function getAdminPartnerYoutubeCreatorProfile(
+  userId: number
+): Promise<{ channelUrl: string; avatarUrl: string }> {
+  const res = await apiFetch(`${base}/admin/partner-youtube-creators/${userId}`);
+  const data = (await res.json().catch(() => ({}))) as { channelUrl?: string; avatarUrl?: string; error?: string };
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+  return {
+    channelUrl: typeof data.channelUrl === 'string' ? data.channelUrl : '',
+    avatarUrl: typeof data.avatarUrl === 'string' ? data.avatarUrl : ''
+  };
+}
+
+export async function putAdminPartnerYoutubeCreatorProfile(
+  userId: number,
+  payload: { channelUrl: string; avatarUrl: string }
+): Promise<{ ok: boolean; error?: string; channelUrl?: string; avatarUrl?: string }> {
+  const res = await apiFetch(`${base}/admin/partner-youtube-creators/${userId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ channelUrl: payload.channelUrl, avatarUrl: payload.avatarUrl })
+  });
+  const data = (await res.json().catch(() => ({}))) as {
+    ok?: boolean;
+    error?: string;
+    channelUrl?: string;
+    avatarUrl?: string;
+  };
+  if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
+  return { ok: !!data.ok, channelUrl: data.channelUrl, avatarUrl: data.avatarUrl };
+}
+
 /** Transferências USDC (Polygon) para o treasury — só admin; chave Etherscan fica no servidor. */
-export async function getAdminTreasuryTokenTxs(page: number, offset: number): Promise<unknown> {
+export async function getAdminTreasuryTokenTxs(page: number, offset: number, treasuryAddress?: string): Promise<unknown> {
   const p = Math.max(1, Math.floor(Number(page)) || 1);
   const o = Math.min(1000, Math.max(1, Math.floor(Number(offset)) || 20));
-  const res = await apiFetch(`${base}/admin/etherscan/treasury-token-txs?page=${p}&offset=${o}`);
+  const q = new URLSearchParams({ page: String(p), offset: String(o) });
+  const addr = typeof treasuryAddress === 'string' ? treasuryAddress.trim() : '';
+  if (/^0x[a-fA-F0-9]{40}$/.test(addr)) {
+    q.set('address', addr);
+  }
+  const res = await apiFetch(`${base}/admin/etherscan/treasury-token-txs?${q.toString()}`);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((data as { error?: string }).error || `HTTP ${res.status}`);
   return data;
@@ -363,7 +617,8 @@ export async function getUsers(
   sortBy: string = 'creation',
   sortDir: 'asc' | 'desc' = 'asc',
   filterStatus: string = 'all',
-  filterLevel: string = 'all'
+  filterLevel: string = 'all',
+  filterAdminsOnly: boolean = false
 ): Promise<{ users: User[]; total: number; pages: number; levels: { id: string; name: string }[] }> {
   try {
     const query = new URLSearchParams({
@@ -373,7 +628,8 @@ export async function getUsers(
       sortBy,
       sortDir,
       filterStatus,
-      filterLevel
+      filterLevel,
+      ...(filterAdminsOnly ? { filterAdmins: '1' } : {})
     }).toString();
     const res = await apiFetch(`${base}/users?${query}`);
     if (!res.ok) return { users: [], total: 0, pages: 0, levels: [] };
@@ -766,6 +1022,65 @@ export async function rollWheel(code: string): Promise<{ ok: boolean; wonItemId?
   }
 }
 
+export async function getPaidWheelPending(): Promise<{ pending: boolean; wonItemId: string | null }> {
+  try {
+    const res = await apiFetch(`${base}/wheel/paid-pending`);
+    if (!res.ok) return { pending: false, wonItemId: null };
+    const data = (await res.json().catch(() => ({}))) as { pending?: unknown; wonItemId?: unknown };
+    const won =
+      data.wonItemId != null && typeof data.wonItemId === 'string' && data.wonItemId.trim()
+        ? data.wonItemId.trim()
+        : null;
+    return { pending: Boolean(won), wonItemId: won };
+  } catch {
+    return { pending: false, wonItemId: null };
+  }
+}
+
+export async function rollWheelPaid(): Promise<{
+  ok: boolean;
+  wonItemId?: string;
+  item?: unknown;
+  newUsdc?: number;
+  error?: string;
+}> {
+  try {
+    const res = await apiFetch(`${base}/wheel/paid-roll`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    if (!res.ok) {
+      try {
+        const j = await res.json();
+        return { ok: false, error: typeof j?.error === 'string' ? j.error : 'Erro ao girar a roleta paga' };
+      } catch {
+        return { ok: false, error: 'Erro ao girar a roleta paga' };
+      }
+    }
+    return await res.json();
+  } catch {
+    return { ok: false, error: 'Erro de rede' };
+  }
+}
+
+export async function claimWheelPaid(wonItemId: string): Promise<{ ok: boolean; boxId?: string; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/wheel/paid-claim`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ wonItemId })
+    });
+    if (!res.ok) {
+      try {
+        const j = await res.json();
+        return { ok: false, error: typeof j?.error === 'string' ? j.error : 'Erro ao resgatar' };
+      } catch {
+        return { ok: false, error: 'Erro ao resgatar' };
+      }
+    }
+    return await res.json();
+  } catch {
+    return { ok: false, error: 'Erro de rede' };
+  }
+}
+
 export async function getMiningCoins(): Promise<any[]> {
   try {
     const res = await apiFetch(`${base}/mining-coins`);
@@ -801,6 +1116,9 @@ export function normalizeMiningCoinPayload(coin: Record<string, any>): Record<st
   const blockTimeRaw = parseLocaleNumber(coin.blockTime, 60);
   const priceUSDRaw = parseLocaleNumber(coin.priceUSD, NaN);
   const priceUSD = Number.isFinite(priceUSDRaw) ? priceUSDRaw : 1;
+  const usdcRaw = parseLocaleNumber(coin.usdcRate, NaN);
+  const usdcRate =
+    Number.isFinite(usdcRaw) && usdcRaw >= 0 ? usdcRaw : (priceUSD >= 0 ? priceUSD : 1);
   const multiplier = parseLocaleNumber(coin.multiplier, 1);
   const minProportion = parseLocaleNumber(coin.minProportion, 0);
   const targetDailyUSD = parseLocaleNumber(coin.targetDailyUSD, 0);
@@ -815,7 +1133,7 @@ export function normalizeMiningCoinPayload(coin: Record<string, any>): Record<st
     minProportion: Math.max(0, minProportion),
     difficulty: difficulty > 0 ? difficulty : 1,
     targetDailyUSD: Math.max(0, targetDailyUSD),
-    usdcRate: priceUSD >= 0 ? priceUSD : 1
+    usdcRate
   };
 }
 
@@ -863,6 +1181,7 @@ export async function login(email: string, password: string, deviceFingerprint?:
     if (deviceFingerprint) body.deviceFingerprint = deviceFingerprint;
     const res = await apiFetch(`${base}/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json();
+    if (res.ok) setSessionHint(true);
     if (!res.ok) return { error: data.error || 'Erro desconhecido' };
     return data;
   } catch (err: any) {
@@ -871,16 +1190,23 @@ export async function login(email: string, password: string, deviceFingerprint?:
 }
 
 export async function getSession(): Promise<User | null> {
+  if (!getSessionHint()) return null;
   try {
     const res = await apiFetch(`${base}/session`);
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 401) setSessionHint(false);
+      return null;
+    }
+    setSessionHint(true);
     try { return await res.json(); } catch { return null; }
   } catch {
+    setSessionHint(false);
     return null;
   }
 }
 
 export async function logout(): Promise<void> {
+  setSessionHint(false);
   await apiFetch(`${base}/logout`, { method: 'POST' });
 }
 
@@ -1009,7 +1335,11 @@ export async function saveGameState(
         globalLastLoadTime = data.serverUpdatedAt;
       }
       return data;
-    } catch { return { ok: true }; }
+    } catch {
+      // HTTP 200 mas corpo inválido: não fingir sucesso — senão `globalLastLoadTime` fica velho e todos os saves seguintes levam `forceReload`.
+      console.warn('[saveGameState] Resposta não-JSON após HTTP OK; o cliente deve recarregar o estado.');
+      return { ok: false, error: 'Resposta inválida ao guardar. Recarregue (F5).' };
+    }
   } catch { return { ok: false, error: 'Network error' }; }
 }
 
@@ -1306,12 +1636,19 @@ export async function impersonateUser(targetEmail: string): Promise<{ ok: boolea
   }
 }
 
-export async function updateAdminPermissions(email: string, isAdmin: boolean, permissions: string[]): Promise<{ ok: boolean; error?: string }> {
+export async function updateAdminPermissions(
+  email: string,
+  isAdmin: boolean,
+  permissions: string[],
+  isSuperAdmin?: boolean
+): Promise<{ ok: boolean; error?: string }> {
   try {
+    const body: Record<string, unknown> = { email, isAdmin, permissions };
+    if (isSuperAdmin !== undefined) body.isSuperAdmin = !!isSuperAdmin;
     const res = await apiFetch(`${base}/admin/update-permissions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, isAdmin, permissions })
+      body: JSON.stringify(body)
     });
     return await res.json();
   } catch {
@@ -1773,4 +2110,3 @@ export async function adminDeleteTransparencyEntry(id: number): Promise<{ ok: bo
     return { ok: false, error: e?.message || 'Erro de rede' };
   }
 }
-

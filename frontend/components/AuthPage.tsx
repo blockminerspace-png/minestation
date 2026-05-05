@@ -4,7 +4,16 @@ import React, { useState, useEffect } from 'react';
 import { AccessLevel, User } from '../types';
 import { getUsers, updateUser, login, requestPasswordReset, resetPasswordSecure } from '../services/api';
 import { collectDeviceFingerprint } from '../utils/deviceFingerprint';
-import { Lock, Mail, User as UserIcon, ArrowRight, AlertCircle, CreditCard, Wallet, Share2, ShieldCheck, Key } from 'lucide-react';
+import {
+    AUTH_LOGIN_RECOVERY_EMAIL_MAX,
+    AUTH_PASSWORD_MAX,
+    AUTH_PASSWORD_MIN,
+    AUTH_REFERRAL_MAX,
+    AUTH_SIGNUP_EMAIL_MAX,
+    AUTH_USERNAME_MAX,
+    AUTH_USERNAME_MIN
+} from '../constants/authLimits';
+import { Lock, Mail, User as UserIcon, ArrowRight, AlertCircle, CheckCircle2, CreditCard, Wallet, Share2, ShieldCheck, Key } from 'lucide-react';
 
 interface AuthPageProps {
     onLogin: (user: User) => void;
@@ -21,6 +30,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
     const [referralInput, setReferralInput] = useState('');
 
     const [error, setError] = useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
     // Web3 & Selection State
     const [selectedLevelId, setSelectedLevelId] = useState<string>('');
@@ -47,28 +57,32 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
             setActiveTab('recovery');
             setRecoveryStep('reset');
             setError(null);
+            setSuccessMessage(null);
             return;
         }
         const ref = params.get('ref');
         if (ref) {
-            setReferralInput(ref);
+            setReferralInput(ref.slice(0, AUTH_REFERRAL_MAX));
             setActiveTab('register');
         }
     }, []);
 
-    const resetForm = () => {
+    const resetForm = (opts?: { keepSuccess?: boolean }) => {
         setEmail(''); setPassword(''); setUsername(''); setConfirmPassword(''); setError(null);
         setRecoveryStep('email'); setRecoveryToken('');
-    }
+        if (!opts?.keepSuccess) setSuccessMessage(null);
+    };
 
     const handleRequestPasswordResetEmail = async () => {
-        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+        const em = email.trim();
+        if (!em || em.length > AUTH_LOGIN_RECOVERY_EMAIL_MAX || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) {
             setError('Indique um email válido.');
             return;
         }
         setError(null);
+        setSuccessMessage(null);
         setIsWeb3Processing(true);
-        const res = await requestPasswordReset(email.trim());
+        const res = await requestPasswordReset(em);
         setIsWeb3Processing(false);
         if (res.ok) {
             setRecoveryStep('sent');
@@ -79,8 +93,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
 
     const handleRecoveryReset = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (password.length < 4) {
-            setError("Senha muito curta.");
+        setSuccessMessage(null);
+        if (password.length < AUTH_PASSWORD_MIN) {
+            setError(`A senha deve ter pelo menos ${AUTH_PASSWORD_MIN} caracteres.`);
+            return;
+        }
+        if (password.length > AUTH_PASSWORD_MAX) {
+            setError(`A senha pode ter no máximo ${AUTH_PASSWORD_MAX} caracteres.`);
             return;
         }
         if (password !== confirmPassword) {
@@ -96,9 +115,9 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
             try {
                 window.history.replaceState({}, '', '/');
             } catch { /* ignore */ }
-            alert('Senha redefinida com sucesso! Faça login agora.');
+            setSuccessMessage('Senha redefinida com sucesso. Faça login agora.');
             setActiveTab('login');
-            resetForm();
+            resetForm({ keepSuccess: true });
         } else {
             setError(res.error || 'Falha ao redefinir senha.');
         }
@@ -107,6 +126,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError(null);
+        setSuccessMessage(null);
 
         let deviceFingerprint: Awaited<ReturnType<typeof collectDeviceFingerprint>> | undefined;
         try {
@@ -119,6 +139,28 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
             // 1. VALIDATION
             if (!email || !password || !username) {
                 setError("Todos os campos são obrigatórios.");
+                return;
+            }
+            const em = email.trim();
+            if (em.length > AUTH_SIGNUP_EMAIL_MAX) {
+                setError(`O email pode ter no máximo ${AUTH_SIGNUP_EMAIL_MAX} caracteres.`);
+                return;
+            }
+            const u = username.trim();
+            if (u.length < AUTH_USERNAME_MIN || u.length > AUTH_USERNAME_MAX) {
+                setError(`O nome de utilizador deve ter entre ${AUTH_USERNAME_MIN} e ${AUTH_USERNAME_MAX} caracteres.`);
+                return;
+            }
+            if (password.length < AUTH_PASSWORD_MIN) {
+                setError(`A senha deve ter pelo menos ${AUTH_PASSWORD_MIN} caracteres.`);
+                return;
+            }
+            if (password.length > AUTH_PASSWORD_MAX) {
+                setError(`A senha pode ter no máximo ${AUTH_PASSWORD_MAX} caracteres.`);
+                return;
+            }
+            if (referralInput.trim().length > AUTH_REFERRAL_MAX) {
+                setError(`O código de indicação pode ter no máximo ${AUTH_REFERRAL_MAX} caracteres.`);
                 return;
             }
             if (password !== confirmPassword) {
@@ -167,13 +209,13 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
             }
 
             // 3. GENERATE REFERRAL CODE
-            const newReferralCode = `${username.toLowerCase().replace(/\s/g, '')}-${crypto.randomUUID().slice(0, 4)}`;
+            const newReferralCode = `${u.toLowerCase().replace(/\s/g, '')}-${crypto.randomUUID().slice(0, 4)}`;
 
             // 5. CREATE USER
             const newUser: User = {
-                email,
+                email: em,
                 password,
-                username,
+                username: u,
                 isBlocked: false,
                 accessLevelId,
                 referralCode: newReferralCode,
@@ -181,7 +223,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                 referrals: []
             };
 
-            const result = await updateUser({ ...newUser, newReferralFor: username, ...(deviceFingerprint ? { deviceFingerprint } : {}) });
+            const result = await updateUser({ ...newUser, newReferralFor: u, ...(deviceFingerprint ? { deviceFingerprint } : {}) });
 
             if (!result.ok) {
                 if (result.code === 'IP_LIMIT_REACHED') {
@@ -199,7 +241,33 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
 
         } else {
             // LOGIN LOGIC
-            const sessionUser = await login(email, password, deviceFingerprint);
+            const em = email.trim();
+            const pwd = password;
+            if (!em && !pwd) {
+                setError('Indique o email e a palavra-passe.');
+                return;
+            }
+            if (!em) {
+                setError('Indique o email.');
+                return;
+            }
+            if (!pwd) {
+                setError('Indique a palavra-passe.');
+                return;
+            }
+            if (em.length > AUTH_LOGIN_RECOVERY_EMAIL_MAX) {
+                setError(`O email pode ter no máximo ${AUTH_LOGIN_RECOVERY_EMAIL_MAX} caracteres.`);
+                return;
+            }
+            if (pwd.length < AUTH_PASSWORD_MIN) {
+                setError(`Palavra-passe demasiado curta (mínimo ${AUTH_PASSWORD_MIN} caracteres).`);
+                return;
+            }
+            if (pwd.length > AUTH_PASSWORD_MAX) {
+                setError(`Palavra-passe demasiado longa (máximo ${AUTH_PASSWORD_MAX} caracteres).`);
+                return;
+            }
+            const sessionUser = await login(em, pwd, deviceFingerprint);
             if (sessionUser && !sessionUser.error) {
                 if (sessionUser.isBlocked) {
                     setError("Esta conta foi bloqueada pela administração.");
@@ -215,7 +283,7 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
 
                 onLogin(sessionUser);
             } else {
-                setError(sessionUser?.error || "Credenciais inválidas.");
+                setError(sessionUser?.error || 'E-mail ou palavra-passe incorretos.');
             }
         }
     };
@@ -252,6 +320,11 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                         </div>
                     )}
 
+                    {successMessage && !error && (
+                        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-900/50 text-green-700 dark:text-green-400 p-3 rounded-lg mb-6 flex items-center gap-2 text-sm">
+                            <CheckCircle2 size={16} /> {successMessage}
+                        </div>
+                    )}
                     {error && (
                         <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 p-3 rounded-lg mb-6 flex items-center gap-2 text-sm">
                             <AlertCircle size={16} /> {error}
@@ -279,6 +352,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                                 type="email"
                                                 value={email}
                                                 onChange={(e) => setEmail(e.target.value)}
+                                                maxLength={AUTH_LOGIN_RECOVERY_EMAIL_MAX}
+                                                autoComplete="email"
                                                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white outline-none"
                                                 placeholder="usuario@exemplo.com"
                                             />
@@ -334,6 +409,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                                 type="password"
                                                 value={password}
                                                 onChange={(e) => setPassword(e.target.value)}
+                                                maxLength={AUTH_PASSWORD_MAX}
+                                                autoComplete="new-password"
                                                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white outline-none"
                                                 placeholder="••••••••"
                                             />
@@ -347,6 +424,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                                 type="password"
                                                 value={confirmPassword}
                                                 onChange={(e) => setConfirmPassword(e.target.value)}
+                                                maxLength={AUTH_PASSWORD_MAX}
+                                                autoComplete="new-password"
                                                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white outline-none"
                                                 placeholder="••••••••"
                                             />
@@ -417,6 +496,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                             type="text"
                                             value={username}
                                             onChange={(e) => setUsername(e.target.value)}
+                                            maxLength={AUTH_USERNAME_MAX}
+                                            autoComplete="username"
                                             className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                             placeholder="Minerador_X"
                                         />
@@ -432,6 +513,12 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                         type="email"
                                         value={email}
                                         onChange={(e) => setEmail(e.target.value)}
+                                        maxLength={
+                                            activeTab === 'login'
+                                                ? AUTH_LOGIN_RECOVERY_EMAIL_MAX
+                                                : AUTH_SIGNUP_EMAIL_MAX
+                                        }
+                                        autoComplete="email"
                                         className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                         placeholder="usuario@exemplo.com"
                                     />
@@ -446,6 +533,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                         type="password"
                                         value={password}
                                         onChange={(e) => setPassword(e.target.value)}
+                                        maxLength={AUTH_PASSWORD_MAX}
+                                        autoComplete={activeTab === 'login' ? 'current-password' : 'new-password'}
                                         className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                         placeholder="••••••••"
                                     />
@@ -471,6 +560,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                                 type="password"
                                                 value={confirmPassword}
                                                 onChange={(e) => setConfirmPassword(e.target.value)}
+                                                maxLength={AUTH_PASSWORD_MAX}
+                                                autoComplete="new-password"
                                                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                                 placeholder="••••••••"
                                             />
@@ -484,6 +575,8 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
                                                 type="text"
                                                 value={referralInput}
                                                 onChange={(e) => setReferralInput(e.target.value)}
+                                                maxLength={AUTH_REFERRAL_MAX}
+                                                autoComplete="off"
                                                 className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-700 rounded-lg py-3 pl-10 pr-4 text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-600 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 outline-none transition-all"
                                                 placeholder="código-de-amigo"
                                             />

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { SystemNews, User, Upgrade, AccessLevel, LootBox, RigRoom } from '../types';
-import { Activity, Users, Layers, Gift, Newspaper, Shield, ChevronLeft, ChevronRight, Wallet, Cog, DollarSign, Store, ChevronDown, ChevronUp, MessageCircle } from 'lucide-react';
+import { Activity, Users, Layers, Gift, Newspaper, Shield, ChevronLeft, ChevronRight, Wallet, Cog, DollarSign, Store, ChevronDown, ChevronUp, MessageCircle, Clapperboard } from 'lucide-react';
 import { AdminDashboard } from './AdminDashboard';
 import { AdminUsers } from './AdminUsers';
 import { AdminEditor } from './AdminEditor';
@@ -25,6 +25,7 @@ import { AdminReports } from './AdminReports';
 import { AdminSecurity } from './AdminSecurity';
 import { AdminSeasonPasses } from './AdminSeasonPasses';
 import { AdminTransparency } from './AdminTransparency';
+import { AdminPartnerVideos } from './AdminPartnerVideos';
 import { BarChart as BarChartIcon } from 'lucide-react';
 import { getSeasonPasses } from '../services/api';
 
@@ -43,7 +44,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     onUpdateLootBoxes, lootBoxes = [],
     user
 }) => {
-    const [activeTab, setActiveTab] = useState<'dashboard' | 'news' | 'users' | 'editor' | 'lootboxes' | 'web3' | 'settings' | 'layout' | 'backup' | 'monetization' | 'p2p' | 'reports' | 'games' | 'security' | 'shops' | 'transparency' | 'support'>(() => {
+    const [activeTab, setActiveTab] = useState<'dashboard' | 'news' | 'users' | 'editor' | 'lootboxes' | 'web3' | 'settings' | 'layout' | 'backup' | 'monetization' | 'p2p' | 'reports' | 'games' | 'security' | 'shops' | 'transparency' | 'support' | 'partners'>(() => {
         try {
             return (localStorage.getItem('adminActiveTab') as any) || 'dashboard';
         } catch { return 'dashboard'; }
@@ -56,6 +57,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     // Security check: If activeTab is restricted, reset to dashboard or first allowed
     useEffect(() => {
         if (!user) return;
+        if (user.isSuperAdmin) return;
         if (user.adminPermissions === null || user.adminPermissions === undefined) return;
         if (!Array.isArray(user.adminPermissions)) return;
         if (!user.adminPermissions.includes(activeTab)) {
@@ -178,8 +180,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                         { id: 'security', icon: <Shield size={18} />, label: 'Segurança' },
                         { id: 'backup', icon: <Database size={18} />, label: 'Backup' },
                         { id: 'support', icon: <MessageCircle size={18} />, label: 'Suporte' },
+                        { id: 'partners', icon: <Clapperboard size={18} />, label: 'Parceiros' },
                     ].filter(item => {
                         if (!user) return false;
+                        if (user.isSuperAdmin) return true;
                         if (user.adminPermissions === null || user.adminPermissions === undefined) return true;
                         if (!Array.isArray(user.adminPermissions)) return true; // Default to allow if not array
                         return user.adminPermissions.includes(item.id);
@@ -211,6 +215,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                     {(() => {
                         const isAllowed = (tab: string) => {
                             if (!user) return false;
+                            if (user.isSuperAdmin) return true;
                             if (user.adminPermissions === null || user.adminPermissions === undefined) return true;
                             if (!Array.isArray(user.adminPermissions)) return true; // Default to allow if not array
                             // Check exact match or if any permission starts with "tab:" (for sub-menus)
@@ -303,7 +308,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     />
                                 )}
                                 {activeTab === 'web3' && isAllowed('web3') && (
-                                    <AdminWeb3Menu />
+                                    <AdminWeb3Menu currentUser={user ?? undefined} />
                                 )}
 
                                 {activeTab === 'settings' && isAllowed('settings') && (
@@ -388,7 +393,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                     <AdminBackup />
                                 )}
                                 {activeTab === 'reports' && isAllowed('reports') && (
-                                    <AdminReports users={userMap as any} />
+                                    <AdminReports users={userMap as any} currentUser={user ?? undefined} />
                                 )}
                                 {activeTab === 'transparency' && isAllowed('transparency') && (
                                     <AdminTransparency />
@@ -419,6 +424,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                                         }}
                                     />
                                 )}
+                                {activeTab === 'partners' && isAllowed('partners') && <AdminPartnerVideos />}
                             </>
                         );
                     })()}

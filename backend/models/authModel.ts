@@ -4,7 +4,7 @@ import { generateReferralCode } from './signupPolicy.js';
 export type DbUserRow = Record<string, unknown>;
 
 export async function findUserByEmail(pool: Pool, normalizedEmail: string): Promise<DbUserRow | undefined> {
-  const uRes = await pool.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
+  const uRes = await pool.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [normalizedEmail]);
   return uRes.rows[0];
 }
 
@@ -81,20 +81,13 @@ export async function listUserAccessLevelIds(pool: Pool, userId: string | number
   return userLvlIds;
 }
 
+/** Atualiza só a carteira Polygon; níveis de acesso vêm de compras/admin no servidor (não do body). */
 export async function updateUserPolygonAndAccess(
   pool: Pool,
   userId: string | number,
-  polygonWallet: unknown,
-  accessLevelId: unknown
+  polygonWallet: unknown
 ): Promise<void> {
   if (polygonWallet !== undefined) {
     await pool.query('UPDATE users SET polygon_wallet = $1 WHERE id = $2', [polygonWallet, userId]);
-  }
-  if (accessLevelId !== undefined) {
-    await pool.query('UPDATE users SET access_level_id = $1 WHERE id = $2', [accessLevelId, userId]);
-    await pool.query(
-      'INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING',
-      [userId, accessLevelId, Date.now()]
-    );
   }
 }

@@ -1,6 +1,12 @@
 import type { Express, Request, RequestHandler, Response } from 'express';
 import type { Pool } from 'pg';
-import { wheelRollInTransaction, roletaClaimInTransaction } from '../models/roletaModel.js';
+import {
+  wheelRollInTransaction,
+  roletaClaimInTransaction,
+  paidWheelRollInTransaction,
+  paidWheelClaimInTransaction,
+  PAID_WHEEL_SPIN_PRICE_USDC
+} from '../models/roletaModel.js';
 import {
   RoletaAppError,
   normalizePromoCode,
@@ -101,6 +107,116 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       }
       console.error('[Wheel Roll]', e);
       sendInternalErrorSafeMessage(res, 'POST /api/wheel/roll', e, 'Erro interno.');
+      return;
+    } finally {
+      client.release();
+    }
+  });
+
+  /** Prémio da roleta paga (US$1) ainda por resgatar — para retomar UI após recarregar. */
+  app.get('/api/wheel/paid-pending', authenticateToken, async (req: Request, res: Response) => {
+    const userId = uidNum(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Auth failed' });
+    }
+    try {
+      const r = await pool.query(
+        `SELECT won_item_id FROM wheel_paid_pending WHERE user_id = $1 LIMIT 1`,
+        [userId]
+      );
+      const won = r.rows[0]?.won_item_id;
+      const wonItemId = won != null && String(won).trim() ? String(won).trim() : null;
+      return res.json({ pending: Boolean(wonItemId), wonItemId });
+    } catch (e) {
+      console.error('[Wheel paid-pending]', e);
+      return res.status(500).json({ error: 'Erro interno' });
+    }
+  });
+
+  app.post('/api/wheel/paid-roll', authenticateToken, async (req: Request, res: Response) => {
+    const userId = uidNum(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Auth failed' });
+    }
+    const serverNowMs = Date.now();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await paidWheelRollInTransaction(client, { userId, serverNowMs });
+      await client.query('COMMIT');
+
+      if (!result.idempotent) {
+        await appendGameActivityLog(pool, userId, 'roleta_paid_roll', {
+          wonItemId: result.wonItemId,
+          chargedUsdc: result.chargedUsdc,
+          newUsdc: result.newUsdc,
+          serverAtMs: serverNowMs
+        });
+      }
+
+      return res.json({
+        ok: true,
+        wonItemId: result.wonItemId,
+        item: result.item,
+        newUsdc: result.newUsdc,
+        idempotent: result.idempotent,
+        spinPriceUsdc: PAID_WHEEL_SPIN_PRICE_USDC
+      });
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      if (e instanceof RoletaAppError) {
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      console.error('[Wheel paid-roll]', e);
+      sendInternalErrorSafeMessage(res, 'POST /api/wheel/paid-roll', e, 'Erro interno.');
+      return;
+    } finally {
+      client.release();
+    }
+  });
+
+  app.post('/api/wheel/paid-claim', authenticateToken, async (req: Request, res: Response) => {
+    const wonItemId = parseWonItemId((req.body as { wonItemId?: unknown })?.wonItemId);
+    if (!wonItemId) {
+      return res.status(400).json({ error: 'Dados inválidos ou campos obrigatórios ausentes.' });
+    }
+    const userId = uidNum(req);
+    if (!userId) {
+      return res.status(401).json({ error: 'Auth failed' });
+    }
+
+    const serverNowMs = Date.now();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await paidWheelClaimInTransaction(client, { userId, wonItemId });
+      await client.query('COMMIT');
+
+      await appendGameActivityLog(pool, userId, 'roleta_paid_claim', {
+        wonItemId,
+        boxId: result.boxId,
+        serverAtMs: serverNowMs
+      });
+
+      return res.json({ ok: true, boxId: result.boxId });
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      if (e instanceof RoletaAppError) {
+        if (e.statusCode === 403) {
+          console.warn('[Roleta paid-claim] rejected', { userId, wonItemId, message: e.message });
+        }
+        return res.status(e.statusCode).json({ error: e.message });
+      }
+      console.error('[Wheel paid-claim]', e);
+      sendInternalErrorSafeMessage(res, 'POST /api/wheel/paid-claim', e, 'Erro interno.');
       return;
     } finally {
       client.release();

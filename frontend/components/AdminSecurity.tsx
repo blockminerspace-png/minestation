@@ -691,8 +691,38 @@ export const AdminSecurity: React.FC = () => {
                                         </div>
                                         <div className="font-mono text-sm text-red-500 font-bold mb-1">{entry.ip}</div>
                                         <div className="text-[10px] text-slate-500 mb-2 italic">"{entry.reason || 'Sem motivo especificado'}"</div>
+                                        {entry.linkedUsers && entry.linkedUsers.length > 0 && (
+                                            <div className="text-[10px] text-amber-600/90 dark:text-amber-400/90 mb-2 space-y-1">
+                                                <div className="font-bold text-amber-700 dark:text-amber-300 uppercase tracking-tight">Contas associadas a este IP</div>
+                                                {entry.linkedUsers.map((u) => (
+                                                    <div key={u.id} className="pl-1 border-l border-amber-700/40 dark:border-amber-500/40">
+                                                        <span className="text-slate-200 font-semibold">{u.username}</span>
+                                                        <span className="text-slate-500"> · </span>
+                                                        <span className="text-slate-400">{u.email}</span>
+                                                        <span className="text-slate-600 block text-[9px] mt-0.5">
+                                                            {[
+                                                                u.vias?.includes('registro') ? 'IP de registo' : null,
+                                                                u.vias?.includes('hist_login') ? 'Histórico de login' : null
+                                                            ]
+                                                                .filter(Boolean)
+                                                                .join(' · ')}
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
                                         <div className="flex items-center justify-between mt-4 pt-2 border-t border-slate-900">
-                                            <span className="text-[9px] text-slate-600">BANIDO EM: {new Date(Number(entry.added_at)).toLocaleDateString()}</span>
+                                            <span className="text-[9px] text-slate-600">
+                                                BANIDO EM:{' '}
+                                                {new Date(Number(entry.added_at)).toLocaleString('pt-PT', {
+                                                    day: '2-digit',
+                                                    month: '2-digit',
+                                                    year: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit',
+                                                    second: '2-digit'
+                                                })}
+                                            </span>
                                             <button
                                                 onClick={() => handleUnbanIp(entry.ip)}
                                                 className="text-[9px] text-red-900 hover:text-red-500 font-bold uppercase transition-colors"

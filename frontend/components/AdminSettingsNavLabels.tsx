@@ -6,6 +6,7 @@ import { DEFAULT_GAME_NAV_LABELS, GAME_NAV_LABEL_KEYS, type GameNavLabelKey } fr
 const fieldHint: Partial<Record<GameNavLabelKey, string>> = {
   lucky_store: 'Mesma permissão da Roleta no menu.',
   roleta: 'Visível quando o nível tem acesso a Caixas da Sorte.',
+  partners: 'Vitrine de vídeos; envio só para níveis Parceiros/Partners.',
 };
 
 export const AdminSettingsNavLabels: React.FC = () => {

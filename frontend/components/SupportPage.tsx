@@ -21,6 +21,7 @@ import {
   type SupportTicketAttachment,
 } from '../services/api';
 import { safeSupportAttachmentHref } from '../utils/supportAttachmentUrls';
+import { SUPPORT_TICKET_MESSAGE_MAX, SUPPORT_TICKET_SUBJECT_MAX } from '../constants/formLimits';
 
 type Props = {
   userEmail?: string | null;
@@ -429,7 +430,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
                         value={followMsg}
                         onChange={(e) => setFollowMsg(e.target.value)}
                         rows={4}
-                        maxLength={8000}
+                        maxLength={SUPPORT_TICKET_MESSAGE_MAX}
                         placeholder="Mensagem para a equipa (mín. 3 caracteres se não anexares ficheiros)"
                         className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-600 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40 resize-y"
                       />
@@ -479,7 +480,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
                   type="text"
                   value={subject}
                   onChange={(e) => setSubject(e.target.value)}
-                  maxLength={180}
+                  maxLength={SUPPORT_TICKET_SUBJECT_MAX}
                   required
                   minLength={3}
                   placeholder="Ex.: Problema ao equipar bateria"
@@ -494,7 +495,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
                   onChange={(e) => setMessage(e.target.value)}
                   required
                   minLength={10}
-                  maxLength={8000}
+                  maxLength={SUPPORT_TICKET_MESSAGE_MAX}
                   rows={8}
                   placeholder="Descreve o que precisas. Podes anexar até 5 imagens ou vídeos (máx. 12 MB cada)."
                   className="w-full px-3 py-2 rounded-lg bg-slate-950 border border-slate-600 text-white text-sm focus:outline-none focus:ring-2 focus:ring-amber-500/40 resize-y min-h-[140px]"

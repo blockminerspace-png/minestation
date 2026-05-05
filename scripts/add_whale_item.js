@@ -26,11 +26,11 @@ const addWhaleItem = async () => {
             slots_capacity: 0,
             ai_slots_capacity: 0,
             description: 'Uma estátua rara de uma baleia sortuda. Aumenta a produção em 5%.',
-            icon: '/img/items/whale.png', // URL for the image
+            icon: '/img/moedas/whale.png', // URL for the image
             status: 'limited',
             is_nft: 0,
             max_global_stock: 100,
-            image: '/img/items/whale.png',
+            image: '/img/moedas/whale.png',
             reward_wh: 0,
             layout: '',
             sell_in_hardware_market: 1,
@@ -65,7 +65,7 @@ const addWhaleItem = async () => {
             description: 'Pode conter a lendária Estátua da Baleia.',
             price: 500,
             trigger: 'shop',
-            icon: '/img/items/whale.png' // Utilizing the same image for the box icon
+            icon: '/img/moedas/whale.png' // Utilizing the same image for the box icon
         };
 
         console.log('Inserting Box:', whaleBox.name);

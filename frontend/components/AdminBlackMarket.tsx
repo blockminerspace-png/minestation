@@ -35,10 +35,18 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
         const url = `${proto}//${window.location.host}/ws/market`;
         let ws: WebSocket | null = null;
         let stopped = false;
+        let reloadTimer: number | null = null;
+        const scheduleReload = () => {
+            if (reloadTimer !== null) window.clearTimeout(reloadTimer);
+            reloadTimer = window.setTimeout(() => {
+                reloadTimer = null;
+                void loadData();
+            }, 500);
+        };
         const open = () => {
             if (stopped) return;
             ws = new WebSocket(url);
-            ws.onmessage = () => { void loadData(); };
+            ws.onmessage = () => { scheduleReload(); };
             ws.onclose = () => {
                 if (!stopped) window.setTimeout(open, 3000);
             };
@@ -47,6 +55,7 @@ export const AdminBlackMarket: React.FC<AdminBlackMarketProps> = ({ gameUpgrades
         open();
         return () => {
             stopped = true;
+            if (reloadTimer !== null) window.clearTimeout(reloadTimer);
             try { ws?.close(); } catch { /* ignore */ }
         };
     }, [loadData]);

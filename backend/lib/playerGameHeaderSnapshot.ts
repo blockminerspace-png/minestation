@@ -1,19 +1,11 @@
 import type { Pool } from 'pg';
 
-export type PlayerGameHeaderPayload = {
-  coinBalances: Record<string, number>;
-  usdc: number;
-  hashByCoinId: Record<string, number>;
-  totalHash: number;
-  serverUpdatedAt: number;
-};
-
 function num(v: unknown, def = 0): number {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
   return Number.isFinite(n) ? n : def;
 }
 
-type UpgradeRow = { base: number; mult: number; cap: number | null };
+export type UpgradeRow = { base: number; mult: number; cap: number | null };
 
 function parsePowerCapacity(raw: unknown): number | null {
   if (raw == null || raw === '') return null;
@@ -22,6 +14,52 @@ function parsePowerCapacity(raw: unknown): number | null {
   if (s === '-1') return -1;
   return num(s);
 }
+
+/** Catálogo `upgrades` muda raramente; evita `SELECT * FROM upgrades` a cada tick do WS (por jogador). */
+const UPGRADES_CATALOG_CACHE_TTL_MS = Math.min(
+  600_000,
+  Math.max(15_000, parseInt(String(process.env.UPGRADES_SNAPSHOT_CACHE_TTL_MS || '60000'), 10) || 60_000)
+);
+
+let upgradesCatalogCache: { map: Map<string, UpgradeRow>; expiresAt: number } | null = null;
+
+/** Só para testes (Vitest); invalida cache entre casos. */
+export function resetUpgradesCatalogCacheForTests(): void {
+  upgradesCatalogCache = null;
+}
+
+async function loadUpgradesCatalogMap(pool: Pool): Promise<Map<string, UpgradeRow>> {
+  const now = Date.now();
+  if (upgradesCatalogCache && upgradesCatalogCache.expiresAt > now) {
+    return upgradesCatalogCache.map;
+  }
+  const upRes = await pool.query(
+    `SELECT id,
+            COALESCE(base_production, 0)::float AS base_production,
+            COALESCE(multiplier, 0)::float AS multiplier,
+            power_capacity
+     FROM upgrades`
+  );
+  const upgrades = new Map<string, UpgradeRow>();
+  for (const u of upRes.rows) {
+    const cap = parsePowerCapacity(u.power_capacity);
+    upgrades.set(String(u.id), {
+      base: num(u.base_production),
+      mult: num(u.multiplier),
+      cap
+    });
+  }
+  upgradesCatalogCache = { map: upgrades, expiresAt: now + UPGRADES_CATALOG_CACHE_TTL_MS };
+  return upgrades;
+}
+
+export type PlayerGameHeaderPayload = {
+  coinBalances: Record<string, number>;
+  usdc: number;
+  hashByCoinId: Record<string, number>;
+  totalHash: number;
+  serverUpdatedAt: number;
+};
 
 /**
  * Saldos USDC/moedas e hashrate por moeda + total, a partir da BD (alinhado ao cálculo de produção do cliente).
@@ -57,22 +95,7 @@ export async function computePlayerGameHeaderSnapshot(
     coinBalances[String(row.coin_id)] = num(row.amount);
   }
 
-  const upRes = await pool.query(
-    `SELECT id,
-            COALESCE(base_production, 0)::float AS base_production,
-            COALESCE(multiplier, 0)::float AS multiplier,
-            power_capacity
-     FROM upgrades`
-  );
-  const upgrades = new Map<string, UpgradeRow>();
-  for (const u of upRes.rows) {
-    const cap = parsePowerCapacity(u.power_capacity);
-    upgrades.set(String(u.id), {
-      base: num(u.base_production),
-      mult: num(u.multiplier),
-      cap
-    });
-  }
+  const upgrades = await loadUpgradesCatalogMap(pool);
 
   const racksRes = await pool.query(
     `SELECT id::text AS id,

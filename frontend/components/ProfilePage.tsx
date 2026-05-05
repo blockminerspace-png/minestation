@@ -1,6 +1,8 @@
 
 import React, { useState, useEffect } from 'react';
 import { User, SeasonPass, SeasonPurchase, AccessLevel, LootBox, GameState } from '@/types';
+import { AUTH_PASSWORD_MAX, AUTH_PASSWORD_MIN, AUTH_REFERRAL_MAX, AUTH_USERNAME_MAX, AUTH_USERNAME_MIN } from '../constants/authLimits';
+import { PLAYER_NEWS_LINK_MAX, PLAYER_NEWS_TEXT_MAX } from '../constants/formLimits';
 import { User as UserIcon, Lock, Mail, Save, AlertCircle, CheckCircle2, Wallet, ShieldCheck, Share2, Copy, Newspaper, Unplug } from 'lucide-react';
 import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState } from '@/services/api';
 
@@ -86,11 +88,19 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
 
   const handleUpdateBasicInfo = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) {
+    const u = username.trim();
+    if (!u) {
       setMessage({ type: 'error', text: "Nome de usuário não pode estar vazio." });
       return;
     }
-    onUpdateProfile({ ...user, username });
+    if (u.length < AUTH_USERNAME_MIN || u.length > AUTH_USERNAME_MAX) {
+      setMessage({
+        type: 'error',
+        text: `O nome de utilizador deve ter entre ${AUTH_USERNAME_MIN} e ${AUTH_USERNAME_MAX} caracteres.`
+      });
+      return;
+    }
+    onUpdateProfile({ ...user, username: u });
     setMessage({ type: 'success', text: "Informações básicas atualizadas." });
   };
 
@@ -100,8 +110,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
       setMessage({ type: 'error', text: "Senha atual incorreta." });
       return;
     }
-    if (newPass.length < 4) {
-      setMessage({ type: 'error', text: "A nova senha é muito curta." });
+    if (newPass.length < AUTH_PASSWORD_MIN) {
+      setMessage({ type: 'error', text: `A nova senha deve ter pelo menos ${AUTH_PASSWORD_MIN} caracteres.` });
+      return;
+    }
+    if (newPass.length > AUTH_PASSWORD_MAX) {
+      setMessage({ type: 'error', text: `A nova senha pode ter no máximo ${AUTH_PASSWORD_MAX} caracteres.` });
       return;
     }
     if (newPass !== confirmPass) {
@@ -223,6 +237,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                     type="text"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
+                    maxLength={AUTH_USERNAME_MAX}
                     className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 pl-10 pr-4 text-slate-900 dark:text-white focus:border-amber-500 outline-none transition-colors"
                   />
                 </div>
@@ -310,7 +325,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                     <input
                       type="text"
                       value={referralCodeInput}
-                      onChange={(e) => setReferralCodeInput(e.target.value)}
+                      onChange={(e) => setReferralCodeInput(e.target.value.slice(0, AUTH_REFERRAL_MAX))}
+                      maxLength={AUTH_REFERRAL_MAX}
                       placeholder="Código de indicação"
                       className="flex-1 bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm"
                     />
@@ -350,11 +366,23 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                 <div className="space-y-3">
                   <div>
                     <label className="text-xs uppercase font-bold text-slate-500">Texto</label>
-                    <input type="text" value={newsText} onChange={e => setNewsText(e.target.value)} className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm" />
+                    <input
+                      type="text"
+                      value={newsText}
+                      onChange={e => setNewsText(e.target.value)}
+                      maxLength={PLAYER_NEWS_TEXT_MAX}
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm"
+                    />
                   </div>
                   <div>
                     <label className="text-xs uppercase font-bold text-slate-500">Link (Opcional)</label>
-                    <input type="text" value={newsLink} onChange={e => setNewsLink(e.target.value)} className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm" />
+                    <input
+                      type="text"
+                      value={newsLink}
+                      onChange={e => setNewsLink(e.target.value)}
+                      maxLength={PLAYER_NEWS_LINK_MAX}
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-3 text-sm"
+                    />
                   </div>
                   <div className="flex gap-2">
                     <button onClick={async () => {
@@ -417,6 +445,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                   type="password"
                   value={currentPass}
                   onChange={(e) => setCurrentPass(e.target.value)}
+                  maxLength={AUTH_PASSWORD_MAX}
                   className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-red-500 outline-none transition-colors"
                 />
               </div>
@@ -427,6 +456,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                   type="password"
                   value={newPass}
                   onChange={(e) => setNewPass(e.target.value)}
+                  maxLength={AUTH_PASSWORD_MAX}
                   className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-amber-500 outline-none transition-colors"
                 />
               </div>
@@ -436,6 +466,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                   type="password"
                   value={confirmPass}
                   onChange={(e) => setConfirmPass(e.target.value)}
+                  maxLength={AUTH_PASSWORD_MAX}
                   className="w-full bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 rounded-lg py-2 px-4 text-slate-900 dark:text-white focus:border-amber-500 outline-none transition-colors"
                 />
               </div>

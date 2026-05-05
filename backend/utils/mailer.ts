@@ -27,14 +27,14 @@ export async function sendResetEmail(
     process.env.FRONTEND_URL ||
     process.env.PUBLIC_URL ||
     process.env.SITE_URL ||
-    'https://test.genesisdao.tech'
+    'https://genesisdao.tech'
   )
     .trim()
     .replace(/\/+$/, '');
   const resetLink = `${publicBase}/redefinir-senha?token=${enc}`;
 
   const mailOptions = {
-    from: process.env.MAIL_FROM || '"Genesis Miner Teste" <no-reply@test.genesisdao.tech>',
+    from: process.env.MAIL_FROM || '"Genesis Miner" <no-reply@genesisdao.tech>',
     to: email,
     subject: 'Redefinição de senha — Genesis Miner',
     html: `

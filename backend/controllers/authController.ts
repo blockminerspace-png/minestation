@@ -14,6 +14,12 @@ import {
 } from '../models/authModel.js';
 import { insertDeviceFingerprintLog, sanitizeDeviceFingerprint } from '../models/deviceFingerprintModel.js';
 import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { resolveIsSuperAdminFromUserRow } from '../utils/legacySuperAdmin.js';
+import {
+  validateLoginEmail,
+  validateLoginFieldsPresent,
+  validateLoginPassword
+} from '../models/registrationValidation.js';
 
 export type AuthControllerDeps = {
   pool: Pool;
@@ -39,6 +45,11 @@ function buildSessionUserJson(u: Record<string, unknown>, session: Record<string
     username: u.username,
     email: u.email,
     isAdmin: !!u.is_admin,
+    isSuperAdmin: resolveIsSuperAdminFromUserRow({
+      is_super_admin: (u as { is_super_admin?: unknown }).is_super_admin,
+      is_admin: (u as { is_admin?: unknown }).is_admin,
+      email: u.email
+    }),
     adminPermissions: adminPerms,
     isBlocked: !!u.is_blocked,
     polygonWallet: u.polygon_wallet,
@@ -59,20 +70,27 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       password?: string;
       deviceFingerprint?: unknown;
     };
-    if (!email || !password) return res.status(400).json({ error: 'Missing credentials' });
+    const emailStr = typeof email === 'string' ? email : '';
+    const passwordStr = typeof password === 'string' ? password : '';
+    const present = validateLoginFieldsPresent(email, password);
+    if (!present.ok) return res.status(400).json({ error: present.error });
+    const emailCheck = validateLoginEmail(emailStr);
+    if (!emailCheck.ok) return res.status(400).json({ error: emailCheck.error });
+    const passwordCheck = validateLoginPassword(passwordStr);
+    if (!passwordCheck.ok) return res.status(400).json({ error: passwordCheck.error });
     try {
-      const normalizedEmail = email.toLowerCase();
+      const normalizedEmail = emailStr.trim().toLowerCase();
       let u = await findUserByEmail(pool, normalizedEmail);
 
       if (!u) {
-        await bcrypt.compare(password, '$2b$10$abcdefghijklmnopqrstuvwxyz123456');
-        return res.status(401).json({ error: 'Credenciais inválidas.' });
+        await bcrypt.compare(passwordStr, '$2b$10$abcdefghijklmnopqrstuvwxyz123456');
+        return res.status(401).json({ error: 'E-mail ou palavra-passe incorretos.' });
       }
 
       if (u.is_blocked) return res.status(403).json({ error: 'Este usuário está bloqueado.' });
 
       if (!u.password) {
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(passwordStr, 10);
         await updateUserPasswordHash(pool, u.id as string | number, hashedPassword);
         u = { ...u, password: hashedPassword };
       }
@@ -81,18 +99,19 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       const pwd = String(u.password ?? '');
       if (pwd && (pwd.startsWith('$2a$') || pwd.startsWith('$2b$'))) {
         try {
-          isMatch = await bcrypt.compare(password, pwd);
+          isMatch = await bcrypt.compare(passwordStr, pwd);
         } catch (bcError: unknown) {
           console.error('[Login] bcrypt:', bcError instanceof Error ? bcError.message : bcError);
         }
-      } else if (pwd === password) {
+      } else if (pwd === passwordStr) {
         isMatch = true;
-        const hashedPassword = await bcrypt.hash(password, 10);
+        const hashedPassword = await bcrypt.hash(passwordStr, 10);
         await updateUserPasswordHash(pool, u.id as string | number, hashedPassword);
       }
 
       if (!isMatch) {
-        return res.status(401).json({ error: 'Credenciais inválidas (Senha incorreta).' });
+        // Mesma mensagem que email inexistente — evita enumeração de contas.
+        return res.status(401).json({ error: 'E-mail ou palavra-passe incorretos.' });
       }
 
       const currentIp = getClientIp(req);
@@ -140,6 +159,11 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
         email: u.email,
         username: u.username,
         isAdmin: !!u.is_admin,
+        isSuperAdmin: resolveIsSuperAdminFromUserRow({
+          is_super_admin: (u as { is_super_admin?: unknown }).is_super_admin,
+          is_admin: (u as { is_admin?: unknown }).is_admin,
+          email: u.email
+        }),
         isBlocked: !!u.is_blocked,
         adminPermissions: parseAdminPermissions(u.admin_permissions),
         polygonWallet: u.polygon_wallet,
@@ -181,11 +205,8 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       const sRes = await pool.query('SELECT * FROM sessions WHERE session_id = $1', [sid]);
       const s = sRes.rows[0];
       if (!s?.user_id) return res.status(401).json({ error: 'No session' });
-      const { polygonWallet, accessLevelId } = (req.body || {}) as {
-        polygonWallet?: unknown;
-        accessLevelId?: unknown;
-      };
-      await updateUserPolygonAndAccess(pool, s.user_id, polygonWallet, accessLevelId);
+      const { polygonWallet } = (req.body || {}) as { polygonWallet?: unknown };
+      await updateUserPolygonAndAccess(pool, s.user_id, polygonWallet);
       res.json({ ok: true });
     } catch (e: unknown) {
       sendInternalErrorSafeMessage(res, 'POST /api/session', e, 'Erro ao atualizar sessão.');

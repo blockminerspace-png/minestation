@@ -1,6 +1,6 @@
 import type { PoolClient } from 'pg';
 import { RoletaAppError } from '../validation/roletaValidation.js';
-import { promoCodeRowEligibleForRoletaFlow } from './promoCodeRoleta.js';
+import { promoCodeRowEligibleForRoletaFlow, throwIfPromoCodeExpired } from './promoCodeRoleta.js';
 
 export type GrantAdminUpgradeRewardsFn = (
   userId: number,
@@ -34,6 +34,7 @@ type PromoRow = {
   admin_upgrade_id: string | null;
   type: string;
   is_active: number;
+  expires_at?: number | null;
 };
 
 /**
@@ -62,6 +63,8 @@ export async function runPromoCodeRedeemInTransaction(
     throw new RoletaAppError('Código desativado', 400);
   }
 
+  throwIfPromoCodeExpired(promo, serverNowMs);
+
   const treatAsRoleta = await promoCodeRowEligibleForRoletaFlow(client, promo);
 
   if (
@@ -76,6 +79,7 @@ export async function runPromoCodeRedeemInTransaction(
     if (!promo?.is_active) {
       throw new RoletaAppError('Expirado.', 404);
     }
+    throwIfPromoCodeExpired(promo, serverNowMs);
   }
 
   if (
