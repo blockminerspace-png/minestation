@@ -6339,6 +6339,18 @@ app.put('/api/user', async (req, res) => {
       }
     }
 
+    const currentUserIdentityRes = await db.query(
+      'SELECT COALESCE(username, \'\') AS username FROM users WHERE id = $1',
+      [uid]
+    );
+    const currentUsername = String(currentUserIdentityRes.rows[0]?.username || '');
+    const nextUsernameRaw = typeof u.username === 'string' ? u.username.trim() : '';
+    const keepingLegacyUsername =
+      !!req.userId &&
+      nextUsernameRaw.length > 0 &&
+      currentUsername.trim().length > 0 &&
+      nextUsernameRaw === currentUsername.trim();
+
     let usernameForUpdate: unknown = u.username;
     if (!req.userId) {
       const userVu = validateSignupUsername(u.username);
@@ -6346,12 +6358,14 @@ app.put('/api/user', async (req, res) => {
         return res.status(400).json({ error: userVu.error });
       }
       usernameForUpdate = userVu.username;
-    } else if (typeof u.username === 'string' && u.username.trim() !== '') {
+    } else if (typeof u.username === 'string' && u.username.trim() !== '' && !keepingLegacyUsername) {
       const userVu = validateSignupUsername(u.username);
       if (!userVu.ok) {
         return res.status(400).json({ error: userVu.error });
       }
       usernameForUpdate = userVu.username;
+    } else if (keepingLegacyUsername) {
+      usernameForUpdate = currentUsername.trim();
     }
 
     if (hasPassword) {
@@ -6668,6 +6682,18 @@ function normalizeJsonSafeNumbers<T>(value: T): T {
   return value;
 }
 
+function sendJsonBigIntSafe(res: express.Response, value: unknown): void {
+  const normalized = normalizeJsonSafeNumbers(value);
+  const body = JSON.stringify(normalized, (_key, entry) => {
+    if (typeof entry === 'bigint') {
+      const num = Number(entry);
+      return Number.isFinite(num) ? num : 0;
+    }
+    return entry;
+  });
+  res.type('application/json').send(body);
+}
+
 // --- GAME STATE ---
 app.get('/api/game-state/:email', async (req, res) => {
   let email = req.params.email;
@@ -6938,7 +6964,7 @@ app.get('/api/game-state/:email', async (req, res) => {
     // Prisma devolve BigInt em campos schema BigInt — nunca passar BigInt cru a `res.json()` (falha de serialização).
     const serverUpdatedAtNum = Number(gs.server_updated_at ?? 0);
 
-    res.json(normalizeJsonSafeNumbers({
+    sendJsonBigIntSafe(res, {
       usdc: gs.usdc,
       startTime: Number(gs.start_time),
       lastUpdatedAt: Number(gs.last_updated_at ?? 0),
@@ -6956,7 +6982,7 @@ app.get('/api/game-state/:email', async (req, res) => {
       claimedBoxes,
       serverUpdatedAt: Number.isFinite(serverUpdatedAtNum) ? serverUpdatedAtNum : 0,
       offlineMined
-    }));
+    });
     const t3 = performance.now();
     console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
   } catch (e) {
