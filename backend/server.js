@@ -900,7 +900,7 @@ function buildCorsOriginSet() {
         add(part);
     for (const part of String(process.env.CORS_EXTRA_ORIGINS || '').split(','))
         add(part);
-    ['https://genesisdao.tech', 'https://test.genesisdao.tech'].forEach(add);
+    ['https://genesisdao.tech', 'https://www.genesisdao.tech', 'https://test.genesisdao.tech'].forEach(add);
     return s;
 }
 const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
@@ -6383,12 +6383,17 @@ app.get('/api/game-state/:email', async (req, res) => {
         const progressRes = await computeProgressForUser(db, uid, now, !isAdminEdit);
         const t1 = performance.now();
         console.log(`[GameState] computeProgress took ${(t1 - t0).toFixed(2)}ms`);
+        // Falha em computeProgress (timeout, deadlock, etc.): a transacção faz rollback — a BD
+        // mantém o último estado persistido. Não bloquear o GET com 500; servir snapshot e
+        // offline vazio neste pedido (o próximo sync volta a tentar aplicar progressão).
+        let offlineMined = {};
         if (!progressRes.ok) {
             const safeMsg = sanitizeApiMessage(progressRes.error, 240);
-            console.warn(`[GameState] computeProgress failed uid=${uid}: ${safeMsg}`);
-            return res.status(500).json({ error: safeMsg });
+            console.warn(`[GameState] computeProgress failed uid=${uid}: ${safeMsg} — serving snapshot without offline apply for this request`);
         }
-        const offlineMined = progressRes.offlineMined || {};
+        else {
+            offlineMined = progressRes.offlineMined || {};
+        }
         console.log(`[GameState] Starting parallel Prisma reads...`);
         const [gsRow, stockRows, unopenedRows, storedBatRows, rackRows, workshopRows, coinBalRows, dailyRows, listingRows, claimedRows] = await Promise.all([
             prisma.game_states.findUnique({ where: { user_id: uid } }),

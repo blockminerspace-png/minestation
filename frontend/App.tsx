@@ -292,6 +292,9 @@ export default function App() {
   });
   const [depositPrefill, setDepositPrefill] = useState<number | undefined>(undefined);
   const [saveLoaded, setSaveLoaded] = useState<boolean>(false);
+  /** Erro ao carregar `/api/game-state/me` (UI de retry em vez de spinner infinito). */
+  const [gameStateLoadError, setGameStateLoadError] = useState<string | null>(null);
+  const [gameStateReloadNonce, setGameStateReloadNonce] = useState(0);
 
   useEffect(() => {
     sessionStorage.setItem('lastView', currentView);
@@ -665,32 +668,49 @@ export default function App() {
     };
   }, [user, globalView, saveLoaded]);
 
-  // Load Save when User changes (Not for admin)
+  // Load Save when User changes (inclui admin: ranking / troféu na header; auto-save continua a ignorar admin)
   useEffect(() => {
-    if (!user || user.isAdmin) {
-      if (!user) setGameState(INITIAL_STATE);
+    if (!user) {
+      setGameState(INITIAL_STATE);
       setSaveLoaded(false);
+      setGameStateLoadError(null);
       return;
     }
 
+    let cancelled = false;
+    setGameStateLoadError(null);
     (async () => {
-      const { data, status } = await apiGetGameState('me');
+      const { data, status, error: errBody } = await apiGetGameState('me');
+      if (cancelled) return;
       if (data) {
         setOfflineStats((data as any).offlineMined || {});
         const parsed = processLoadedState(data, user.email);
         setGameState(parsed);
         setSaveLoaded(true);
+        setGameStateLoadError(null);
       } else if (status === 404) {
-        // Se não houver save, inicia com o estado inicial neutro e salva
         setGameState(INITIAL_STATE);
         await apiSaveGameState(user.email, INITIAL_STATE);
-        setSaveLoaded(true);
+        if (!cancelled) {
+          setSaveLoaded(true);
+          setGameStateLoadError(null);
+        }
       } else {
-        // Erro crítico (500 ou rede), não marca como carregado para evitar sobrescrever
-        console.error("Falha ao carregar estado do jogo:", status);
+        const hint =
+          errBody ||
+          (status === 401
+            ? 'Sessão expirou. Entre novamente.'
+            : status >= 500
+              ? 'Servidor não conseguiu carregar o guardado. Tente de novo em instantes.'
+              : 'Não foi possível carregar o estado do jogo.');
+        console.error('[GameState] Falha ao carregar:', status, hint);
+        if (!cancelled) setGameStateLoadError(hint);
       }
     })();
-  }, [user]);
+    return () => {
+      cancelled = true;
+    };
+  }, [user, gameStateReloadNonce]);
 
   // INTRO PRESENTATION (CMD STYLE)
   // Trigger on every fresh login (session start)
@@ -2419,7 +2439,7 @@ export default function App() {
             <div className="hidden md:flex items-center gap-2">
               <button onClick={() => setGlobalView('home')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'home' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Início (landing)"><Home size={18} /></button>
               <a href="https://t.me/+Fm72joLwb-tjYTZh" target="_blank" rel="noopener noreferrer" className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-[#229ED9] transition" title="Telegram — Genesis Miner"><TelegramIcon size={18} /></a>
-              <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); }} className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-yellow-500 transition" title="Ranking de mineradores"><Trophy size={18} /></button>
+              <button onClick={() => { if (!user) setGlobalView('auth'); else { setGlobalView('game'); setCurrentView('ranking'); } }} className="px-3 py-2 text-sm font-bold rounded text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 hover:text-yellow-500 transition" title="Ranking de mineradores"><Trophy size={18} /></button>
               <button onClick={() => setGlobalView('docs')} className={`px-3 py-2 text-sm font-bold rounded hover:bg-slate-200 dark:hover:bg-slate-800 transition ${globalView === 'docs' ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`} title="Documentação"><BookOpen size={18} /></button>
               {user && (globalView === 'home' || globalView === 'docs') && !user.isAdmin && (
                 <div className="flex gap-2">
@@ -2461,7 +2481,7 @@ export default function App() {
               <div className="w-full grid grid-cols-1 gap-2">
                 <button onClick={() => { setGlobalView('home'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'home' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Home size={16} /> Início</button>
                 <a href="https://t.me/+Fm72joLwb-tjYTZh" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-[#229ED9] hover:bg-slate-100 dark:hover:bg-slate-800 transition"><TelegramIcon size={16} /> Telegram</a>
-                <button onClick={() => { setGlobalView('game'); setCurrentView('ranking'); setMobileMenuOpen(false); }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-yellow-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><Trophy size={16} /> Ranking</button>
+                <button onClick={() => { setMobileMenuOpen(false); if (!user) setGlobalView('auth'); else { setGlobalView('game'); setCurrentView('ranking'); } }} className="flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border border-slate-200 dark:border-slate-700 text-yellow-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition"><Trophy size={16} /> Ranking</button>
                 <button onClick={() => { setGlobalView('docs'); setMobileMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${globalView === 'docs' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><BookOpen size={16} /> Docs</button>
                 {user && (globalView === 'home' || globalView === 'docs') && !user.isAdmin && (
                   <>
@@ -2523,7 +2543,7 @@ export default function App() {
           </div>
         )}
 
-        {globalView === 'game' && user && !user.isAdmin && (
+        {globalView === 'game' && user && (
           <>
             {/* GAME NAVIGATION */}
             <nav className="min-w-0 w-full bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 shrink-0 transition-colors duration-300">
@@ -2600,7 +2620,22 @@ export default function App() {
               <div className="flex-1 min-w-0 overflow-hidden relative max-w-7xl w-full flex flex-col min-h-0">
                 <div className="shrink-0 z-20"><MarketNews /></div>
                 <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar relative min-h-0 flex flex-col font-mono">
-                  {!saveLoaded && (
+                  {!saveLoaded && gameStateLoadError && (
+                    <div className="flex min-h-[40vh] w-full flex-col items-center justify-center gap-4 bg-slate-900/80 text-slate-200 font-mono rounded-xl border border-red-900/30 px-6 py-8 text-center">
+                      <p className="text-sm text-red-300 max-w-md">{gameStateLoadError}</p>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGameStateLoadError(null);
+                          setGameStateReloadNonce((n) => n + 1);
+                        }}
+                        className="rounded-lg border border-amber-500/60 bg-amber-600/20 px-4 py-2 text-sm font-bold text-amber-200 hover:bg-amber-600/30 transition"
+                      >
+                        Tentar novamente
+                      </button>
+                    </div>
+                  )}
+                  {!saveLoaded && !gameStateLoadError && (
                     <div className="flex min-h-[40vh] w-full items-center justify-center bg-slate-900/80 text-amber-500 font-mono rounded-xl border border-amber-900/20">
                       <div className="text-xl animate-pulse tracking-widest">Carregando estado…</div>
                     </div>

@@ -1,4 +1,8 @@
 # Incluir no `server { }` que faz proxy para a aplicação (HTTPS), **antes** de `location /`.
+# OPCIONAL — não está incluído em conf.d/minestation.conf por omissão.
+# Se o site “morre” fora da Cloudflare (DNS cinzento, IP directo, ranges desatualizados),
+# não uses este ficheiro ou remove o `include` correspondente do server { }.
+#
 # Só aceita HTTP(s) de IPs da Cloudflare + localhost (health/debug na VM).
 # Não substitui UFW: feche 5432, 6379, etc. na firewall e não exponha portas de debug.
 

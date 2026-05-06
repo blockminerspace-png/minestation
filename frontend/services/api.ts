@@ -852,7 +852,10 @@ export async function bulkGiftUsers(emails: string[], gift: { type: string; id?:
   }
 }
 
-export async function getGameState(email: string, opts?: { adminOverride?: boolean }): Promise<{ data: GameState | null; status: number }> {
+export async function getGameState(
+  email: string,
+  opts?: { adminOverride?: boolean }
+): Promise<{ data: GameState | null; status: number; error?: string }> {
   // Use 'me' if it's the current session user to leverage the backend's session-based auth
   const target = email === 'me' ? 'me' : encodeURIComponent(email);
   try {
@@ -860,7 +863,14 @@ export async function getGameState(email: string, opts?: { adminOverride?: boole
     if (opts?.adminOverride) headers['X-Admin-Edit'] = '1';
     const res = await apiFetch(`${base}/game-state/${target}?t=${Date.now()}`, { headers });
     if (!res.ok) {
-      return { data: null, status: res.status };
+      let error: string | undefined;
+      try {
+        const j = (await res.json()) as { error?: unknown };
+        if (typeof j?.error === 'string' && j.error.trim()) error = j.error.trim();
+      } catch {
+        /* corpo não-JSON */
+      }
+      return { data: null, status: res.status, error };
     }
     const data = await res.json();
     if (data && data.serverUpdatedAt) {

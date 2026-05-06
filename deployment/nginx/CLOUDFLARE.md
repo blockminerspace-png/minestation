@@ -2,8 +2,10 @@
 
 Dois ficheiros em `snippets/`:
 
-1. **`cloudflare-real-ip.conf`** — incluir uma vez em `http { }` para o Nginx registar o IP real do cliente (`CF-Connecting-IP`).
-2. **`cloudflare-allow.inc`** — incluir dentro de cada `server { }` que expõe o site à internet, **no topo do bloco** (antes das `location`), para recusar ligações que não venham da Cloudflare (bypass do proxy).
+1. **`cloudflare-real-ip.conf`** — incluir uma vez em `http { }` para o Nginx registar o IP real do cliente (`CF-Connecting-IP`). Isto é seguro e recomendado quando usas Cloudflare como proxy.
+2. **`cloudflare-allow.inc`** — **opcional**. Só faz sentido se quiseres recusar na origem qualquer ligação que **não** venha dos IPs oficiais da Cloudflare (reduz bypass do proxy). **Não** está ligado no `conf.d/minestation.conf` deste repo. Se activaste isto na VM e o site deixou de responder (403 / ligação recusada), **remove o `include`** — sobretudo com DNS “cinzento”, teste directo ao IP da origem, ou até ranges Cloudflare desactualizados.
+
+O exemplo abaixo mostra **como** incluir o allowlist se precisares; não é o default do deploy.
 
 Exemplo mínimo no `server` HTTPS que faz `proxy_pass` à API/SPA:
 
