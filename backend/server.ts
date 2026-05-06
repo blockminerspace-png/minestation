@@ -6339,18 +6339,6 @@ app.put('/api/user', async (req, res) => {
       }
     }
 
-    const currentUserIdentityRes = await db.query(
-      'SELECT COALESCE(username, \'\') AS username FROM users WHERE id = $1',
-      [uid]
-    );
-    const currentUsername = String(currentUserIdentityRes.rows[0]?.username || '');
-    const nextUsernameRaw = typeof u.username === 'string' ? u.username.trim() : '';
-    const keepingLegacyUsername =
-      !!req.userId &&
-      nextUsernameRaw.length > 0 &&
-      currentUsername.trim().length > 0 &&
-      nextUsernameRaw === currentUsername.trim();
-
     let usernameForUpdate: unknown = u.username;
     if (!req.userId) {
       const userVu = validateSignupUsername(u.username);
@@ -6358,14 +6346,8 @@ app.put('/api/user', async (req, res) => {
         return res.status(400).json({ error: userVu.error });
       }
       usernameForUpdate = userVu.username;
-    } else if (typeof u.username === 'string' && u.username.trim() !== '' && !keepingLegacyUsername) {
-      const userVu = validateSignupUsername(u.username);
-      if (!userVu.ok) {
-        return res.status(400).json({ error: userVu.error });
-      }
-      usernameForUpdate = userVu.username;
-    } else if (keepingLegacyUsername) {
-      usernameForUpdate = currentUsername.trim();
+    } else if (typeof u.username === 'string' && u.username.trim() !== '') {
+      usernameForUpdate = u.username.trim();
     }
 
     if (hasPassword) {
