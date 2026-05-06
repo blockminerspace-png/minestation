@@ -51,6 +51,33 @@ export function sendInternalErrorSafeMessage(
  * Resposta 500 com campos extra (ex.: `{ ok: false }`, `{ report }`).
  * Em produção `error` é sempre `publicErrorMessage` (sem concatenar mensagem da exceção).
  */
+/** Erro de negócio com resposta HTTP explícita (corpo JSON já fechado). */
+export class HttpControlledError extends Error {
+  readonly statusCode: number;
+  readonly jsonBody: Record<string, unknown>;
+  constructor(statusCode: number, jsonBody: Record<string, unknown>) {
+    const msg =
+      typeof jsonBody.error === 'string'
+        ? jsonBody.error
+        : typeof jsonBody.message === 'string'
+          ? jsonBody.message
+          : 'Request failed';
+    super(msg);
+    this.name = 'HttpControlledError';
+    this.statusCode = statusCode;
+    this.jsonBody = jsonBody;
+  }
+}
+
+/** Se `err` for `HttpControlledError`, envia `res.status(...).json(...)` e devolve `true`. */
+export function respondIfHttpControlledError(res: Response, err: unknown): boolean {
+  if (!(err instanceof HttpControlledError)) return false;
+  if (!res.headersSent) {
+    res.status(err.statusCode).json(err.jsonBody);
+  }
+  return true;
+}
+
 export function sendInternalErrorShape(
   res: Response,
   logTag: string,

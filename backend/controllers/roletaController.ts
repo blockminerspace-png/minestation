@@ -1,5 +1,5 @@
 import type { Express, Request, RequestHandler, Response } from 'express';
-import type { Pool } from 'pg';
+import { prisma } from '../config/prisma.js';
 import {
   wheelRollInTransaction,
   roletaClaimInTransaction,
@@ -15,10 +15,9 @@ import {
 import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type RoletaPlayerDeps = {
-  pool: Pool;
   authenticateToken: RequestHandler;
   appendGameActivityLog: (
-    q: Pool | import('pg').PoolClient,
+    q: unknown,
     userId: number,
     action: string,
     meta: unknown
@@ -33,7 +32,7 @@ function uidNum(req: Request): number | null {
 }
 
 export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps): void {
-  const { pool, authenticateToken, appendGameActivityLog } = deps;
+  const { authenticateToken, appendGameActivityLog } = deps;
 
   /** Código de roleta já resgatado mas ainda sem prémio finalizado (girar/reivindicar). */
   app.get('/api/roleta/pending-code', authenticateToken, async (req: Request, res: Response) => {
@@ -42,22 +41,21 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       return res.status(401).json({ error: 'Auth failed' });
     }
     try {
-      const r = await pool.query(
-        `SELECT r.code
-         FROM promo_code_redemptions r
-         INNER JOIN promo_codes p ON p.code = r.code
-         LEFT JOIN loot_boxes lb ON lb.id = p.loot_box_id
-         WHERE r.user_id = $1
-           AND r.reward_granted = 0
-           AND (
-             p.type LIKE 'roleta_%'
-             OR lb.trigger = 'roleta_code'
-           )
-         ORDER BY r.redeemed_at DESC NULLS LAST
-         LIMIT 1`,
-        [userId]
-      );
-      const row = r.rows[0] as { code?: string } | undefined;
+      const r = await prisma.$queryRaw<Array<{ code: string }>>`
+        SELECT r.code
+        FROM promo_code_redemptions r
+        INNER JOIN promo_codes p ON p.code = r.code
+        LEFT JOIN loot_boxes lb ON lb.id = p.loot_box_id
+        WHERE r.user_id = ${userId}
+          AND r.reward_granted = 0
+          AND (
+            p.type LIKE 'roleta_%'
+            OR lb.trigger = 'roleta_code'
+          )
+        ORDER BY r.redeemed_at DESC NULLS LAST
+        LIMIT 1
+      `;
+      const row = r[0];
       const code = row?.code != null ? String(row.code).trim() : '';
       return res.json({ code: code || null });
     } catch (e) {
@@ -77,18 +75,19 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
     }
 
     const serverNowMs = Date.now();
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const result = await wheelRollInTransaction(client, {
-        userId,
-        normalizedCode,
-        serverNowMs
-      });
-      await client.query('COMMIT');
+      const result = await prisma.$transaction(
+        async (tx) =>
+          wheelRollInTransaction(tx, {
+            userId,
+            normalizedCode,
+            serverNowMs
+          }),
+        { timeout: 60_000, maxWait: 10_000 }
+      );
 
       if (!result.idempotent) {
-        await appendGameActivityLog(pool, userId, 'roleta_roll', {
+        await appendGameActivityLog(null, userId, 'roleta_roll', {
           code: normalizedCode,
           wonItemId: result.wonItemId,
           serverAtMs: serverNowMs
@@ -97,19 +96,12 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
 
       return res.json({ ok: true, wonItemId: result.wonItemId, item: result.item });
     } catch (e) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
-      }
       if (e instanceof RoletaAppError) {
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Wheel Roll]', e);
       sendInternalErrorSafeMessage(res, 'POST /api/wheel/roll', e, 'Erro interno.');
       return;
-    } finally {
-      client.release();
     }
   });
 
@@ -120,11 +112,11 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       return res.status(401).json({ error: 'Auth failed' });
     }
     try {
-      const r = await pool.query(
-        `SELECT won_item_id FROM wheel_paid_pending WHERE user_id = $1 LIMIT 1`,
-        [userId]
-      );
-      const won = r.rows[0]?.won_item_id;
+      const row = await prisma.wheel_paid_pending.findUnique({
+        where: { user_id: userId },
+        select: { won_item_id: true }
+      });
+      const won = row?.won_item_id;
       const wonItemId = won != null && String(won).trim() ? String(won).trim() : null;
       return res.json({ pending: Boolean(wonItemId), wonItemId });
     } catch (e) {
@@ -139,14 +131,14 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       return res.status(401).json({ error: 'Auth failed' });
     }
     const serverNowMs = Date.now();
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const result = await paidWheelRollInTransaction(client, { userId, serverNowMs });
-      await client.query('COMMIT');
+      const result = await prisma.$transaction(
+        async (tx) => paidWheelRollInTransaction(tx, { userId, serverNowMs }),
+        { timeout: 60_000, maxWait: 10_000 }
+      );
 
       if (!result.idempotent) {
-        await appendGameActivityLog(pool, userId, 'roleta_paid_roll', {
+        await appendGameActivityLog(null, userId, 'roleta_paid_roll', {
           wonItemId: result.wonItemId,
           chargedUsdc: result.chargedUsdc,
           newUsdc: result.newUsdc,
@@ -163,19 +155,12 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         spinPriceUsdc: PAID_WHEEL_SPIN_PRICE_USDC
       });
     } catch (e) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
-      }
       if (e instanceof RoletaAppError) {
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Wheel paid-roll]', e);
       sendInternalErrorSafeMessage(res, 'POST /api/wheel/paid-roll', e, 'Erro interno.');
       return;
-    } finally {
-      client.release();
     }
   });
 
@@ -190,13 +175,13 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
     }
 
     const serverNowMs = Date.now();
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const result = await paidWheelClaimInTransaction(client, { userId, wonItemId });
-      await client.query('COMMIT');
+      const result = await prisma.$transaction(
+        async (tx) => paidWheelClaimInTransaction(tx, { userId, wonItemId }),
+        { timeout: 60_000, maxWait: 10_000 }
+      );
 
-      await appendGameActivityLog(pool, userId, 'roleta_paid_claim', {
+      await appendGameActivityLog(null, userId, 'roleta_paid_claim', {
         wonItemId,
         boxId: result.boxId,
         serverAtMs: serverNowMs
@@ -204,11 +189,6 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
 
       return res.json({ ok: true, boxId: result.boxId });
     } catch (e) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
-      }
       if (e instanceof RoletaAppError) {
         if (e.statusCode === 403) {
           console.warn('[Roleta paid-claim] rejected', { userId, wonItemId, message: e.message });
@@ -218,8 +198,6 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       console.error('[Wheel paid-claim]', e);
       sendInternalErrorSafeMessage(res, 'POST /api/wheel/paid-claim', e, 'Erro interno.');
       return;
-    } finally {
-      client.release();
     }
   });
 
@@ -236,18 +214,19 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
     }
 
     const serverNowMs = Date.now();
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const result = await roletaClaimInTransaction(client, {
-        userId,
-        normalizedCode,
-        wonItemId,
-        serverNowMs
-      });
-      await client.query('COMMIT');
+      const result = await prisma.$transaction(
+        async (tx) =>
+          roletaClaimInTransaction(tx, {
+            userId,
+            normalizedCode,
+            wonItemId,
+            serverNowMs
+          }),
+        { timeout: 60_000, maxWait: 10_000 }
+      );
 
-      await appendGameActivityLog(pool, userId, 'roleta_claim', {
+      await appendGameActivityLog(null, userId, 'roleta_claim', {
         code: normalizedCode,
         wonItemId,
         boxId: result.boxId,
@@ -256,11 +235,6 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
 
       return res.json({ ok: true, boxId: result.boxId });
     } catch (e) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
-      }
       if (e instanceof RoletaAppError) {
         if (e.statusCode === 403) {
           console.warn('[Roleta Security] claim rejected', { userId, normalizedCode, message: e.message });
@@ -270,8 +244,6 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       console.error('[Roleta Claim]', e);
       sendInternalErrorSafeMessage(res, 'POST /api/roleta/claim', e, 'Erro interno.');
       return;
-    } finally {
-      client.release();
     }
   });
 }

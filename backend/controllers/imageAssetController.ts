@@ -3,8 +3,8 @@ import path from 'node:path';
 import cluster from 'node:cluster';
 import type { Express, Request, RequestHandler, Response } from 'express';
 import express from 'express';
-import type { Pool } from 'pg';
 import multer from 'multer';
+import { prisma } from '../config/prisma.js';
 import { compressMediaFileInPlace } from '../lib/compressMediaAsset.js';
 import {
   IMG_ADMIN_TARGET_SUBFOLDER_SET,
@@ -16,7 +16,6 @@ import {
 } from '../models/imageAssetModel.js';
 
 export type ImageAssetControllerDeps = {
-  pool: Pool;
   isAdmin: RequestHandler;
   imgDir: string;
   uploadsDir: string;
@@ -85,7 +84,7 @@ function createAdminAdMulter(uploadsDir: string): ReturnType<typeof multer> {
 }
 
 export function registerImageAssetRoutes(app: Express, deps: ImageAssetControllerDeps): void {
-  const { pool, isAdmin, imgDir, uploadsDir } = deps;
+  const { isAdmin, imgDir, uploadsDir } = deps;
   const uploadAd = createAdminAdMulter(uploadsDir);
 
   app.post('/api/upload-image', async (req: Request, res: Response) => {
@@ -93,8 +92,11 @@ export function registerImageAssetRoutes(app: Express, deps: ImageAssetControlle
       return res.status(401).json({ error: 'Não autenticado' });
     }
     try {
-      const adm = await pool.query('SELECT COALESCE(is_admin,0) AS is_admin FROM users WHERE id = $1', [req.userId]);
-      if (!Number(adm.rows[0]?.is_admin)) {
+      const adm = await prisma.users.findUnique({
+        where: { id: Number(req.userId) },
+        select: { is_admin: true }
+      });
+      if (!Number(adm?.is_admin ?? 0)) {
         return res.status(403).json({ error: 'Apenas administradores podem usar este upload.' });
       }
     } catch {
@@ -120,8 +122,11 @@ export function registerImageAssetRoutes(app: Express, deps: ImageAssetControlle
       req.userId
     ) {
       try {
-        const adm = await pool.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
-        if (adm.rows[0]?.is_admin) {
+        const adm = await prisma.users.findUnique({
+          where: { id: Number(req.userId) },
+          select: { is_admin: true }
+        });
+        if (Number(adm?.is_admin ?? 0) !== 0) {
           destDir = path.join(imgDir, assetFolder);
           fs.mkdirSync(destDir, { recursive: true });
           publicPath = `/img/${assetFolder}/${filename}`;

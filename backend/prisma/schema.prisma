@@ -1,6 +1,20 @@
-// Postgres principal — alinhado a `config/initDb.ts` + migrações comuns.
-// Sem relações Prisma declaradas: menos drift; usa `prisma.user.findMany()` etc.
-// Quando a BD tiver tabelas novas: `cd backend && npx prisma db pull` e rever o diff.
+// =============================================================================
+// Mine Station — PostgreSQL (fonte de verdade). Espelho mantido com Prisma.
+//
+// Manutenção do schema
+//   1) Alterações via Prisma: `cd backend && npx prisma migrate dev` (preferível em produção séria).
+//   2) Alterações só em SQL / initDb: `cd backend && npx prisma db pull` e rever o diff do
+//      `schema.prisma` antes de commit (alinha com `config/initDb.ts`).
+//   3) `npx prisma generate` após mudar este ficheiro (o `build:app` do backend já inclui generate).
+//
+// Desenho
+//   - Sem relações `@relation` entre models: o código usa SQL explícito / find por id; reduz
+//     conflitos com tabelas legadas e `db.query` no `server.ts`.
+//   - Trilho de atividade de jogo para o admin (caixas, roleta, depósitos, …): MongoDB
+//     (`game_activity_logs`); não voltar a criar tabela homónima no Postgres.
+//
+// Ver também: `backend/docs/PRISMA_DATA_SCOPE.md`
+// =============================================================================
 
 generator client {
   provider = "prisma-client-js"
@@ -10,6 +24,8 @@ datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
 }
+
+// --- Utilizadores, sessões, JWT refresh, níveis de acesso ---
 
 model users {
   id                 Int     @id @default(autoincrement())
@@ -47,6 +63,8 @@ model referrals {
 
   @@map("referrals")
 }
+
+// --- Economia de mineração: moedas, catálogo de peças, compatibilidade de racks ---
 
 model mining_coins {
   id                 String  @id
@@ -122,6 +140,8 @@ model upgrade_compat_racks {
   @@map("upgrade_compat_racks")
 }
 
+// --- Caixas, notícias, passes de época ---
+
 model loot_boxes {
   id          String  @id
   name        String
@@ -180,6 +200,8 @@ model season_purchases {
   @@map("season_purchases")
 }
 
+// --- Estado persistido do jogador (save-game): saldos, stock, rigs, oficina ---
+
 model game_states {
   id                       Int     @id @default(autoincrement())
   user_id                  Int     @unique
@@ -196,6 +218,8 @@ model game_states {
 
   @@map("game_states")
 }
+
+// --- Definições chave-valor (flags, intervalos de backup, etc.) ---
 
 model settings {
   key   String @id
@@ -264,6 +288,8 @@ model rack_multiplier_slots {
   @@map("rack_multiplier_slots")
 }
 
+// --- Mercado P2P / mercado paralelo ---
+
 model player_listings {
   id              String  @id
   user_id         Int
@@ -304,6 +330,8 @@ model nft_items {
   @@id([contract_address, token_id])
   @@map("nft_items")
 }
+
+// --- Sessão legacy (cookie sid) e tokens JWT ---
 
 model sessions {
   session_id       String  @id
@@ -347,6 +375,8 @@ model coin_withdrawals {
   @@id([user_id, coin_id])
   @@map("coin_withdrawals")
 }
+
+// --- Loja admin: packs, visibilidade, compras ---
 
 model admin_upgrades {
   id                   String @id
@@ -436,6 +466,8 @@ model player_news_submissions {
   @@map("player_news_submissions")
 }
 
+// --- Suporte e moderação de conteúdo ---
+
 model support_tickets {
   id          String @id
   user_id     Int
@@ -469,6 +501,8 @@ model support_ticket_player_replies {
 
   @@map("support_ticket_player_replies")
 }
+
+// --- Salas de rigs (expansão de slots) ---
 
 model rig_rooms {
   id                        String @id
@@ -526,15 +560,7 @@ model daily_actions {
   @@map("daily_actions")
 }
 
-model game_activity_logs {
-  id         BigInt @id @default(autoincrement())
-  user_id    Int
-  action     String
-  meta       Json   @default(dbgenerated("'{}'::jsonb"))
-  created_at BigInt
-
-  @@map("game_activity_logs")
-}
+// --- Códigos promocionais e resgates ---
 
 model promo_codes {
   code             String  @id
@@ -573,6 +599,8 @@ model mining_yield_history {
   @@map("mining_yield_history")
 }
 
+// --- Definições globais de economia (mercados, taxas) ---
+
 model economy_settings {
   id                              Int @id
   black_market_enabled            Int?
@@ -600,6 +628,8 @@ model withdrawal_requests {
   @@map("withdrawal_requests")
 }
 
+// --- Roleta / roda de prémios ---
+
 model wheel_prizes {
   id      String @id
   label   String
@@ -625,6 +655,8 @@ model wallet_labels {
   @@map("wallet_labels")
 }
 
+// --- Modelos de indicação (comissões por nível) ---
+
 model referral_models {
   id                              Int     @id @default(autoincrement())
   name                            String
@@ -647,6 +679,8 @@ model access_level_referral_models {
 
   @@map("access_level_referral_models")
 }
+
+// --- Segurança e anti-abuso (dados operacionais em SQL; não confundir com trilho Mongo de jogo) ---
 
 model user_history_ips {
   user_id      Int
@@ -698,6 +732,8 @@ model security_threat_scores {
   @@map("security_threat_scores")
 }
 
+// --- Transparência e textos de UI ---
+
 model transparency_entries {
   id          Int    @id @default(autoincrement())
   category    String
@@ -720,6 +756,8 @@ model ui_display_labels {
   @@map("ui_display_labels")
 }
 
+// --- Roleta paga (estado pendente por utilizador) ---
+
 model wheel_paid_pending {
   user_id     Int    @id
   won_item_id String
@@ -728,6 +766,8 @@ model wheel_paid_pending {
 
   @@map("wheel_paid_pending")
 }
+
+// --- Histórico de carregamento oficina (auditoria técnica / enriquecimento) ---
 
 model charging_history {
   id                   Int       @id @default(autoincrement())
@@ -752,6 +792,8 @@ model app_cache {
 
   @@map("app_cache")
 }
+
+// --- Parceiros YouTube ---
 
 model partner_youtube_submissions {
   id               String  @id

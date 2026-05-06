@@ -687,7 +687,7 @@ export const AdminSupport: React.FC<AdminSupportProps> = ({
                   ) : (
                     <div className="space-y-3">
                       <p className="text-[11px] text-slate-500">
-                        Linhas da tabela <span className="font-mono text-slate-400">game_activity_logs</span> para{' '}
+                        Eventos Mongo <span className="font-mono text-slate-400">game_activity_logs</span> para{' '}
                         <span className="font-mono text-slate-300">{t.email}</span>
                         {ticketUserNumericId(t) > 0 ? (
                           <span className="text-slate-500"> (user #{ticketUserNumericId(t)})</span>

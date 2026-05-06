@@ -1,41 +1,70 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import type { Pool } from 'pg';
 import {
   computePlayerGameHeaderSnapshot,
   resetUpgradesCatalogCacheForTests
 } from '../lib/playerGameHeaderSnapshot.js';
 
-function makePoolResponder(
-  rows: {
-    gameState: { rowCount: number; rows: Record<string, unknown>[] };
-    balances: { rows: Record<string, unknown>[] };
-    upgrades: { rows: Record<string, unknown>[] };
-    racks: { rows: Record<string, unknown>[] };
-    slots: { rows: Record<string, unknown>[] };
-    mults: { rows: Record<string, unknown>[] };
-  }
-) {
-  let upgradeCalls = 0;
-  const pool = {
-    query: vi.fn(async (sql: string, _params?: unknown[]) => {
-      if (String(sql).includes('FROM game_states')) return rows.gameState;
-      if (String(sql).includes('coin_balances')) return rows.balances;
-      if (String(sql).includes('FROM upgrades')) {
-        upgradeCalls += 1;
-        return rows.upgrades;
-      }
-      if (String(sql).includes('placed_racks')) return rows.racks;
-      if (String(sql).includes('rack_slots')) return rows.slots;
-      if (String(sql).includes('rack_multiplier_slots')) return rows.mults;
-      return { rows: [] };
-    })
-  } as unknown as Pool;
-  return { pool, getUpgradeQueryCount: () => upgradeCalls };
+const prismaMock = vi.hoisted(() => ({
+  game_states: { findUnique: vi.fn() },
+  coin_balances: { findMany: vi.fn() },
+  upgrades: { findMany: vi.fn() },
+  placed_racks: { findMany: vi.fn() },
+  rack_slots: { findMany: vi.fn() },
+  rack_multiplier_slots: { findMany: vi.fn() }
+}));
+
+vi.mock('../config/prisma.js', () => ({
+  prisma: prismaMock
+}));
+
+type MockRows = {
+  gameState: { rowCount: number; rows: Record<string, unknown>[] };
+  balances: { rows: Record<string, unknown>[] };
+  upgrades: { rows: Record<string, unknown>[] };
+  racks: { rows: Record<string, unknown>[] };
+  slots: { rows: Record<string, unknown>[] };
+  mults: { rows: Record<string, unknown>[] };
+};
+
+function mapGameStateRow(row: Record<string, unknown>) {
+  const su = row.server_updated_at;
+  return {
+    usdc: Number(row.usdc),
+    server_updated_at:
+      su == null || su === ''
+        ? null
+        : typeof su === 'bigint'
+          ? su
+          : BigInt(String(su))
+  };
+}
+
+function attachPrismaMocks(rows: MockRows) {
+  prismaMock.game_states.findUnique.mockImplementation(async () => {
+    if (rows.gameState.rowCount === 0) return null;
+    return mapGameStateRow(rows.gameState.rows[0]!);
+  });
+  prismaMock.coin_balances.findMany.mockResolvedValue(rows.balances.rows as never);
+  prismaMock.upgrades.findMany.mockResolvedValue(rows.upgrades.rows as never);
+  prismaMock.placed_racks.findMany.mockResolvedValue(rows.racks.rows as never);
+  prismaMock.rack_slots.findMany.mockResolvedValue(rows.slots.rows as never);
+  prismaMock.rack_multiplier_slots.findMany.mockResolvedValue(rows.mults.rows as never);
+}
+
+function getUpgradeQueryCount(): number {
+  return prismaMock.upgrades.findMany.mock.calls.length;
 }
 
 describe('computePlayerGameHeaderSnapshot', () => {
   beforeEach(() => {
     resetUpgradesCatalogCacheForTests();
+    vi.clearAllMocks();
+    prismaMock.coin_balances.findMany.mockResolvedValue([] as never);
+    prismaMock.placed_racks.findMany.mockResolvedValue([] as never);
+    prismaMock.rack_slots.findMany.mockResolvedValue([] as never);
+    prismaMock.rack_multiplier_slots.findMany.mockResolvedValue([] as never);
+    prismaMock.upgrades.findMany.mockResolvedValue([] as never);
+    prismaMock.game_states.findUnique.mockResolvedValue(null);
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2020-01-01T00:00:00.000Z'));
   });
@@ -46,7 +75,7 @@ describe('computePlayerGameHeaderSnapshot', () => {
   });
 
   it('sem game_state devolve payload vazio e não consulta upgrades', async () => {
-    const { pool, getUpgradeQueryCount } = makePoolResponder({
+    attachPrismaMocks({
       gameState: { rowCount: 0, rows: [] },
       balances: { rows: [] },
       upgrades: { rows: [] },
@@ -54,7 +83,7 @@ describe('computePlayerGameHeaderSnapshot', () => {
       slots: { rows: [] },
       mults: { rows: [] }
     });
-    const out = await computePlayerGameHeaderSnapshot(pool, 42);
+    const out = await computePlayerGameHeaderSnapshot(42);
     expect(out.coinBalances).toEqual({});
     expect(out.usdc).toBe(0);
     expect(out.totalHash).toBe(0);
@@ -62,7 +91,7 @@ describe('computePlayerGameHeaderSnapshot', () => {
   });
 
   it('com estado soma hashrate de rack ligado com bateria infinita e GPUs', async () => {
-    const { pool, getUpgradeQueryCount } = makePoolResponder({
+    attachPrismaMocks({
       gameState: { rowCount: 1, rows: [{ usdc: 2.5, server_updated_at: '12345' }] },
       balances: { rows: [{ coin_id: 'btc', amount: 1 }] },
       upgrades: {
@@ -89,7 +118,7 @@ describe('computePlayerGameHeaderSnapshot', () => {
       },
       mults: { rows: [] }
     });
-    const out = await computePlayerGameHeaderSnapshot(pool, 7);
+    const out = await computePlayerGameHeaderSnapshot(7);
     expect(out.usdc).toBe(2.5);
     expect(out.serverUpdatedAt).toBe(12345);
     expect(out.coinBalances.btc).toBe(1);
@@ -99,7 +128,7 @@ describe('computePlayerGameHeaderSnapshot', () => {
   });
 
   it('rack desligado ou sem moeda não contribui', async () => {
-    const { pool } = makePoolResponder({
+    attachPrismaMocks({
       gameState: { rowCount: 1, rows: [{ usdc: 0, server_updated_at: '1' }] },
       balances: { rows: [] },
       upgrades: {
@@ -137,12 +166,12 @@ describe('computePlayerGameHeaderSnapshot', () => {
       },
       mults: { rows: [] }
     });
-    const out = await computePlayerGameHeaderSnapshot(pool, 1);
+    const out = await computePlayerGameHeaderSnapshot(1);
     expect(out.totalHash).toBe(0);
   });
 
   it('cache de upgrades: segunda chamada não volta a SELECT upgrades antes do TTL', async () => {
-    const data = {
+    const data: MockRows = {
       gameState: { rowCount: 1, rows: [{ usdc: 1, server_updated_at: '9' }] },
       balances: { rows: [] },
       upgrades: {
@@ -152,15 +181,15 @@ describe('computePlayerGameHeaderSnapshot', () => {
       slots: { rows: [] },
       mults: { rows: [] }
     };
-    const { pool, getUpgradeQueryCount } = makePoolResponder(data);
-    await computePlayerGameHeaderSnapshot(pool, 1);
+    attachPrismaMocks(data);
+    await computePlayerGameHeaderSnapshot(1);
     expect(getUpgradeQueryCount()).toBe(1);
-    await computePlayerGameHeaderSnapshot(pool, 2);
+    await computePlayerGameHeaderSnapshot(2);
     expect(getUpgradeQueryCount()).toBe(1);
   });
 
   it('após TTL volta a consultar upgrades', async () => {
-    const data = {
+    const data: MockRows = {
       gameState: { rowCount: 1, rows: [{ usdc: 1, server_updated_at: '9' }] },
       balances: { rows: [] },
       upgrades: {
@@ -170,15 +199,15 @@ describe('computePlayerGameHeaderSnapshot', () => {
       slots: { rows: [] },
       mults: { rows: [] }
     };
-    const { pool, getUpgradeQueryCount } = makePoolResponder(data);
-    await computePlayerGameHeaderSnapshot(pool, 1);
+    attachPrismaMocks(data);
+    await computePlayerGameHeaderSnapshot(1);
     vi.advanceTimersByTime(60_001);
-    await computePlayerGameHeaderSnapshot(pool, 1);
+    await computePlayerGameHeaderSnapshot(1);
     expect(getUpgradeQueryCount()).toBe(2);
   });
 
   it('aplica multiplicadores de rack_multiplier_slots', async () => {
-    const { pool } = makePoolResponder({
+    attachPrismaMocks({
       gameState: { rowCount: 1, rows: [{ usdc: 0, server_updated_at: '1' }] },
       balances: { rows: [] },
       upgrades: {
@@ -204,13 +233,13 @@ describe('computePlayerGameHeaderSnapshot', () => {
       slots: { rows: [{ rack_id: 'rx', slot_index: 0, machine_item_id: 'gpu' }] },
       mults: { rows: [{ rack_id: 'rx', slot_index: 0, multiplier_item_id: 'mul' }] }
     });
-    const out = await computePlayerGameHeaderSnapshot(pool, 1);
+    const out = await computePlayerGameHeaderSnapshot(1);
     expect(out.hashByCoinId.eth).toBeCloseTo(25);
     expect(out.totalHash).toBeCloseTo(25);
   });
 
   it('bateria finita com carga zero não produz', async () => {
-    const { pool } = makePoolResponder({
+    attachPrismaMocks({
       gameState: { rowCount: 1, rows: [{ usdc: 0, server_updated_at: '1' }] },
       balances: { rows: [] },
       upgrades: {
@@ -235,12 +264,12 @@ describe('computePlayerGameHeaderSnapshot', () => {
       slots: { rows: [{ rack_id: 'rx', slot_index: 0, machine_item_id: 'gpu' }] },
       mults: { rows: [] }
     });
-    const out = await computePlayerGameHeaderSnapshot(pool, 1);
+    const out = await computePlayerGameHeaderSnapshot(1);
     expect(out.totalHash).toBe(0);
   });
 
   it('bateria finita com carga > 0 produz', async () => {
-    const { pool } = makePoolResponder({
+    attachPrismaMocks({
       gameState: { rowCount: 1, rows: [{ usdc: 0, server_updated_at: '1' }] },
       balances: { rows: [] },
       upgrades: {
@@ -265,7 +294,7 @@ describe('computePlayerGameHeaderSnapshot', () => {
       slots: { rows: [{ rack_id: 'rx', slot_index: 0, machine_item_id: 'gpu' }] },
       mults: { rows: [] }
     });
-    const out = await computePlayerGameHeaderSnapshot(pool, 1);
+    const out = await computePlayerGameHeaderSnapshot(1);
     expect(out.totalHash).toBe(4);
   });
 });

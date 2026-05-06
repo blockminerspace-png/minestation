@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import type { Express, Request, RequestHandler, Response } from 'express';
-import type { Pool } from 'pg';
 import {
   countPartnerSubmissionsForUserSince,
   getPartnerAccessLevelIdsLower,
@@ -16,7 +15,10 @@ import {
   listPartnerYoutubePartnersForAdmin,
   isPartnerYoutubeManualAllowlisted,
   addPartnerYoutubeManualAllowlist,
-  removePartnerYoutubeManualAllowlist
+  removePartnerYoutubeManualAllowlist,
+  findUserIdsByNormalizedEmail,
+  findUserIdsByNormalizedUsername,
+  userExistsById
 } from '../models/partnerYoutubeModel.js';
 import {
   extractYoutubeVideoId,
@@ -27,14 +29,13 @@ import {
 } from '../utils/partnerYoutubeHelpers.js';
 
 export type AppendGameActivityLog = (
-  pool: Pool,
+  _q: unknown,
   userId: number,
   action: string,
   meta: Record<string, unknown>
 ) => Promise<void>;
 
 export type PartnerYoutubeDeps = {
-  pool: Pool;
   authenticateToken: RequestHandler;
   isAdmin: RequestHandler;
   appendGameActivityLog: AppendGameActivityLog;
@@ -48,15 +49,15 @@ function uidNum(req: Request): number | null {
 }
 
 export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeDeps): void {
-  const { pool, authenticateToken, isAdmin, appendGameActivityLog } = deps;
+  const { authenticateToken, isAdmin, appendGameActivityLog } = deps;
 
   app.get('/api/partner-videos/public', async (req: Request, res: Response) => {
     try {
       const limit = Math.min(48, Math.max(1, parseInt(String(req.query.limit ?? '24'), 10) || 24));
       const offset = Math.max(0, parseInt(String(req.query.offset ?? '0'), 10) || 0);
-      const r = await listPartnerYoutubeApprovedPublic(pool, limit, offset);
+      const rows = await listPartnerYoutubeApprovedPublic(limit, offset);
       res.json({
-        videos: r.rows.map((row) => ({
+        videos: rows.map((row) => ({
           id: row.id,
           title: row.title,
           youtubeUrl: row.youtube_url,
@@ -83,17 +84,17 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       return;
     }
     try {
-      const idSet = await getPartnerAccessLevelIdsLower(pool, uid);
-      const manualListed = await isPartnerYoutubeManualAllowlisted(pool, uid);
+      const idSet = await getPartnerAccessLevelIdsLower(uid);
+      const manualListed = await isPartnerYoutubeManualAllowlisted(uid);
       const isPartner = userAccessSetHasPartnerLevel(idSet) || manualListed;
       const dayStart = partnerYoutubeUtcDayStartMs(Date.now());
-      const usedToday = await countPartnerSubmissionsForUserSince(pool, uid, dayStart);
-      const listRes = await listPartnerYoutubeByUser(pool, uid);
+      const usedToday = await countPartnerSubmissionsForUserSince(uid, dayStart);
+      const listRows = await listPartnerYoutubeByUser(uid);
       res.json({
         isPartner,
         canSubmitToday: isPartner && usedToday < 1,
         submissionsToday: usedToday,
-        submissions: listRes.rows.map((row) => ({
+        submissions: listRows.map((row) => ({
           id: row.id,
           title: row.title,
           youtubeUrl: row.youtube_url,
@@ -136,8 +137,8 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
     }
     const canonicalUrl = `https://www.youtube.com/watch?v=${vid}`;
     try {
-      const idSet = await getPartnerAccessLevelIdsLower(pool, uid);
-      const manualListed = await isPartnerYoutubeManualAllowlisted(pool, uid);
+      const idSet = await getPartnerAccessLevelIdsLower(uid);
+      const manualListed = await isPartnerYoutubeManualAllowlisted(uid);
       if (!userAccessSetHasPartnerLevel(idSet) && !manualListed) {
         res.status(403).json({
           error:
@@ -146,7 +147,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
         return;
       }
       const dayStart = partnerYoutubeUtcDayStartMs(Date.now());
-      const usedToday = await countPartnerSubmissionsForUserSince(pool, uid, dayStart);
+      const usedToday = await countPartnerSubmissionsForUserSince(uid, dayStart);
       if (usedToday >= 1) {
         res.status(429).json({
           error: 'Limite de 1 envio por dia (UTC) atingido. Volta amanhã.',
@@ -156,7 +157,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       }
       const id = crypto.randomUUID();
       const now = Date.now();
-      await insertPartnerYoutubeSubmission(pool, {
+      await insertPartnerYoutubeSubmission({
         id,
         userId: uid,
         title,
@@ -166,7 +167,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
         createdAt: now
       });
       try {
-        await appendGameActivityLog(pool, uid, 'partner_youtube_submit', { submissionId: id, videoId: vid });
+        await appendGameActivityLog(null, uid, 'partner_youtube_submit', { submissionId: id, videoId: vid });
       } catch {
         /* ignore */
       }
@@ -192,38 +193,32 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
         return;
       }
       try {
-        const ur = raw.includes('@')
-          ? await pool.query(
-              `SELECT id FROM users WHERE LOWER(TRIM(email)) = LOWER(TRIM($1)) LIMIT 3`,
-              [raw]
-            )
-          : await pool.query(
-              `SELECT id FROM users WHERE LOWER(TRIM(username)) = LOWER(TRIM($1)) LIMIT 3`,
-              [raw]
-            );
-        if (ur.rows.length === 0) {
+        const ids = raw.includes('@')
+          ? await findUserIdsByNormalizedEmail(raw)
+          : await findUserIdsByNormalizedUsername(raw);
+        if (ids.length === 0) {
           res.status(404).json({ error: 'Utilizador não encontrado.' });
           return;
         }
-        if (ur.rows.length > 1) {
+        if (ids.length > 1) {
           res.status(400).json({ error: 'Vários resultados; escolhe na lista pelo ID ou refina a pesquisa.' });
           return;
         }
-        userId = Number((ur.rows[0] as { id: number }).id);
+        userId = ids[0];
       } catch (e) {
         console.error('[POST /api/admin/partner-youtube-allowlist] lookup', e);
         res.status(500).json({ error: 'Erro ao procurar utilizador.' });
         return;
       }
     } else {
-      const ex = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
-      if (!ex.rows[0]) {
+      const ok = await userExistsById(userId);
+      if (!ok) {
         res.status(404).json({ error: 'Utilizador não encontrado.' });
         return;
       }
     }
     try {
-      const inserted = await addPartnerYoutubeManualAllowlist(pool, userId, adminId, Date.now());
+      const inserted = await addPartnerYoutubeManualAllowlist(userId, adminId, Date.now());
       res.json({ ok: true, inserted, userId });
     } catch (e) {
       console.error('[POST /api/admin/partner-youtube-allowlist]', e);
@@ -242,7 +237,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       return;
     }
     try {
-      const removed = await removePartnerYoutubeManualAllowlist(pool, targetId);
+      const removed = await removePartnerYoutubeManualAllowlist(targetId);
       if (!removed) {
         res.status(404).json({ error: 'Este utilizador não está na lista manual.' });
         return;
@@ -256,9 +251,9 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
 
   app.get('/api/admin/partner-youtube-partners', isAdmin, async (_req: Request, res: Response) => {
     try {
-      const r = await listPartnerYoutubePartnersForAdmin(pool);
+      const partnerRows = await listPartnerYoutubePartnersForAdmin();
       res.json({
-        partners: r.rows.map((row) => ({
+        partners: partnerRows.map((row) => ({
           userId: row.user_id,
           username: row.username,
           email: row.email,
@@ -279,9 +274,9 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
     const statusFilter =
       st === 'pending' || st === 'approved' || st === 'rejected' ? (st as 'pending' | 'approved' | 'rejected') : 'all';
     try {
-      const r = await listPartnerYoutubeSubmissionsForAdmin(pool, statusFilter);
+      const subRows = await listPartnerYoutubeSubmissionsForAdmin(statusFilter);
       res.json({
-        submissions: r.rows.map((row) => ({
+        submissions: subRows.map((row) => ({
           id: row.id,
           userId: row.user_id,
           username: row.username,
@@ -315,7 +310,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       return;
     }
     try {
-      const n = await updatePartnerYoutubeApprove(pool, id, adminId, Date.now());
+      const n = await updatePartnerYoutubeApprove(id, adminId, Date.now());
       if (!n) {
         res.status(404).json({ error: 'Envio não encontrado ou já processado.' });
         return;
@@ -341,7 +336,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
     const body = (req.body || {}) as { reason?: unknown };
     const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 500) : '';
     try {
-      const n = await updatePartnerYoutubeReject(pool, id, adminId, reason || null, Date.now());
+      const n = await updatePartnerYoutubeReject(id, adminId, reason || null, Date.now());
       if (!n) {
         res.status(404).json({ error: 'Envio não encontrado ou já processado.' });
         return;
@@ -360,7 +355,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       return;
     }
     try {
-      const row = await getPartnerYoutubeCreatorProfile(pool, uid);
+      const row = await getPartnerYoutubeCreatorProfile(uid);
       res.json({
         channelUrl: row?.channel_url ?? '',
         avatarUrl: row?.avatar_url ?? ''
@@ -396,7 +391,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       return;
     }
     try {
-      await upsertPartnerYoutubeCreatorProfile(pool, {
+      await upsertPartnerYoutubeCreatorProfile({
         userId: uid,
         channelUrl,
         avatarUrl,
@@ -421,7 +416,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       return;
     }
     try {
-      const n = await deletePartnerYoutubeSubmission(pool, raw);
+      const n = await deletePartnerYoutubeSubmission(raw);
       if (!n) {
         res.status(404).json({ error: 'Envio não encontrado.' });
         return;

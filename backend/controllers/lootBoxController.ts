@@ -1,11 +1,16 @@
 import type { Express, Request, RequestHandler, Response } from 'express';
-import type { Pool, PoolClient } from 'pg';
+import { prisma } from '../config/prisma.js';
+import { prismaSqlTx } from '../lib/sqlTransaction.js';
 import {
-  rollLootBoxOnce,
-  rollLootBoxGrantAll,
   parseLootBoxId,
   deleteLootBoxCascade,
-  isLootBoxBrokenForSafeDelete
+  isLootBoxBrokenForSafeDelete,
+  executeLootBoxOpenInTransaction,
+  executeLootBoxBuyInTransaction,
+  executeLootBoxDiscardInTransaction,
+  LootBoxOpenError,
+  LootBoxBuyError,
+  LootBoxDiscardError
 } from '../models/lootBoxModel.js';
 import {
   assertEmailMatchesSession,
@@ -15,19 +20,23 @@ import {
 import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type LootBoxAdminDeps = {
-  pool: Pool;
   isAdmin: RequestHandler;
 };
 
+class LootBoxAdminUserError extends Error {
+  readonly status: number;
+  readonly body: Record<string, unknown>;
+  constructor(status: number, body: Record<string, unknown>) {
+    super(typeof body.error === 'string' ? String(body.error) : 'admin');
+    this.name = 'LootBoxAdminUserError';
+    this.status = status;
+    this.body = body;
+  }
+}
+
 export type LootBoxPlayerDeps = {
-  pool: Pool;
-  grantAdminUpgradeRewards: (
-    userId: number,
-    upgradeId: string,
-    client: PoolClient
-  ) => Promise<unknown>;
   appendGameActivityLog: (
-    q: Pool | PoolClient,
+    q: unknown,
     userId: number,
     action: string,
     meta: unknown
@@ -42,17 +51,22 @@ function uidNum(req: Request): number | null {
 }
 
 export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDeps): void {
-  const { pool, grantAdminUpgradeRewards, appendGameActivityLog } = deps;
+  const { appendGameActivityLog } = deps;
 
   app.get('/api/loot-boxes', async (req: Request, res: Response) => {
     try {
-      const boxesRes = await pool.query(
-        'SELECT * FROM loot_boxes ORDER BY COALESCE(is_active, 1) DESC, trigger ASC, name ASC, id ASC'
-      );
-      const boxIds = boxesRes.rows.map((r: { id: string }) => r.id);
-      const itemsRes = boxIds.length
-        ? await pool.query('SELECT * FROM loot_box_items WHERE box_id = ANY($1::text[])', [boxIds])
-        : { rows: [] as Record<string, unknown>[] };
+      const boxes = await prisma.loot_boxes.findMany({
+        orderBy: [
+          { is_active: 'desc' },
+          { trigger: 'asc' },
+          { name: 'asc' },
+          { id: 'asc' }
+        ]
+      });
+      const boxIds = boxes.map((b) => b.id);
+      const itemRows = boxIds.length
+        ? await prisma.loot_box_items.findMany({ where: { box_id: { in: boxIds } } })
+        : [];
       const itemMap: Record<
         string,
         Array<{
@@ -63,14 +77,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
           probability: number;
         }>
       > = {};
-      for (const it of itemsRes.rows as Array<{
-        box_id: string;
-        item_id: string;
-        item_type: string;
-        min_qty: number;
-        max_qty: number;
-        probability: number;
-      }>) {
+      for (const it of itemRows) {
         itemMap[it.box_id] = itemMap[it.box_id] || [];
         itemMap[it.box_id].push({
           id: it.item_id,
@@ -80,26 +87,16 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
           probability: it.probability
         });
       }
-      const resp = boxesRes.rows.map(
-        (b: {
-          id: string;
-          name: string;
-          description: string;
-          price: number;
-          trigger: string;
-          icon: string;
-          is_active?: number;
-        }) => ({
-          id: b.id,
-          name: b.name,
-          description: b.description,
-          price: b.price,
-          trigger: b.trigger,
-          icon: b.icon,
-          isActive: b.is_active === undefined ? true : !!b.is_active,
-          items: itemMap[b.id] || []
-        })
-      );
+      const resp = boxes.map((b) => ({
+        id: b.id,
+        name: b.name,
+        description: b.description,
+        price: b.price,
+        trigger: b.trigger,
+        icon: b.icon,
+        isActive: b.is_active === undefined || b.is_active === null ? true : !!b.is_active,
+        items: itemMap[b.id] || []
+      }));
       res.json(resp);
     } catch (e: unknown) {
       sendInternalErrorSafeMessage(res, req.originalUrl || 'loot-box', e, 'Erro ao listar caixas.');
@@ -118,10 +115,9 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       return;
     }
 
-    const client = await pool.connect();
     try {
       const emailGate = await assertEmailMatchesSession(
-        client,
+        prisma,
         userId,
         (req.body as { email?: unknown } | undefined)?.email
       );
@@ -130,104 +126,29 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
 
-      await client.query('BEGIN');
-
-      const boxCountRes = await client.query(
-        'SELECT qty FROM unopened_boxes WHERE user_id = $1 AND box_id = $2 FOR UPDATE',
-        [userId, boxId]
+      const { rewards, gainedUsdc, boxName } = await prisma.$transaction(
+        (tx) => executeLootBoxOpenInTransaction(tx, { userId, boxId }),
+        { timeout: 60_000, maxWait: 10_000 }
       );
-      const boxCount = boxCountRes.rows[0] as { qty: number } | undefined;
-      if (!boxCount || boxCount.qty < 1) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Não tens caixas deste tipo no inventário.' });
-        return;
-      }
 
-      const boxDefRes = await client.query('SELECT * FROM loot_boxes WHERE id = $1', [boxId]);
-      const boxDef = boxDefRes.rows[0] as { name: string; trigger?: string } | undefined;
-      if (!boxDef) {
-        await client.query('ROLLBACK');
-        res.status(404).json({ error: 'Caixa não encontrada.' });
-        return;
-      }
-
-      const itemsRes = await client.query('SELECT * FROM loot_box_items WHERE box_id = $1', [
-        boxId
-      ]);
-      const items = itemsRes.rows;
-      if (items.length === 0) {
-        await client.query('ROLLBACK');
-        console.error(
-          `[LootBox] Critical Error: Box ${boxId} ("${boxDef.name}") has no items configured.`
-        );
-        res.status(500).json({ error: 'Configuração da caixa inválida (sem itens).' });
-        return;
-      }
-
-      const isRegistrationBox = String(boxDef.trigger || '') === 'registration';
-      const { rewards, gainedUsdc, gainedItems, gainedCoins, gainedBundles } = isRegistrationBox
-        ? rollLootBoxGrantAll(items)
-        : rollLootBoxOnce(items);
-
-      if (boxCount.qty <= 1) {
-        await client.query('DELETE FROM unopened_boxes WHERE user_id = $1 AND box_id = $2', [
-          userId,
-          boxId
-        ]);
-      } else {
-        await client.query(
-          'UPDATE unopened_boxes SET qty = qty - 1 WHERE user_id = $1 AND box_id = $2',
-          [userId, boxId]
-        );
-      }
-
-      if (gainedUsdc > 0) {
-        await client.query(
-          `UPDATE game_states
-           SET usdc = COALESCE(usdc, 0) + $1,
-               usdc_bonus = COALESCE(usdc_bonus, 0) + $1
-           WHERE user_id = $2`,
-          [gainedUsdc, userId]
-        );
-      }
-
-      for (const [id, qty] of Object.entries(gainedItems)) {
-        await client.query(
-          'INSERT INTO stock (user_id, item_id, qty) VALUES ($1,$2,$3) ON CONFLICT(user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty',
-          [userId, id, qty]
-        );
-      }
-
-      for (const [id, qty] of Object.entries(gainedCoins)) {
-        await client.query(
-          'INSERT INTO coin_balances (user_id, coin_id, amount) VALUES ($1,$2,$3) ON CONFLICT(user_id, coin_id) DO UPDATE SET amount = coin_balances.amount + EXCLUDED.amount',
-          [userId, id, qty]
-        );
-      }
-
-      for (const b of gainedBundles) {
-        for (let i = 0; i < b.qty; i++) {
-          await grantAdminUpgradeRewards(userId, b.id, client);
-        }
-      }
-
-      await client.query('COMMIT');
-
-      const unameRes = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
-      const username = unameRes.rows[0]?.username || '';
+      const urow = await prisma.users.findUnique({
+        where: { id: userId },
+        select: { username: true }
+      });
+      const username = urow?.username || '';
       console.log(
         '[LootBoxOpen] ts=%s userId=%s username=%s boxId=%s boxName=%s rewards=%s gainedUsdc=%s',
         new Date().toISOString(),
         userId,
         username,
         boxId,
-        boxDef.name,
+        boxName,
         JSON.stringify(rewards),
         gainedUsdc
       );
-      await appendGameActivityLog(pool, userId, 'loot_box_open', {
+      await appendGameActivityLog(null, userId, 'loot_box_open', {
         boxId,
-        boxName: boxDef.name,
+        boxName,
         rewardCount: rewards.length,
         gainedUsdc,
         rewardsPreview: rewards.slice(0, 12)
@@ -235,15 +156,12 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
 
       res.json({ ok: true, rewards });
     } catch (err: unknown) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
+      if (err instanceof LootBoxOpenError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
       }
       console.error('[BoxOpen] Error:', err);
       res.status(500).json({ error: 'Erro ao abrir caixa.' });
-    } finally {
-      client.release();
     }
   });
 
@@ -259,10 +177,9 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       return;
     }
 
-    const client = await pool.connect();
     try {
       const emailGate = await assertEmailMatchesSession(
-        client,
+        prisma,
         userId,
         (req.body as { email?: unknown } | undefined)?.email
       );
@@ -271,122 +188,45 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
 
-      const boxRes = await client.query(
-        'SELECT * FROM loot_boxes WHERE id = $1 AND COALESCE(is_active, 1) = 1',
-        [boxId]
-      );
-      const box = boxRes.rows[0] as
-        | { trigger: string; price: number | string; name: string }
-        | undefined;
-      if (!box) {
-        res.status(404).json({ error: 'Caixa não encontrada.' });
-        return;
-      }
-      if (box.trigger !== 'shop' && box.trigger !== 'shop_once' && box.trigger !== 'special') {
-        res.status(400).json({ error: 'Esta caixa não está à venda na loja.' });
-        return;
-      }
-
-      const price = Number(box.price);
-      if (!Number.isFinite(price) || price <= 0 || price > 1e12) {
-        res.status(400).json({ error: 'Preço da caixa inválido ou não configurado para venda.' });
-        return;
-      }
-
-      await client.query('BEGIN');
-
-      const itemsCheck = await client.query(
-        'SELECT 1 FROM loot_box_items WHERE box_id = $1 LIMIT 1',
-        [boxId]
-      );
-      if (!itemsCheck.rowCount) {
-        await client.query('ROLLBACK');
-        res.status(400).json({
-          error: 'Esta caixa não tem prémios configurados e não pode ser vendida. Contacte o suporte.'
-        });
-        return;
-      }
-
-      if (box.trigger === 'shop_once') {
-        try {
-          await client.query(
-            'INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3)',
-            [userId, boxId, Date.now()]
-          );
-        } catch (insErr: unknown) {
-          const code = insErr && typeof insErr === 'object' && 'code' in insErr ? (insErr as { code?: string }).code : '';
-          if (code === '23505') {
-            await client.query('ROLLBACK');
-            res.status(400).json({ error: 'Esta caixa de compra única já foi resgatada.' });
-            return;
-          }
-          throw insErr;
-        }
-      }
-
-      const gsRes = await client.query(
-        'SELECT usdc FROM game_states WHERE user_id = $1 FOR UPDATE',
-        [userId]
-      );
-      const gs = gsRes.rows[0] as { usdc?: number } | undefined;
-      const bal = Number(gs?.usdc) || 0;
-      if (bal < price) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Saldo USDC insuficiente.' });
-        return;
-      }
-
-      const payRes = await client.query(
-        'UPDATE game_states SET usdc = usdc - $1, last_updated_at = $2, server_updated_at = $2 WHERE user_id = $3 AND usdc >= $1 RETURNING usdc',
-        [price, Date.now(), userId]
-      );
-      if (payRes.rowCount === 0) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Saldo USDC insuficiente.' });
-        return;
-      }
-
-      await client.query(
-        `INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1)
-         ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1`,
-        [userId, boxId]
+      const { newUsdc, boxName, trigger, price } = await prisma.$transaction(
+        (tx) => executeLootBoxBuyInTransaction(tx, { userId, boxId }),
+        { timeout: 60_000, maxWait: 10_000 }
       );
 
-      await client.query('COMMIT');
-
-      const newUsdc = (payRes.rows[0] as { usdc: number }).usdc;
-      const unameRes = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
-      const username = unameRes.rows[0]?.username || '';
+      const urow = await prisma.users.findUnique({
+        where: { id: userId },
+        select: { username: true }
+      });
+      const username = urow?.username || '';
       console.log(
         '[LootBoxBuy] ts=%s userId=%s username=%s boxId=%s boxName=%s priceUsdc=%s newUsdc=%s trigger=%s',
         new Date().toISOString(),
         userId,
         username,
         boxId,
-        box.name,
+        boxName,
         price.toFixed(6),
         Number(newUsdc).toFixed(6),
-        box.trigger
+        trigger
       );
-      await appendGameActivityLog(pool, userId, 'loot_box_buy', {
+      await appendGameActivityLog(null, userId, 'loot_box_buy', {
         boxId,
-        boxName: box.name,
+        boxName,
         priceUsdc: Number(price.toFixed(6)),
         newUsdc: Number(Number(newUsdc).toFixed(6)),
-        trigger: box.trigger
+        trigger
       });
 
       res.json({ ok: true, newUsdc });
     } catch (err: unknown) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
+      if (err instanceof LootBoxBuyError) {
+        const body: { error: string; missing?: number } = { error: err.message };
+        if (err.missing != null) body.missing = err.missing;
+        res.status(err.statusCode).json(body);
+        return;
       }
       console.error('[BoxBuy] Error:', err);
       res.status(500).json({ error: 'Erro ao comprar caixa.' });
-    } finally {
-      client.release();
     }
   });
 
@@ -407,10 +247,9 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       return;
     }
 
-    const client = await pool.connect();
     try {
       const emailGate = await assertEmailMatchesSession(
-        client,
+        prisma,
         userId,
         (req.body as { email?: unknown } | undefined)?.email
       );
@@ -419,79 +258,46 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
 
-      await client.query('BEGIN');
-
-      const boxCountRes = await client.query(
-        'SELECT qty FROM unopened_boxes WHERE user_id = $1 AND box_id = $2 FOR UPDATE',
-        [userId, boxId]
+      const { discardedQty, remainingQty, boxName } = await prisma.$transaction(
+        (tx) => executeLootBoxDiscardInTransaction(tx, { userId, boxId, qtySpec }),
+        { timeout: 60_000, maxWait: 10_000 }
       );
-      const boxCount = boxCountRes.rows[0] as { qty: number } | undefined;
-      const owned = boxCount?.qty ?? 0;
-      if (!boxCount || owned < 1) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Não tens caixas deste tipo no inventário.' });
-        return;
-      }
 
-      const toRemove = qtySpec === 'all' ? owned : Math.min(qtySpec, owned);
-      if (toRemove < 1) {
-        await client.query('ROLLBACK');
-        res.status(400).json({ error: 'Quantidade inválida.' });
-        return;
-      }
-
-      if (owned <= toRemove) {
-        await client.query('DELETE FROM unopened_boxes WHERE user_id = $1 AND box_id = $2', [
-          userId,
-          boxId
-        ]);
-      } else {
-        await client.query(
-          'UPDATE unopened_boxes SET qty = qty - $1 WHERE user_id = $2 AND box_id = $3',
-          [toRemove, userId, boxId]
-        );
-      }
-
-      await client.query('COMMIT');
-
-      const remaining = owned - toRemove;
-      const boxNameRes = await pool.query('SELECT name FROM loot_boxes WHERE id = $1', [boxId]);
-      const boxName = (boxNameRes.rows[0] as { name?: string } | undefined)?.name || boxId;
-      const unameRes = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
-      const username = unameRes.rows[0]?.username || '';
+      const urow = await prisma.users.findUnique({
+        where: { id: userId },
+        select: { username: true }
+      });
+      const username = urow?.username || '';
       console.log(
         '[LootBoxDiscard] ts=%s userId=%s username=%s boxId=%s discardedQty=%s remaining=%s',
         new Date().toISOString(),
         userId,
         username,
         boxId,
-        toRemove,
-        remaining
+        discardedQty,
+        remainingQty
       );
-      await appendGameActivityLog(pool, userId, 'loot_box_discard', {
+      await appendGameActivityLog(null, userId, 'loot_box_discard', {
         boxId,
         boxName,
-        discardedQty: toRemove,
-        remainingQty: remaining
+        discardedQty,
+        remainingQty
       });
 
-      res.json({ ok: true, discardedQty: toRemove, remainingQty: remaining });
+      res.json({ ok: true, discardedQty, remainingQty });
     } catch (err: unknown) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
+      if (err instanceof LootBoxDiscardError) {
+        res.status(err.statusCode).json({ error: err.message });
+        return;
       }
       console.error('[BoxDiscard] Error:', err);
       res.status(500).json({ error: 'Erro ao descartar caixa(s).' });
-    } finally {
-      client.release();
     }
   });
 }
 
 export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps): void {
-  const { pool, isAdmin } = deps;
+  const { isAdmin } = deps;
 
   app.delete('/api/admin/loot-boxes/:boxId', isAdmin, async (req: Request, res: Response) => {
     const boxId = parseLootBoxId(req.params.boxId);
@@ -504,31 +310,32 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
     const brokenOnly =
       q === '1' || q === 'true' || q === 'yes' || String(q).toLowerCase() === 'on';
 
-    const client = await pool.connect();
     try {
-      await client.query('BEGIN');
-      const exists = await client.query('SELECT id, name FROM loot_boxes WHERE id = $1', [boxId]);
-      if (exists.rowCount === 0) {
-        await client.query('ROLLBACK');
-        res.status(404).json({ error: 'Caixa não encontrada.' });
-        return;
-      }
-      const boxName = (exists.rows[0] as { name: string }).name;
-
-      if (brokenOnly) {
-        const broken = await isLootBoxBrokenForSafeDelete(client, boxId);
-        if (!broken) {
-          await client.query('ROLLBACK');
-          res.status(409).json({
-            error:
-              'A caixa ainda tem itens com probabilidade > 0. Remova brokenOnly=1 para apagar à força, ou zere as probabilidades no editor.'
-          });
-          return;
-        }
-      }
-
-      const summary = await deleteLootBoxCascade(client, boxId);
-      await client.query('COMMIT');
+      const { boxName, summary } = await prisma.$transaction(
+        async (tx) => {
+          const sql = prismaSqlTx(tx);
+          const exists = await sql.queryRows<{ id: string; name: string }>(
+            'SELECT id, name FROM loot_boxes WHERE id = $1',
+            [boxId]
+          );
+          if (exists.length === 0) {
+            throw new LootBoxAdminUserError(404, { error: 'Caixa não encontrada.' });
+          }
+          const name = exists[0]!.name;
+          if (brokenOnly) {
+            const broken = await isLootBoxBrokenForSafeDelete(sql, boxId);
+            if (!broken) {
+              throw new LootBoxAdminUserError(409, {
+                error:
+                  'A caixa ainda tem itens com probabilidade > 0. Remova brokenOnly=1 para apagar à força, ou zere as probabilidades no editor.'
+              });
+            }
+          }
+          const summary = await deleteLootBoxCascade(sql, boxId);
+          return { boxName: name, summary };
+        },
+        { timeout: 60_000, maxWait: 10_000 }
+      );
 
       console.log('[LootBoxAdminDelete]', {
         boxId,
@@ -539,15 +346,12 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
 
       res.json({ ok: true, summary });
     } catch (e: unknown) {
-      try {
-        await client.query('ROLLBACK');
-      } catch {
-        /* ignore */
+      if (e instanceof LootBoxAdminUserError) {
+        res.status(e.status).json(e.body);
+        return;
       }
       console.error('[LootBoxAdminDelete] Error:', e);
       sendInternalErrorSafeMessage(res, req.originalUrl || 'loot-box', e, 'Falha ao apagar caixa.');
-    } finally {
-      client.release();
     }
   });
 }

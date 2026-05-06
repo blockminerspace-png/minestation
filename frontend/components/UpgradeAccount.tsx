@@ -4,7 +4,8 @@ import type { Config } from 'dompurify';
 import type { LucideIcon } from 'lucide-react';
 import { AccessLevel, User, SeasonPass, SeasonPurchase, AdminUpgrade, Upgrade, LootBox, MiningCoin, RigRoom } from '../types';
 import { Crown, CheckCircle2, ShieldCheck, Zap, Rocket, Gift } from 'lucide-react';
-import { getSeasonPasses, getSeasonPurchases, purchaseSeasonPass, getAdminUpgrades, purchaseAdminUpgrade, getUpgrades, getLootBoxes, getAdminUpgradePurchases, getMiningCoins, getMyRigRooms } from '../services/api';
+import { getSeasonPasses, getSeasonPurchases, getAdminUpgrades, purchaseAdminUpgrade, getUpgrades, getLootBoxes, getAdminUpgradePurchases, getMiningCoins, getMyRigRooms } from '../services/api';
+import { appendUsdcShortfallLine } from '../utils/playerMoneyMessages';
 
 interface UpgradeAccountProps {
   user: User;
@@ -198,7 +199,7 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
     } else if (res && res.missing && onSuggestDeposit) {
       onSuggestDeposit(parseFloat(res.missing.toFixed(2)));
     } else if (res && res.error) {
-      alert(res.error);
+      alert(appendUsdcShortfallLine(res.error, res.missing));
     }
   };
 

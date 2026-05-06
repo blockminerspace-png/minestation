@@ -1,11 +1,11 @@
-import type { PoolClient } from 'pg';
+import type { Prisma } from '@prisma/client';
 import { RoletaAppError } from '../validation/roletaValidation.js';
 import { promoCodeRowEligibleForRoletaFlow, throwIfPromoCodeExpired } from './promoCodeRoleta.js';
 
 export type GrantAdminUpgradeRewardsFn = (
   userId: number,
   upgradeId: string,
-  client: PoolClient
+  tx: Prisma.TransactionClient
 ) => Promise<unknown>;
 
 export type PromoRedeemTransactionResult =
@@ -33,16 +33,47 @@ type PromoRow = {
   upgrade_id: string | null;
   admin_upgrade_id: string | null;
   type: string;
-  is_active: number;
-  expires_at?: number | null;
+  is_active: number | null;
+  expires_at?: bigint | number | null;
 };
 
+function promoRowFromPrisma(p: {
+  code: string;
+  loot_box_id: string | null;
+  upgrade_id: string | null;
+  admin_upgrade_id: string | null;
+  type: string;
+  is_active: number | null;
+  expires_at: bigint | null;
+}): PromoRow {
+  return {
+    code: p.code,
+    loot_box_id: p.loot_box_id,
+    upgrade_id: p.upgrade_id,
+    admin_upgrade_id: p.admin_upgrade_id,
+    type: p.type,
+    is_active: p.is_active,
+    expires_at: p.expires_at
+  };
+}
+
+function mapRawPromoRow(r: Record<string, unknown>): PromoRow {
+  return {
+    code: String(r.code),
+    loot_box_id: (r.loot_box_id as string | null) ?? null,
+    upgrade_id: (r.upgrade_id as string | null) ?? null,
+    admin_upgrade_id: (r.admin_upgrade_id as string | null) ?? null,
+    type: String(r.type),
+    is_active: r.is_active == null ? null : Number(r.is_active),
+    expires_at: r.expires_at as bigint | number | null | undefined
+  };
+}
+
 /**
- * Corpo da transação de resgate (já dentro de `BEGIN`).
- * Usa apenas queries parametrizadas.
+ * Corpo da transação de resgate (dentro de `prisma.$transaction`).
  */
 export async function runPromoCodeRedeemInTransaction(
-  client: PoolClient,
+  tx: Prisma.TransactionClient,
   args: {
     userId: number;
     normalizedCode: string;
@@ -52,8 +83,10 @@ export async function runPromoCodeRedeemInTransaction(
 ): Promise<PromoRedeemTransactionResult> {
   const { userId, normalizedCode, serverNowMs, grantAdminUpgradeRewards } = args;
 
-  let codeRows = await client.query(`SELECT * FROM promo_codes WHERE code = $1`, [normalizedCode]);
-  let promo = codeRows.rows[0] as PromoRow | undefined;
+  let promoRow = await tx.promo_codes.findUnique({
+    where: { code: normalizedCode }
+  });
+  let promo = promoRow ? promoRowFromPrisma(promoRow) : undefined;
 
   if (!promo) {
     throw new RoletaAppError('Código inválido', 404);
@@ -65,18 +98,22 @@ export async function runPromoCodeRedeemInTransaction(
 
   throwIfPromoCodeExpired(promo, serverNowMs);
 
-  const treatAsRoleta = await promoCodeRowEligibleForRoletaFlow(client, promo);
+  const treatAsRoleta = await promoCodeRowEligibleForRoletaFlow(tx, promo);
 
   if (
     promo.type === 'global_once' ||
     promo.type === 'roleta_global_1x' ||
     promo.type === 'roleta_player_1x'
   ) {
-    codeRows = await client.query(`SELECT * FROM promo_codes WHERE code = $1 FOR UPDATE`, [
-      normalizedCode
-    ]);
-    promo = codeRows.rows[0] as PromoRow | undefined;
-    if (!promo?.is_active) {
+    const locked = await tx.$queryRaw<Array<Record<string, unknown>>>`
+      SELECT * FROM promo_codes WHERE code = ${normalizedCode} FOR UPDATE
+    `;
+    const raw = locked[0];
+    if (!raw) {
+      throw new RoletaAppError('Código inválido', 404);
+    }
+    promo = mapRawPromoRow(raw);
+    if (!promo.is_active) {
       throw new RoletaAppError('Expirado.', 404);
     }
     throwIfPromoCodeExpired(promo, serverNowMs);
@@ -87,73 +124,90 @@ export async function runPromoCodeRedeemInTransaction(
     promo.type === 'roleta_global_1x' ||
     promo.type === 'roleta_player_1x'
   ) {
-    const globalCheck = await client.query(
-      `SELECT 1 FROM promo_code_redemptions WHERE code = $1 LIMIT 1`,
-      [promo.code]
-    );
-    if (globalCheck.rowCount && globalCheck.rowCount > 0) {
+    const globalRedeem = await tx.promo_code_redemptions.findFirst({
+      where: { code: promo.code },
+      select: { code: true }
+    });
+    if (globalRedeem) {
       throw new RoletaAppError('Este código já foi resgatado.', 400);
     }
   }
 
-  const userCheck = await client.query(
-    `SELECT reward_granted FROM promo_code_redemptions WHERE code = $1 AND user_id = $2`,
-    [promo.code, userId]
-  );
+  const existingUserRedeem = await tx.promo_code_redemptions.findUnique({
+    where: { code_user_id: { code: promo.code, user_id: userId } },
+    select: { reward_granted: true }
+  });
 
-  if (userCheck.rowCount && userCheck.rowCount > 0) {
-    const rg = (userCheck.rows[0] as { reward_granted: number }).reward_granted;
+  if (existingUserRedeem) {
+    const rg = existingUserRedeem.reward_granted ?? 1;
     if (treatAsRoleta && rg === 0) {
       return { kind: 'roleta_reentry', code: promo.code };
     }
     throw new RoletaAppError('Você já resgatou este código.', 400);
   }
 
+  const redeemedAt = BigInt(serverNowMs);
+
   if (treatAsRoleta) {
-    await client.query(
-      `INSERT INTO promo_code_redemptions (code, user_id, redeemed_at, reward_granted)
-       VALUES ($1, $2, $3, 0)`,
-      [promo.code, userId, serverNowMs]
-    );
+    await tx.promo_code_redemptions.create({
+      data: {
+        code: promo.code,
+        user_id: userId,
+        redeemed_at: redeemedAt,
+        reward_granted: 0
+      }
+    });
     return { kind: 'roleta_new', code: promo.code, serverNowMs };
   }
 
-  await client.query(
-    `INSERT INTO promo_code_redemptions (code, user_id, redeemed_at) VALUES ($1, $2, $3)`,
-    [promo.code, userId, serverNowMs]
-  );
+  await tx.promo_code_redemptions.create({
+    data: {
+      code: promo.code,
+      user_id: userId,
+      redeemed_at: redeemedAt
+    }
+  });
 
   if (promo.loot_box_id) {
-    await client.query(
-      `INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1)
-       ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1`,
-      [userId, promo.loot_box_id]
-    );
+    const bid = String(promo.loot_box_id).trim();
+    await tx.unopened_boxes.upsert({
+      where: { user_id_box_id: { user_id: userId, box_id: bid } },
+      create: { user_id: userId, box_id: bid, qty: 1 },
+      update: { qty: { increment: 1 } }
+    });
   } else if (promo.upgrade_id) {
-    await client.query(
-      `INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, 1)
-       ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + 1`,
-      [userId, promo.upgrade_id]
-    );
+    const iid = String(promo.upgrade_id).trim();
+    await tx.stock.upsert({
+      where: { user_id_item_id: { user_id: userId, item_id: iid } },
+      create: { user_id: userId, item_id: iid, qty: 1 },
+      update: { qty: { increment: 1 } }
+    });
   } else if (promo.admin_upgrade_id) {
-    await grantAdminUpgradeRewards(userId, promo.admin_upgrade_id, client);
+    await grantAdminUpgradeRewards(userId, String(promo.admin_upgrade_id).trim(), tx);
   }
 
   if (promo.type === 'global_once') {
-    await client.query(`UPDATE promo_codes SET is_active = 0 WHERE code = $1`, [normalizedCode]);
+    await tx.promo_codes.update({
+      where: { code: normalizedCode },
+      data: { is_active: 0 }
+    });
   }
 
-  const boxesRes = await client.query(`SELECT box_id, qty FROM unopened_boxes WHERE user_id = $1`, [
-    userId
-  ]);
+  const boxesRes = await tx.unopened_boxes.findMany({
+    where: { user_id: userId },
+    select: { box_id: true, qty: true }
+  });
   const unopenedBoxes: Record<string, number> = {};
-  for (const r of boxesRes.rows as Array<{ box_id: string; qty: number }>) {
+  for (const r of boxesRes) {
     unopenedBoxes[r.box_id] = r.qty;
   }
 
-  const stockRes = await client.query(`SELECT item_id, qty FROM stock WHERE user_id = $1`, [userId]);
+  const stockRes = await tx.stock.findMany({
+    where: { user_id: userId },
+    select: { item_id: true, qty: true }
+  });
   const stock: Record<string, number> = {};
-  for (const r of stockRes.rows as Array<{ item_id: string; qty: number }>) {
+  for (const r of stockRes) {
     stock[r.item_id] = r.qty;
   }
 

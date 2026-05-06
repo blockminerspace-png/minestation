@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Sparkles, Ticket, DollarSign } from 'lucide-react';
+import { Sparkles, Ticket, DollarSign, Loader2 } from 'lucide-react';
 import type { Upgrade } from '../types';
 import GameView from './roleta/GameView';
 import { getPendingRoletaCode } from '../services/api';
@@ -100,8 +100,9 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
       }
     } catch {
       setNotice({ variant: 'error', message: 'Falha na comunicação com o servidor' });
+    } finally {
+      setRedeeming(false);
     }
-    setRedeeming(false);
   }, [promoCode, onRedeemSuccess]);
 
   const clearRoletaSession = useCallback(() => {
@@ -193,9 +194,16 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
                     type="button"
                     onClick={handleRedeem}
                     disabled={redeeming || !promoCode.trim() || Boolean(roletaCode)}
-                    className="inline-flex min-h-[44px] flex-1 items-center justify-center rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 px-6 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-orange-900/25 transition hover:from-orange-500 hover:to-amber-500 disabled:pointer-events-none disabled:opacity-40 sm:min-h-[48px] sm:flex-none sm:px-8 sm:text-sm"
+                    className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 px-6 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-orange-900/25 transition hover:from-orange-500 hover:to-amber-500 disabled:pointer-events-none disabled:opacity-40 sm:min-h-[48px] sm:flex-none sm:px-8 sm:text-sm"
                   >
-                    {redeeming ? 'A resgatar…' : 'Resgatar'}
+                    {redeeming ? (
+                      <>
+                        <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                        A resgatar
+                      </>
+                    ) : (
+                      'Resgatar'
+                    )}
                   </button>
                   {roletaCode ? (
                     <button

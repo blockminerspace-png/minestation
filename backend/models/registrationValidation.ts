@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import { prisma } from '../config/prisma.js';
 
 /** Cadastro público: apenas estes domínios (login continua permitindo qualquer e-mail já registado). */
 export const SIGNUP_ALLOWED_DOMAINS = new Set([
@@ -264,36 +264,40 @@ export function validateOptionalAccessLevelId(raw: unknown): string | null | { e
 
 /** Outro utilizador já usa este nome (comparação case-insensitive). */
 export async function getConflictingUserIdByUsername(
-  pool: Pool,
   username: string,
   excludeUserId?: number | string | null
 ): Promise<number | null> {
-  if (excludeUserId == null || excludeUserId === '') {
-    const r = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1) LIMIT 1', [username]);
-    return r.rows[0]?.id ?? null;
-  }
-  const r = await pool.query('SELECT id FROM users WHERE LOWER(username) = LOWER($1) AND id <> $2 LIMIT 1', [
-    username,
-    excludeUserId
-  ]);
-  return r.rows[0]?.id ?? null;
+  const ex =
+    excludeUserId != null && excludeUserId !== ''
+      ? { not: Number(excludeUserId) }
+      : undefined;
+  const r = await prisma.users.findFirst({
+    where: {
+      username: { equals: username, mode: 'insensitive' },
+      ...(ex != null ? { id: ex } : {})
+    },
+    select: { id: true }
+  });
+  return r?.id ?? null;
 }
 
 /** E-mail já associado a outra conta. */
 export async function getConflictingUserIdByEmail(
-  pool: Pool,
   email: string,
   excludeUserId?: number | string | null
 ): Promise<number | null> {
-  if (excludeUserId == null || excludeUserId === '') {
-    const r = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1', [email]);
-    return r.rows[0]?.id ?? null;
-  }
-  const r = await pool.query('SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id <> $2 LIMIT 1', [
-    email,
-    excludeUserId
-  ]);
-  return r.rows[0]?.id ?? null;
+  const ex =
+    excludeUserId != null && excludeUserId !== ''
+      ? { not: Number(excludeUserId) }
+      : undefined;
+  const r = await prisma.users.findFirst({
+    where: {
+      email: { equals: email, mode: 'insensitive' },
+      ...(ex != null ? { id: ex } : {})
+    },
+    select: { id: true }
+  });
+  return r?.id ?? null;
 }
 
 export function validateAccessLevelIdsArray(raw: unknown): { ok: true; ids: string[] } | { ok: false; error: string } {

@@ -67,6 +67,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const [userActivityLogs, setUserActivityLogs] = useState<GameUserActivityEntry[]>([]);
     const [userActivityLoading, setUserActivityLoading] = useState(false);
     const [userActivityError, setUserActivityError] = useState<string | null>(null);
+    const [userActivityMongoNote, setUserActivityMongoNote] = useState<string | null>(null);
     const [activityLogFilterId, setActivityLogFilterId] = useState<string>('all');
     const [activityLogSearch, setActivityLogSearch] = useState('');
     const [miningCoins, setMiningCoinsState] = useState<{ id: string; name: string }[]>([]);
@@ -197,7 +198,8 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         (async () => {
             setUserActivityLoading(true);
             setUserActivityError(null);
-            const { logs, error } = await getAdminUserActivity(selectedUser.email || '', {
+            setUserActivityMongoNote(null);
+            const { logs, error, activityLogNote } = await getAdminUserActivity(selectedUser.email || '', {
                 userId: dbId,
                 limit: 150
             });
@@ -208,6 +210,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                 setUserActivityLogs([]);
             } else {
                 setUserActivityLogs(logs);
+                setUserActivityMongoNote(activityLogNote ?? null);
             }
         })();
         return () => {
@@ -220,6 +223,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         setSaveTab('stock');
         setUserActivityLogs([]);
         setUserActivityError(null);
+        setUserActivityMongoNote(null);
         setActivityLogFilterId('all');
         setActivityLogSearch('');
         setEditProfileForm({
@@ -949,7 +953,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                 type="button"
                                 onClick={() => setSaveTab('logs')}
                                 className={`shrink-0 px-3 py-1 rounded text-xs font-bold inline-flex items-center gap-1 ring-inset ${saveTab === 'logs' ? 'bg-amber-600 text-white ring-2 ring-amber-400/80' : 'bg-slate-700 text-slate-200 ring-1 ring-amber-600/40'}`}
-                                title="Eventos gravados pelo servidor: caixas, roleta, códigos, depósitos (tabela game_activity_logs)."
+                                title="Eventos gravados no MongoDB (coleção game_activity_logs): caixas, roleta, códigos, depósitos."
                             >
                                 <History size={12} /> Atividade
                             </button>
@@ -974,7 +978,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                         <div className="flex-1 overflow-y-auto custom-scrollbar">
                             <div className="space-y-3">
                                 <p className="text-[11px] text-slate-500">
-                                    Linhas da tabela <span className="font-mono text-slate-400">game_activity_logs</span> para{' '}
+                                    Eventos na base Mongo <span className="font-mono text-slate-400">game_activity_logs</span> para{' '}
                                     <span className="font-mono text-slate-300">{selectedUser?.email}</span>
                                     {selectedUserDbId(selectedUser) != null ? (
                                         <span className="text-slate-500"> (user #{selectedUserDbId(selectedUser)})</span>
@@ -1026,6 +1030,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                 {!userActivityLoading && userActivityError && (
                                     <div className="rounded-lg border border-amber-700/50 bg-amber-950/30 px-3 py-2 text-sm text-amber-200">{userActivityError}</div>
                                 )}
+                                {!userActivityLoading && !userActivityError && userActivityMongoNote && (
+                                    <div className="rounded-lg border border-sky-800/60 bg-sky-950/40 px-3 py-2 text-xs text-sky-100">
+                                        {userActivityMongoNote}
+                                    </div>
+                                )}
                                 {!userActivityLoading && !userActivityError && (
                                     <div className="rounded-lg border border-slate-700 overflow-hidden">
                                         <table className="w-full text-left text-xs">
@@ -1060,7 +1069,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                                 ) : (
                                                     <tr>
                                                         <td colSpan={3} className="px-4 py-8 text-center text-slate-500 italic">
-                                                            Nenhum evento registado para esta conta (ou a tabela de logs ainda não recebeu dados).
+                                                            Nenhum evento registado para esta conta (MongoDB vazio ou sem MONGODB_URI no servidor).
                                                         </td>
                                                     </tr>
                                                 )}
@@ -1076,15 +1085,19 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                             const dbId = selectedUserDbId(selectedUser);
                                             if (!selectedUser.email?.trim() && !dbId) return;
                                             setUserActivityLoading(true);
-                                            getAdminUserActivity(selectedUser.email || '', { userId: dbId, limit: 150 }).then(({ logs, error }) => {
-                                                setUserActivityLoading(false);
-                                                if (error) {
-                                                    setUserActivityError(error);
-                                                    setUserActivityLogs([]);
-                                                } else {
-                                                    setUserActivityLogs(logs);
+                                            getAdminUserActivity(selectedUser.email || '', { userId: dbId, limit: 150 }).then(
+                                                ({ logs, error, activityLogNote }) => {
+                                                    setUserActivityLoading(false);
+                                                    if (error) {
+                                                        setUserActivityError(error);
+                                                        setUserActivityLogs([]);
+                                                        setUserActivityMongoNote(null);
+                                                    } else {
+                                                        setUserActivityLogs(logs);
+                                                        setUserActivityMongoNote(activityLogNote ?? null);
+                                                    }
                                                 }
-                                            });
+                                            );
                                         }}
                                         className="text-xs font-bold text-amber-500 hover:text-amber-400 uppercase"
                                     >

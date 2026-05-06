@@ -1,5 +1,4 @@
 import type { Express, Request, Response } from 'express';
-import type { Pool } from 'pg';
 import type bcryptjs from 'bcryptjs';
 import crypto from 'node:crypto';
 import {
@@ -13,6 +12,7 @@ import {
   updateUserPolygonAndAccess
 } from '../models/authModel.js';
 import { insertDeviceFingerprintLog, sanitizeDeviceFingerprint } from '../models/deviceFingerprintModel.js';
+import { logUserAction } from '../lib/mongoLogs.js';
 import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 import { resolveIsSuperAdminFromUserRow } from '../utils/legacySuperAdmin.js';
 import {
@@ -22,7 +22,6 @@ import {
 } from '../models/registrationValidation.js';
 
 export type AuthControllerDeps = {
-  pool: Pool;
   bcrypt: typeof bcryptjs;
   parseCookies: (req: Request) => Record<string, string>;
   getClientIp: (req: Request) => string;
@@ -62,7 +61,7 @@ function buildSessionUserJson(u: Record<string, unknown>, session: Record<string
 }
 
 export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void {
-  const { pool, bcrypt, parseCookies, getClientIp } = deps;
+  const { bcrypt, parseCookies, getClientIp } = deps;
 
   app.post('/api/login', async (req: Request, res: Response) => {
     const { email, password, deviceFingerprint } = (req.body || {}) as {
@@ -80,7 +79,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
     if (!passwordCheck.ok) return res.status(400).json({ error: passwordCheck.error });
     try {
       const normalizedEmail = emailStr.trim().toLowerCase();
-      let u = await findUserByEmail(pool, normalizedEmail);
+      let u = await findUserByEmail(normalizedEmail);
 
       if (!u) {
         await bcrypt.compare(passwordStr, '$2b$10$abcdefghijklmnopqrstuvwxyz123456');
@@ -91,7 +90,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
 
       if (!u.password) {
         const hashedPassword = await bcrypt.hash(passwordStr, 10);
-        await updateUserPasswordHash(pool, u.id as string | number, hashedPassword);
+        await updateUserPasswordHash(u.id as string | number, hashedPassword);
         u = { ...u, password: hashedPassword };
       }
 
@@ -106,7 +105,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       } else if (pwd === passwordStr) {
         isMatch = true;
         const hashedPassword = await bcrypt.hash(passwordStr, 10);
-        await updateUserPasswordHash(pool, u.id as string | number, hashedPassword);
+        await updateUserPasswordHash(u.id as string | number, hashedPassword);
       }
 
       if (!isMatch) {
@@ -116,13 +115,12 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
 
       const currentIp = getClientIp(req);
       try {
-        await recordLoginIp(pool, u.id as string | number, currentIp);
+        await recordLoginIp(u.id as string | number, currentIp);
       } catch (ipErr: unknown) {
         console.error('[Login] Erro ao registrar histórico de IP:', ipErr instanceof Error ? ipErr.message : ipErr);
       }
 
       const referralCode = await ensureUserReferralCode(
-        pool,
         u.id as string | number,
         String(u.username ?? ''),
         u.referral_code as string | null | undefined
@@ -131,18 +129,18 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
 
       const sid = crypto.randomUUID();
       const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
-      await insertSession(pool, sid, u.id as string | number, Date.now(), expiresAt);
+      await insertSession(sid, u.id as string | number, Date.now(), expiresAt);
 
       const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
       res.setHeader('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${30 * 24 * 3600}`);
 
-      const userLvlIds = await listUserAccessLevelIds(pool, u.id as string | number, u.access_level_id);
+      const userLvlIds = await listUserAccessLevelIds(u.id as string | number, u.access_level_id);
 
       const fp = sanitizeDeviceFingerprint(deviceFingerprint);
       if (fp) {
         const ip = getClientIp(req);
         const ua = String(req.get('user-agent') || '');
-        void insertDeviceFingerprintLog(pool, {
+        void insertDeviceFingerprintLog({
           userId: Number(u.id),
           eventType: 'login',
           fingerprintHash: fp.fingerprintHash,
@@ -153,6 +151,9 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
           console.warn('[Fingerprint] login:', err instanceof Error ? err.message : err);
         });
       }
+
+      const uidNum = Number(u.id);
+      logUserAction(Number.isFinite(uidNum) ? uidNum : null, 'login', { auth: 'password' });
 
       res.json({
         id: String(u.id),
@@ -182,10 +183,10 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
     const sid = cookies.sid;
     if (!sid) return res.status(401).json({ error: 'No session' });
     try {
-      const loaded = await loadSessionUser(pool, sid);
+      const loaded = await loadSessionUser(sid);
       if (!loaded) return res.status(401).json({ error: 'Session expired' });
       const { session: s, user: u } = loaded;
-      const userLvlIds = await listUserAccessLevelIds(pool, u.id as string | number, u.access_level_id);
+      const userLvlIds = await listUserAccessLevelIds(u.id as string | number, u.access_level_id);
       res.json(buildSessionUserJson(u, s, userLvlIds));
     } catch (e: unknown) {
       sendInternalErrorSafeMessage(res, 'GET /api/session', e, 'Erro ao carregar sessão.');
@@ -202,11 +203,12 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
     const sid = cookies.sid;
     if (!sid) return res.status(401).json({ error: 'No session' });
     try {
-      const sRes = await pool.query('SELECT * FROM sessions WHERE session_id = $1', [sid]);
-      const s = sRes.rows[0];
-      if (!s?.user_id) return res.status(401).json({ error: 'No session' });
+      const loaded = await loadSessionUser(sid);
+      if (!loaded) return res.status(401).json({ error: 'No session' });
       const { polygonWallet } = (req.body || {}) as { polygonWallet?: unknown };
-      await updateUserPolygonAndAccess(pool, s.user_id, polygonWallet);
+      await updateUserPolygonAndAccess(loaded.user.id as string | number, polygonWallet);
+      const wid = Number(loaded.user.id);
+      logUserAction(Number.isFinite(wid) ? wid : null, 'wallet_link', {});
       res.json({ ok: true });
     } catch (e: unknown) {
       sendInternalErrorSafeMessage(res, 'POST /api/session', e, 'Erro ao atualizar sessão.');

@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { GameState, LootBox, LootBoxItem, Upgrade } from '../types';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
-import { Gift, Package, Sparkles, DollarSign, Box, CheckCircle2, Ticket, Store, Trash2 } from 'lucide-react';
+import { Gift, Package, Sparkles, DollarSign, Box, CheckCircle2, Ticket, Store, Trash2, Loader2 } from 'lucide-react';
 import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
 
 /** Caixas criadas pelo prémio da roleta guardam o item em `description` (`reward_for_<upgradeId>`), não sempre em `items`. */
@@ -39,7 +39,7 @@ interface LuckyBoxStoreProps {
     gameState: GameState;
     lootBoxes: LootBox[];
     upgrades: Upgrade[];
-    onBuyBox: (boxId: string) => void;
+    onBuyBox: (boxId: string) => void | Promise<void>;
     onOpenBox: (boxId: string) => Promise<{ rewards: any[] } | null>;
     /** Remove caixas não abertas do inventário (sem prémio). */
     onDiscardBox?: (boxId: string) => Promise<{ ok: boolean; error?: string }>;
@@ -64,6 +64,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
     const [rewards, setRewards] = useState<any[] | null>(null);
     const [promoCode, setPromoCode] = useState('');
     const [redeeming, setRedeeming] = useState(false);
+    const [buyingBoxId, setBuyingBoxId] = useState<string | null>(null);
     const [notice, setNotice] = useState<UiNotice | null>(null);
 
     type LuckyTab = 'inventario' | 'loja';
@@ -235,8 +236,9 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
             }
         } catch (e) {
             setNotice({ variant: 'error', message: 'Falha na comunicação com o servidor' });
+        } finally {
+            setRedeeming(false);
         }
-        setRedeeming(false);
     };
 
     const formatCost = (val: number) => {
@@ -285,9 +287,16 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                             type="button"
                             onClick={handleRedeem}
                             disabled={redeeming || !promoCode.trim()}
-                            className="min-h-[44px] shrink-0 rounded-xl bg-orange-600 px-6 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-orange-600/25 transition hover:bg-orange-500 disabled:opacity-50"
+                            className="inline-flex min-h-[44px] shrink-0 items-center justify-center gap-2 rounded-xl bg-orange-600 px-6 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-orange-600/25 transition hover:bg-orange-500 disabled:opacity-50"
                         >
-                            {redeeming ? '…' : 'Resgatar'}
+                            {redeeming ? (
+                                <>
+                                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                                    A resgatar
+                                </>
+                            ) : (
+                                'Resgatar'
+                            )}
                         </button>
                     </div>
                 </div>
@@ -434,7 +443,10 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                     {lojaBoxes.map(box => {
                         const availability = getBoxAvailability(box);
                         const canAfford = gameState.usdc >= box.price;
-                        const canBuyNow = availability.canBuy && canAfford;
+                        const buyingThis = buyingBoxId === box.id;
+                        const shopBusyElsewhere = buyingBoxId !== null && !buyingThis;
+                        const disabledShop = !availability.canBuy || !canAfford || shopBusyElsewhere || buyingThis;
+                        const showBuyActive = (availability.canBuy && canAfford) || buyingThis;
                         return (
                         <div key={box.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 rounded-xl p-4 flex flex-col items-center text-center shadow-sm transition-all relative overflow-hidden group">
                             <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner group-hover:scale-110 transition-transform overflow-hidden">
@@ -474,18 +486,30 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
 
                             <div className="mt-auto w-full">
                                 <button
-                                    onClick={() => {
-                                        if (availability.canBuy) onBuyBox(box.id);
+                                    type="button"
+                                    onClick={async () => {
+                                        if (!availability.canBuy || buyingBoxId) return;
+                                        setBuyingBoxId(box.id);
+                                        try {
+                                            await Promise.resolve(onBuyBox(box.id));
+                                        } finally {
+                                            setBuyingBoxId(null);
+                                        }
                                     }}
-                                    disabled={!canBuyNow}
+                                    disabled={disabledShop}
                                     className={`
                                 w-full py-2 rounded-lg font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-1
-                                ${canBuyNow
+                                ${showBuyActive
                                             ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-500/20'
                                             : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}
                             `}
                                 >
-                                    {availability.label ? (
+                                    {buyingThis ? (
+                                        <>
+                                            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                                            <span className="uppercase tracking-wider">A comprar</span>
+                                        </>
+                                    ) : availability.label ? (
                                         <span className="flex items-center gap-1 uppercase tracking-wider">
                                             <Gift size={14} /> {availability.label}
                                         </span>

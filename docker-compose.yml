@@ -4,6 +4,12 @@
 # Contentores: `app` (site), `app-bull-worker`, `app-postgres`, `app-redis`, `app-mongo`.
 # Não correr em simultâneo com deployment/docker-compose.yml no mesmo host (nomes `app*` colidem).
 # Se já tinhas volumes com outro nome de project, migrar dados — mudar `name:` recria volumes vazios.
+#
+# VM / produção: se `docker ps` mostrar só 3, os outros podem estar parados ou a reiniciar.
+#   docker compose ps -a
+#   docker compose logs app --tail 80
+#   docker compose logs bull-worker --tail 80
+# Arranque explícito dos 5: `bash scripts/docker-stack-up.sh` (na raiz do repo).
 
 name: minestation-dev
 
@@ -11,6 +17,7 @@ services:
   db:
     container_name: app-postgres
     image: postgres:16-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -22,10 +29,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+      start_period: 30s
 
   redis:
     container_name: app-redis
     image: redis:7-alpine
+    restart: unless-stopped
     command: redis-server --appendonly yes
     volumes:
       - redisdata:/data
@@ -34,20 +43,24 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+      start_period: 15s
 
   mongo:
     container_name: app-mongo
     image: mongo:7
+    restart: unless-stopped
     volumes:
       - mongodata:/data/db
     healthcheck:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 15
+      start_period: 60s
 
   app:
     container_name: app
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile
@@ -74,6 +87,7 @@ services:
 
   bull-worker:
     container_name: app-bull-worker
+    restart: unless-stopped
     build:
       context: .
       dockerfile: Dockerfile

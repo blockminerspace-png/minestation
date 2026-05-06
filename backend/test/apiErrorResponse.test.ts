@@ -63,6 +63,23 @@ describe('apiErrorResponse (NODE_ENV≠production)', () => {
     sendInternalErrorShape(res, '/b', new Error('y'), { ok: false }, 'pub2');
     expect(status).not.toHaveBeenCalled();
   });
+
+  it('respondIfHttpControlledError envia status e corpo do HttpControlledError', async () => {
+    const { HttpControlledError, respondIfHttpControlledError } = await import('../utils/apiErrorResponse.js');
+    const res = mockResponse();
+    const handled = respondIfHttpControlledError(res, new HttpControlledError(400, { ok: false, error: 'x' }));
+    expect(handled).toBe(true);
+    expect(res.status).toHaveBeenCalledWith(400);
+    const chain = (res.status as ReturnType<typeof vi.fn>).mock.results[0]?.value;
+    expect(chain.json).toHaveBeenCalledWith({ ok: false, error: 'x' });
+  });
+
+  it('respondIfHttpControlledError devolve false para erro normal', async () => {
+    const { respondIfHttpControlledError } = await import('../utils/apiErrorResponse.js');
+    const res = mockResponse();
+    expect(respondIfHttpControlledError(res, new Error('plain'))).toBe(false);
+    expect(res.status).not.toHaveBeenCalled();
+  });
 });
 
 describe('apiErrorResponse (production)', () => {

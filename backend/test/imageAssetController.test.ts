@@ -4,9 +4,20 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import express from 'express';
-import type { Pool } from 'pg';
 import type { RequestHandler } from 'express';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const { prismaUsersFindUnique } = vi.hoisted(() => ({
+  prismaUsersFindUnique: vi.fn()
+}));
+
+vi.mock('../config/prisma.js', () => ({
+  prisma: {
+    users: {
+      findUnique: prismaUsersFindUnique
+    }
+  }
+}));
 import {
   mountImageStaticMiddleware,
   registerImageAssetRoutes,
@@ -16,36 +27,11 @@ import {
 const TINY_PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
-function poolMockAdmin(): Pool {
-  return {
-    query: async (sql: string) => {
-      if (sql.includes('is_admin')) {
-        return { rows: [{ is_admin: 1 }] } as Awaited<ReturnType<Pool['query']>>;
-      }
-      return { rows: [] } as Awaited<ReturnType<Pool['query']>>;
-    }
-  } as Pool;
-}
-
-function poolMockNonAdmin(): Pool {
-  return {
-    query: async (sql: string) => {
-      if (sql.includes('is_admin')) {
-        return { rows: [{ is_admin: 0 }] } as Awaited<ReturnType<Pool['query']>>;
-      }
-      return { rows: [] } as Awaited<ReturnType<Pool['query']>>;
-    }
-  } as Pool;
-}
-
 const isAdminPass: RequestHandler = (_req, _res, next) => {
   next();
 };
 
-async function withTempImgApp(
-  pool: Pool,
-  fn: (baseUrl: string, root: string) => Promise<void>
-): Promise<void> {
+async function withTempImgApp(fn: (baseUrl: string, root: string) => Promise<void>): Promise<void> {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'minestation-ctrl-img-'));
   const uploads = path.join(root, 'uploads');
   fs.mkdirSync(uploads, { recursive: true });
@@ -56,7 +42,6 @@ async function withTempImgApp(
     next();
   });
   registerImageAssetRoutes(app, {
-    pool,
     isAdmin: isAdminPass,
     imgDir: root,
     uploadsDir: uploads
@@ -77,6 +62,11 @@ async function withTempImgApp(
 }
 
 describe('imageAssetController', () => {
+  beforeEach(() => {
+    prismaUsersFindUnique.mockReset();
+    prismaUsersFindUnique.mockResolvedValue({ is_admin: 1 } as never);
+  });
+
   it('POST /api/upload-image 401 sem userId na sessão', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'minestation-ctrl-img-nouid-'));
     const uploads = path.join(root, 'uploads');
@@ -84,7 +74,6 @@ describe('imageAssetController', () => {
     const app = express();
     app.use(express.json({ limit: '3mb' }));
     registerImageAssetRoutes(app, {
-      pool: poolMockAdmin(),
       isAdmin: isAdminPass,
       imgDir: root,
       uploadsDir: uploads
@@ -112,7 +101,7 @@ describe('imageAssetController', () => {
   });
 
   it('POST /api/upload-image 200 e ficheiro em uploads/', async () => {
-    await withTempImgApp(poolMockAdmin(), async (baseUrl, root) => {
+    await withTempImgApp(async (baseUrl, root) => {
       const res = await fetch(`${baseUrl}/api/upload-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -130,7 +119,7 @@ describe('imageAssetController', () => {
   });
 
   it('POST /api/upload-image com assetFolder (admin) grava em subpasta', async () => {
-    await withTempImgApp(poolMockAdmin(), async (baseUrl, root) => {
+    await withTempImgApp(async (baseUrl, root) => {
       const res = await fetch(`${baseUrl}/api/upload-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -149,7 +138,8 @@ describe('imageAssetController', () => {
   });
 
   it('POST /api/upload-image 403 se sessão não é admin (mesmo só para uploads/)', async () => {
-    await withTempImgApp(poolMockNonAdmin(), async (baseUrl) => {
+    prismaUsersFindUnique.mockResolvedValue({ is_admin: 0 } as never);
+    await withTempImgApp(async (baseUrl) => {
       const res = await fetch(`${baseUrl}/api/upload-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -164,7 +154,7 @@ describe('imageAssetController', () => {
   });
 
   it('POST /api/upload-image 400 sem dataUrl ou data URL inválida', async () => {
-    await withTempImgApp(poolMockAdmin(), async (baseUrl) => {
+    await withTempImgApp(async (baseUrl) => {
       const r1 = await fetch(`${baseUrl}/api/upload-image`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -181,7 +171,7 @@ describe('imageAssetController', () => {
   });
 
   it('POST /api/admin/upload-ad grava PNG em uploads/', async () => {
-    await withTempImgApp(poolMockAdmin(), async (baseUrl, root) => {
+    await withTempImgApp(async (baseUrl, root) => {
       const buf = Buffer.from(TINY_PNG_B64, 'base64');
       const form = new FormData();
       form.append('image', new Blob([buf], { type: 'image/png' }), 'banner.png');
@@ -196,7 +186,7 @@ describe('imageAssetController', () => {
   });
 
   it('POST /api/admin/upload-ad 400 sem ficheiro', async () => {
-    await withTempImgApp(poolMockAdmin(), async (baseUrl) => {
+    await withTempImgApp(async (baseUrl) => {
       const form = new FormData();
       const res = await fetch(`${baseUrl}/api/admin/upload-ad`, { method: 'POST', body: form });
       expect(res.status).toBe(400);

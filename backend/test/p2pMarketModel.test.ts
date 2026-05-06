@@ -1,5 +1,12 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { Pool } from 'pg';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+const prismaMock = vi.hoisted(() => ({
+  economy_settings: { findUnique: vi.fn() },
+  settings: { findUnique: vi.fn() }
+}));
+
+vi.mock('../config/prisma.js', () => ({ prisma: prismaMock }));
+
 import {
   timestampMsFromDb,
   parseUsdFromDb,
@@ -8,10 +15,15 @@ import {
   MARKET_RESERVE_MS,
   MARKET_LISTING_TTL_MS,
   getBlackMarketPriceBandPercent,
-  isP2PMarketEnabled,
+  isP2PMarketEnabled
 } from '../models/p2pMarketModel.js';
 
 describe('p2pMarketModel', () => {
+  beforeEach(() => {
+    prismaMock.economy_settings.findUnique.mockReset();
+    prismaMock.settings.findUnique.mockReset();
+  });
+
   it('timestampMsFromDb', () => {
     expect(timestampMsFromDb(null)).toBe(0);
     expect(timestampMsFromDb(1700000000000)).toBe(1700000000000);
@@ -43,7 +55,7 @@ describe('p2pMarketModel', () => {
         qty: 3,
         expires_at: now + 60_000,
         reserved_until: now + 30_000,
-        reserver_username: 'buyer',
+        reserver_username: 'buyer'
       },
       now
     );
@@ -57,69 +69,68 @@ describe('p2pMarketModel', () => {
   });
 
   it('getBlackMarketPriceBandPercent lê economy_settings e faz clamp', async () => {
-    const query = vi.fn().mockResolvedValue({
-      rows: [{ black_market_price_band_percent: 150 }],
-    });
-    const n = await getBlackMarketPriceBandPercent({ query } as unknown as Pool);
+    prismaMock.economy_settings.findUnique.mockResolvedValue({
+      black_market_price_band_percent: 150
+    } as never);
+    const n = await getBlackMarketPriceBandPercent();
     expect(n).toBe(90);
   });
 
   it('getBlackMarketPriceBandPercent faz clamp inferior a 1', async () => {
-    const query = vi.fn().mockResolvedValue({
-      rows: [{ black_market_price_band_percent: 0 }],
-    });
-    const n = await getBlackMarketPriceBandPercent({ query } as unknown as Pool);
+    prismaMock.economy_settings.findUnique.mockResolvedValue({
+      black_market_price_band_percent: 0
+    } as never);
+    const n = await getBlackMarketPriceBandPercent();
     expect(n).toBe(1);
   });
 
   it('getBlackMarketPriceBandPercent fallback settings quando economy_settings falha', async () => {
-    const query = vi
-      .fn()
-      .mockRejectedValueOnce(new Error('no table'))
-      .mockResolvedValueOnce({ rows: [{ value: '7' }] });
-    const n = await getBlackMarketPriceBandPercent({ query } as unknown as Pool);
+    prismaMock.economy_settings.findUnique.mockRejectedValueOnce(new Error('no table'));
+    prismaMock.settings.findUnique.mockResolvedValue({ value: '7' } as never);
+    const n = await getBlackMarketPriceBandPercent();
     expect(n).toBe(7);
   });
 
   it('getBlackMarketPriceBandPercent devolve 20 quando ambas as queries falham', async () => {
-    const query = vi.fn().mockRejectedValue(new Error('down'));
-    const n = await getBlackMarketPriceBandPercent({ query } as unknown as Pool);
+    prismaMock.economy_settings.findUnique.mockRejectedValue(new Error('down'));
+    prismaMock.settings.findUnique.mockRejectedValue(new Error('down'));
+    const n = await getBlackMarketPriceBandPercent();
     expect(n).toBe(20);
   });
 
   it('isP2PMarketEnabled usa economy_settings quando existe linha', async () => {
-    const query = vi
-      .fn()
-      .mockResolvedValueOnce({ rows: [{ black_market_enabled: 0 }] })
-      .mockResolvedValueOnce({ rows: [] });
-    const on = await isP2PMarketEnabled({ query } as unknown as Pool);
+    prismaMock.economy_settings.findUnique.mockResolvedValue({ black_market_enabled: 0 } as never);
+    const on = await isP2PMarketEnabled();
     expect(on).toBe(false);
   });
 
+  it('isP2PMarketEnabled com linha economy_settings e black_market_enabled null não usa settings', async () => {
+    prismaMock.economy_settings.findUnique.mockResolvedValue({ black_market_enabled: null } as never);
+    prismaMock.settings.findUnique.mockResolvedValue({ value: '1' } as never);
+    expect(await isP2PMarketEnabled()).toBe(false);
+  });
+
   it('isP2PMarketEnabled fallback settings quando sem linha em economy_settings', async () => {
-    const query = vi
-      .fn()
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ value: '1' }] });
-    const on = await isP2PMarketEnabled({ query } as unknown as Pool);
+    prismaMock.economy_settings.findUnique.mockResolvedValue(null);
+    prismaMock.settings.findUnique.mockResolvedValue({ value: '1' } as never);
+    const on = await isP2PMarketEnabled();
     expect(on).toBe(true);
   });
 
   it('isP2PMarketEnabled fallback settings value 0 desliga mercado', async () => {
-    const query = vi
-      .fn()
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({ rows: [{ value: '0' }] });
-    expect(await isP2PMarketEnabled({ query } as unknown as Pool)).toBe(false);
+    prismaMock.economy_settings.findUnique.mockResolvedValue(null);
+    prismaMock.settings.findUnique.mockResolvedValue({ value: '0' } as never);
+    expect(await isP2PMarketEnabled()).toBe(false);
   });
 
   it('isP2PMarketEnabled true quando sem economy_settings nem settings', async () => {
-    const query = vi.fn().mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
-    expect(await isP2PMarketEnabled({ query } as unknown as Pool)).toBe(true);
+    prismaMock.economy_settings.findUnique.mockResolvedValue(null);
+    prismaMock.settings.findUnique.mockResolvedValue(null);
+    expect(await isP2PMarketEnabled()).toBe(true);
   });
 
   it('isP2PMarketEnabled devolve true em catch', async () => {
-    const query = vi.fn().mockRejectedValue(new Error('db'));
-    expect(await isP2PMarketEnabled({ query } as unknown as Pool)).toBe(true);
+    prismaMock.economy_settings.findUnique.mockRejectedValue(new Error('db'));
+    expect(await isP2PMarketEnabled()).toBe(true);
   });
 });

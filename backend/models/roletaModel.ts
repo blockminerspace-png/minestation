@@ -1,7 +1,10 @@
-import type { Pool, PoolClient } from 'pg';
 import crypto from 'node:crypto';
+import { prisma } from '../config/prisma.js';
 import { RoletaAppError, sanitizeDisplayName } from '../validation/roletaValidation.js';
 import { promoCodeRowEligibleForRoletaFlow, throwIfPromoCodeExpired } from './promoCodeRoleta.js';
+import type { RoletaDbTx } from './roletaDbTypes.js';
+
+export type { RoletaDbTx } from './roletaDbTypes.js';
 
 export type WheelPrizeRow = {
   id: string;
@@ -10,8 +13,6 @@ export type WheelPrizeRow = {
   color: string | null;
   item_id: string;
 };
-
-type PgQueryable = Pick<Pool, 'query'>;
 
 /** `label` exibido: nome atual do upgrade quando `item_id` existe; senão etiqueta em `wheel_prizes`. */
 function mapWheelPrizeJoinedRow(row: Record<string, unknown>): WheelPrizeRow {
@@ -28,47 +29,43 @@ function mapWheelPrizeJoinedRow(row: Record<string, unknown>): WheelPrizeRow {
   };
 }
 
-export async function queryAllWheelPrizesJoined(q: PgQueryable): Promise<WheelPrizeRow[]> {
-  const prizesRes = await q.query(
-    `SELECT wp.id,
-            wp.label AS stored_label,
-            wp.weight,
-            wp.color,
-            wp.item_id,
-            u.name AS upgrade_name
-     FROM wheel_prizes wp
-     LEFT JOIN upgrades u ON u.id = wp.item_id
-     ORDER BY wp.id ASC`
-  );
-  return prizesRes.rows.map((r) => mapWheelPrizeJoinedRow(r as Record<string, unknown>));
+export async function queryAllWheelPrizesJoined(tx: RoletaDbTx): Promise<WheelPrizeRow[]> {
+  const prizesRes = await tx.$queryRaw<Record<string, unknown>[]>`
+    SELECT wp.id,
+           wp.label AS stored_label,
+           wp.weight,
+           wp.color,
+           wp.item_id,
+           u.name AS upgrade_name
+    FROM wheel_prizes wp
+    LEFT JOIN upgrades u ON u.id = wp.item_id
+    ORDER BY wp.id ASC
+  `;
+  return prizesRes.map((r) => mapWheelPrizeJoinedRow(r));
 }
 
-export async function queryWheelPrizeByItemIdJoined(
-  q: PgQueryable,
-  itemId: string
-): Promise<WheelPrizeRow | null> {
-  const prizeRes = await q.query(
-    `SELECT wp.id,
-            wp.label AS stored_label,
-            wp.weight,
-            wp.color,
-            wp.item_id,
-            u.name AS upgrade_name
-     FROM wheel_prizes wp
-     LEFT JOIN upgrades u ON u.id = wp.item_id
-     WHERE wp.item_id = $1
-     LIMIT 1`,
-    [itemId]
-  );
-  const r = prizeRes.rows[0];
-  return r ? mapWheelPrizeJoinedRow(r as Record<string, unknown>) : null;
+export async function queryWheelPrizeByItemIdJoined(tx: RoletaDbTx, itemId: string): Promise<WheelPrizeRow | null> {
+  const prizeRes = await tx.$queryRaw<Record<string, unknown>[]>`
+    SELECT wp.id,
+           wp.label AS stored_label,
+           wp.weight,
+           wp.color,
+           wp.item_id,
+           u.name AS upgrade_name
+    FROM wheel_prizes wp
+    LEFT JOIN upgrades u ON u.id = wp.item_id
+    WHERE wp.item_id = ${itemId}
+    LIMIT 1
+  `;
+  const r = prizeRes[0];
+  return r ? mapWheelPrizeJoinedRow(r) : null;
 }
 
 /** Resposta JSON de `/api/wheel/config` e GET admin (camelCase). */
-export async function fetchWheelPrizesForApiConfig(q: PgQueryable): Promise<
+export async function fetchWheelPrizesForApiConfig(): Promise<
   Array<{ id: string; label: string; color: string | null; weight: number; itemId: string }>
 > {
-  const rows = await queryAllWheelPrizesJoined(q);
+  const rows = await queryAllWheelPrizesJoined(prisma);
   return rows.map((row) => ({
     id: row.id,
     label: row.label,
@@ -123,50 +120,61 @@ export const PAID_WHEEL_SPIN_PRICE_USDC = 1;
  * Não altera `promo_code_redemptions`.
  */
 export async function grantWheelPrizeUnopenedBox(
-  client: PoolClient,
+  tx: RoletaDbTx,
   userId: number,
   wonItemId: string
 ): Promise<RoletaClaimResult> {
-  const boxRes = await client.query(
-    `SELECT id FROM loot_boxes
-     WHERE trigger = 'roleta_reward' AND description = $1`,
-    [`reward_for_${wonItemId}`]
-  );
+  const existing = await tx.loot_boxes.findFirst({
+    where: { trigger: 'roleta_reward', description: `reward_for_${wonItemId}` },
+    select: { id: true }
+  });
 
   let prizeBoxId: string;
-  if (boxRes.rows[0]) {
-    prizeBoxId = (boxRes.rows[0] as { id: string }).id;
+  if (existing?.id) {
+    prizeBoxId = existing.id;
   } else {
     prizeBoxId = crypto.randomUUID();
-    const upgRes = await client.query(`SELECT name FROM upgrades WHERE id = $1`, [wonItemId]);
-    const rawName = (upgRes.rows[0] as { name?: string } | undefined)?.name ?? wonItemId;
+    const upg = await tx.$queryRaw<{ name: string }[]>`
+      SELECT name FROM upgrades WHERE id = ${wonItemId} LIMIT 1
+    `;
+    const rawName = upg[0]?.name ?? wonItemId;
     const itemName = sanitizeDisplayName(String(rawName), 120);
     const boxName = `Prêmio: ${itemName}`;
 
-    await client.query(
-      `INSERT INTO loot_boxes (id, name, description, price, trigger, icon)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [prizeBoxId, boxName, `reward_for_${wonItemId}`, 0, 'roleta_reward', '🎁']
-    );
+    await tx.loot_boxes.create({
+      data: {
+        id: prizeBoxId,
+        name: boxName,
+        description: `reward_for_${wonItemId}`,
+        price: 0,
+        trigger: 'roleta_reward',
+        icon: '🎁'
+      }
+    });
 
-    await client.query(
-      `INSERT INTO loot_box_items (box_id, item_type, item_id, min_qty, max_qty, probability)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [prizeBoxId, 'item', wonItemId, 1, 1, 100]
-    );
+    await tx.loot_box_items.create({
+      data: {
+        box_id: prizeBoxId,
+        item_type: 'item',
+        item_id: wonItemId,
+        min_qty: 1,
+        max_qty: 1,
+        probability: 100
+      }
+    });
   }
 
-  const boxNameRow = await client.query(`SELECT name FROM loot_boxes WHERE id = $1`, [prizeBoxId]);
-  const boxName = sanitizeDisplayName(
-    String((boxNameRow.rows[0] as { name?: string } | undefined)?.name ?? 'Prêmio'),
-    200
-  );
+  const boxRow = await tx.loot_boxes.findUnique({
+    where: { id: prizeBoxId },
+    select: { name: true }
+  });
+  const boxName = sanitizeDisplayName(String(boxRow?.name ?? 'Prêmio'), 200);
 
-  await client.query(
-    `INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1)
-     ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1`,
-    [userId, prizeBoxId]
-  );
+  await tx.unopened_boxes.upsert({
+    where: { user_id_box_id: { user_id: userId, box_id: prizeBoxId } },
+    create: { user_id: userId, box_id: prizeBoxId, qty: 1 },
+    update: { qty: { increment: 1 } }
+  });
 
   return { boxId: prizeBoxId, boxName };
 }
@@ -175,72 +183,73 @@ export async function grantWheelPrizeUnopenedBox(
  * Exige transação ativa. Bloqueia linha de resgate (`FOR UPDATE`) para evitar corrida em roll/claim.
  */
 export async function wheelRollInTransaction(
-  client: PoolClient,
+  tx: RoletaDbTx,
   args: { userId: number; normalizedCode: string; serverNowMs: number }
 ): Promise<WheelRollResult> {
   const { userId, normalizedCode, serverNowMs } = args;
 
-  const redRes = await client.query(
-    `SELECT reward_granted, won_item_id
-     FROM promo_code_redemptions
-     WHERE code = $1 AND user_id = $2
-     FOR UPDATE`,
-    [normalizedCode, userId]
-  );
+  const redRes = await tx.$queryRaw<
+    Array<{ reward_granted: number | null; won_item_id: string | null }>
+  >`
+    SELECT reward_granted, won_item_id
+    FROM promo_code_redemptions
+    WHERE code = ${normalizedCode} AND user_id = ${userId}
+    FOR UPDATE
+  `;
 
-  if (redRes.rowCount === 0) {
+  if (redRes.length === 0) {
     throw new RoletaAppError('Você precisa resgatar o código primeiro.', 400);
   }
 
-  const redemption = redRes.rows[0] as {
-    reward_granted: number;
-    won_item_id: string | null;
-  };
+  const redemption = redRes[0]!;
 
   if (redemption.reward_granted === 1) {
     throw new RoletaAppError('Este código já foi totalmente utilizado.', 400);
   }
 
-  const promoRowRes = await client.query(
-    `SELECT type, loot_box_id, expires_at FROM promo_codes WHERE code = $1`,
-    [normalizedCode]
-  );
-  const prow = promoRowRes.rows[0] as { type?: string; loot_box_id?: string | null; expires_at?: unknown } | undefined;
+  const prowRows = await tx.$queryRaw<Array<{ type: string; loot_box_id: string | null; expires_at: bigint | null }>>`
+    SELECT type, loot_box_id, expires_at FROM promo_codes WHERE code = ${normalizedCode} LIMIT 1
+  `;
+  const prow = prowRows[0];
   if (prow) throwIfPromoCodeExpired(prow, serverNowMs);
-  const wheelOk = prow ? await promoCodeRowEligibleForRoletaFlow(client, prow) : false;
+  const wheelOk = prow ? await promoCodeRowEligibleForRoletaFlow(tx, prow) : false;
   if (!wheelOk) {
     throw new RoletaAppError('Este código não permite giro de roleta.', 400);
   }
 
   if (redemption.won_item_id) {
-    const item = await queryWheelPrizeByItemIdJoined(client, String(redemption.won_item_id));
+    const item = await queryWheelPrizeByItemIdJoined(tx, String(redemption.won_item_id));
     return { wonItemId: String(redemption.won_item_id), item, idempotent: true };
   }
 
-  const prizes = await queryAllWheelPrizesJoined(client);
+  const prizes = await queryAllWheelPrizesJoined(tx);
   if (prizes.length === 0) {
     throw new RoletaAppError('Configuração da roleta não encontrada.', 500);
   }
 
   const selected = pickWeightedPrize(prizes);
 
-  const upd = await client.query(
-    `UPDATE promo_code_redemptions
-     SET won_item_id = $1, roulette_rolled_at = $2
-     WHERE code = $3 AND user_id = $4
-       AND won_item_id IS NULL
-       AND reward_granted = 0`,
-    [selected.item_id, serverNowMs, normalizedCode, userId]
-  );
+  const upd = await tx.promo_code_redemptions.updateMany({
+    where: {
+      code: normalizedCode,
+      user_id: userId,
+      won_item_id: null,
+      reward_granted: 0
+    },
+    data: {
+      won_item_id: selected.item_id,
+      roulette_rolled_at: BigInt(serverNowMs)
+    }
+  });
 
-  if (upd.rowCount === 0) {
-    const again = await client.query(
-      `SELECT won_item_id FROM promo_code_redemptions WHERE code = $1 AND user_id = $2`,
-      [normalizedCode, userId]
-    );
-    const wid = again.rows[0]?.won_item_id;
+  if (upd.count === 0) {
+    const again = await tx.promo_code_redemptions.findUnique({
+      where: { code_user_id: { code: normalizedCode, user_id: userId } },
+      select: { won_item_id: true }
+    });
+    const wid = again?.won_item_id;
     if (wid) {
-      const item = await queryWheelPrizeByItemIdJoined(client, String(wid));
+      const item = await queryWheelPrizeByItemIdJoined(tx, String(wid));
       return { wonItemId: String(wid), item, idempotent: true };
     }
     throw new RoletaAppError('Não foi possível registrar o giro. Tente novamente.', 409);
@@ -255,7 +264,7 @@ export type RoletaClaimResult = {
 };
 
 export async function roletaClaimInTransaction(
-  client: PoolClient,
+  tx: RoletaDbTx,
   args: {
     userId: number;
     normalizedCode: string;
@@ -265,22 +274,20 @@ export async function roletaClaimInTransaction(
 ): Promise<RoletaClaimResult> {
   const { userId, normalizedCode, wonItemId, serverNowMs } = args;
 
-  const redRes = await client.query(
-    `SELECT reward_granted, won_item_id
-     FROM promo_code_redemptions
-     WHERE code = $1 AND user_id = $2
-     FOR UPDATE`,
-    [normalizedCode, userId]
-  );
+  const redRes = await tx.$queryRaw<
+    Array<{ reward_granted: number | null; won_item_id: string | null }>
+  >`
+    SELECT reward_granted, won_item_id
+    FROM promo_code_redemptions
+    WHERE code = ${normalizedCode} AND user_id = ${userId}
+    FOR UPDATE
+  `;
 
-  if (redRes.rowCount === 0) {
+  if (redRes.length === 0) {
     throw new RoletaAppError('Código não resgatado.', 400);
   }
 
-  const redemption = redRes.rows[0] as {
-    reward_granted: number;
-    won_item_id: string | null;
-  };
+  const redemption = redRes[0]!;
 
   if (redemption.reward_granted === 1) {
     throw new RoletaAppError('Recompensa já reivindicada.', 400);
@@ -296,27 +303,31 @@ export async function roletaClaimInTransaction(
     );
   }
 
-  const codeRes = await client.query(
-    `SELECT type, loot_box_id, expires_at FROM promo_codes WHERE code = $1`,
-    [normalizedCode]
-  );
-  const promo = codeRes.rows[0] as { type?: string; loot_box_id?: string | null; expires_at?: unknown } | undefined;
+  const codeRows = await tx.$queryRaw<Array<{ type: string; loot_box_id: string | null; expires_at: bigint | null }>>`
+    SELECT type, loot_box_id, expires_at FROM promo_codes WHERE code = ${normalizedCode} LIMIT 1
+  `;
+  const promo = codeRows[0];
   if (promo) throwIfPromoCodeExpired(promo, serverNowMs);
-  const claimOk = promo ? await promoCodeRowEligibleForRoletaFlow(client, promo) : false;
+  const claimOk = promo ? await promoCodeRowEligibleForRoletaFlow(tx, promo) : false;
   if (!claimOk) {
     throw new RoletaAppError('Tipo de código inválido.', 400);
   }
 
-  const granted = await grantWheelPrizeUnopenedBox(client, userId, wonItemId);
+  const granted = await grantWheelPrizeUnopenedBox(tx, userId, wonItemId);
 
-  const upd = await client.query(
-    `UPDATE promo_code_redemptions
-     SET reward_granted = 1, roulette_claimed_at = $1
-     WHERE code = $2 AND user_id = $3 AND reward_granted = 0`,
-    [serverNowMs, normalizedCode, userId]
-  );
+  const upd = await tx.promo_code_redemptions.updateMany({
+    where: {
+      code: normalizedCode,
+      user_id: userId,
+      reward_granted: 0
+    },
+    data: {
+      reward_granted: 1,
+      roulette_claimed_at: BigInt(serverNowMs)
+    }
+  });
 
-  if (upd.rowCount === 0) {
+  if (upd.count === 0) {
     throw new RoletaAppError('Falha ao finalizar resgate do código (nenhuma linha atualizada).', 409);
   }
 
@@ -328,30 +339,28 @@ export async function roletaClaimInTransaction(
  * No máximo um giro pendente por jogador (repetir POST devolve o mesmo resultado sem cobrar de novo).
  */
 export async function paidWheelRollInTransaction(
-  client: PoolClient,
+  tx: RoletaDbTx,
   args: { userId: number; serverNowMs: number }
 ): Promise<PaidWheelRollResult> {
   const { userId, serverNowMs } = args;
   const price = PAID_WHEEL_SPIN_PRICE_USDC;
 
   /** `game_states` primeiro: serializa giros pagos do mesmo jogador e evita cobrança dupla. */
-  const gsRes = await client.query(
-    'SELECT usdc FROM game_states WHERE user_id = $1 FOR UPDATE',
-    [userId]
-  );
-  const gs = gsRes.rows[0] as { usdc?: unknown } | undefined;
+  const gsRows = await tx.$queryRaw<Array<{ usdc: number }>>`
+    SELECT usdc::float AS usdc FROM game_states WHERE user_id = ${userId} FOR UPDATE
+  `;
+  const gs = gsRows[0];
   if (!gs) {
     throw new RoletaAppError('Estado de jogo não encontrado.', 400);
   }
 
-  const pendRes = await client.query(
-    `SELECT won_item_id FROM wheel_paid_pending WHERE user_id = $1 FOR UPDATE`,
-    [userId]
-  );
-  const existingWon = pendRes.rows[0]?.won_item_id as string | undefined;
+  const pendRows = await tx.$queryRaw<Array<{ won_item_id: string }>>`
+    SELECT won_item_id FROM wheel_paid_pending WHERE user_id = ${userId} FOR UPDATE
+  `;
+  const existingWon = pendRows[0]?.won_item_id;
   if (existingWon) {
     const newUsdc = Number(gs.usdc) || 0;
-    const item = await queryWheelPrizeByItemIdJoined(client, String(existingWon));
+    const item = await queryWheelPrizeByItemIdJoined(tx, String(existingWon));
     return {
       wonItemId: String(existingWon),
       item,
@@ -366,28 +375,34 @@ export async function paidWheelRollInTransaction(
     throw new RoletaAppError('Saldo USDC insuficiente (mínimo US$1,00 por giro).', 400);
   }
 
-  const payRes = await client.query(
-    `UPDATE game_states SET usdc = usdc - $1, last_updated_at = $2, server_updated_at = $2
-     WHERE user_id = $3 AND usdc >= $1 RETURNING usdc`,
-    [price, serverNowMs, userId]
-  );
-  if (payRes.rowCount === 0) {
+  const payRows = await tx.$queryRaw<Array<{ usdc: number }>>`
+    UPDATE game_states
+    SET usdc = usdc - ${price},
+        last_updated_at = ${BigInt(serverNowMs)},
+        server_updated_at = ${BigInt(serverNowMs)}
+    WHERE user_id = ${userId} AND usdc >= ${price}
+    RETURNING usdc::float AS usdc
+  `;
+  if (payRows.length === 0) {
     throw new RoletaAppError('Saldo USDC insuficiente (mínimo US$1,00 por giro).', 400);
   }
 
-  const prizes = await queryAllWheelPrizesJoined(client);
+  const prizes = await queryAllWheelPrizesJoined(tx);
   if (prizes.length === 0) {
     throw new RoletaAppError('Configuração da roleta não encontrada.', 500);
   }
   const selected = pickWeightedPrize(prizes);
 
-  await client.query(
-    `INSERT INTO wheel_paid_pending (user_id, won_item_id, charged_usdc, rolled_at)
-     VALUES ($1, $2, $3, $4)`,
-    [userId, selected.item_id, price, serverNowMs]
-  );
+  await tx.wheel_paid_pending.create({
+    data: {
+      user_id: userId,
+      won_item_id: selected.item_id,
+      charged_usdc: price,
+      rolled_at: BigInt(serverNowMs)
+    }
+  });
 
-  const newUsdc = Number((payRes.rows[0] as { usdc?: unknown }).usdc) || 0;
+  const newUsdc = Number(payRows[0]!.usdc) || 0;
   return {
     wonItemId: selected.item_id,
     item: selected,
@@ -398,19 +413,18 @@ export async function paidWheelRollInTransaction(
 }
 
 export async function paidWheelClaimInTransaction(
-  client: PoolClient,
+  tx: RoletaDbTx,
   args: { userId: number; wonItemId: string }
 ): Promise<RoletaClaimResult> {
   const { userId, wonItemId } = args;
 
-  const pendRes = await client.query(
-    `SELECT won_item_id FROM wheel_paid_pending WHERE user_id = $1 FOR UPDATE`,
-    [userId]
-  );
-  if (pendRes.rowCount === 0) {
+  const pendRows = await tx.$queryRaw<Array<{ won_item_id: string }>>`
+    SELECT won_item_id FROM wheel_paid_pending WHERE user_id = ${userId} FOR UPDATE
+  `;
+  if (pendRows.length === 0) {
     throw new RoletaAppError('Não há prémio pendente. Gire a roleta paga primeiro.', 400);
   }
-  const rowWon = String((pendRes.rows[0] as { won_item_id?: string }).won_item_id || '');
+  const rowWon = String(pendRows[0]!.won_item_id || '');
   if (rowWon !== String(wonItemId)) {
     throw new RoletaAppError(
       'Integridade do sorteio violada. O item reivindicado não corresponde ao sorteado.',
@@ -418,10 +432,10 @@ export async function paidWheelClaimInTransaction(
     );
   }
 
-  const granted = await grantWheelPrizeUnopenedBox(client, userId, wonItemId);
+  const granted = await grantWheelPrizeUnopenedBox(tx, userId, wonItemId);
 
-  const del = await client.query(`DELETE FROM wheel_paid_pending WHERE user_id = $1`, [userId]);
-  if (del.rowCount === 0) {
+  const del = await tx.wheel_paid_pending.deleteMany({ where: { user_id: userId } });
+  if (del.count === 0) {
     throw new RoletaAppError('Estado da roleta paga alterado. Recarregue a página.', 409);
   }
 

@@ -314,6 +314,86 @@ export async function validateStoredBatteriesForSave(
   return { ok: true };
 }
 
+/** Erro de guarda ao aplicar remoções em `stored_batteries` (save-game / persistência de sala). */
+export class StoredBatterySaveGuardError extends Error {
+  readonly httpStatus = 409 as const;
+  readonly forceReload = true as const;
+  constructor(message: string) {
+    super(message);
+    this.name = 'StoredBatterySaveGuardError';
+  }
+}
+
+function collectBatteryInstanceRefsFromWorkshopPayload(workshopSlots: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(workshopSlots)) return out;
+  for (const w of workshopSlots) {
+    if (!w || typeof w !== 'object' || Array.isArray(w)) continue;
+    const internal = (w as Record<string, unknown>).internalSlots;
+    if (!internal || typeof internal !== 'object' || Array.isArray(internal)) continue;
+    for (const v of Object.values(internal)) {
+      if (v == null) continue;
+      const s = String(v).trim();
+      if (s) out.add(s);
+    }
+  }
+  return out;
+}
+
+function collectBatteryIdsFromPlacedRacksPayload(placedRacks: unknown): Set<string> {
+  const out = new Set<string>();
+  if (!Array.isArray(placedRacks)) return out;
+  for (const r of placedRacks) {
+    if (!r || typeof r !== 'object' || Array.isArray(r)) continue;
+    const bid = (r as Record<string, unknown>).batteryId;
+    if (bid != null && String(bid).trim()) out.add(String(bid).trim());
+  }
+  return out;
+}
+
+/**
+ * Impede que o save apague linhas de `stored_batteries` quando o payload não mostra para onde
+ * foram as instâncias (ex.: cliente incompleto após rede/VM). Cada id que deixaria de estar
+ * listado no armazém tem de aparecer como `batteryId` numa rig ou como valor em `internalSlots`
+ * da oficina no mesmo pedido.
+ */
+export async function validateStoredBatteryWarehouseRemovalAllowed(
+  client: PoolClient,
+  uid: number | string,
+  incomingIds: string[],
+  changes: { placedRacks?: unknown; workshopSlots?: unknown },
+  adminOverride: boolean
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (adminOverride) return { ok: true };
+
+  const dbRes = await client.query<{ id: string }>('SELECT id FROM stored_batteries WHERE user_id = $1', [uid]);
+  const dbIds = (dbRes.rows || [])
+    .map((r) => String(r.id || '').trim())
+    .filter((id) => id.length > 0);
+  if (dbIds.length === 0) return { ok: true };
+
+  const incomingSet = new Set(
+    incomingIds.map((id) => String(id || '').trim()).filter((id) => id.length > 0)
+  );
+  const toDrop = dbIds.filter((id) => !incomingSet.has(id));
+  if (toDrop.length === 0) return { ok: true };
+
+  const referenced = new Set<string>([
+    ...collectBatteryIdsFromPlacedRacksPayload(changes.placedRacks),
+    ...collectBatteryInstanceRefsFromWorkshopPayload(changes.workshopSlots)
+  ]);
+
+  const orphans = toDrop.filter((id) => !referenced.has(id));
+  if (orphans.length > 0) {
+    return {
+      ok: false,
+      error:
+        'O armazém de baterias enviado deixa de listar unidades que o servidor ainda tem no armazém, sem aparecerem montadas nas rigs ou na oficina neste guardar. Recarrega a página (F5) para sincronizar.'
+    };
+  }
+  return { ok: true };
+}
+
 const WORKSHOP_SLOT_COUNT = 6;
 const MAX_WORKSHOP_JSON_KEYS = 400;
 

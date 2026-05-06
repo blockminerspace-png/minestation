@@ -1,14 +1,8 @@
 import crypto from 'node:crypto';
 import path from 'node:path';
 import type { Express, Request, RequestHandler, Response } from 'express';
-import type { Pool } from 'pg';
 import multer from 'multer';
-import type {
-  AdminReplyBatchRow,
-  PlayerReplyBatchRow,
-  SupportTicketReplyDbRow,
-  SupportTicketPlayerReplyDbRow
-} from '../models/supportTicketModel.js';
+import type { SupportTicketReplyDbRow, SupportTicketPlayerReplyDbRow } from '../models/supportTicketModel.js';
 import {
   getSupportTicketById,
   getTicketForAdminReply,
@@ -40,14 +34,13 @@ export const SUPPORT_ALLOWED_EXT = new Set([
 ]);
 
 export type AppendGameActivityLog = (
-  pool: Pool,
+  _q: unknown,
   userId: number,
   action: string,
   meta: Record<string, unknown>
 ) => Promise<void>;
 
 export type SupportTicketDeps = {
-  pool: Pool;
   authenticateToken: RequestHandler;
   isAdmin: RequestHandler;
   uploadSupport: ReturnType<typeof multer>;
@@ -135,7 +128,7 @@ export function createSupportTicketUploadMiddlewares(uploadsDir: string): {
 }
 
 export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDeps): void {
-  const { pool, authenticateToken, isAdmin, uploadSupport, uploadSupportReply, appendGameActivityLog } = deps;
+  const { authenticateToken, isAdmin, uploadSupport, uploadSupportReply, appendGameActivityLog } = deps;
 
   app.post(
     '/api/support/submit',
@@ -172,7 +165,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       const id = crypto.randomUUID();
       const now = Date.now();
       try {
-        await insertSupportTicket(pool, {
+        await insertSupportTicket({
           id,
           userId: uid,
           subject,
@@ -180,7 +173,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
           attachmentsJson: JSON.stringify(attachments),
           createdAt: now
         });
-        await appendGameActivityLog(pool, uid, 'support_ticket_submit', {
+        await appendGameActivityLog(null, uid, 'support_ticket_submit', {
           ticketId: id,
           attachmentCount: attachments.length
         });
@@ -199,8 +192,8 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       return;
     }
     try {
-      const rowsRes = await listMySupportTicketSummaries(pool, uid);
-      const tickets = rowsRes.rows.map((r) => {
+      const summaryRows = await listMySupportTicketSummaries(uid);
+      const tickets = summaryRows.map((r) => {
         const createdAt = Number(r.created_at) || 0;
         const lastAdmin = Number(r.last_admin_at) || 0;
         const lastPlayer = Number(r.last_player_at) || 0;
@@ -233,14 +226,13 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       return;
     }
     try {
-      const tRes = await getSupportTicketById(pool, ticketId);
-      const t = tRes.rows[0];
+      const t = await getSupportTicketById(ticketId);
       if (!t || Number(t.user_id) !== uid) {
         res.status(404).json({ error: 'Pedido não encontrado.' });
         return;
       }
-      const adminRes = await listAdminRepliesForTicket(pool, ticketId);
-      const playerRes = await listPlayerRepliesForTicket(pool, ticketId);
+      const adminReplies = await listAdminRepliesForTicket(ticketId);
+      const playerReplies = await listPlayerRepliesForTicket(ticketId);
       res.json({
         ticket: {
           id: t.id,
@@ -250,14 +242,14 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
           status: t.status,
           createdAt: Number(t.created_at) || 0
         },
-        adminReplies: adminRes.rows.map((r: SupportTicketReplyDbRow) => ({
+        adminReplies: adminReplies.map((r: SupportTicketReplyDbRow) => ({
           id: r.id,
           adminUsername: r.admin_username,
           message: r.message,
           attachments: asJsonArray(r.attachments),
           createdAt: Number(r.created_at) || 0
         })),
-        playerReplies: playerRes.rows.map((r: SupportTicketPlayerReplyDbRow) => ({
+        playerReplies: playerReplies.map((r: SupportTicketPlayerReplyDbRow) => ({
           id: r.id,
           message: r.message,
           attachments: asJsonArray(r.attachments),
@@ -306,8 +298,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       await compressUploadedMulterFiles(files);
       const { list: attachments } = buildAttachmentsFromFiles(files);
       try {
-        const tRes = await getTicketForPlayerAction(pool, ticketId);
-        const t = tRes.rows[0];
+        const t = await getTicketForPlayerAction(ticketId);
         if (!t || Number(t.user_id) !== uid) {
           res.status(404).json({ error: 'Pedido não encontrado.' });
           return;
@@ -321,7 +312,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
         }
         const replyId = crypto.randomUUID();
         const now = Date.now();
-        await insertSupportPlayerReply(pool, {
+        await insertSupportPlayerReply({
           replyId,
           ticketId,
           userId: uid,
@@ -329,7 +320,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
           attachmentsJson: JSON.stringify(attachments),
           createdAt: now
         });
-        await appendGameActivityLog(pool, uid, 'support_ticket_player_reply', {
+        await appendGameActivityLog(null, uid, 'support_ticket_player_reply', {
           ticketId,
           replyId,
           attachmentCount: attachments.length
@@ -348,8 +339,8 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
         300,
         Math.max(1, parseInt(String(req.query.limit || '100'), 10) || 100)
       );
-      const rowsRes = await listTicketsForAdmin(pool, limit);
-      const ids = rowsRes.rows.map((r) => r.id);
+      const adminTicketRows = await listTicketsForAdmin(limit);
+      const ids = adminTicketRows.map((r) => r.id);
       const repliesByTicket: Record<
         string,
         {
@@ -366,8 +357,8 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
         { id: string; message: string; attachments: unknown[]; createdAt: number }[]
       > = {};
       if (ids.length > 0) {
-        const repRes = await listAdminRepliesForTicketIds(pool, ids);
-        for (const row of repRes.rows as AdminReplyBatchRow[]) {
+        const repRows = await listAdminRepliesForTicketIds(ids);
+        for (const row of repRows) {
           const tid = row.ticket_id;
           if (!repliesByTicket[tid]) repliesByTicket[tid] = [];
           repliesByTicket[tid].push({
@@ -379,8 +370,8 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
             createdAt: Number(row.created_at) || 0
           });
         }
-        const prRes = await listPlayerRepliesForTicketIds(pool, ids);
-        for (const row of prRes.rows as PlayerReplyBatchRow[]) {
+        const prRows = await listPlayerRepliesForTicketIds(ids);
+        for (const row of prRows) {
           const tid = row.ticket_id;
           if (!playerRepliesByTicket[tid]) playerRepliesByTicket[tid] = [];
           playerRepliesByTicket[tid].push({
@@ -391,7 +382,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
           });
         }
       }
-      const rows = rowsRes.rows.map((r) => ({
+      const rows = adminTicketRows.map((r) => ({
         id: r.id,
         userId: r.user_id,
         username: r.username,
@@ -419,8 +410,8 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
     }
     const st = status === 'archived' ? 'archived' : 'open';
     try {
-      const r = await updateSupportTicketStatus(pool, st, id);
-      if (!r.rows[0]) {
+      const updated = await updateSupportTicketStatus(st, id);
+      if (updated === 0) {
         res.status(404).json({ error: 'Ticket não encontrado.' });
         return;
       }
@@ -467,15 +458,14 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       await compressUploadedMulterFiles(files);
       const { list: attachments } = buildAttachmentsFromFiles(files);
       try {
-        const tRes = await getTicketForAdminReply(pool, ticketId);
-        const t = tRes.rows[0];
+        const t = await getTicketForAdminReply(ticketId);
         if (!t) {
           res.status(404).json({ error: 'Ticket não encontrado.' });
           return;
         }
         const replyId = crypto.randomUUID();
         const now = Date.now();
-        await insertSupportAdminReply(pool, {
+        await insertSupportAdminReply({
           replyId,
           ticketId,
           adminUserId: adminId,
@@ -483,7 +473,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
           attachmentsJson: JSON.stringify(attachments),
           createdAt: now
         });
-        await appendGameActivityLog(pool, t.user_id, 'support_ticket_admin_reply', {
+        await appendGameActivityLog(null, t.user_id, 'support_ticket_admin_reply', {
           ticketId,
           replyId,
           adminUserId: adminId,

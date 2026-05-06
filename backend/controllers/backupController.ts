@@ -3,7 +3,7 @@ import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import type { Express, RequestHandler } from 'express';
-import type { Pool } from 'pg';
+import { prisma } from '../config/prisma.js';
 import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import type { PgCliSpawnOptions } from '../config/database.js';
 
@@ -45,7 +45,6 @@ export type PgRestoreSpawnOptions = PgCliSpawnOptions;
 
 export type BackupControllerDeps = {
   isAdmin: RequestHandler;
-  pool: Pool;
   backupModel: BackupModelApi;
   getPgRestoreSpawnOptions: () => PgRestoreSpawnOptions;
   getPgRestorePath: () => string;
@@ -109,64 +108,50 @@ export function msUntilNextLocalClockRun(nowMs: number = Date.now()): number {
   return Math.max(1000, target.getTime() - now.getTime());
 }
 
-export type ScheduledSqlBackupOptions = {
-  /** Pool Postgres: usado para advisory lock (uma só instância corre o dump). */
-  pool?: Pool;
-};
-
 /**
  * Agenda um único `pg_dump` automático por dia, à hora local do servidor (default 00:00).
- * Com `pool`, só um processo entre réplicas executa (advisory lock na mesma BD).
+ * Usa advisory lock na BD via Prisma para uma só instância entre réplicas.
  */
-export function startScheduledSqlBackups(backupModel: BackupModelApi, opts?: ScheduledSqlBackupOptions): void {
+export function startScheduledSqlBackups(backupModel: BackupModelApi): void {
   if (process.env.BACKUP_DISABLE_AUTO === '1' || String(process.env.BACKUP_DISABLE_AUTO).toLowerCase() === 'true') {
     console.log('[Backup] Backups automáticos SQL desativados (BACKUP_DISABLE_AUTO).');
     return;
   }
-  const pool = opts?.pool;
+  const k1 = AUTO_SQL_BACKUP_LOCK_K1;
+  const k2 = AUTO_SQL_BACKUP_LOCK_K2;
   const { hour, minute } = parseAutoBackupLocalClock();
 
   const tick = async (): Promise<void> => {
-    if (pool) {
-      const client = await pool.connect();
-      try {
-        const lockRes = await client.query('SELECT pg_try_advisory_lock($1::integer, $2::integer) AS ok', [
-          AUTO_SQL_BACKUP_LOCK_K1,
-          AUTO_SQL_BACKUP_LOCK_K2,
-        ]);
-        const got = lockRes.rows[0]?.ok === true;
-        if (!got) {
-          console.log('[Backup] Dump SQL automático ignorado (outro processo detém o lock).');
-          return;
-        }
-        try {
-          const r = await createScheduledSqlBackupOnce(backupModel);
-          console.log(`[Backup] Dump SQL automático: ${sanitizeForLog(r.filename)} (${r.bytes} bytes)`);
-        } catch (e) {
-          console.error('[Backup] Falha no dump SQL automático:', sanitizeForLog(toErrorMessage(e), 200));
-        } finally {
-          try {
-            await client.query('SELECT pg_advisory_unlock($1::integer, $2::integer)', [
-              AUTO_SQL_BACKUP_LOCK_K1,
-              AUTO_SQL_BACKUP_LOCK_K2,
-            ]);
-          } catch (unlockErr) {
-            console.error('[Backup] Falha ao libertar advisory lock:', sanitizeForLog(toErrorMessage(unlockErr), 200));
-          }
-        }
-      } catch (e) {
-        console.error('[Backup] Falha ao adquirir lock / conectar para dump automático:', sanitizeForLog(toErrorMessage(e), 200));
-      } finally {
-        client.release();
-      }
-      return;
-    }
-
     try {
-      const r = await createScheduledSqlBackupOnce(backupModel);
-      console.log(`[Backup] Dump SQL automático: ${sanitizeForLog(r.filename)} (${r.bytes} bytes)`);
+      await prisma.$transaction(
+        async (tx) => {
+          const lockRes = await tx.$queryRaw<[{ ok: boolean }]>`
+            SELECT pg_try_advisory_lock(${k1}::integer, ${k2}::integer) AS ok
+          `;
+          const got = lockRes[0]?.ok === true;
+          if (!got) {
+            console.log('[Backup] Dump SQL automático ignorado (outro processo detém o lock).');
+            return;
+          }
+          try {
+            const r = await createScheduledSqlBackupOnce(backupModel);
+            console.log(`[Backup] Dump SQL automático: ${sanitizeForLog(r.filename)} (${r.bytes} bytes)`);
+          } catch (e) {
+            console.error('[Backup] Falha no dump SQL automático:', sanitizeForLog(toErrorMessage(e), 200));
+          } finally {
+            try {
+              await tx.$queryRaw`
+                SELECT pg_advisory_unlock(${k1}::integer, ${k2}::integer)
+              `;
+            } catch (unlockErr) {
+              console.error('[Backup] Falha ao libertar advisory lock:', sanitizeForLog(toErrorMessage(unlockErr), 200));
+            }
+          }
+        },
+        { timeout: 1_200_000, maxWait: 30_000 }
+      );
     } catch (e) {
-      console.error('[Backup] Falha no dump SQL automático:', sanitizeForLog(toErrorMessage(e), 200));
+      console.error('[Backup] Falha ao adquirir lock / transação para dump automático:', sanitizeForLog(toErrorMessage(e), 200));
     }
   };
 
@@ -194,7 +179,7 @@ export function startScheduledSqlBackups(backupModel: BackupModelApi, opts?: Sch
  * Rotas admin: listar / criar (pg_dump SQL) / apagar / upload / download / restaurar.
  */
 export function registerBackupRoutes(app: Express, deps: BackupControllerDeps): void {
-  const { isAdmin, pool, backupModel: m, getPgRestoreSpawnOptions, getPgRestorePath } = deps;
+  const { isAdmin, backupModel: m, getPgRestoreSpawnOptions, getPgRestorePath } = deps;
 
   function spawnPgRestoreAwait(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -372,107 +357,120 @@ export function registerBackupRoutes(app: Express, deps: BackupControllerDeps): 
       }
     }
 
-    const client = await pool.connect();
     const priority = priorityOrder(m);
     try {
-      await client.query('BEGIN');
+      await prisma.$transaction(
+        async (tx) => {
+        if (filename.endsWith('.db') || filename.endsWith('.sqlite')) {
+          if (!BetterSqliteDatabase) {
+            throw new Error('SQLITE501');
+          }
+          const bkpDb = new BetterSqliteDatabase(bkpPath, { readonly: true });
+          const foundTables = bkpDb
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+            .all()
+            .map((t) => String((t as { name?: unknown }).name ?? ''));
 
-      if (filename.endsWith('.db') || filename.endsWith('.sqlite')) {
-        if (!BetterSqliteDatabase) {
-          await client.query('ROLLBACK');
-          return res.status(501).json({
-            error: 'Restauro SQLite requer o pacote opcional better-sqlite3 (`npm install better-sqlite3`).'
+          const sortedTables = foundTables.sort((a, b) => {
+            let idxA = priority.indexOf(a);
+            let idxB = priority.indexOf(b);
+            if (idxA === -1) idxA = 999;
+            if (idxB === -1) idxB = 999;
+            return idxA - idxB;
           });
-        }
-        const bkpDb = new BetterSqliteDatabase(bkpPath, { readonly: true });
-        const foundTables = bkpDb
-          .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
-          .all()
-          .map((t) => String((t as { name?: unknown }).name ?? ''));
 
-        const sortedTables = foundTables.sort((a, b) => {
-          let idxA = priority.indexOf(a);
-          let idxB = priority.indexOf(b);
-          if (idxA === -1) idxA = 999;
-          if (idxB === -1) idxB = 999;
-          return idxA - idxB;
-        });
+          for (const tableName of sortedTables) {
+            if (!m.RESTORE_ALLOWED_TABLES.has(tableName) || !m.isSafeSqlIdentifier(tableName)) {
+              console.warn(`[Restore] Tabela ignorada (não permitida): ${sanitizeForLog(tableName, 80)}`);
+              continue;
+            }
+            const existsRows = await tx.$queryRawUnsafe(
+              `SELECT 1 AS x FROM information_schema.tables WHERE table_schema = 'public' AND table_name = $1 LIMIT 1`,
+              tableName
+            );
+            if (!Array.isArray(existsRows) || existsRows.length === 0) continue;
+            const backupRows = bkpDb.prepare(`SELECT * FROM ${tableName}`).all();
+            if (backupRows.length === 0) continue;
+            const cols = Object.keys(backupRows[0] as Record<string, unknown>);
+            if (!cols.every(m.isSafeSqlIdentifier)) {
+              console.warn(`[Restore] Colunas inválidas na tabela ${sanitizeForLog(tableName, 80)}, ignorando.`);
+              continue;
+            }
+            const colList = cols.join(', ');
+            const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+            for (const row of backupRows) {
+              const values = cols.map((c) => (row as Record<string, unknown>)[c]);
+              try {
+                await tx.$executeRawUnsafe('SAVEPOINT restore_row');
+                await tx.$executeRawUnsafe(
+                  `INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+                  ...values
+                );
+                await tx.$executeRawUnsafe('RELEASE SAVEPOINT restore_row');
+              } catch (e) {
+                await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT restore_row');
+                console.warn(
+                  `[Restore] Saltando registro em ${sanitizeForLog(tableName, 80)}: ${sanitizeForLog(toErrorMessage(e), 120)}`
+                );
+              }
+            }
+          }
+          bkpDb.close();
+        } else {
+          const rawJson = fs.readFileSync(bkpPath, 'utf8');
+          const backupData = JSON.parse(rawJson) as Record<string, unknown>;
+          const sortedKeys = Object.keys(backupData).sort((a, b) => {
+            let idxA = priority.indexOf(a);
+            let idxB = priority.indexOf(b);
+            if (idxA === -1) idxA = 999;
+            if (idxB === -1) idxB = 999;
+            return idxA - idxB;
+          });
 
-        for (const tableName of sortedTables) {
-          if (!m.RESTORE_ALLOWED_TABLES.has(tableName) || !m.isSafeSqlIdentifier(tableName)) {
-            console.warn(`[Restore] Tabela ignorada (não permitida): ${sanitizeForLog(tableName, 80)}`);
-            continue;
-          }
-          const existsRes = await client.query('SELECT 1 FROM information_schema.tables WHERE table_name = $1', [tableName]);
-          if (existsRes.rowCount === 0) continue;
-          const backupRows = bkpDb.prepare(`SELECT * FROM ${tableName}`).all();
-          if (backupRows.length === 0) continue;
-          const cols = Object.keys(backupRows[0] as Record<string, unknown>);
-          if (!cols.every(m.isSafeSqlIdentifier)) {
-            console.warn(`[Restore] Colunas inválidas na tabela ${sanitizeForLog(tableName, 80)}, ignorando.`);
-            continue;
-          }
-          const colList = cols.join(', ');
-          const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-          for (const row of backupRows) {
-            const values = cols.map((c) => (row as Record<string, unknown>)[c]);
-            try {
-              await client.query('SAVEPOINT restore_row');
-              await client.query(`INSERT INTO ${tableName} (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`, values);
-              await client.query('RELEASE SAVEPOINT restore_row');
-            } catch (e) {
-              await client.query('ROLLBACK TO SAVEPOINT restore_row');
-              console.warn(`[Restore] Saltando registro em ${sanitizeForLog(tableName, 80)}: ${sanitizeForLog(toErrorMessage(e), 120)}`);
+          for (const table of sortedKeys) {
+            if (!m.RESTORE_ALLOWED_TABLES.has(table) || !m.isSafeSqlIdentifier(table)) {
+              console.warn(`[Restore] Tabela ignorada (não permitida): ${sanitizeForLog(table, 80)}`);
+              continue;
+            }
+            const rowsRaw = backupData[table];
+            if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) continue;
+            const rows = rowsRaw as Array<Record<string, unknown>>;
+            const cols = Object.keys(rows[0]);
+            if (!cols.every(m.isSafeSqlIdentifier)) {
+              console.warn(`[Restore] Colunas inválidas na tabela ${sanitizeForLog(table, 80)}, ignorando.`);
+              continue;
+            }
+            const colList = cols.join(', ');
+            const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
+            for (const row of rows) {
+              const values = cols.map((c) => row[c]);
+              try {
+                await tx.$executeRawUnsafe('SAVEPOINT restore_row');
+                await tx.$executeRawUnsafe(
+                  `INSERT INTO ${table} (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`,
+                  ...values
+                );
+                await tx.$executeRawUnsafe('RELEASE SAVEPOINT restore_row');
+              } catch (e) {
+                await tx.$executeRawUnsafe('ROLLBACK TO SAVEPOINT restore_row');
+                console.warn(
+                  `[Restore] Saltando registro em ${sanitizeForLog(table, 80)}: ${sanitizeForLog(toErrorMessage(e), 120)}`
+                );
+              }
             }
           }
         }
-        bkpDb.close();
-      } else {
-        const rawJson = fs.readFileSync(bkpPath, 'utf8');
-        const backupData = JSON.parse(rawJson) as Record<string, unknown>;
-        const sortedKeys = Object.keys(backupData).sort((a, b) => {
-          let idxA = priority.indexOf(a);
-          let idxB = priority.indexOf(b);
-          if (idxA === -1) idxA = 999;
-          if (idxB === -1) idxB = 999;
-          return idxA - idxB;
-        });
-
-        for (const table of sortedKeys) {
-          if (!m.RESTORE_ALLOWED_TABLES.has(table) || !m.isSafeSqlIdentifier(table)) {
-            console.warn(`[Restore] Tabela ignorada (não permitida): ${sanitizeForLog(table, 80)}`);
-            continue;
-          }
-          const rowsRaw = backupData[table];
-          if (!Array.isArray(rowsRaw) || rowsRaw.length === 0) continue;
-          const rows = rowsRaw as Array<Record<string, unknown>>;
-          const cols = Object.keys(rows[0]);
-          if (!cols.every(m.isSafeSqlIdentifier)) {
-            console.warn(`[Restore] Colunas inválidas na tabela ${sanitizeForLog(table, 80)}, ignorando.`);
-            continue;
-          }
-          const colList = cols.join(', ');
-          const placeholders = cols.map((_, i) => `$${i + 1}`).join(', ');
-          for (const row of rows) {
-            const values = cols.map((c) => row[c]);
-            try {
-              await client.query('SAVEPOINT restore_row');
-              await client.query(`INSERT INTO ${table} (${colList}) VALUES (${placeholders}) ON CONFLICT DO NOTHING`, values);
-              await client.query('RELEASE SAVEPOINT restore_row');
-            } catch (e) {
-              await client.query('ROLLBACK TO SAVEPOINT restore_row');
-              console.warn(`[Restore] Saltando registro em ${sanitizeForLog(table, 80)}: ${sanitizeForLog(toErrorMessage(e), 120)}`);
-            }
-          }
-        }
-      }
-      await client.query('COMMIT');
+      },
+        { timeout: 1_800_000, maxWait: 60_000 }
+      );
       res.json({ ok: true });
     } catch (e) {
-      await client.query('ROLLBACK');
+      if (e instanceof Error && e.message === 'SQLITE501') {
+        return res.status(501).json({
+          error: 'Restauro SQLite requer o pacote opcional better-sqlite3 (`npm install better-sqlite3`).'
+        });
+      }
       res.status(500).json({ error: 'Erro no restore: ' + sanitizeApiMessage(toErrorMessage(e), 200) });
-    } finally {
-      client.release();
     }
   });
 }

@@ -3,6 +3,7 @@ import {
   parseLootBoxId,
   rollLootBoxOnce,
   rollLootBoxGrantAll,
+  LootBoxBuyError,
   type LootBoxItemRow,
 } from '../models/lootBoxModel.js';
 
@@ -35,6 +36,15 @@ describe('lootBoxModel', () => {
     expect(p.rewards.length).toBe(1);
     expect(p.rewards[0]!.type).toBe('currency');
     expect(p.gainedUsdc).toBe(5);
+  });
+
+  it('LootBoxBuyError inclui missing opcional', () => {
+    const e = new LootBoxBuyError(400, 'Saldo USDC insuficiente.', { missing: 2.5 });
+    expect(e.statusCode).toBe(400);
+    expect(e.message).toBe('Saldo USDC insuficiente.');
+    expect(e.missing).toBe(2.5);
+    const plain = new LootBoxBuyError(404, 'Caixa não encontrada.');
+    expect(plain.missing).toBeUndefined();
   });
 
   it('rollLootBoxGrantAll inclui todas com probability > 0', () => {

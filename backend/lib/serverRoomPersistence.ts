@@ -3,6 +3,10 @@
  * Mirrors relevant blocks in server.js save-game / game-state.
  */
 import type { PoolClient } from 'pg';
+import {
+  validateStoredBatteryWarehouseRemovalAllowed,
+  StoredBatterySaveGuardError
+} from './saveGameEconomyValidate.js';
 
 export function normalizePlacedRackRoomId(raw: unknown): string {
   const s = raw != null ? String(raw).trim() : '';
@@ -146,6 +150,8 @@ export type GameStateChanges = {
   stock?: Record<string, number>;
   storedBatteries?: Array<{ id: string; itemId: string; currentCharge?: number }>;
   placedRacks?: PlacedRackLoaded[];
+  /** Opcional: usado pela validação de remoções seguras em `stored_batteries`. */
+  workshopSlots?: unknown;
 };
 
 export type ActivityLogEntry = { action: string; meta: Record<string, unknown> };
@@ -157,6 +163,20 @@ export async function persistStockStoredBatteriesPlacedRacks(
   saveActivityLogs: ActivityLogEntry[]
 ): Promise<void> {
   const { stock, storedBatteries, placedRacks } = changes;
+
+  if (storedBatteries) {
+    const incomingBatIds = storedBatteries.map((b) => b.id);
+    const rm = await validateStoredBatteryWarehouseRemovalAllowed(
+      client,
+      uid,
+      incomingBatIds,
+      { placedRacks: changes.placedRacks, workshopSlots: changes.workshopSlots },
+      false
+    );
+    if (!rm.ok) {
+      throw new StoredBatterySaveGuardError(rm.error);
+    }
+  }
 
   if (stock) {
     const itemIds = Object.keys(stock);

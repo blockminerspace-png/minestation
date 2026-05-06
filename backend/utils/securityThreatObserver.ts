@@ -16,9 +16,9 @@
  *   Com `0` só grava pontuação em `security_threat_scores` (evita banir IPs errados / CGNAT / proxy mal configurado).
  */
 import type { Express, Request, Response } from 'express';
-import type { Pool } from 'pg';
 import type { BackupModelApi } from '../controllers/backupController.js';
 import { createScheduledSqlBackupOnce } from '../controllers/backupController.js';
+import { prisma } from '../config/prisma.js';
 
 const AUTO_SQL_BACKUP_LOCK_K1 = 0x4d53;
 const AUTO_SQL_BACKUP_LOCK_K2 = 0x6270;
@@ -157,13 +157,11 @@ export function scoreForHttpResponse(statusCode: number, path: string, userAgent
 }
 
 export type SecurityThreatObserverDeps = {
-  pool: Pool;
   backupModel: BackupModelApi;
   getClientIp: (req: Request) => string;
 };
 
 async function applyScoreAndMaybeBan(
-  pool: Pool,
   backupModel: BackupModelApi | null,
   ip: string,
   points: number
@@ -172,16 +170,17 @@ async function applyScoreAndMaybeBan(
   const now = Date.now();
   const win = windowMs();
   const thresh = banThreshold();
+  const k1 = AUTO_SQL_BACKUP_LOCK_K1;
+  const k2 = AUTO_SQL_BACKUP_LOCK_K2;
 
-  const client = await pool.connect();
-  try {
-    const sel = await client.query(
-      `SELECT score, window_start FROM security_threat_scores WHERE ip = $1`,
-      [ip]
-    );
+  await prisma.$transaction(
+    async (tx) => {
+    const row = await tx.security_threat_scores.findUnique({
+      where: { ip },
+      select: { score: true, window_start: true }
+    });
     let newScore = points;
     let windowStart = now;
-    const row = sel.rows[0] as { score?: unknown; window_start?: unknown } | undefined;
     if (row) {
       const ws = Number(row.window_start);
       const sc = Number(row.score);
@@ -193,35 +192,39 @@ async function applyScoreAndMaybeBan(
         windowStart = Number.isFinite(ws) ? ws : now;
       }
     }
-    await client.query(
-      `INSERT INTO security_threat_scores (ip, score, window_start, updated_at)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (ip) DO UPDATE SET score = $2, window_start = $3, updated_at = $4`,
-      [ip, newScore, windowStart, now]
-    );
+    await tx.security_threat_scores.upsert({
+      where: { ip },
+      create: {
+        ip,
+        score: newScore,
+        window_start: BigInt(windowStart),
+        updated_at: BigInt(now)
+      },
+      update: {
+        score: newScore,
+        window_start: BigInt(windowStart),
+        updated_at: BigInt(now)
+      }
+    });
 
     if (newScore >= thresh) {
       if (isSecurityObserverAutoIpBanEnabled()) {
-        await client.query(
-          `INSERT INTO ip_blacklist (ip, reason, added_at) VALUES ($1, $2, $3)
-         ON CONFLICT (ip) DO UPDATE SET reason = EXCLUDED.reason, added_at = EXCLUDED.added_at`,
-          [
-            ip,
-            `[Observador automático] Pontuação ${newScore} (janela ~${Math.round(win / 60000)} min).`,
-            now
-          ]
-        );
+        const reason = `[Observador automático] Pontuação ${newScore} (janela ~${Math.round(win / 60000)} min).`;
+        await tx.ip_blacklist.upsert({
+          where: { ip },
+          create: { ip, reason, added_at: BigInt(now) },
+          update: { reason, added_at: BigInt(now) }
+        });
         console.warn(`[SecurityObserver] IP bloqueado automaticamente: ${ip} (score=${newScore})`);
 
         const doBackup =
           process.env.SECURITY_OBSERVER_BACKUP_ON_BAN !== '0' &&
           String(process.env.SECURITY_OBSERVER_BACKUP_ON_BAN).toLowerCase() !== 'false';
         if (doBackup && backupModel) {
-          const lockRes = await client.query(`SELECT pg_try_advisory_lock($1::integer, $2::integer) AS ok`, [
-            AUTO_SQL_BACKUP_LOCK_K1,
-            AUTO_SQL_BACKUP_LOCK_K2
-          ]);
-          if (lockRes.rows[0]?.ok === true) {
+          const lockRes = await tx.$queryRaw<[{ ok: boolean }]>`
+            SELECT pg_try_advisory_lock(${k1}::integer, ${k2}::integer) AS ok
+          `;
+          if (lockRes[0]?.ok === true) {
             try {
               const r = await createScheduledSqlBackupOnce(backupModel);
               console.warn(
@@ -231,10 +234,9 @@ async function applyScoreAndMaybeBan(
               console.error('[SecurityObserver] Backup de emergência falhou:', e);
             } finally {
               try {
-                await client.query(`SELECT pg_advisory_unlock($1::integer, $2::integer)`, [
-                  AUTO_SQL_BACKUP_LOCK_K1,
-                  AUTO_SQL_BACKUP_LOCK_K2
-                ]);
+                await tx.$queryRaw`
+                  SELECT pg_advisory_unlock(${k1}::integer, ${k2}::integer)
+                `;
               } catch (unlockErr) {
                 console.error('[SecurityObserver] advisory unlock:', unlockErr);
               }
@@ -249,18 +251,17 @@ async function applyScoreAndMaybeBan(
         );
       }
 
-      await client.query(`UPDATE security_threat_scores SET score = 0, window_start = $2 WHERE ip = $1`, [
-        ip,
-        now
-      ]);
+      await tx.security_threat_scores.update({
+        where: { ip },
+        data: { score: 0, window_start: BigInt(now), updated_at: BigInt(now) }
+      });
     }
-  } finally {
-    client.release();
-  }
+  },
+    { timeout: 1_200_000, maxWait: 30_000 }
+  );
 }
 
 export function recordThreatFromHttpResponse(
-  pool: Pool,
   backupModel: BackupModelApi | null,
   ip: string,
   path: string,
@@ -270,57 +271,61 @@ export function recordThreatFromHttpResponse(
   if (!isSecurityObserverEnabled()) return;
   const pts = scoreForHttpResponse(statusCode, path, userAgent);
   if (pts <= 0) return;
-  void applyScoreAndMaybeBan(pool, backupModel, ip, pts).catch((e) => {
+  void applyScoreAndMaybeBan(backupModel, ip, pts).catch((e) => {
     console.warn('[SecurityObserver] recordThreat:', e instanceof Error ? e.message : e);
   });
 }
 
 /** Middleware: no `finish` da resposta, pontua por IP (não bloqueia o request). */
 export function attachSecurityThreatResponseObserver(app: Express, deps: SecurityThreatObserverDeps): void {
-  const { pool, backupModel, getClientIp } = deps;
+  const { backupModel, getClientIp } = deps;
   app.use((req: Request, res: Response, next) => {
     if (!isSecurityObserverEnabled()) return next();
     const ip = getClientIp(req);
     const pathOnly = String(req.originalUrl || req.url || '');
     res.on('finish', () => {
       const ua = req.headers['user-agent'];
-      recordThreatFromHttpResponse(pool, backupModel, ip, pathOnly, res.statusCode, typeof ua === 'string' ? ua : undefined);
+      recordThreatFromHttpResponse(
+        backupModel,
+        ip,
+        pathOnly,
+        res.statusCode,
+        typeof ua === 'string' ? ua : undefined
+      );
     });
     next();
   });
 }
 
 /** Varre admin_access_logs (só worker de fundo): muitas tentativas falhadas no painel. */
-export async function runSecurityObserverAdminLogScan(pool: Pool, backupModel: BackupModelApi | null): Promise<void> {
+export async function runSecurityObserverAdminLogScan(backupModel: BackupModelApi | null): Promise<void> {
   if (!isSecurityObserverEnabled()) return;
   const since = Date.now() - 12 * 60 * 1000;
   const minHits = Math.max(8, parseInt(process.env.SECURITY_OBSERVER_ADMIN_PROBE_MIN || '18', 10) || 18);
   const bonus = Math.max(10, parseInt(process.env.SECURITY_OBSERVER_ADMIN_PROBE_SCORE || '22', 10) || 22);
 
-  const r = await pool.query(
-    `SELECT ip, COUNT(*)::int AS c
-       FROM admin_access_logs
-      WHERE created_at > $1
-        AND (
-          details LIKE '%No session cookie provided%'
-          OR details LIKE '%Invalid session ID:%'
-          OR details LIKE '%Expired session:%'
-          OR details LIKE '%attempted admin access without admin flag%'
-          OR details LIKE '%Permissão admin negada:%'
-        )
-      GROUP BY ip
-     HAVING COUNT(*) >= $2`,
-    [since, minHits]
-  );
-  for (const row of r.rows as Array<{ ip?: string; c?: number }>) {
+  const r = await prisma.$queryRaw<Array<{ ip: string; c: number }>>`
+    SELECT ip, COUNT(*)::int AS c
+    FROM admin_access_logs
+    WHERE created_at > ${BigInt(since)}
+      AND (
+        details LIKE '%No session cookie provided%'
+        OR details LIKE '%Invalid session ID:%'
+        OR details LIKE '%Expired session:%'
+        OR details LIKE '%attempted admin access without admin flag%'
+        OR details LIKE '%Permissão admin negada:%'
+      )
+    GROUP BY ip
+    HAVING COUNT(*) >= ${minHits}
+  `;
+  for (const row of r) {
     const ip = String(row.ip || '');
     if (isLocalIp(ip) || isIpAllowlisted(ip)) continue;
-    await applyScoreAndMaybeBan(pool, backupModel, ip, bonus);
+    await applyScoreAndMaybeBan(backupModel, ip, bonus);
   }
 }
 
 export function startSecurityThreatObserverBackgroundScan(
-  pool: Pool,
   backupModel: BackupModelApi,
   opts?: { intervalMs?: number }
 ): void {
@@ -330,15 +335,13 @@ export function startSecurityThreatObserverBackgroundScan(
   }
   const intervalMs = opts?.intervalMs ?? 120_000;
   const tick = (): void => {
-    void runSecurityObserverAdminLogScan(pool, backupModel).catch((e) => {
+    void runSecurityObserverAdminLogScan(backupModel).catch((e) => {
       console.warn('[SecurityObserver] scan:', e instanceof Error ? e.message : e);
     });
   };
   setInterval(tick, intervalMs);
   setTimeout(tick, 45_000);
-  const allowHint = process.env.SECURITY_OBSERVER_IP_ALLOWLIST?.trim()
-    ? ' allowlist=sim'
-    : '';
+  const allowHint = process.env.SECURITY_OBSERVER_IP_ALLOWLIST?.trim() ? ' allowlist=sim' : '';
   const autoBan = isSecurityObserverAutoIpBanEnabled() ? ' ban automático em ip_blacklist=sim' : ' ban automático=off (só pontuação)';
   console.log(
     `[SecurityObserver] Activo: janela ${windowMs() / 60000} min, limiar ${banThreshold()} pts, máx ${maxScorePerRequest()} pts/pedido, scan admin logs a cada ${Math.round(intervalMs / 1000)}s.${allowHint}${autoBan}`

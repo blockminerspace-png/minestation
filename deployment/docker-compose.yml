@@ -1,5 +1,20 @@
-# Produção / VPS: contentores `app`, `app-bull-worker`, `app-postgres`, `app-redis`, `app-mongo`, `app-nginx`, `app-certbot`.
+# Produção / VPS — stack completa (7 serviços):
+#   app-postgres  → PostgreSQL (dados do jogo / Prisma)
+#   app-mongo     → MongoDB (logs genesis)
+#   app-redis     → Redis (BullMQ, cache, Socket.IO adapter — obrigatório)
+#   app           → API + site
+#   app-bull-worker → worker de filas
+#   app-nginx     → reverse proxy
+#   app-certbot   → renovação TLS
+#
+# Se na VM só vires nginx + app + postgres, estás num compose ANTIGO (3 serviços).
+# Este ficheiro substitui esse layout: na VM faz `git pull`, confirma que este
+# `deployment/docker-compose.yml` tem serviços `redis` e `mongo`, depois:
+#   cd deployment && docker compose down && docker compose up -d --build
+# (atenção: `down` sem `-v` mantém volumes; Redis/Mongo ganham volumes novos na 1ª subida.)
+#
 # Não subir em simultâneo com o compose da raiz no mesmo host (nomes `app*` colidem).
+# Arranque recomendado: `bash stack-up.sh` nesta pasta.
 
 name: minestation
 
@@ -19,6 +34,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
 
   redis:
     container_name: app-redis
@@ -32,6 +48,7 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 15s
 
   mongo:
     container_name: app-mongo
@@ -43,7 +60,8 @@ services:
       test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 60s
 
   app:
     container_name: app

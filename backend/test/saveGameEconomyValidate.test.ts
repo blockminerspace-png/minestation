@@ -5,6 +5,7 @@ import {
   isAdminDailyActionKey,
   validateDailyActionsForSave,
   validateStockForSave,
+  validateStoredBatteryWarehouseRemovalAllowed,
 } from '../lib/saveGameEconomyValidate.js';
 
 describe('saveGameEconomyValidate', () => {
@@ -82,5 +83,68 @@ describe('saveGameEconomyValidate', () => {
       expect(r.reason).toBe('unknown_item');
       expect(r.samples).toContain('ghost_item');
     }
+  });
+
+  it('validateStoredBatteryWarehouseRemovalAllowed aceita wipe quando cada id está numa rig', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValue({ rows: [{ id: 'bat-a' }, { id: 'bat-b' }] })
+    };
+    const r = await validateStoredBatteryWarehouseRemovalAllowed(
+      client as never,
+      1,
+      [],
+      {
+        placedRacks: [{ id: 'r1', batteryId: 'bat-a' }, { id: 'r2', batteryId: 'bat-b' }],
+        workshopSlots: []
+      },
+      false
+    );
+    expect(r).toEqual({ ok: true });
+  });
+
+  it('validateStoredBatteryWarehouseRemovalAllowed aceita id na oficina (internalSlots)', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValue({ rows: [{ id: 'inst-1' }] })
+    };
+    const r = await validateStoredBatteryWarehouseRemovalAllowed(
+      client as never,
+      1,
+      [],
+      {
+        placedRacks: [],
+        workshopSlots: [{ itemId: 'charger_x', internalSlots: { s0: 'inst-1' }, currentCharge: 0 }]
+      },
+      false
+    );
+    expect(r).toEqual({ ok: true });
+  });
+
+  it('validateStoredBatteryWarehouseRemovalAllowed rejeita wipe quando falta referência no payload', async () => {
+    const client = {
+      query: vi.fn().mockResolvedValue({ rows: [{ id: 'orphan' }] })
+    };
+    const r = await validateStoredBatteryWarehouseRemovalAllowed(
+      client as never,
+      1,
+      [],
+      { placedRacks: [], workshopSlots: [] },
+      false
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/F5/);
+    }
+  });
+
+  it('validateStoredBatteryWarehouseRemovalAllowed admin ignora', async () => {
+    const client = { query: vi.fn().mockResolvedValue({ rows: [{ id: 'x' }] }) };
+    const r = await validateStoredBatteryWarehouseRemovalAllowed(
+      client as never,
+      1,
+      [],
+      { placedRacks: [], workshopSlots: [] },
+      true
+    );
+    expect(r).toEqual({ ok: true });
   });
 });

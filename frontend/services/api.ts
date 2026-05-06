@@ -1505,7 +1505,7 @@ export async function removeFromBlacklist(ip: string): Promise<{ ok: boolean; er
 export async function getAdminUserActivity(
   email: string,
   opts?: { userId?: number; limit?: number }
-): Promise<{ logs: GameUserActivityEntry[]; error?: string }> {
+): Promise<{ logs: GameUserActivityEntry[]; error?: string; activityLogNote?: string }> {
   const q = new URLSearchParams();
   const uid = opts?.userId;
   if (uid != null && Number.isFinite(uid) && uid > 0) {
@@ -1526,8 +1526,12 @@ export async function getAdminUserActivity(
       } catch { /* ignore */ }
       return { logs: [], error: msg };
     }
-    const data = await res.json();
-    return { logs: Array.isArray(data.logs) ? data.logs : [] };
+    const data = (await res.json()) as {
+      logs?: GameUserActivityEntry[];
+      activityLogNote?: string;
+    };
+    const note = typeof data.activityLogNote === 'string' ? data.activityLogNote : undefined;
+    return { logs: Array.isArray(data.logs) ? data.logs : [], ...(note ? { activityLogNote: note } : {}) };
   } catch {
     return { logs: [], error: 'Erro de rede.' };
   }
@@ -1685,16 +1689,28 @@ export async function openLootBox(email: string, boxId: string): Promise<{ ok: b
   }
 }
 
-export async function buyLootBox(email: string, boxId: string): Promise<{ ok: boolean; error?: string; newUsdc?: number }> {
+export async function buyLootBox(
+  email: string,
+  boxId: string
+): Promise<{ ok: boolean; error?: string; newUsdc?: number; missing?: number }> {
   try {
     const res = await apiFetch(`${base}/loot-boxes/buy`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ boxId, email })
     });
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; newUsdc?: number };
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      newUsdc?: number;
+      missing?: number;
+    };
     if (!res.ok) {
-      return { ok: false, error: data.error || `Erro HTTP ${res.status}` };
+      const missing =
+        typeof data.missing === 'number' && Number.isFinite(data.missing) && data.missing > 0
+          ? data.missing
+          : undefined;
+      return { ok: false, error: data.error || `Erro HTTP ${res.status}`, missing };
     }
     return { ok: !!data.ok, newUsdc: data.newUsdc };
   } catch {

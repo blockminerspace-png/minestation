@@ -528,9 +528,9 @@ export interface SecurityStats {
   blacklist: BlacklistEntry[];
 }
 
-/** Linha de `game_activity_logs` (ações de jogo do jogador). */
+/** Linha de atividade de jogo (MongoDB `game_activity_logs`; id = ObjectId em string). */
 export interface GameUserActivityEntry {
-  id: number;
+  id: string;
   action: string;
   meta: Record<string, unknown> | null;
   createdAt: number;

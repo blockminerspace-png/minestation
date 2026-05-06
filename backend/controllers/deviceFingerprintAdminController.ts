@@ -1,15 +1,13 @@
 import type { Express, Request, Response, RequestHandler } from 'express';
-import type { Pool } from 'pg';
 import { listDeviceFingerprintLogs } from '../models/deviceFingerprintModel.js';
 import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type DeviceFingerprintAdminDeps = {
-  pool: Pool;
   isAdmin: RequestHandler;
 };
 
 export function registerDeviceFingerprintAdminRoutes(app: Express, deps: DeviceFingerprintAdminDeps): void {
-  const { pool, isAdmin } = deps;
+  const { isAdmin } = deps;
 
   app.get('/api/admin/device-fingerprints', isAdmin, async (req: Request, res: Response) => {
     try {
@@ -23,7 +21,7 @@ export function registerDeviceFingerprintAdminRoutes(app: Express, deps: DeviceF
       const userId = Number.isFinite(userIdParsed) && userIdParsed > 0 ? userIdParsed : null;
       const q = typeof req.query.q === 'string' ? req.query.q : undefined;
 
-      const { rows, total } = await listDeviceFingerprintLogs(pool, {
+      const { rows, total } = await listDeviceFingerprintLogs({
         limit,
         offset,
         eventType,

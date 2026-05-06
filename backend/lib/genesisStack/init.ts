@@ -54,7 +54,9 @@ export async function initGenesisStackServices(): Promise<void> {
     else {
         console.log('[GenesisStack] MONGODB_URI não definido — logs Mongo desativados');
         if (process.env.NODE_ENV === 'production') {
-            console.warn('[GenesisStack] Produção sem MONGODB_URI: analytics só em Postgres/consola');
+            console.warn(
+                '[GenesisStack] Produção sem MONGODB_URI: action_logs/event_history em Mongo desligados; defina a URI no .env (ver backend/docs/MONGO_LOG_CONTRACT.md).'
+            );
         }
     }
 }

@@ -42,6 +42,7 @@ import {
 } from './services/api';
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
+import { appendUsdcShortfallLine } from './utils/playerMoneyMessages';
 import { trackSpaPageView } from './lib/analytics';
 import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
@@ -2151,10 +2152,11 @@ export default function App() {
 
     // Optimistic check
     if (gameState.usdc < box.price) {
+      const short = Math.max(0, box.price - gameState.usdc);
       setLuckyBoxNotice({
         variant: 'error',
         title: 'Caixas da Sorte',
-        message: 'Saldo USDC insuficiente na reserva.'
+        message: appendUsdcShortfallLine('Saldo USDC insuficiente na reserva.', short)
       });
       return;
     }
@@ -2182,7 +2184,7 @@ export default function App() {
       setLuckyBoxNotice({
         variant: 'error',
         title: 'Caixas da Sorte',
-        message: res.error || 'Erro ao comprar a caixa.'
+        message: appendUsdcShortfallLine(res.error || 'Erro ao comprar a caixa.', res.missing)
       });
     }
   };

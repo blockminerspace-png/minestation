@@ -446,14 +446,7 @@ export const initDb = async () => {
         PRIMARY KEY (user_id, action_key)
       );
 
-      CREATE TABLE IF NOT EXISTS game_activity_logs (
-        id BIGSERIAL PRIMARY KEY,
-        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-        action TEXT NOT NULL,
-        meta JSONB NOT NULL DEFAULT '{}'::jsonb,
-        created_at BIGINT NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_game_activity_logs_user_created ON game_activity_logs (user_id, created_at DESC);
+      -- game_activity_logs: removido — auditoria de jogo em MongoDB (coleção game_activity_logs, GENESIS_MONGO_DB).
 
       CREATE TABLE IF NOT EXISTS promo_codes (
         code TEXT PRIMARY KEY,

@@ -10,7 +10,7 @@ export function formatUserActivityMeta(meta: GameUserActivityEntry['meta']): str
   }
 }
 
-/** Filtros da aba Atividade (ação em `game_activity_logs`). */
+/** Filtros da aba Atividade (ações gravadas no Mongo `game_activity_logs`). */
 export const ACTIVITY_LOG_FILTER_GROUPS: {
   id: string;
   label: string;

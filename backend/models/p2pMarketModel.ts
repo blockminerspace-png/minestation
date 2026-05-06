@@ -1,4 +1,4 @@
-import type { Pool } from 'pg';
+import { prisma } from '../config/prisma.js';
 
 /** Converte valor vindo do PG (BIGINT como string, número, ISO) para epoch ms. */
 export function timestampMsFromDb(val: unknown): number {
@@ -30,18 +30,21 @@ export const MARKET_LISTING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
  * linha em economy_settings manda; senão fallback em settings.
  */
 /** % de banda (1–90); fallback 20. Alinhado a economy_settings / settings. */
-export async function getBlackMarketPriceBandPercent(pool: Pool): Promise<number> {
+export async function getBlackMarketPriceBandPercent(): Promise<number> {
   try {
-    const rowRes = await pool.query(
-      'SELECT black_market_price_band_percent FROM economy_settings WHERE id = 1'
-    );
-    const row = rowRes.rows[0] as { black_market_price_band_percent?: unknown } | undefined;
+    const row = await prisma.economy_settings.findUnique({
+      where: { id: 1 },
+      select: { black_market_price_band_percent: true }
+    });
     const n = Number(row?.black_market_price_band_percent ?? 20);
     return Math.min(90, Math.max(1, Number.isFinite(n) ? n : 20));
   } catch {
     try {
-      const bk = await pool.query("SELECT value FROM settings WHERE key = 'black_market_price_band_percent'");
-      const n = Number((bk.rows[0] as { value?: string } | undefined)?.value);
+      const bk = await prisma.settings.findUnique({
+        where: { key: 'black_market_price_band_percent' },
+        select: { value: true }
+      });
+      const n = Number(bk?.value);
       return Math.min(90, Math.max(1, Number.isFinite(n) ? n : 20));
     } catch {
       return 20;
@@ -80,15 +83,18 @@ export function computeP2PBandReferenceUsd(baseCost: number, bookFallbackAsk: nu
   return m ?? 0;
 }
 
-export async function isP2PMarketEnabled(pool: Pool): Promise<boolean> {
+export async function isP2PMarketEnabled(): Promise<boolean> {
   try {
-    const rowRes = await pool.query(
-      'SELECT black_market_enabled FROM economy_settings WHERE id = 1'
-    );
-    const row = rowRes.rows[0] as { black_market_enabled?: number | string } | undefined;
-    const bkRes = await pool.query("SELECT value FROM settings WHERE key = 'black_market_enabled'");
-    if (row) return Number(row.black_market_enabled) !== 0;
-    if (bkRes.rows[0]) return (bkRes.rows[0] as { value: string }).value === '1';
+    const row = await prisma.economy_settings.findUnique({
+      where: { id: 1 },
+      select: { black_market_enabled: true }
+    });
+    const bk = await prisma.settings.findUnique({
+      where: { key: 'black_market_enabled' },
+      select: { value: true }
+    });
+    if (row != null) return Number(row.black_market_enabled) !== 0;
+    if (bk?.value != null) return bk.value === '1';
     return true;
   } catch {
     return true;

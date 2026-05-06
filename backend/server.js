@@ -14,8 +14,11 @@ import { GoogleGenAI } from "@google/genai";
 import bcrypt from 'bcryptjs';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-import db from './dist/config/db.js';
+import db, { connectPrisma, disconnectPrisma, prisma } from './dist/config/db.js';
+import { Prisma } from '@prisma/client';
 import { startMiningYieldCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
+import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
+import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisStack/init.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { UI_DISPLAY_LABEL_KEY_SET } from './dist/config/uiDisplayLabelKeys.js';
 import { allowsAdminRouteAccess, permissionTabSetFromDbJson, resolveAdminRouteRequirement } from './dist/utils/adminRouteAuth.js';
@@ -29,6 +32,9 @@ import { registerP2pMarketRoutes } from './dist/controllers/p2pMarketController.
 import { registerLootBoxPlayerRoutes, registerLootBoxAdminRoutes } from './dist/controllers/lootBoxController.js';
 import { registerRoletaPlayerRoutes } from './dist/controllers/roletaController.js';
 import { fetchWheelPrizesForApiConfig } from './dist/models/roletaModel.js';
+import { grantAdminUpgradeRewardsInTx, grantPassRewardsInTx } from './dist/models/adminUpgradeGrantModel.js';
+import { pgSqlTx } from './dist/lib/sqlTransaction.js';
+import { runReferralCommissionOnTx } from './dist/models/referralCommissionModel.js';
 import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemController.js';
 import { runBulkRoomBattery, isValidRoomId } from './dist/lib/roomBatteryBulk.js';
 import { loadUserStock, loadUserStoredBatteries, loadUserPlacedRacksWithSlots, loadUpgradesWithCompat, persistStockStoredBatteriesPlacedRacks } from './dist/lib/serverRoomPersistence.js';
@@ -39,12 +45,16 @@ import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controlle
 import { createSupportTicketUploadMiddlewares, registerSupportTicketRoutes } from './dist/controllers/supportTicketController.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
-import { sendInternalError, sendInternalErrorSafeMessage, sendInternalErrorShape } from './dist/utils/apiErrorResponse.js';
+import { sendInternalError, sendInternalErrorSafeMessage, sendInternalErrorShape, HttpControlledError, respondIfHttpControlledError } from './dist/utils/apiErrorResponse.js';
+import { appendGameActivityLogMongo, listGameActivityLogsMongo } from './dist/lib/mongoLogs.js';
 import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
 import { ActivityThrottleMaps, resolveActivityThrottleConfig } from './dist/lib/activityThrottle.js';
 import { mountImageStaticMiddleware, registerImageAssetRoutes, runImageRootStartupOrganizeIfEnabled } from './dist/controllers/imageAssetController.js';
-import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from './dist/lib/saveGameEconomyValidate.js';
+import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, validateStoredBatteryWarehouseRemovalAllowed, StoredBatterySaveGuardError, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from './dist/lib/saveGameEconomyValidate.js';
 import { validateLoginEmail, validateLoginFieldsPresent, validateLoginPassword, validateSignupPassword, validateSignupUsername, validateOptionalPolygonWallet, validateOptionalAccessLevelId, validateOptionalReferralCodeInput, validateAccessLevelIdsArray, EMAIL_ADDRESS_MAX_LENGTH, SIGNUP_EMAIL_MAX_TOTAL } from './dist/models/registrationValidation.js';
+import { getUserIdByEmail, EmailPolicyError, IpLimitError } from './dist/models/userModel.js';
+import { findUserByEmail, insertSession, recordLoginIp, ensureUserReferralCode, updateUserPasswordHash, listUserAccessLevelIds, findUserById, findSessionRow, findActiveSessionUserId, findSessionUserIdIgnoringExpiry, deleteSessionBySessionId, updateUserPolygonAndAccess } from './dist/models/authModel.js';
+import { executeUserPutCoreTransaction } from './dist/models/userPutCoreTransaction.js';
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
     console.error('[Fatal] Unhandled Rejection at:', promise, 'reason:', reason);
@@ -592,46 +602,7 @@ const ensureUsdcDefault = async () => {
 };
 // --- ADVANCED REFERRAL COMMISSION LOGIC ---
 const processReferralCommission = async (client, userId, amount, type) => {
-    try {
-        // 1. Find the referrer
-        const refRes = await client.query(`
-      SELECT r.user_id as referrer_id, u.access_level_id
-      FROM referrals r
-      JOIN users u ON r.user_id = u.id
-      WHERE r.referred_username = (SELECT username FROM users WHERE id = $1)
-    `, [userId]);
-        if (refRes.rowCount === 0)
-            return;
-        const { referrer_id, access_level_id } = refRes.rows[0];
-        const alId = access_level_id || 'normal';
-        // 2. Find the assigned model
-        const modelRes = await client.query(`
-      SELECT m.* 
-      FROM referral_models m
-      JOIN access_level_referral_models a ON m.id = a.referral_model_id
-      WHERE a.access_level_id = $1 AND m.is_active = 1
-    `, [alId]);
-        const model = modelRes.rows[0];
-        if (!model)
-            return;
-        let commissionPercent = 0;
-        if (type === 'deposit')
-            commissionPercent = model.deposit_commission_percent || 0;
-        else if (type === 'hardware')
-            commissionPercent = model.hardware_commission_percent || 0;
-        else if (type === 'black_market')
-            commissionPercent = model.black_market_commission_percent || 0;
-        if (commissionPercent > 0) {
-            const commissionAmount = (amount * commissionPercent) / 100;
-            if (commissionAmount > 0) {
-                console.log(`[ReferralCommission] Awarding ${commissionAmount} USDC to referrer ${referrer_id} (${type} commission ${commissionPercent}%)`);
-                await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [commissionAmount, referrer_id]);
-            }
-        }
-    }
-    catch (err) {
-        console.error('[ReferralCommission] Error processing commission:', err);
-    }
+    await runReferralCommissionOnTx(pgSqlTx(client), userId, amount, type);
 };
 const ensureAdminPermissionsColumn = async () => {
     try {
@@ -929,25 +900,25 @@ const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
         '') || '(nenhuma)';
     console.log(`[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, CORS_EXTRA_ORIGINS, genesisdao.tech, test.genesisdao.tech)`);
 }
-/** Eventos de jogo para auditoria no admin (não falha o fluxo principal). */
-async function appendGameActivityLog(q, userId, action, meta) {
+/**
+ * Eventos de jogo para auditoria no admin (MongoDB; não falha o fluxo principal).
+ * O primeiro argumento mantém-se por compatibilidade com chamadas antigas (`pool`) mas é ignorado.
+ */
+async function appendGameActivityLog(_q, userId, action, meta) {
     if (!userId || !action)
         return;
-    const safeAction = String(action).slice(0, 120);
-    let metaJson = '{}';
+    const uid = typeof userId === 'number' ? userId : parseInt(String(userId), 10);
+    if (!Number.isFinite(uid) || uid <= 0)
+        return;
+    const safeAction = String(action).slice(0, 200);
+    let metaObj = {};
     try {
-        metaJson = JSON.stringify(meta == null ? {} : meta);
+        metaObj = JSON.parse(JSON.stringify(meta == null ? {} : meta));
     }
     catch {
-        metaJson = '{}';
+        metaObj = {};
     }
-    const ts = Date.now();
-    try {
-        await q.query(`INSERT INTO game_activity_logs (user_id, action, meta, created_at) VALUES ($1, $2, $3::jsonb, $4)`, [userId, safeAction, metaJson, ts]);
-    }
-    catch (e) {
-        console.warn('[GameActivityLog]', e.message);
-    }
+    await appendGameActivityLogMongo(uid, safeAction, metaObj);
 }
 /** WebSocket: métricas do painel admin (KPIs; cookie de sessão). */
 let adminDashboardWss = null;
@@ -1247,7 +1218,6 @@ const passwordResetRequestLimiter = rateLimit({
 app.use('/api/', limiter);
 app.use('/api/login', authLimiter);
 attachSecurityThreatResponseObserver(app, {
-    pool: db,
     backupModel,
     getClientIp
 });
@@ -1255,7 +1225,7 @@ app.use(express.json({ limit: '5mb' })); // Reduzido o limite para 5MB por segur
 app.use(express.urlencoded({ limit: '5mb', extended: true }));
 const jwtAllowLegacySession = process.env.JWT_ALLOW_LEGACY_SESSION !== '0' &&
     process.env.JWT_ALLOW_LEGACY_SID !== '0';
-app.use(createResolveAuthMiddleware({ db, parseCookies, allowLegacySession: jwtAllowLegacySession }));
+app.use(createResolveAuthMiddleware({ parseCookies, allowLegacySession: jwtAllowLegacySession }));
 app.use((req, res, next) => {
     const url = req.url || '';
     if (/\/cgi-bin\b/i.test(url)) {
@@ -1301,34 +1271,28 @@ app.use(async (req, res, next) => {
     catch (e) { /* ignore */ }
     next();
 });
-registerDeviceFingerprintAdminRoutes(app, { pool: db, isAdmin });
-registerP2pMarketRoutes(app, { pool: db, emitMarketWs, processReferralCommission });
+registerDeviceFingerprintAdminRoutes(app, { isAdmin });
+registerP2pMarketRoutes(app, { emitMarketWs });
 registerLootBoxPlayerRoutes(app, {
-    pool: db,
-    grantAdminUpgradeRewards,
     appendGameActivityLog
 });
-registerLootBoxAdminRoutes(app, { pool: db, isAdmin });
+registerLootBoxAdminRoutes(app, { isAdmin });
 registerRoletaPlayerRoutes(app, {
-    pool: db,
     authenticateToken,
     appendGameActivityLog
 });
 registerPromoRedeemRoutes(app, {
-    pool: db,
     parseCookies,
-    grantAdminUpgradeRewards,
+    grantAdminUpgradeRewards: grantAdminUpgradeRewardsInTx,
     appendGameActivityLog
 });
 registerBackupRoutes(app, {
     isAdmin,
-    pool: db,
     backupModel,
     getPgRestoreSpawnOptions,
     getPgRestorePath
 });
 registerSupportTicketRoutes(app, {
-    pool: db,
     authenticateToken,
     isAdmin,
     uploadSupport,
@@ -1336,13 +1300,11 @@ registerSupportTicketRoutes(app, {
     appendGameActivityLog
 });
 registerPartnerYoutubeRoutes(app, {
-    pool: db,
     authenticateToken,
     isAdmin,
     appendGameActivityLog
 });
 registerImageAssetRoutes(app, {
-    pool: db,
     isAdmin,
     imgDir: IMG_DIR,
     uploadsDir: IMG_UPLOADS_DIR
@@ -1443,13 +1405,7 @@ app.post('/api/player-activity-log', async (req, res) => {
     return res.json({ ok: true });
 });
 // CACHE REMOVIDO CONFORME SOLICITADO
-// --- DYNAMIC NETWORK HASHRATE & RANKING ---
-let globalNetworkStats = {
-    hashrates: {},
-    activeMiners: 0,
-    activeMinersByCoin: {},
-    ranking: []
-};
+// --- Ranking / hashrates: um único tick em miningYieldCron + getGlobalNetworkStats() ---
 startMiningYieldCron(db);
 // --- CHARGING HISTORY ENDPOINTS ---
 app.get('/api/charging-history', authenticateToken, async (req, res) => {
@@ -1492,7 +1448,7 @@ app.post('/api/charging-history/log', authenticateToken, async (req, res) => {
 // --- Moved middlewares below ---
 app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
     try {
-        const items = await fetchWheelPrizesForApiConfig(db);
+        const items = await fetchWheelPrizesForApiConfig();
         res.json(items);
     }
     catch (e) {
@@ -1970,16 +1926,6 @@ app.post('/api/wallet-labels', isAdmin, async (req, res) => {
     }
 });
 // API UTILITIES
-const generateReferralCode = (username) => {
-    const base = (username || 'user')
-        .toLowerCase()
-        .replace(/\s+/g, '-')
-        .replace(/[^a-z0-9_-]/g, '-')
-        .slice(0, 12) || 'user';
-    const rand = crypto.randomUUID().replace(/-/g, '').slice(0, 8);
-    const num = Math.floor(Math.random() * 100000).toString().padStart(5, '0');
-    return `${base}-${rand}_${num}`;
-};
 /** Domínios permitidos para novo cadastro público (contas antigas não são alteradas). */
 const SIGNUP_EMAIL_ALLOWLIST = new Set([
     'gmail.com', 'googlemail.com',
@@ -2019,217 +1965,8 @@ const assertPublicSignupEmailAllowed = (normalizedEmail) => {
         error: 'Cadastro permitido apenas com contas Gmail, Outlook, Yahoo, Hotmail, Live, Mail.ru ou Web.de. E-mails temporários não são aceites. Comunidade: https://t.me/+Fm72joLwb-tjYTZh'
     };
 };
-const getUserIdByEmail = async (email, ip = null, opts = {}) => {
-    const allowAnyDomain = !!opts.allowAnyDomain;
-    if (!email)
-        throw new Error('Email is required for getUserIdByEmail');
-    const normalizedEmail = email.toLowerCase();
-    const rowRes = await db.query('SELECT id, username, referral_code FROM users WHERE email = $1', [normalizedEmail]);
-    const row = rowRes.rows[0];
-    if (row) {
-        if (!row.referral_code) {
-            let code = generateReferralCode(row.username);
-            let tries = 0;
-            while (tries < 10) {
-                const existsRes = await db.query('SELECT 1 FROM users WHERE referral_code = $1', [code]);
-                if (existsRes.rowCount === 0)
-                    break;
-                code = generateReferralCode(row.username);
-                tries++;
-            }
-            await db.query('UPDATE users SET referral_code = $1 WHERE id = $2', [code, row.id]);
-        }
-        return row.id;
-    }
-    const username = email.split('@')[0];
-    let code = generateReferralCode(username);
-    let tries = 0;
-    while (tries < 10) {
-        const existsRes = await db.query('SELECT 1 FROM users WHERE referral_code = $1', [code]);
-        if (existsRes.rowCount === 0)
-            break;
-        code = generateReferralCode(username);
-        tries++;
-    }
-    try {
-        if (!allowAnyDomain) {
-            const policy = assertPublicSignupEmailAllowed(normalizedEmail);
-            if (!policy.ok) {
-                const err = new Error(policy.error);
-                err.code = 'EMAIL_POLICY';
-                throw err;
-            }
-        }
-        if (ip) {
-            const countRes = await db.query('SELECT COUNT(*) FROM users WHERE registration_ip = $1', [ip]);
-            if (parseInt(countRes.rows[0].count) >= 3) {
-                const existingRes = await db.query('SELECT username, email FROM users WHERE registration_ip = $1 LIMIT 3', [ip]);
-                const accounts = existingRes.rows.map(u => `${u.username} (${u.email})`).join(', ');
-                const err = new Error('Limite de 3 contas por IP atingido.');
-                err.existingAccounts = existingRes.rows; // Attach for the route handler
-                throw err;
-            }
-        }
-        const info = await db.query('INSERT INTO users (username, email, referral_code, is_admin, is_blocked, registration_ip) VALUES ($1, $2, $3, 0, 0, $4) RETURNING id', [username, normalizedEmail, code, ip]);
-        const newUid = info.rows[0].id;
-        const now = Date.now();
-        // Log IP History immediately
-        if (ip) {
-            await db.query('INSERT INTO user_history_ips (user_id, ip, last_used_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [newUid, ip, now]);
-        }
-        // Grant Registration Box
-        const regBoxes = await db.query("SELECT id FROM loot_boxes WHERE trigger = 'registration'");
-        for (const box of regBoxes.rows) {
-            await db.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [newUid, box.id]);
-            await db.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [newUid, box.id, now]);
-        }
-        // Initialize Game State
-        try {
-            await db.query(`
-        INSERT INTO game_states (user_id, usdc, start_time, last_updated_at, claimed_referrals, referral_bonus_claimed, black_market_balance)
-        VALUES ($1, 0, $2, $2, 0, 0, 0)
-        ON CONFLICT (user_id) DO NOTHING
-      `, [newUid, Date.now()]);
-        }
-        catch (gsErr) {
-            console.error('Failed to create game state:', gsErr);
-        }
-        return newUid;
-    }
-    catch (err) {
-        if (err.code === '23505') { // unique_violation
-            const retryRes = await db.query('SELECT id FROM users WHERE email = $1', [email]);
-            if (retryRes.rows[0])
-                return retryRes.rows[0].id;
-        }
-        throw err;
-    }
-};
 // --- ADMIN UPGRADES (BUNDLES) ---
-/**
- * Common logic to grant rewards from an AdminUpgrade package.
- * Works for both Shop Purchases and Promo Code redemptions.
- */
-async function grantAdminUpgradeRewards(userId, upgradeId, client) {
-    // Validate Upgrade
-    const upRes = await client.query('SELECT * FROM admin_upgrades WHERE id = $1', [upgradeId]);
-    if (upRes.rows.length === 0)
-        throw new Error('Upgrade não encontrado');
-    const upgrade = upRes.rows[0];
-    // 1. Grant USDC (GameStates - HIGHEST LOCK PRIORITY)
-    if (upgrade.grant_usdc > 0) {
-        await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [upgrade.grant_usdc, userId]);
-    }
-    // 2. Grant Coins (CoinBalances - SECOND PRIORITY)
-    const coins = await client.query('SELECT * FROM admin_upgrade_coins WHERE upgrade_id=$1', [upgrade.id]);
-    for (const c of coins.rows) {
-        await client.query(`INSERT INTO coin_balances (user_id, coin_id, amount) VALUES ($1,$2,$3) ON CONFLICT (user_id, coin_id) DO UPDATE SET amount = coin_balances.amount + $3`, [userId, c.coin_id, c.amount]);
-    }
-    // 3. Grant Items
-    const items = await client.query('SELECT * FROM admin_upgrade_items WHERE upgrade_id=$1', [upgrade.id]);
-    for (const it of items.rows) {
-        await client.query(`INSERT INTO stock (user_id, item_id, qty) VALUES ($1,$2,$3) ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + $3`, [userId, it.item_id, it.qty]);
-    }
-    // 4. Grant Boxes
-    const boxes = await client.query('SELECT * FROM admin_upgrade_boxes WHERE upgrade_id=$1', [upgrade.id]);
-    for (const b of boxes.rows) {
-        await client.query(`INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1,$2,$3) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + $3`, [userId, b.box_id, b.qty]);
-    }
-    // 5. Grant Passes
-    const passes = await client.query('SELECT * FROM admin_upgrade_passes WHERE upgrade_id=$1', [upgrade.id]);
-    for (const p of passes.rows) {
-        const seasonRes = await client.query('SELECT season_id FROM season_passes WHERE id=$1', [p.pass_id]);
-        if (seasonRes.rows.length > 0) {
-            const seasonId = seasonRes.rows[0].season_id;
-            await client.query(`INSERT INTO season_purchases (user_id, pass_id, season_id, purchased_at) VALUES ($1,$2,$3,$4) ON CONFLICT (user_id, pass_id) DO NOTHING`, [userId, p.pass_id, seasonId, Date.now()]);
-            // Grant Season/Pass Rewards
-            await grantPassRewards(userId, p.pass_id, seasonId, client);
-        }
-    }
-    // 6. Grant Access Level
-    if (upgrade.grant_access_level_id) {
-        await client.query('UPDATE users SET access_level_id = $1 WHERE id = $2', [upgrade.grant_access_level_id, userId]);
-        await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [userId, upgrade.grant_access_level_id, Date.now()]);
-    }
-    // 7. Grant Loot Box Reward (Trigger based)
-    const boxRewards = await client.query('SELECT id FROM loot_boxes WHERE trigger = $1', [upgradeId]);
-    for (const box of boxRewards.rows) {
-        await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [userId, box.id]);
-    }
-    // 8. Special Case: Genesis Bundle Rig Room
-    // ID do Pacote Genesis: 53f0c699-0471-4e65-a147-17064e3aafe0
-    // ID da Sala Genesis: room_1765936323521
-    if (upgradeId === '53f0c699-0471-4e65-a147-17064e3aafe0') {
-        await client.query(`
-      INSERT INTO user_rig_rooms (user_id, room_id, purchased_at, unlocked_slots)
-      VALUES ($1, $2, $3, 0)
-      ON CONFLICT (user_id, room_id) DO NOTHING
-    `, [userId, 'room_1765936323521', Date.now()]);
-    }
-    return upgrade;
-}
-/**
- * Grants item/currency rewards directly associated with a Season Pass.
- * Now supports direct items and currencies via season_pass_rewards table.
- * Maintains legacy support for trigger-based loot boxes.
- */
-async function grantPassRewards(userId, passId, seasonId, client) {
-    console.log(`[SeasonReward] ===== STARTING REWARD GRANT =====`);
-    console.log(`[SeasonReward] User ID: ${userId}, Pass ID: ${passId}, Season ID: ${seasonId}`);
-    try {
-        // 1. Grant Direct Rewards (Items/Currency)
-        console.log(`[SeasonReward] Querying rewards for pass ${passId}...`);
-        const rewardsRes = await client.query('SELECT * FROM season_pass_rewards WHERE pass_id = $1', [passId]);
-        console.log(`[SeasonReward] Found ${rewardsRes.rows.length} direct rewards`);
-        if (rewardsRes.rows.length === 0) {
-            console.log(`[SeasonReward] WARNING: No direct rewards configured for pass ${passId}`);
-        }
-        // Sort rewards to enforce locking order: USDC -> Coins -> Items
-        const usdcRewards = rewardsRes.rows.filter(r => r.type === 'currency' && r.coin_id === 'usdc');
-        const coinRewards = rewardsRes.rows.filter(r => r.type === 'currency' && r.coin_id !== 'usdc');
-        const itemRewards = rewardsRes.rows.filter(r => r.type === 'item');
-        // 1. Grant USDC (GameStates - HIGHEST PRIORITY)
-        for (const reward of usdcRewards) {
-            console.log(`[SeasonReward] Granting USDC ${reward.qty} to user ${userId}`);
-            await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [reward.qty, userId]);
-        }
-        // 2. Grant Coins (CoinBalances - SECOND PRIORITY)
-        for (const reward of coinRewards) {
-            console.log(`[SeasonReward] Granting COIN ${reward.coin_id} (qty: ${reward.qty}) to user ${userId}`);
-            await client.query(`INSERT INTO coin_balances (user_id, coin_id, amount) VALUES ($1, $2, $3) 
-               ON CONFLICT (user_id, coin_id) DO UPDATE SET amount = coin_balances.amount + $3`, [userId, reward.coin_id, reward.qty]);
-        }
-        // 3. Grant Items (Stock - LOWEST PRIORITY)
-        for (const reward of itemRewards) {
-            console.log(`[SeasonReward] Granting ITEM ${reward.item_id} (qty: ${reward.qty}) to user ${userId}`);
-            try {
-                await client.query(`INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3) 
-               ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + $3`, [userId, reward.item_id, reward.qty]);
-                console.log(`[SeasonReward] ✅ Successfully granted ${reward.qty}x ${reward.item_id}`);
-            }
-            catch (itemErr) {
-                console.error(`[SeasonReward] ❌ FAILED to grant item ${reward.item_id}:`, itemErr.message);
-                throw itemErr; // Propagate error to rollback transaction
-            }
-        }
-        console.log(`[SeasonReward] ===== REWARD GRANT COMPLETE =====`);
-        // 2. Legacy Support: Grant Loot Boxes based on Trigger
-        console.log(`[SeasonReward] Checking for legacy loot boxes...`);
-        const boxRewards = await client.query('SELECT id FROM loot_boxes WHERE LOWER(trigger) = LOWER($1) OR LOWER(trigger) = LOWER($2)', [passId.trim(), 'season:' + seasonId.trim()]);
-        console.log(`[SeasonReward] Found ${boxRewards.rows.length} legacy boxes`);
-        for (const box of boxRewards.rows) {
-            console.log(`[SeasonReward] Granting Legacy BOX ${box.id} to user ${userId} for pass ${passId}/season ${seasonId}`);
-            await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [userId, box.id]);
-        }
-        console.log(`[SeasonReward] ===== REWARD GRANT COMPLETED =====`);
-    }
-    catch (err) {
-        console.error('[SeasonReward] ❌❌❌ CRITICAL ERROR granting rewards:', err);
-        console.error('[SeasonReward] Error details:', err.message);
-        console.error('[SeasonReward] Stack:', err.stack);
-        throw err; // IMPORTANT: Propagate error to rollback the entire transaction
-    }
-}
+// Concessão de pacotes / recompensas de pass: `grantAdminUpgradeRewardsInTx` e `grantPassRewardsInTx` em `models/adminUpgradeGrantModel.ts`.
 app.get('/api/admin-upgrades', async (req, res) => {
     try {
         let isAdminUser = false;
@@ -2356,59 +2093,76 @@ app.post('/api/admin-upgrades/purchase', async (req, res) => {
         return res.status(401).json({ error: 'Não autenticado' });
     if (!upgradeId)
         return res.status(400).json({ error: 'Missing fields' });
-    const client = await db.connect();
+    const uid = req.userId;
     try {
-        await client.query('BEGIN');
-        // Validate User & Balance
-        const uRes = await client.query('SELECT u.id, gs.usdc, u.access_level_id FROM users u JOIN game_states gs ON gs.user_id = u.id WHERE u.id = $1', [req.userId]);
-        if (uRes.rows.length === 0)
-            throw new Error('Usuário não encontrado');
-        const user = uRes.rows[0];
-        // Validate Upgrade
-        const upRes = await client.query('SELECT * FROM admin_upgrades WHERE id = $1', [upgradeId]);
-        if (upRes.rows.length === 0)
-            throw new Error('Upgrade não encontrado');
-        const upgrade = upRes.rows[0];
-        if (!upgrade.is_active)
-            throw new Error('Upgrade inativo/expirado');
-        // Check duplicate
-        const check = await client.query('SELECT 1 FROM admin_upgrade_purchases WHERE user_id = $1 AND upgrade_id = $2', [user.id, upgrade.id]);
-        if (check.rows.length > 0)
-            throw new Error('Você já possui este upgrade');
-        // Check if user already has this access level (e.g. Founder)
-        if (upgrade.grant_access_level_id && user.access_level_id === upgrade.grant_access_level_id) {
-            throw new Error(`Você já possui o nível de acesso ${upgrade.grant_access_level_id}`);
-        }
-        // Special check for Genesis Bundle vs Sala Gênesis
-        if (upgradeId === '53f0c699-0471-4e65-a147-17064e3aafe0') {
-            const roomCheck = await client.query('SELECT 1 FROM user_rig_rooms WHERE user_id = $1 AND room_id = $2', [user.id, 'room_1765936323521']);
-            if (roomCheck.rows.length > 0) {
-                throw new Error('Você já possui a Sala Gênesis deste pacote.');
+        const newUsdc = await prisma.$transaction(async (tx) => {
+            const user = await tx.users.findUnique({
+                where: { id: uid },
+                select: { id: true, access_level_id: true }
+            });
+            if (!user)
+                throw new Error('Usuário não encontrado');
+            const gs = await tx.game_states.findUnique({
+                where: { user_id: uid },
+                select: { usdc: true }
+            });
+            const usdc = Number(gs?.usdc ?? 0);
+            const upgrade = await tx.admin_upgrades.findUnique({
+                where: { id: String(upgradeId) }
+            });
+            if (!upgrade)
+                throw new Error('Upgrade não encontrado');
+            if (!upgrade.is_active)
+                throw new Error('Upgrade inativo/expirado');
+            const dup = await tx.admin_upgrade_purchases.findUnique({
+                where: { user_id_upgrade_id: { user_id: uid, upgrade_id: upgrade.id } }
+            });
+            if (dup)
+                throw new Error('Você já possui este upgrade');
+            if (upgrade.grant_access_level_id &&
+                user.access_level_id === upgrade.grant_access_level_id) {
+                throw new Error(`Você já possui o nível de acesso ${upgrade.grant_access_level_id}`);
             }
-        }
-        // Check Balance
-        if (user.usdc < upgrade.price_usdc) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ ok: false, error: 'Saldo insuficiente', missing: upgrade.price_usdc - user.usdc });
-        }
-        // Deduct
-        await client.query('UPDATE game_states SET usdc = usdc - $1 WHERE user_id = $2', [upgrade.price_usdc, user.id]);
-        // Record Purchase
-        await client.query('INSERT INTO admin_upgrade_purchases (user_id, upgrade_id, purchased_at) VALUES ($1,$2,$3)', [user.id, upgrade.id, Date.now()]);
-        // Grant all rewards using the helper
-        await grantAdminUpgradeRewards(user.id, upgrade.id, client);
-        // Get final balance
-        const final = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [user.id]);
-        await client.query('COMMIT');
-        res.json({ ok: true, newUsdc: final.rows[0].usdc });
+            if (String(upgradeId) === '53f0c699-0471-4e65-a147-17064e3aafe0') {
+                const room = await tx.user_rig_rooms.findUnique({
+                    where: { user_id_room_id: { user_id: uid, room_id: 'room_1765936323521' } }
+                });
+                if (room)
+                    throw new Error('Você já possui a Sala Gênesis deste pacote.');
+            }
+            const price = Number(upgrade.price_usdc);
+            if (usdc < price) {
+                throw new HttpControlledError(400, {
+                    ok: false,
+                    error: 'Saldo insuficiente',
+                    missing: price - usdc
+                });
+            }
+            await tx.game_states.updateMany({
+                where: { user_id: uid },
+                data: { usdc: { decrement: price } }
+            });
+            await tx.admin_upgrade_purchases.create({
+                data: {
+                    user_id: uid,
+                    upgrade_id: upgrade.id,
+                    purchased_at: BigInt(Date.now())
+                }
+            });
+            await grantAdminUpgradeRewardsInTx(uid, upgrade.id, tx);
+            const final = await tx.game_states.findUnique({
+                where: { user_id: uid },
+                select: { usdc: true }
+            });
+            return Number(final?.usdc ?? 0);
+        }, { timeout: 60000, maxWait: 10000 });
+        res.json({ ok: true, newUsdc });
     }
     catch (e) {
-        await client.query('ROLLBACK');
+        if (respondIfHttpControlledError(res, e))
+            return;
         console.error('Purchase error:', e);
         sendInternalErrorShape(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
-    }
-    finally {
-        client.release();
     }
 });
 /** Caminhos de imagem relativos sem `/` inicial quebram no SPA; normaliza na API. */
@@ -4135,6 +3889,9 @@ app.post('/api/server-room/bulk-batteries', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
+        if (e instanceof StoredBatterySaveGuardError) {
+            return res.status(409).json({ error: e.message, forceReload: true });
+        }
         console.error('[server-room/bulk-batteries]', e);
         sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno.');
     }
@@ -5112,46 +4869,59 @@ app.post('/api/season-pass/purchase', async (req, res) => {
         return res.status(401).json({ error: 'Não autenticado' });
     if (!passId)
         return res.status(400).json({ error: 'Missing fields' });
-    const client = await db.connect();
+    const uid = req.userId;
     try {
-        const uid = req.userId;
-        const passRes = await client.query('SELECT * FROM season_passes WHERE id = $1', [passId]);
-        const pass = passRes.rows[0];
-        if (!pass)
-            return res.status(404).json({ error: 'Pass not found' });
-        if (!pass.is_active)
-            return res.status(400).json({ error: 'Pass inactive' });
-        const alreadyRes = await client.query('SELECT 1 FROM season_purchases WHERE user_id = $1 AND pass_id = $2', [uid, passId]);
-        if (alreadyRes.rowCount > 0)
-            return res.status(400).json({ error: 'Already purchased' });
-        const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-        const bal = gsRes.rows[0]?.usdc ?? 0;
-        const price = pass.price_usdc ?? 0;
-        if (bal < price)
-            return res.status(400).json({ error: 'Insufficient USDC', missing: price - bal });
-        const now = Date.now();
-        await client.query('BEGIN');
-        await client.query('UPDATE game_states SET usdc = usdc - $1 WHERE user_id = $2', [price, uid]);
-        await client.query('INSERT INTO season_purchases (user_id, pass_id, season_id, purchased_at) VALUES ($1, $2, $3, $4)', [uid, passId, pass.season_id, now]);
-        // GRANT SEASON/PASS REWARDS
-        console.log(`[Purchase] Granting rewards for user ${uid}, pass ${passId}...`);
-        await grantPassRewards(uid, passId, pass.season_id, client);
-        console.log(`[Purchase] About to COMMIT transaction for user ${uid}, pass ${passId}`);
-        await client.query('COMMIT');
-        console.log(`[Purchase] ✅ Transaction COMMITTED successfully`);
-        // VERIFICATION: Check if items are actually in stock
+        const { bal, price } = await prisma.$transaction(async (tx) => {
+            const pass = await tx.season_passes.findUnique({ where: { id: passId } });
+            if (!pass)
+                throw new HttpControlledError(404, { error: 'Pass not found' });
+            if (!pass.is_active)
+                throw new HttpControlledError(400, { error: 'Pass inactive' });
+            const dup = await tx.season_purchases.findUnique({
+                where: { user_id_pass_id: { user_id: uid, pass_id: passId } }
+            });
+            if (dup)
+                throw new HttpControlledError(400, { error: 'Already purchased' });
+            const gs = await tx.game_states.findUnique({
+                where: { user_id: uid },
+                select: { usdc: true }
+            });
+            const balN = Number(gs?.usdc ?? 0);
+            const priceN = Number(pass.price_usdc ?? 0);
+            if (balN < priceN) {
+                throw new HttpControlledError(400, {
+                    error: 'Insufficient USDC',
+                    missing: priceN - balN
+                });
+            }
+            await tx.game_states.updateMany({
+                where: { user_id: uid },
+                data: { usdc: { decrement: priceN } }
+            });
+            await tx.season_purchases.create({
+                data: {
+                    user_id: uid,
+                    pass_id: passId,
+                    season_id: pass.season_id,
+                    purchased_at: BigInt(Date.now())
+                }
+            });
+            console.log(`[Purchase] Granting rewards for user ${uid}, pass ${passId}...`);
+            await grantPassRewardsInTx(tx, uid, passId, pass.season_id);
+            return { bal: balN, price: priceN };
+        }, { timeout: 60000, maxWait: 10000 });
         console.log(`[Purchase] VERIFICATION: Checking if items are in stock...`);
-        const rewardsCheck = await db.query('SELECT * FROM season_pass_rewards WHERE pass_id = $1', [passId]);
-        if (rewardsCheck.rows.length > 0) {
-            for (const reward of rewardsCheck.rows) {
-                if (reward.type === 'item' && reward.item_id) {
-                    const stockCheck = await db.query('SELECT qty FROM stock WHERE user_id = $1 AND item_id = $2', [uid, reward.item_id]);
-                    if (stockCheck.rows.length > 0) {
-                        console.log(`[Purchase] ✅ VERIFIED: ${reward.item_id} is in stock (qty: ${stockCheck.rows[0].qty})`);
-                    }
-                    else {
-                        console.error(`[Purchase] ❌❌❌ CRITICAL: ${reward.item_id} NOT FOUND in stock for user ${uid}!`);
-                    }
+        const rewardsCheck = await prisma.season_pass_rewards.findMany({ where: { pass_id: passId } });
+        for (const reward of rewardsCheck) {
+            if (reward.type === 'item' && reward.item_id) {
+                const stockRow = await prisma.stock.findUnique({
+                    where: { user_id_item_id: { user_id: uid, item_id: reward.item_id } }
+                });
+                if (stockRow) {
+                    console.log(`[Purchase] ✅ VERIFIED: ${reward.item_id} is in stock (qty: ${stockRow.qty})`);
+                }
+                else {
+                    console.error(`[Purchase] ❌❌❌ CRITICAL: ${reward.item_id} NOT FOUND in stock for user ${uid}!`);
                 }
             }
         }
@@ -5159,13 +4929,10 @@ app.post('/api/season-pass/purchase', async (req, res) => {
         res.json({ ok: true, newUsdc: bal - price });
     }
     catch (e) {
-        console.error(`[Purchase] ❌ ERROR during purchase, rolling back:`, e.message);
-        await client.query('ROLLBACK');
-        console.log(`[Purchase] Transaction ROLLED BACK`);
+        if (respondIfHttpControlledError(res, e))
+            return;
+        console.error(`[Purchase] ❌ ERROR during purchase:`, e);
         sendInternalError(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
     }
 });
 app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
@@ -5174,32 +4941,30 @@ app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
         return res.status(400).json({ error: 'Missing fields' });
     try {
         const uid = await getUserIdByEmail(email, req.ip, { allowAnyDomain: true });
-        const passRes = await db.query('SELECT * FROM season_passes WHERE id = $1', [passId]);
-        const pass = passRes.rows[0];
-        if (!pass)
-            return res.status(404).json({ error: 'Pass not found' });
-        const alreadyRes = await db.query('SELECT 1 FROM season_purchases WHERE user_id = $1 AND pass_id = $2', [uid, passId]);
-        if (alreadyRes.rowCount > 0)
-            return res.status(400).json({ error: 'Already purchased' });
-        const now = Date.now();
-        const client = await db.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query('INSERT INTO season_purchases (user_id, pass_id, season_id, purchased_at) VALUES ($1,$2,$3,$4)', [uid, passId, pass.season_id, now]);
-            // GRANT SEASON/PASS REWARDS
-            await grantPassRewards(uid, passId, pass.season_id, client);
-            await client.query('COMMIT');
-        }
-        catch (e) {
-            await client.query('ROLLBACK');
-            throw e;
-        }
-        finally {
-            client.release();
-        }
+        await prisma.$transaction(async (tx) => {
+            const pass = await tx.season_passes.findUnique({ where: { id: passId } });
+            if (!pass)
+                throw new HttpControlledError(404, { error: 'Pass not found' });
+            const dup = await tx.season_purchases.findUnique({
+                where: { user_id_pass_id: { user_id: uid, pass_id: passId } }
+            });
+            if (dup)
+                throw new HttpControlledError(400, { error: 'Already purchased' });
+            await tx.season_purchases.create({
+                data: {
+                    user_id: uid,
+                    pass_id: passId,
+                    season_id: pass.season_id,
+                    purchased_at: BigInt(Date.now())
+                }
+            });
+            await grantPassRewardsInTx(tx, uid, passId, pass.season_id);
+        }, { timeout: 60000, maxWait: 10000 });
         res.json({ ok: true });
     }
     catch (e) {
+        if (respondIfHttpControlledError(res, e))
+            return;
         sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
@@ -5802,7 +5567,7 @@ app.post('/api/referrals/claim-reward', async (req, res) => {
 });
 app.get('/api/wheel/config', async (req, res) => {
     try {
-        const items = await fetchWheelPrizesForApiConfig(db);
+        const items = await fetchWheelPrizesForApiConfig();
         res.json(items);
     }
     catch (e) {
@@ -5949,8 +5714,7 @@ app.post('/api/login', async (req, res) => {
         return res.status(400).json({ error: passwordCheck.error });
     try {
         const normalizedEmail = emailStr.trim().toLowerCase();
-        const uRes = await db.query('SELECT * FROM users WHERE LOWER(email) = LOWER($1)', [normalizedEmail]);
-        let u = uRes.rows[0];
+        let u = await findUserByEmail(normalizedEmail);
         if (!u) {
             await bcrypt.compare(passwordStr, '$2b$10$abcdefghijklmnopqrstuvwxyz123456');
             return res.status(401).json({ error: 'E-mail ou palavra-passe incorretos.' });
@@ -5959,58 +5723,45 @@ app.post('/api/login', async (req, res) => {
             return res.status(403).json({ error: 'Este usuário está bloqueado.' });
         if (!u.password) {
             const hashedPassword = await bcrypt.hash(passwordStr, 10);
-            await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, u.id]);
-            u.password = hashedPassword;
+            await updateUserPasswordHash(u.id, hashedPassword);
+            u = { ...u, password: hashedPassword };
         }
         let isMatch = false;
-        if (u.password && (u.password.startsWith('$2a$') || u.password.startsWith('$2b$'))) {
+        const pwd = String(u.password ?? '');
+        if (pwd && (pwd.startsWith('$2a$') || pwd.startsWith('$2b$'))) {
             try {
-                isMatch = await bcrypt.compare(passwordStr, u.password);
+                isMatch = await bcrypt.compare(passwordStr, pwd);
             }
             catch (bcError) {
                 console.error('[Login] bcrypt:', bcError.message || bcError);
             }
         }
-        else {
-            if (u.password === passwordStr) {
-                isMatch = true;
-                const hashedPassword = await bcrypt.hash(passwordStr, 10);
-                await db.query('UPDATE users SET password = $1 WHERE id = $2', [hashedPassword, u.id]);
-            }
+        else if (pwd === passwordStr) {
+            isMatch = true;
+            const hashedPassword = await bcrypt.hash(passwordStr, 10);
+            await updateUserPasswordHash(u.id, hashedPassword);
+            u = { ...u, password: hashedPassword };
         }
         if (!isMatch) {
             return res.status(401).json({ error: 'E-mail ou palavra-passe incorretos.' });
         }
-        // SINCRONIZAÇÃO E LOG DE IP
         const currentIp = getClientIp(req);
         try {
-            if (!u.registration_ip) {
-                await db.query('UPDATE users SET registration_ip = $1 WHERE id = $2', [currentIp, u.id]);
-                u.registration_ip = currentIp;
-            }
-            // Registrar no histórico de IPs
-            await db.query(`
-        INSERT INTO user_history_ips (user_id, ip, last_used_at) 
-        VALUES ($1, $2, $3) 
-        ON CONFLICT (user_id, ip) DO UPDATE SET last_used_at = $3
-      `, [u.id, currentIp, Date.now()]);
+            await recordLoginIp(u.id, currentIp);
+            u = { ...u, registration_ip: u.registration_ip ?? currentIp };
         }
         catch (ipErr) {
             console.error('[Login] Erro ao registrar histórico de IP:', ipErr.message);
-            // Não bloqueia o login se falhar apenas o registro de IP
         }
-        if (!u.referral_code) {
-            let code = generateReferralCode(u.username);
-            await db.query('UPDATE users SET referral_code = $1 WHERE id = $2', [code, u.id]);
-            u.referral_code = code;
-        }
+        const referralCode = await ensureUserReferralCode(u.id, String(u.username ?? ''), u.referral_code);
+        u = { ...u, referral_code: referralCode };
         const sid = crypto.randomUUID();
         const expiresAt = Date.now() + 30 * 24 * 3600 * 1000;
-        await db.query('INSERT INTO sessions (session_id,user_id,created_at,expires_at) VALUES ($1,$2,$3,$4)', [sid, u.id, Date.now(), expiresAt]);
+        await insertSession(sid, u.id, Date.now(), expiresAt);
         const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
         res.append('Set-Cookie', `sid=${sid}; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=${30 * 24 * 3600}`);
         try {
-            await issueJwtAuthCookies(db, res, u.id, req);
+            await issueJwtAuthCookies(res, u.id, req);
         }
         catch (jwtErr) {
             console.error('[Login] JWT cookies:', jwtErr);
@@ -6018,17 +5769,13 @@ app.post('/api/login', async (req, res) => {
         let adminPerms = null;
         try {
             if (u.admin_permissions)
-                adminPerms = JSON.parse(u.admin_permissions);
+                adminPerms = JSON.parse(String(u.admin_permissions));
         }
         catch (pe) {
             console.error('[Login] Failed to parse admin_permissions:', pe);
         }
         adminPerms = normalizeAdminPermissionsForApi(!!u.is_admin, adminPerms);
-        const userLvlsRes = await db.query('SELECT access_level_id FROM user_access_levels WHERE user_id = $1', [u.id]);
-        const userLvlIds = userLvlsRes.rows.map((l) => l.access_level_id);
-        if (u.access_level_id && !userLvlIds.includes(u.access_level_id)) {
-            userLvlIds.push(u.access_level_id);
-        }
+        const userLvlIds = await listUserAccessLevelIds(u.id, u.access_level_id);
         res.json({
             id: String(u.id),
             email: u.email,
@@ -6060,8 +5807,7 @@ app.get('/api/session', async (req, res) => {
     let targetUserId = req.userId;
     try {
         if (sid) {
-            const sRes = await db.query('SELECT user_id, expires_at, original_user_id FROM sessions WHERE session_id = $1', [sid]);
-            const s = sRes.rows[0];
+            const s = await findSessionRow(sid);
             if (s && Number(s.expires_at) >= Date.now()) {
                 isImpersonating = !!s.original_user_id;
                 if (!targetUserId)
@@ -6070,15 +5816,10 @@ app.get('/api/session', async (req, res) => {
         }
         if (!targetUserId)
             return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
-        const uRes = await db.query('SELECT * FROM users WHERE id = $1', [targetUserId]);
-        const u = uRes.rows[0];
+        const u = await findUserById(Number(targetUserId));
         if (!u)
             return res.status(404).json({ error: 'User not found' });
-        const userLvlsRes = await db.query('SELECT access_level_id FROM user_access_levels WHERE user_id = $1', [u.id]);
-        const userLvlIds = userLvlsRes.rows.map(l => l.access_level_id);
-        if (u.access_level_id && !userLvlIds.includes(u.access_level_id)) {
-            userLvlIds.push(u.access_level_id);
-        }
+        const userLvlIds = await listUserAccessLevelIds(u.id, u.access_level_id);
         let adminPerms = null;
         try {
             if (u.admin_permissions)
@@ -6112,19 +5853,18 @@ app.get('/api/session', async (req, res) => {
         sendInternalError(res, req.originalUrl || 'api', e);
     }
 });
-app.post('/api/auth/refresh', async (req, res) => handleJwtRefresh(req, res, db, parseCookies));
+app.post('/api/auth/refresh', async (req, res) => handleJwtRefresh(req, res, parseCookies));
 app.post('/api/logout', async (req, res) => {
     const sid = parseCookies(req).sid;
     let uid = req.userId;
     try {
         if (!uid && sid) {
-            const r = await db.query('SELECT user_id FROM sessions WHERE session_id = $1', [sid]);
-            uid = r.rows[0]?.user_id;
+            uid = await findSessionUserIdIgnoringExpiry(sid);
         }
         if (uid)
-            await revokeJwtRefreshForUser(db, uid);
+            await revokeJwtRefreshForUser(uid);
         if (sid)
-            await db.query('DELETE FROM sessions WHERE session_id = $1', [sid]);
+            await deleteSessionBySessionId(sid);
     }
     catch (e) {
         console.error('[Logout]', e.message);
@@ -6140,17 +5880,12 @@ app.post('/api/session', async (req, res) => {
     let uid = req.userId;
     try {
         if (!uid && sid) {
-            const sRes = await db.query('SELECT * FROM sessions WHERE session_id = $1', [sid]);
-            const s = sRes.rows[0];
-            if (!s || Number(s.expires_at) < Date.now())
-                return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
-            uid = s.user_id;
+            uid = await findActiveSessionUserId(sid);
         }
         if (!uid)
             return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
         const { polygonWallet } = req.body || {};
-        if (polygonWallet !== undefined)
-            await db.query('UPDATE users SET polygon_wallet = $1 WHERE id = $2', [polygonWallet, uid]);
+        await updateUserPolygonAndAccess(uid, polygonWallet);
         res.json({ ok: true });
     }
     catch (e) {
@@ -6297,7 +6032,6 @@ app.put('/api/user', async (req, res) => {
         .toLowerCase()
         .trim();
     console.log(`[UserUpdate] Payload received for email: ${normalizedEmail}, userId: ${req.userId}`);
-    const client = await db.connect();
     try {
         let uid;
         if (req.userId) {
@@ -6439,109 +6173,43 @@ app.put('/api/user', async (req, res) => {
             }
             accessLevelIdsValidated = av.ids;
         }
-        await client.query('BEGIN');
-        // Update User
-        if (hasPassword) {
-            const hashedPassword = await bcrypt.hash(u.password, 10);
-            await client.query('UPDATE users SET username=$1, email=$2, password=$3, polygon_wallet=$4, access_level_id=$5, referred_by=$6 WHERE id = $7', [usernameForUpdate, normalizedEmail, hashedPassword, polygonForUpdate, accessLevelIdForUpdate, referredByForUpdate, uid]);
-        }
-        else {
-            await client.query('UPDATE users SET username=$1, email=$2, polygon_wallet=$3, access_level_id=$4, referred_by=$5 WHERE id = $6', [usernameForUpdate, normalizedEmail, polygonForUpdate, accessLevelIdForUpdate, referredByForUpdate, uid]);
-        }
-        if (allowAccessLevelFromBody && accessLevelIdForUpdate) {
-            await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING', [uid, accessLevelIdForUpdate, Date.now()]);
-        }
-        if (allowAccessLevelFromBody && accessLevelIdsValidated) {
-            // Sincronizar múltiplos níveis
-            await client.query('DELETE FROM user_access_levels WHERE user_id = $1', [uid]);
-            for (const alid of accessLevelIdsValidated) {
-                await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [uid, alid, Date.now()]);
-            }
-            // Garantir que o nível primário esteja incluído se definido
-            if (accessLevelIdForUpdate) {
-                await client.query('INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [uid, accessLevelIdForUpdate, Date.now()]);
-            }
-        }
-        // Handle Referral
+        const passwordHash = hasPassword ? await bcrypt.hash(u.password, 10) : null;
         const clientIpReferral = getClientIp(req);
-        if (referredByForUpdate) {
-            // Find referrer (Case insensitive)
-            const refRes = await client.query('SELECT id, access_level_id FROM users WHERE LOWER(referral_code) = LOWER($1)', [referredByForUpdate]);
-            const ref = refRes.rows[0];
-            if (ref && usernameForUpdate) {
-                // PREVENÇÃO DE AUTO-INDICAÇÃO: Verificar IP de registro e histórico
-                const referrerRes = await client.query('SELECT registration_ip FROM users WHERE id = $1', [ref.id]);
-                const referrerRegIp = referrerRes.rows[0]?.registration_ip;
-                // Verificar se o IP atual já foi usado pelo indicador no histórico
-                const historyCheck = await client.query('SELECT 1 FROM user_history_ips WHERE user_id = $1 AND ip = $2', [ref.id, clientIpReferral]);
-                if ((referrerRegIp && referrerRegIp === clientIpReferral) || historyCheck.rowCount > 0) {
-                    console.warn(`[Referral] Bloqueada tentativa de auto-indicação. IP ${clientIpReferral} vinculado ao indicador ID: ${ref.id}`);
-                    throw new Error('Auto-indicação não permitida. Você não pode usar seu próprio código de indicação em contas do mesmo IP.');
-                }
-                else {
-                    // Link referral (Idempotent)
-                    const refInsert = await client.query('INSERT INTO referrals (user_id, referred_username) VALUES ($1, $2) ON CONFLICT (user_id, referred_username) DO NOTHING', [ref.id, usernameForUpdate]);
-                    if (refInsert.rowCount > 0) {
-                        // Check for Advanced Referral Model
-                        const alId = ref.access_level_id || 'normal';
-                        const modelRes = await client.query(`
-              SELECT m.* 
-              FROM referral_models m
-              JOIN access_level_referral_models a ON m.id = a.referral_model_id
-              WHERE a.access_level_id = $1 AND m.is_active = 1
-            `, [alId]);
-                        const model = modelRes.rows[0];
-                        if (model) {
-                            console.log(`[Referral] Using Advanced Model: ${model.name} for Access Level: ${alId}`);
-                            // Grant Referrer Rewards
-                            if (model.sender_reward_usdc > 0) {
-                                await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [model.sender_reward_usdc, ref.id]);
-                            }
-                            if (model.sender_loot_box_id) {
-                                await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [ref.id, model.sender_loot_box_id]);
-                            }
-                            // Grant Referee Rewards
-                            if (model.receiver_reward_usdc > 0) {
-                                await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [model.receiver_reward_usdc, uid]);
-                            }
-                            if (model.receiver_loot_box_id) {
-                                await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, model.receiver_loot_box_id]);
-                                await client.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [uid, model.receiver_loot_box_id, Date.now()]);
-                            }
-                            await client.query('UPDATE game_states SET claimed_referrals = claimed_referrals + 1 WHERE user_id = $1', [ref.id]);
-                            await client.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
-                        }
-                        else {
-                            // FALLBACK: Grant Referrer Reward (Sender) - Using triggers
-                            const senderBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_sender'");
-                            for (const box of senderBoxes.rows) {
-                                await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [ref.id, box.id]);
-                            }
-                            await client.query('UPDATE game_states SET claimed_referrals = claimed_referrals + 1 WHERE user_id = $1', [ref.id]);
-                            // FALLBACK: Grant Referee Reward (Receiver) - Using triggers
-                            const gsRes = await client.query('SELECT referral_bonus_claimed FROM game_states WHERE user_id = $1', [uid]);
-                            if (gsRes.rows[0] && !gsRes.rows[0].referral_bonus_claimed) {
-                                const receiverBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_receiver'");
-                                const now = Date.now();
-                                for (const box of receiverBoxes.rows) {
-                                    await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, box.id]);
-                                    await client.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [uid, box.id, now]);
-                                }
-                                await client.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        await client.query('COMMIT');
+        await prisma.$transaction(async (tx) => {
+            await executeUserPutCoreTransaction(tx, {
+                uid: Number(uid),
+                usernameForUpdate: String(usernameForUpdate ?? ''),
+                normalizedEmail,
+                passwordHash,
+                polygonForUpdate: polygonForUpdate == null || polygonForUpdate === ''
+                    ? null
+                    : String(polygonForUpdate),
+                accessLevelIdForUpdate: accessLevelIdForUpdate == null || accessLevelIdForUpdate === ''
+                    ? null
+                    : String(accessLevelIdForUpdate),
+                referredByForUpdate: referredByForUpdate == null || referredByForUpdate === ''
+                    ? null
+                    : String(referredByForUpdate),
+                allowAccessLevelFromBody,
+                accessLevelIdsValidated,
+                clientIpReferral
+            });
+        });
         console.log(`[UserUpdate] Success for uid: ${uid}`);
         res.json({ ok: true });
     }
     catch (e) {
-        if (client)
-            await client.query('ROLLBACK');
         console.error('[UserUpdate] Error:', e);
+        if (e instanceof IpLimitError) {
+            return res.status(403).json({
+                error: e.message,
+                code: 'IP_LIMIT_REACHED',
+                accounts: e.existingAccounts
+            });
+        }
+        if (e instanceof EmailPolicyError) {
+            return res.status(400).json({ ok: false, error: e.message });
+        }
         if (e.existingAccounts) {
             return res.status(403).json({
                 error: e.message,
@@ -6552,11 +6220,13 @@ app.put('/api/user', async (req, res) => {
         if (e.code === 'EMAIL_POLICY') {
             return res.status(400).json({ ok: false, error: e.message });
         }
+        if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+            return res.status(409).json({
+                error: 'Este e-mail ou nome de utilizador já está em uso.',
+                code: 'DUPLICATE'
+            });
+        }
         sendInternalErrorSafeMessage(res, '[UserUpdate]', e, 'Erro interno no servidor durante o registro.');
-    }
-    finally {
-        if (client)
-            client.release();
     }
 });
 async function deleteUserByEmail(email, client) {
@@ -7224,8 +6894,13 @@ app.post('/api/save-game', async (req, res) => {
                 await client.query('ROLLBACK');
                 return res.status(400).json({ error: batVal.error });
             }
-            // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores).
-            const incomingIds = changes.storedBatteries.map(b => b.id);
+            const incomingIds = changes.storedBatteries.map((b) => b.id);
+            const batRm = await validateStoredBatteryWarehouseRemovalAllowed(client, uid, incomingIds, { placedRacks: changes.placedRacks, workshopSlots: changes.workshopSlots }, effectiveAdminOverride);
+            if (!batRm.ok) {
+                throw new StoredBatterySaveGuardError(batRm.error);
+            }
+            // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores),
+            // desde que cada id retirado do armazém apareça montada nas rigs ou oficina (validação acima).
             if (incomingIds.length > 0) {
                 await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, incomingIds]);
             }
@@ -7616,6 +7291,9 @@ app.post('/api/save-game', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
+        if (e instanceof StoredBatterySaveGuardError) {
+            return res.status(409).json({ error: e.message, forceReload: true });
+        }
         const err = e;
         if (err && err.workshopClientError && typeof err.message === 'string') {
             return res.status(400).json({ error: err.message });
@@ -7656,8 +7334,8 @@ app.post('/api/admin/backup-settings', isAdmin, async (req, res) => {
 setTimeout(async () => {
     // Only run background tasks on the designated worker
     if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
-        startScheduledSqlBackups(backupModel, { pool: db });
-        startSecurityThreatObserverBackgroundScan(db, backupModel, { intervalMs: 120000 });
+        startScheduledSqlBackups(backupModel);
+        startSecurityThreatObserverBackgroundScan(backupModel, { intervalMs: 120000 });
         await ensureAdminPermissionsColumn();
         await ensureSystemNewsAdColumns();
     }
@@ -7818,12 +7496,18 @@ app.post('/api/admin/stop-impersonate', async (req, res) => {
     const cookies = parseCookies(req);
     const sid = cookies.sid;
     try {
-        const sRes = await db.query('SELECT original_user_id FROM sessions WHERE session_id = $1', [sid]);
-        const originalUid = sRes.rows[0]?.original_user_id;
+        const sRow = await prisma.sessions.findUnique({
+            where: { session_id: sid },
+            select: { original_user_id: true }
+        });
+        const originalUid = sRow?.original_user_id;
         if (!originalUid)
             return res.status(400).json({ error: 'Not impersonating' });
-        await db.query('UPDATE sessions SET user_id = $1, original_user_id = NULL WHERE session_id = $2', [originalUid, sid]);
-        await issueJwtAuthCookies(db, res, originalUid, req);
+        await prisma.sessions.update({
+            where: { session_id: sid },
+            data: { user_id: originalUid, original_user_id: null }
+        });
+        await issueJwtAuthCookies(res, originalUid, req);
         res.json({ ok: true });
     }
     catch (e) {
@@ -8021,14 +7705,20 @@ app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
         else {
             return res.status(400).json({ error: 'Indique email, username ou userId válido' });
         }
-        const rows = await db.query(`SELECT id, action, meta, created_at FROM game_activity_logs WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2`, [uid, limit]);
+        const logs = await listGameActivityLogsMongo(Number(uid), limit);
+        const mongoOk = !!getGenesisMongo();
         res.json({
-            logs: rows.rows.map((r) => ({
-                id: Number(r.id),
+            logs: logs.map((r) => ({
+                id: r.id,
                 action: r.action,
                 meta: r.meta,
-                createdAt: Number(r.created_at)
-            }))
+                createdAt: r.createdAt
+            })),
+            ...(mongoOk
+                ? {}
+                : {
+                    activityLogNote: 'MONGODB_URI não está definido: o histórico de atividade de jogo só existe no MongoDB. Configure a URI e a coleção genesis_logs.game_activity_logs.'
+                })
         });
     }
     catch (e) {
@@ -8820,162 +8510,15 @@ app.post('/api/admin/withdrawals/status', isAdmin, async (req, res) => {
             client.release();
     }
 });
-// --- NEW RANKING & STATS SYSTEM ---
-let isCalculatingRanking = false;
-const calculateHashratesAndRanking = async () => {
-    if (isCalculatingRanking) {
-        console.log('[Mining] Ranking calculation skipped (already running).');
-        return;
-    }
-    isCalculatingRanking = true;
-    const start = Date.now();
-    const client = await db.connect();
-    try {
-        // ... (rest of the function remains the same, just wrapping try/finally)
-        const activeRes = await client.query(`
-      SELECT pr.selected_coin_id, pr.id, pr.user_id, pr.battery_id, pr.current_charge, u.username
-      FROM placed_racks pr
-      JOIN users u ON pr.user_id = u.id
-      WHERE pr.is_on = 1 
-      AND pr.wiring_id IS NOT NULL 
-      AND pr.battery_id IS NOT NULL
-      AND u.is_blocked = 0
-      AND u.ranking_excluded = 0
-  `);
-        // Fetch Upgrades
-        const upsRes = await client.query('SELECT id, base_production, multiplier, power_capacity FROM upgrades');
-        const upsMap = new Map();
-        upsRes.rows.forEach(u => upsMap.set(u.id, u));
-        // Slots & Multipliers
-        const slotRes = await client.query('SELECT rack_id, machine_item_id FROM rack_slots');
-        const slotsMap = {};
-        slotRes.rows.forEach(s => {
-            if (!slotsMap[s.rack_id])
-                slotsMap[s.rack_id] = [];
-            slotsMap[s.rack_id].push(s.machine_item_id);
-        });
-        const multiRes = await client.query('SELECT rack_id, multiplier_item_id FROM rack_multiplier_slots');
-        const multiMap = {};
-        multiRes.rows.forEach(m => {
-            if (!multiMap[m.rack_id])
-                multiMap[m.rack_id] = [];
-            multiMap[m.rack_id].push(m.multiplier_item_id);
-        });
-        const coinTotals = {}; // CoinID -> Total Power
-        const userStats = new Map(); // UserId -> UStat
-        // Process Racks
-        for (const rack of activeRes.rows) {
-            const cid = String(rack.selected_coin_id);
-            if (!cid)
-                continue;
-            const batt = upsMap.get(rack.battery_id);
-            const isInfinite = batt && batt.power_capacity === -1;
-            // CONSISTENCY FIX: If user wants Ranking Logic, we must align with how ranking is usually displayed.
-            // Usually ranking shows TOTAL RAW POWER regardless of battery?
-            // But for "Active Miners", they must be mining. So charge > 0 makes sense.
-            // The user log showed 425 miners. My previous logic showed 425.
-            // The issue was frontend getting 0.
-            if (!isInfinite && rack.current_charge <= 0.001)
-                continue;
-            let base = 0;
-            (slotsMap[rack.id] || []).forEach(mid => {
-                const u = upsMap.get(mid);
-                if (u)
-                    base += (u.base_production || 0);
-            });
-            if (base <= 0)
-                continue;
-            let mult = 1;
-            (multiMap[rack.id] || []).forEach(mid => {
-                const u = upsMap.get(mid);
-                if (u)
-                    mult += (u.multiplier || 0);
-            });
-            const power = base * mult;
-            coinTotals[cid] = (coinTotals[cid] || 0) + power;
-            if (!userStats.has(rack.user_id)) {
-                userStats.set(rack.user_id, {
-                    user_id: rack.user_id,
-                    username: rack.username,
-                    coins: {}
-                });
-            }
-            const uStat = userStats.get(rack.user_id);
-            uStat.coins[cid] = (uStat.coins[cid] || 0) + power;
-        }
-        // Build Ranking & Counts
-        const activeMinersByCoin = {};
-        let totalActiveUsers = 0;
-        const rankingList = [];
-        userStats.forEach(u => {
-            const userCoins = Object.keys(u.coins);
-            if (userCoins.length > 0) {
-                totalActiveUsers++;
-                rankingList.push({
-                    ...u,
-                    totalPower: Object.values(u.coins).reduce((a, b) => Number(a) + Number(b), 0)
-                });
-                userCoins.forEach(cid => {
-                    if (u.coins[cid] > 0) {
-                        activeMinersByCoin[cid] = (activeMinersByCoin[cid] || 0) + 1;
-                    }
-                });
-            }
-        });
-        // Sort Ranking
-        rankingList.sort((a, b) => b.totalPower - a.totalPower);
-        // Update Global State (New)
-        const newState = {
-            hashrates: coinTotals,
-            activeMiners: totalActiveUsers,
-            activeMinersByCoin: activeMinersByCoin,
-            ranking: rankingList
-        };
-        globalNetworkStats = newState;
-        // Persist to DB for other workers (Critical for Load Balancing)
-        await client.query(`
-        INSERT INTO app_cache (key, value, updated_at)
-        VALUES ('network_stats', $1, NOW())
-        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
-    `, [newState]);
-        // Update Legacy Globals (for existing endpoints)
-        miningRuntimeStats.globalNetworkHashrates.clear();
-        for (const [cid, val] of Object.entries(coinTotals)) {
-            miningRuntimeStats.globalNetworkHashrates.set(cid, Number(val) || 0);
-        }
-        miningRuntimeStats.globalActiveMiners = totalActiveUsers;
-        miningRuntimeStats.globalActiveMinersByCoin.clear();
-        for (const [cid, val] of Object.entries(activeMinersByCoin)) {
-            miningRuntimeStats.globalActiveMinersByCoin.set(cid, Number(val) || 0);
-        }
-        const duration = Date.now() - start;
-        if (duration > 1000) {
-            console.log(`[Mining] Ranking updated in ${duration}ms. Active Users: ${totalActiveUsers}`);
-        }
-    }
-    catch (e) {
-        console.error('Recalc Hashrates Error:', e);
-    }
-    finally {
-        client.release();
-        isCalculatingRanking = false;
-    }
-};
-// Start Timers for New Logic
 // Depósitos pendentes: todos os processos (API só / cluster); o crédito continua idempotente com lock por tx.
 setInterval(sweepPendingDepositsOnce, 90000);
 setTimeout(sweepPendingDepositsOnce, 8000);
-if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
-    // OPTIMIZATION: Increased from 10s to 60s to reduce CPU load
-    setInterval(calculateHashratesAndRanking, 60000);
-    setTimeout(calculateHashratesAndRanking, 5000);
-}
 // Admin Ranking Endpoint
 app.get('/api/admin/ranking', isAdmin, async (req, res) => {
     try {
         const coinsRes = await db.query('SELECT id, name, symbol FROM mining_coins');
         // Intelligent Retrieval: Local Memory (Background Worker) vs DB Cache (API Worker)
-        let stats = globalNetworkStats;
+        let stats = getGlobalNetworkStats();
         if (!stats || !stats.ranking || stats.ranking.length === 0) {
             try {
                 const cacheRes = await db.query("SELECT value FROM app_cache WHERE key = 'network_stats'");
@@ -8999,6 +8542,18 @@ app.get('/api/admin/ranking', isAdmin, async (req, res) => {
 });
 const startServer = async () => {
     try {
+        await initGenesisStackServices().catch((e) => {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn('[GenesisStack] Redis/Mongo opcionais:', msg);
+        });
+        try {
+            await connectPrisma();
+            console.log('[Prisma] ligado ao Postgres ($connect).');
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn('[Prisma] $connect falhou — confirme DATABASE_URL:', msg);
+        }
         // Initialization tasks should only run on the Background worker (or ALL)
         if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
             await initDb();
@@ -9050,7 +8605,7 @@ const startServer = async () => {
         await ensureAdminSuperAdminSchema();
         await ensureSecurityThreatObserverSchema();
         await ensureSupportTicketSchema();
-        await ensurePartnerYoutubeSchema(db);
+        await ensurePartnerYoutubeSchema();
     }
     catch (e) {
         console.error('[DB] Failed to initialize PostgreSQL:', e);
@@ -9169,7 +8724,7 @@ const startServer = async () => {
                             if (ws.readyState !== 1)
                                 return;
                             try {
-                                const data = await computePlayerGameHeaderSnapshot(db, uid);
+                                const data = await computePlayerGameHeaderSnapshot(uid);
                                 ws.send(JSON.stringify({ type: 'player_game', event: 'tick', data }));
                             }
                             catch (e) {
@@ -9236,6 +8791,17 @@ if (cluster.isWorker) {
         if (m && m.type === 'market_ws_broadcast' && m.payload) {
             marketWsBroadcastLocal(m.payload);
         }
+    });
+}
+for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.once(sig, () => {
+        void disconnectPrisma()
+            .catch(() => {
+            /* ignore */
+        })
+            .finally(() => {
+            process.exit(0);
+        });
     });
 }
 startServer();

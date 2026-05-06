@@ -1,6 +1,8 @@
 import type { Express, Request, Response } from 'express';
-import type { Pool } from 'pg';
 import type bcryptjs from 'bcryptjs';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../config/prisma.js';
+import { executeUserPutCoreTransaction } from '../models/userPutCoreTransaction.js';
 import {
   assertPublicSignupEmailAllowed,
   getConflictingUserIdByEmail,
@@ -16,16 +18,16 @@ import {
 } from '../models/registrationValidation.js';
 import { EmailPolicyError, getUserIdByEmail, IpLimitError } from '../models/userModel.js';
 import { insertDeviceFingerprintLog, sanitizeDeviceFingerprint } from '../models/deviceFingerprintModel.js';
+import { logUserAction } from '../lib/mongoLogs.js';
 import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
 
 export type UserRegistrationDeps = {
-  pool: Pool;
   bcrypt: typeof bcryptjs;
   getClientIp: (req: Request) => string;
 };
 
 export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): void {
-  const { pool, bcrypt, getClientIp } = deps;
+  const { bcrypt, getClientIp } = deps;
 
   app.put('/api/user', async (req: Request, res: Response) => {
     const isAuthenticatedRequest = Boolean((req as Request & { userId?: number }).userId);
@@ -34,7 +36,6 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
       .toLowerCase()
       .trim();
     console.log(`[UserUpdate] Payload received for email: ${normalizedEmail}, userId: ${req.userId}`);
-    const client = await pool.connect();
     try {
       let uid: string | number;
       let usernameForDb: string | unknown = u.username;
@@ -43,14 +44,17 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
       let referredByForDb: unknown = u.referredBy ?? null;
 
       if (req.userId) {
-        const uAdminRes = await pool.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
-        const isAdminUser = uAdminRes.rows[0]?.is_admin;
+        const adminRow = await prisma.users.findUnique({
+          where: { id: Number(req.userId) },
+          select: { is_admin: true }
+        });
+        const isAdminUser = adminRow?.is_admin;
 
         if (isAdminUser && (u.id || u.email)) {
           if (u.id) {
             uid = u.id as string | number;
           } else {
-            uid = await getUserIdByEmail(pool, normalizedEmail, getClientIp(req), { allowAnyDomain: true });
+            uid = await getUserIdByEmail(normalizedEmail, getClientIp(req), { allowAnyDomain: true });
           }
         } else {
           uid = req.userId;
@@ -61,7 +65,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
           if (!vu.ok) {
             return res.status(400).json({ error: vu.error });
           }
-          const taken = await getConflictingUserIdByUsername(pool, vu.username, uid);
+          const taken = await getConflictingUserIdByUsername(vu.username, uid);
           if (taken != null) {
             return res.status(409).json({
               error: 'Este nome de utilizador já está em uso. Escolha outro.',
@@ -75,7 +79,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
           if (!normalizedEmail.includes('@') || normalizedEmail.length > EMAIL_ADDRESS_MAX_LENGTH) {
             return res.status(400).json({ error: 'E-mail inválido.' });
           }
-          const emailTaken = await getConflictingUserIdByEmail(pool, normalizedEmail, uid);
+          const emailTaken = await getConflictingUserIdByEmail(normalizedEmail, uid);
           if (emailTaken != null) {
             return res.status(409).json({
               error: 'Este e-mail já está associado a outra conta.',
@@ -104,12 +108,6 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
           referredByForDb = ref.code;
         }
 
-        if (Array.isArray(u.accessLevelIds)) {
-          const av = validateAccessLevelIdsArray(u.accessLevelIds);
-          if (!av.ok) {
-            return res.status(400).json({ error: av.error });
-          }
-        }
       } else {
         if (!u.email) {
           return res.status(400).json({ error: 'Email é obrigatório para o registro.' });
@@ -124,8 +122,10 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         }
         const nickname = userVu.username;
 
-        const existingRow = await pool.query('SELECT id, password FROM users WHERE email = $1', [normalizedEmail]);
-        const existing = existingRow.rows[0];
+        const existing = await prisma.users.findFirst({
+          where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+          select: { id: true, password: true }
+        });
 
         if (existing?.password) {
           return res.status(403).json({ error: 'Este email já está cadastrado. Por favor, faça login.' });
@@ -175,7 +175,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
             return res.status(400).json({ ok: false, error: ev.error });
           }
 
-          const userTaken = await getConflictingUserIdByUsername(pool, nickname, null);
+          const userTaken = await getConflictingUserIdByUsername(nickname, null);
           if (userTaken != null) {
             return res.status(409).json({
               error: 'Este nome de utilizador já está em uso. Escolha outro.',
@@ -183,11 +183,11 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
             });
           }
 
-          uid = (await getUserIdByEmail(pool, normalizedEmail, getClientIp(req), {
+          uid = (await getUserIdByEmail(normalizedEmail, getClientIp(req), {
             preferredUsername: nickname
           })) as number;
         } else {
-          const userTaken = await getConflictingUserIdByUsername(pool, nickname, existing.id);
+          const userTaken = await getConflictingUserIdByUsername(nickname, existing.id);
           if (userTaken != null) {
             return res.status(409).json({
               error: 'Este nome de utilizador já está em uso. Escolha outro.',
@@ -202,12 +202,27 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
 
       let allowAccessLevelFromBody = !req.userId;
       if (req.userId) {
-        const gateRes = await pool.query('SELECT COALESCE(is_admin,0) AS a FROM users WHERE id = $1', [req.userId]);
-        allowAccessLevelFromBody = !!gateRes.rows[0]?.a;
+        const gateRow = await prisma.users.findUnique({
+          where: { id: Number(req.userId) },
+          select: { is_admin: true }
+        });
+        allowAccessLevelFromBody = !!gateRow?.is_admin;
       }
       if (!allowAccessLevelFromBody) {
-        const curLv = await pool.query('SELECT access_level_id FROM users WHERE id = $1', [uid]);
-        accessLevelForDb = curLv.rows[0]?.access_level_id ?? null;
+        const curRow = await prisma.users.findUnique({
+          where: { id: Number(uid) },
+          select: { access_level_id: true }
+        });
+        accessLevelForDb = curRow?.access_level_id ?? null;
+      }
+
+      let accessLevelIdsValidated: string[] | null = null;
+      if (allowAccessLevelFromBody && Array.isArray(u.accessLevelIds)) {
+        const av = validateAccessLevelIdsArray(u.accessLevelIds);
+        if (!av.ok) {
+          return res.status(400).json({ error: av.error });
+        }
+        accessLevelIdsValidated = av.ids;
       }
 
       const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
@@ -218,169 +233,32 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         }
       }
 
-      await client.query('BEGIN');
-
-      if (hasPassword) {
-        const hashedPassword = await bcrypt.hash(u.password as string, 10);
-        await client.query(
-          'UPDATE users SET username=$1, email=$2, password=$3, polygon_wallet=$4, access_level_id=$5, referred_by=$6 WHERE id=$7',
-          [
-            usernameForDb,
-            normalizedEmail,
-            hashedPassword,
-            polygonForDb,
-            accessLevelForDb,
-            referredByForDb,
-            uid
-          ]
-        );
-      } else {
-        await client.query(
-          'UPDATE users SET username=$1, email=$2, polygon_wallet=$3, access_level_id=$4, referred_by=$5 WHERE id=$6',
-          [usernameForDb, normalizedEmail, polygonForDb, accessLevelForDb, referredByForDb, uid]
-        );
-      }
-
-      if (allowAccessLevelFromBody && accessLevelForDb) {
-        await client.query(
-          'INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT (user_id, access_level_id) DO NOTHING',
-          [uid, accessLevelForDb, Date.now()]
-        );
-      }
-
-      if (allowAccessLevelFromBody && Array.isArray(u.accessLevelIds)) {
-        const av = validateAccessLevelIdsArray(u.accessLevelIds);
-        if (!av.ok) {
-          throw new Error(av.error);
-        }
-        await client.query('DELETE FROM user_access_levels WHERE user_id = $1', [uid]);
-        for (const alid of av.ids) {
-          await client.query(
-            'INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
-            [uid, alid, Date.now()]
-          );
-        }
-        if (accessLevelForDb) {
-          await client.query(
-            'INSERT INTO user_access_levels (user_id, access_level_id, granted_at) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING',
-            [uid, accessLevelForDb, Date.now()]
-          );
-        }
-      }
-
+      const passwordHash = hasPassword ? await bcrypt.hash(u.password as string, 10) : null;
       const clientIp = getClientIp(req);
-      const refCode = typeof referredByForDb === 'string' ? referredByForDb : null;
 
-      if (refCode) {
-        const refRes = await client.query('SELECT id, access_level_id FROM users WHERE LOWER(referral_code) = LOWER($1)', [
-          refCode
-        ]);
-        const ref = refRes.rows[0];
-        const referredUsername = typeof usernameForDb === 'string' ? usernameForDb : String(usernameForDb ?? '');
-
-        if (ref && referredUsername) {
-          const referrerRes = await client.query('SELECT registration_ip FROM users WHERE id = $1', [ref.id]);
-          const referrerRegIp = referrerRes.rows[0]?.registration_ip;
-
-          const historyCheck = await client.query('SELECT 1 FROM user_history_ips WHERE user_id = $1 AND ip = $2', [
-            ref.id,
-            clientIp
-          ]);
-
-          if ((referrerRegIp && referrerRegIp === clientIp) || historyCheck.rowCount! > 0) {
-            console.warn(`[Referral] Bloqueada tentativa de auto-indicação. IP ${clientIp} vinculado ao indicador ID: ${ref.id}`);
-            throw new Error(
-              'Auto-indicação não permitida. Você não pode usar seu próprio código de indicação em contas do mesmo IP.'
-            );
-          } else {
-            const refInsert = await client.query(
-              'INSERT INTO referrals (user_id, referred_username) VALUES ($1, $2) ON CONFLICT (user_id, referred_username) DO NOTHING',
-              [ref.id, referredUsername]
-            );
-
-            if (refInsert.rowCount! > 0) {
-              const alId = ref.access_level_id || 'normal';
-              const modelRes = await client.query(
-                `SELECT m.*
-                 FROM referral_models m
-                 JOIN access_level_referral_models a ON m.id = a.referral_model_id
-                 WHERE a.access_level_id = $1 AND m.is_active = 1`,
-                [alId]
-              );
-              const model = modelRes.rows[0];
-
-              if (model) {
-                console.log(`[Referral] Using Advanced Model: ${model.name} for Access Level: ${alId}`);
-
-                if (model.sender_reward_usdc > 0) {
-                  await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [
-                    model.sender_reward_usdc,
-                    ref.id
-                  ]);
-                }
-                if (model.sender_loot_box_id) {
-                  await client.query(
-                    'INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1',
-                    [ref.id, model.sender_loot_box_id]
-                  );
-                }
-
-                if (model.receiver_reward_usdc > 0) {
-                  await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [
-                    model.receiver_reward_usdc,
-                    uid
-                  ]);
-                }
-                if (model.receiver_loot_box_id) {
-                  await client.query(
-                    'INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1',
-                    [uid, model.receiver_loot_box_id]
-                  );
-                  await client.query(
-                    'INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-                    [uid, model.receiver_loot_box_id, Date.now()]
-                  );
-                }
-
-                await client.query('UPDATE game_states SET claimed_referrals = claimed_referrals + 1 WHERE user_id = $1', [
-                  ref.id
-                ]);
-                await client.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
-              } else {
-                const senderBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_sender'");
-                for (const box of senderBoxes.rows) {
-                  await client.query(
-                    'INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1',
-                    [ref.id, box.id]
-                  );
-                }
-                await client.query('UPDATE game_states SET claimed_referrals = claimed_referrals + 1 WHERE user_id = $1', [
-                  ref.id
-                ]);
-
-                const gsRes = await client.query('SELECT referral_bonus_claimed FROM game_states WHERE user_id = $1', [uid]);
-                if (gsRes.rows[0] && !gsRes.rows[0].referral_bonus_claimed) {
-                  const receiverBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_receiver'");
-                  const now = Date.now();
-                  for (const box of receiverBoxes.rows) {
-                    await client.query(
-                      'INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1',
-                      [uid, box.id]
-                    );
-                    await client.query(
-                      'INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
-                      [uid, box.id, now]
-                    );
-                  }
-                  await client.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
-                }
-              }
-            }
-          }
-        }
-      }
-
-      await client.query('COMMIT');
+      await prisma.$transaction(async (tx) => {
+        await executeUserPutCoreTransaction(tx, {
+          uid: Number(uid),
+          usernameForUpdate: String(usernameForDb ?? ''),
+          normalizedEmail,
+          passwordHash,
+          polygonForUpdate:
+            polygonForDb == null || polygonForDb === ''
+              ? null
+              : String(polygonForDb),
+          accessLevelIdForUpdate:
+            accessLevelForDb == null || accessLevelForDb === ''
+              ? null
+              : String(accessLevelForDb),
+          referredByForUpdate:
+            referredByForDb == null || referredByForDb === ''
+              ? null
+              : String(referredByForDb),
+          allowAccessLevelFromBody,
+          accessLevelIdsValidated,
+          clientIpReferral: clientIp
+        });
+      });
       console.log(`[UserUpdate] Success for uid: ${uid}`);
 
       if (!isAuthenticatedRequest) {
@@ -388,7 +266,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         if (fp) {
           const ip = getClientIp(req);
           const ua = String(req.get('user-agent') || '');
-          void insertDeviceFingerprintLog(pool, {
+          void insertDeviceFingerprintLog({
             userId: Number(uid),
             eventType: 'register',
             fingerprintHash: fp.fingerprintHash,
@@ -401,9 +279,13 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
         }
       }
 
+      const uidForLog = Number(uid);
+      if (Number.isFinite(uidForLog)) {
+        logUserAction(uidForLog, isAuthenticatedRequest ? 'profile_update' : 'signup_complete', {});
+      }
+
       res.json({ ok: true });
     } catch (e: unknown) {
-      await client.query('ROLLBACK').catch(() => {});
       console.error('[UserUpdate] Error:', e);
       if (e instanceof IpLimitError) {
         return res.status(403).json({
@@ -432,14 +314,18 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
       if (pg.code === 'EMAIL_POLICY') {
         return res.status(400).json({ ok: false, error: pg.message });
       }
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        return res.status(409).json({
+          error: 'Este e-mail ou nome de utilizador já está em uso.',
+          code: 'DUPLICATE'
+        });
+      }
       sendInternalErrorSafeMessage(
         res,
         'PUT /api/user',
         e,
         'Erro interno no servidor durante o registro.'
       );
-    } finally {
-      client.release();
     }
   });
 }

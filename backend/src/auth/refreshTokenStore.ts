@@ -1,14 +1,18 @@
 import crypto from 'node:crypto';
-import type { Pool } from 'pg';
+import { Prisma } from '@prisma/client';
+import { prisma } from '../../config/prisma.js';
 import { getJwtAuthConfig } from './config.js';
 
 function hashToken(raw: string): string {
   return crypto.createHash('sha256').update(String(raw), 'utf8').digest('hex');
 }
 
-export async function revokeAllRefreshForUser(db: Pool, userId: number): Promise<void> {
-  const now = Date.now();
-  await db.query('UPDATE jwt_refresh_tokens SET revoked_at = $1 WHERE user_id = $2 AND revoked_at IS NULL', [now, userId]);
+export async function revokeAllRefreshForUser(userId: number): Promise<void> {
+  const now = BigInt(Date.now());
+  await prisma.jwt_refresh_tokens.updateMany({
+    where: { user_id: userId, revoked_at: null },
+    data: { revoked_at: now }
+  });
 }
 
 export type InsertRefreshArgs = {
@@ -20,14 +24,20 @@ export type InsertRefreshArgs = {
   ip: string | null;
 };
 
-export async function insertRefreshToken(db: Pool, args: InsertRefreshArgs): Promise<void> {
+export async function insertRefreshToken(args: InsertRefreshArgs): Promise<void> {
   const { userId, rawToken, familyId, expiresAt, userAgent, ip } = args;
   const tokenHash = hashToken(rawToken);
-  await db.query(
-    `INSERT INTO jwt_refresh_tokens (user_id, token_hash, family_id, expires_at, created_at, user_agent, ip)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-    [userId, tokenHash, familyId, expiresAt, Date.now(), userAgent || null, ip || null]
-  );
+  await prisma.jwt_refresh_tokens.create({
+    data: {
+      user_id: userId,
+      token_hash: tokenHash,
+      family_id: familyId,
+      expires_at: BigInt(expiresAt),
+      created_at: BigInt(Date.now()),
+      user_agent: userAgent || null,
+      ip: ip || null
+    }
+  });
 }
 
 export type RotateRefreshOk = { ok: true; userId: number; newRefreshRaw: string };
@@ -35,47 +45,40 @@ export type RotateRefreshFail = { ok: false; code: string };
 export type RotateRefreshResult = RotateRefreshOk | RotateRefreshFail;
 
 export async function rotateRefreshToken(
-  db: Pool,
   rawOld: string,
   { userAgent, ip }: { userAgent: string | null; ip: string | null }
 ): Promise<RotateRefreshResult> {
   const oldHash = hashToken(rawOld);
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-    const r = await client.query(
-      `SELECT * FROM jwt_refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL FOR UPDATE`,
-      [oldHash]
+  return prisma.$transaction(async (tx) => {
+    const rows = await tx.$queryRaw<
+      Array<{ id: bigint; user_id: number; family_id: string; expires_at: bigint }>
+    >(
+      Prisma.sql`SELECT id, user_id, family_id, expires_at FROM jwt_refresh_tokens WHERE token_hash = ${oldHash} AND revoked_at IS NULL FOR UPDATE LIMIT 1`
     );
-    const row = r.rows[0] as { id: number; user_id: number; family_id: string; expires_at: number } | undefined;
+    const row = rows[0];
     if (!row) {
-      await client.query('ROLLBACK');
-      return { ok: false, code: 'invalid' };
+      return { ok: false, code: 'invalid' } as const;
     }
     if (Number(row.expires_at) < Date.now()) {
-      await client.query('ROLLBACK');
-      return { ok: false, code: 'expired' };
+      return { ok: false, code: 'expired' } as const;
     }
     const cfg = getJwtAuthConfig();
     const newRaw = crypto.randomBytes(48).toString('base64url');
     const newHash = hashToken(newRaw);
     const expMs = Date.now() + cfg.refreshTtlSec * 1000;
-    await client.query('DELETE FROM jwt_refresh_tokens WHERE id = $1', [row.id]);
-    await client.query(
-      `INSERT INTO jwt_refresh_tokens (user_id, token_hash, family_id, expires_at, created_at, user_agent, ip)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-      [row.user_id, newHash, row.family_id, expMs, Date.now(), userAgent || null, ip || null]
-    );
-    await client.query('COMMIT');
-    return { ok: true, userId: row.user_id, newRefreshRaw: newRaw };
-  } catch (e) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      /* ignore */
-    }
-    throw e;
-  } finally {
-    client.release();
-  }
+    const now = BigInt(Date.now());
+    await tx.jwt_refresh_tokens.delete({ where: { id: row.id } });
+    await tx.jwt_refresh_tokens.create({
+      data: {
+        user_id: row.user_id,
+        token_hash: newHash,
+        family_id: row.family_id,
+        expires_at: BigInt(expMs),
+        created_at: now,
+        user_agent: userAgent || null,
+        ip: ip || null
+      }
+    });
+    return { ok: true, userId: row.user_id, newRefreshRaw: newRaw } as const;
+  });
 }

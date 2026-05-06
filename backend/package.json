@@ -6,8 +6,8 @@
   "scripts": {
     "build:cron": "tsc -p tsconfig.cron.json",
     "build:ts": "tsc -p tsconfig.json",
-    "build:server": "tsc -p tsconfig.server.json",
-    "build:app": "prisma generate && rm -rf dist/cron 2>/dev/null && npm run build:cron && npm run build:ts && npm run build:server",
+    "build:server": "npm run build:ts && tsc -p tsconfig.server.json",
+    "build:app": "prisma generate && rm -rf dist/cron 2>/dev/null && npm run build:cron && npm run build:server",
     "prestart": "npm run build:app",
     "start": "node server.js",
     "test": "node ./node_modules/vitest/vitest.mjs run",
@@ -17,6 +17,7 @@
     "img:rewrite-db": "node scripts/rewrite-img-paths-after-reorg.mjs",
     "sanitize:legacy-stock": "node scripts/sanitize_legacy_stock_items.mjs",
     "db:pull": "prisma db pull",
+    "schema:validate": "prisma validate",
     "migrate:deploy": "prisma migrate deploy",
     "migrate:dev": "prisma migrate dev",
     "migrate:status": "prisma migrate status"
