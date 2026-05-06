@@ -102,6 +102,7 @@ services:
     environment:
       NODE_ENV: production
       REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/genesis_logs
       GENESIS_BULL_QUEUE: ${GENESIS_BULL_QUEUE:-genesis-maintenance}
     env_file:
       - .env
