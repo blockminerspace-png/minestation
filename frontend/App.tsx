@@ -522,28 +522,42 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const path = (window.location.pathname || '').toLowerCase().replace(/\/+$/, '');
-      const resetTokenParam = new URLSearchParams(window.location.search).get('token');
-      const isPasswordResetUrl = Boolean(resetTokenParam && path.includes('redefinir-senha'));
+      try {
+        const path = (window.location.pathname || '').toLowerCase().replace(/\/+$/, '');
+        const resetTokenParam = new URLSearchParams(window.location.search).get('token');
+        const isPasswordResetUrl = Boolean(resetTokenParam && path.includes('redefinir-senha'));
 
-      const [sess, ms, { serverTime }] = await Promise.all([
-        getSession(),
-        getMonetizationSettings(),
-        getServerTime()
-      ]);
-      if (cancelled) return;
+        const [sess, ms, timeRes] = await Promise.all([
+          getSession(),
+          getMonetizationSettings(),
+          getServerTime()
+        ]);
+        if (cancelled) return;
 
-      if (sess) {
-        setUser(sess);
-        if (isPasswordResetUrl) setGlobalView('auth');
-        else setGlobalView(sess.isAdmin ? 'admin' : 'game');
-      } else {
-        setUser(null);
-        if (isPasswordResetUrl) setGlobalView('auth');
-        else setGlobalView('home');
+        const serverTime =
+          timeRes && typeof (timeRes as { serverTime?: unknown }).serverTime === 'number'
+            ? (timeRes as { serverTime: number }).serverTime
+            : Date.now();
+
+        if (sess) {
+          setUser(sess);
+          if (isPasswordResetUrl) setGlobalView('auth');
+          else setGlobalView(sess.isAdmin ? 'admin' : 'game');
+        } else {
+          setUser(null);
+          if (isPasswordResetUrl) setGlobalView('auth');
+          else setGlobalView('home');
+        }
+        if (ms) setMonetizationSettings(ms);
+        setTimeOffset(serverTime - Date.now());
+      } catch (e) {
+        console.error('[SessionInit]', e);
+        if (!cancelled) {
+          setUser(null);
+          setGlobalView('home');
+          setTimeOffset(0);
+        }
       }
-      if (ms) setMonetizationSettings(ms);
-      setTimeOffset(serverTime - Date.now());
     })();
     return () => {
       cancelled = true;
@@ -680,31 +694,37 @@ export default function App() {
     let cancelled = false;
     setGameStateLoadError(null);
     (async () => {
-      const { data, status, error: errBody } = await apiGetGameState('me');
-      if (cancelled) return;
-      if (data) {
-        setOfflineStats((data as any).offlineMined || {});
-        const parsed = processLoadedState(data, user.email);
-        setGameState(parsed);
-        setSaveLoaded(true);
-        setGameStateLoadError(null);
-      } else if (status === 404) {
-        setGameState(INITIAL_STATE);
-        await apiSaveGameState(user.email, INITIAL_STATE);
-        if (!cancelled) {
+      try {
+        const { data, status, error: errBody } = await apiGetGameState('me');
+        if (cancelled) return;
+        if (data) {
+          setOfflineStats((data as any).offlineMined || {});
+          const parsed = processLoadedState(data, user.email);
+          setGameState(parsed);
           setSaveLoaded(true);
           setGameStateLoadError(null);
+        } else if (status === 404) {
+          setGameState(INITIAL_STATE);
+          await apiSaveGameState(user.email, INITIAL_STATE);
+          if (!cancelled) {
+            setSaveLoaded(true);
+            setGameStateLoadError(null);
+          }
+        } else {
+          const hint =
+            errBody ||
+            (status === 401
+              ? 'Sessão expirou. Entre novamente.'
+              : status >= 500
+                ? 'Servidor não conseguiu carregar o guardado. Tente de novo em instantes.'
+                : 'Não foi possível carregar o estado do jogo.');
+          console.error('[GameState] Falha ao carregar:', status, hint);
+          if (!cancelled) setGameStateLoadError(hint);
         }
-      } else {
-        const hint =
-          errBody ||
-          (status === 401
-            ? 'Sessão expirou. Entre novamente.'
-            : status >= 500
-              ? 'Servidor não conseguiu carregar o guardado. Tente de novo em instantes.'
-              : 'Não foi possível carregar o estado do jogo.');
-        console.error('[GameState] Falha ao carregar:', status, hint);
-        if (!cancelled) setGameStateLoadError(hint);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Erro inesperado ao processar o guardado.';
+        console.error('[GameState] Excepção ao carregar:', e);
+        if (!cancelled) setGameStateLoadError(msg);
       }
     })();
     return () => {
@@ -2365,7 +2385,7 @@ export default function App() {
                     (() => {
                       // Calcular poder para todas as moedas e ordenar
                       const coinsWithPower = miningCoins.map((c) => {
-                        const wsP = livePlayerGameWs?.hashByCoinId[c.id];
+                        const wsP = livePlayerGameWs?.hashByCoinId?.[c.id];
                         if (wsP != null && Number.isFinite(wsP)) {
                           return { ...c, power: wsP };
                         }
@@ -2402,6 +2422,7 @@ export default function App() {
                       } else {
                         // Show highlighted if set, OR the first one (which is now the one with most power)
                         const c = highlightedCoinId ? coinsWithPower.find(x => x.id === highlightedCoinId) || coinsWithPower[0] : coinsWithPower[0];
+                        if (!c) return <span className="font-mono text-slate-500">—</span>;
                         const total = (gameState.coinBalances || {})[c.id] || 0;
                         return <span className="font-mono font-bold text-amber-700 dark:text-amber-300">{c.name}: {formatAmount(total)}</span>;
                       }
