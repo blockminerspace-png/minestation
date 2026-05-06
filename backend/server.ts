@@ -126,13 +126,6 @@ process.on('uncaughtException', (err) => {
 const WORKER_ROLE = process.env.WORKER_ROLE || 'ALL';
 console.log(`[Worker ${process.pid}] Started with Role: ${WORKER_ROLE}`);
 
-/** Por defeito só BACKGROUND/ALL agendam o sweep (cluster-safe). `DEPOSIT_SWEEP_ALL_WORKERS=1` repete em todos os workers (comportamento antigo). */
-function shouldScheduleDepositSweep(): boolean {
-  const v = String(process.env.DEPOSIT_SWEEP_ALL_WORKERS || '').trim().toLowerCase();
-  if (v === '1' || v === 'true' || v === 'yes') return true;
-  return WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL';
-}
-
 function isValidSaveGameItemId(value: unknown): value is string {
   return typeof value === 'string' && SAVE_GAME_ITEM_ID_RE.test(value);
 }
@@ -998,12 +991,7 @@ function buildCorsOriginSet() {
     '';
   add(primaryPublic);
   for (const part of String(process.env.CORS_ALLOWED_ORIGINS || '').split(',')) add(part);
-  [
-    'https://genesisdao.tech',
-    'https://test.genesisdao.tech',
-    'https://minestation.tech',
-    'https://test.minestation.tech'
-  ].forEach(add);
+  ['https://genesisdao.tech', 'https://test.genesisdao.tech'].forEach(add);
   return s;
 }
 const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
@@ -1017,7 +1005,7 @@ const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
         ''
     ) || '(nenhuma)';
   console.log(
-    `[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, genesisdao.tech, test.genesisdao.tech, minestation.tech, test.minestation.tech)`
+    `[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, genesisdao.tech, test.genesisdao.tech)`
   );
 }
 
@@ -5798,19 +5786,16 @@ let dashboardStatsCache = null;
 let lastDashboardFetch = 0;
 const DASHBOARD_CACHE_TTL = 10000; // 10 seconds cache
 
-async function getAdminDashboardStatsCached() {
+app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
   const now = Date.now();
   if (dashboardStatsCache && (now - lastDashboardFetch < DASHBOARD_CACHE_TTL)) {
-    return dashboardStatsCache;
+    return res.json(dashboardStatsCache);
   }
-  dashboardStatsCache = await computeAdminDashboardStatsUncached();
-  lastDashboardFetch = Date.now();
-  return dashboardStatsCache;
-}
 
-app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
   try {
-    res.json(await getAdminDashboardStatsCached());
+    dashboardStatsCache = await computeAdminDashboardStatsUncached();
+    lastDashboardFetch = Date.now();
+    res.json(dashboardStatsCache);
   } catch (e) {
     console.error('[DashStats] Error:', e);
     sendInternalError(res, req.originalUrl || 'api', e);
@@ -7049,10 +7034,12 @@ app.get('/api/game-state/:email', async (req, res) => {
     if (!u) return res.status(404).json({ error: 'User not found' });
 
     const now = Date.now();
+    console.log(`[GameState] Start for ${uid} at ${now}`);
     const t0 = performance.now();
 
     const progressRes = await computeProgressForUser(db, uid, now, !isAdminEdit);
     const t1 = performance.now();
+    console.log(`[GameState] computeProgress took ${(t1 - t0).toFixed(2)}ms`);
 
     if (!progressRes.ok) {
       const safeMsg = sanitizeApiMessage(progressRes.error, 240);
@@ -7062,6 +7049,8 @@ app.get('/api/game-state/:email', async (req, res) => {
 
     const offlineMined = progressRes.offlineMined || {};
 
+    // OPTIMIZATION: Parallelize independent DB queries
+    console.log(`[GameState] Starting Parallel DB Queries...`);
     const [
       gsRes,
       stockRes,
@@ -7087,6 +7076,7 @@ app.get('/api/game-state/:email', async (req, res) => {
     ]);
 
     const t2 = performance.now();
+    console.log(`[GameState] DB Queries took ${(t2 - t1).toFixed(2)}ms`);
 
     const gs = gsRes.rows[0] || { usdc: 0, start_time: now, claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: now, black_market_balance: 0, server_updated_at: 0 };
 
@@ -7244,7 +7234,7 @@ app.get('/api/game-state/:email', async (req, res) => {
       }
     }
 
-    const payload = {
+    res.json({
       usdc: gs.usdc,
       startTime: Number(gs.start_time),
       lastUpdatedAt: Number(gs.last_updated_at),
@@ -7262,14 +7252,9 @@ app.get('/api/game-state/:email', async (req, res) => {
       claimedBoxes,
       serverUpdatedAt: gs.server_updated_at || 0,
       offlineMined
-    };
+    });
     const t3 = performance.now();
-    if ((t3 - t0) >= 400) {
-      console.warn(
-        `[GameState] slow uid=${uid} total=${(t3 - t0).toFixed(2)}ms progress=${(t1 - t0).toFixed(2)}ms db=${(t2 - t1).toFixed(2)}ms`
-      );
-    }
-    res.json(payload);
+    console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
   } catch (e) {
     sendInternalErrorSafeMessage(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
   }
@@ -8657,9 +8642,7 @@ app.get('/api/mining/coins', async (req, res) => {
 app.post('/api/mining/coins', isAdmin, async (req, res) => {
   const c = req.body;
 
-  if (!c.name || !c.symbol) {
-    return res.status(400).json({ error: 'Nome e símbolo da moeda são obrigatórios.' });
-  }
+  if (!c.name || !c.symbol) return res.status(400).json({ error: 'Name and Symbol are required' });
 
   const parseMiningNumeric = (v, fallback) => {
     if (typeof v === 'number' && Number.isFinite(v)) return v;
@@ -8688,10 +8671,6 @@ app.post('/api/mining/coins', isAdmin, async (req, res) => {
     const priceUSD = (() => {
       const p = parseMiningNumeric(c.priceUSD, NaN);
       return Number.isFinite(p) && p >= 0 ? p : 1;
-    })();
-    const usdcRateVal = (() => {
-      const u = parseMiningNumeric(c.usdcRate, NaN);
-      return Number.isFinite(u) && u >= 0 ? u : priceUSD;
     })();
     const difficulty = Math.max(1, parseMiningNumeric(c.difficulty, 1));
     const multiplier = Math.max(1, parseMiningNumeric(c.multiplier, 1));
@@ -9389,16 +9368,9 @@ const calculateHashratesAndRanking = async () => {
 };
 
 // Start Timers for New Logic
-// Depósitos pendentes: por defeito só BACKGROUND/ALL (ver `shouldScheduleDepositSweep` / DEPOSIT_SWEEP_ALL_WORKERS).
-if (shouldScheduleDepositSweep()) {
-  setInterval(sweepPendingDepositsOnce, 90000);
-  setTimeout(sweepPendingDepositsOnce, 8000);
-  console.log(`[DepositSweep] agendado (pid=${process.pid}, role=${WORKER_ROLE})`);
-} else {
-  console.log(
-    `[DepositSweep] omitido neste processo (pid=${process.pid}, role=${WORKER_ROLE}). Defina DEPOSIT_SWEEP_ALL_WORKERS=1 para replicar em todos os workers.`
-  );
-}
+// Depósitos pendentes: todos os processos (API só / cluster); o crédito continua idempotente com lock por tx.
+setInterval(sweepPendingDepositsOnce, 90000);
+setTimeout(sweepPendingDepositsOnce, 8000);
 
 if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
   // OPTIMIZATION: Increased from 10s to 60s to reduce CPU load
@@ -9537,7 +9509,7 @@ const startServer = async () => {
             const sendStats = async () => {
               if (ws.readyState !== 1) return;
               try {
-                const data = await getAdminDashboardStatsCached();
+                const data = await computeAdminDashboardStatsUncached();
                 ws.send(JSON.stringify({ type: 'admin_dashboard', event: 'stats', data }));
               } catch (e) {
                 console.warn('[AdminDashWs] push:', e.message);

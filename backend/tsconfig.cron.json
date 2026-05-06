@@ -10,6 +10,13 @@
     "noEmitOnError": true,
     "esModuleInterop": true
   },
-  "include": ["cron/**/*.ts", "lib/safeText.ts"],
+  "include": [
+    "cron/**/*.ts",
+    "lib/safeText.ts",
+    "lib/stack/**/*.ts",
+    "lib/genesisStack/init.ts",
+    "lib/mongoLogs.ts",
+    "config/prisma.ts"
+  ],
   "exclude": ["node_modules", "dist"]
 }

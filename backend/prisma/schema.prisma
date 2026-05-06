@@ -1,0 +1,788 @@
+// Postgres principal — alinhado a `config/initDb.ts` + migrações comuns.
+// Sem relações Prisma declaradas: menos drift; usa `prisma.user.findMany()` etc.
+// Quando a BD tiver tabelas novas: `cd backend && npx prisma db pull` e rever o diff.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model users {
+  id                 Int     @id @default(autoincrement())
+  username           String
+  email              String  @unique
+  password           String?
+  is_admin           Int?    @default(0)
+  is_super_admin     Int     @default(0)
+  polygon_wallet     String?
+  is_blocked         Int?    @default(0)
+  access_level_id    String?
+  referral_code      String?
+  referred_by        String?
+  last_active_at     BigInt?
+  ranking_excluded   Int?    @default(0)
+  registration_ip    String?
+  admin_permissions    String?
+
+  @@map("users")
+}
+
+model user_access_levels {
+  user_id         Int
+  access_level_id String
+  granted_at      BigInt
+
+  @@id([user_id, access_level_id])
+  @@map("user_access_levels")
+}
+
+model referrals {
+  id                 Int    @id @default(autoincrement())
+  user_id            Int
+  referred_username  String
+
+  @@map("referrals")
+}
+
+model mining_coins {
+  id                 String  @id
+  name               String
+  symbol             String  @default("")
+  description        String  @default("")
+  network_hashrate   Float   @default(0)
+  block_reward       Float   @default(0)
+  block_time         Float   @default(60)
+  price_usd          Float   @default(0)
+  algorithm          String  @default("")
+  difficulty         Float   @default(1)
+  multiplier         Float   @default(1)
+  color              String  @default("#ffffff")
+  min_proportion     Float
+  usdc_rate          Float
+  is_active          Int
+  target_daily_usd   Float?  @default(0)
+  show_in_exchange   Int?    @default(1)
+
+  @@map("mining_coins")
+}
+
+model access_levels {
+  id                 String  @id
+  name               String
+  description        String
+  is_default         Int
+  is_active          Int
+  price_usdc         Float?
+  contract_address   String?
+  inactive_message   String?
+  news_posting_enabled Int?  @default(0)
+  allowed_pages      String?
+
+  @@map("access_levels")
+}
+
+model upgrades {
+  id                   String  @id
+  name                 String
+  category             String
+  type                 String
+  base_cost            Float
+  base_production      Float
+  power_consumption    Float?
+  power_capacity       Float?
+  multiplier           Float?
+  slots_capacity       Int?
+  ai_slots_capacity    Int?
+  description          String
+  icon                 String
+  status               String
+  is_nft               Int
+  nft_contract         String?
+  nft_token_id         String?
+  max_global_stock     Int?
+  image                String?
+  reward_wh            Float?  @default(0)
+  layout               String?
+  sell_in_hardware_market Int? @default(1)
+  sell_in_black_market Int?    @default(1)
+  is_active            Int?    @default(1)
+
+  @@map("upgrades")
+}
+
+model upgrade_compat_racks {
+  upgrade_id String
+  rack_id    String
+
+  @@id([upgrade_id, rack_id])
+  @@map("upgrade_compat_racks")
+}
+
+model loot_boxes {
+  id          String  @id
+  name        String
+  description String
+  price       Float
+  trigger     String
+  icon        String
+  is_active   Int?    @default(1)
+
+  @@map("loot_boxes")
+}
+
+model loot_box_items {
+  id           Int     @id @default(autoincrement())
+  box_id       String
+  item_type    String
+  item_id      String
+  min_qty      Int
+  max_qty      Int
+  probability  Float
+
+  @@map("loot_box_items")
+}
+
+model system_news {
+  id         String  @id
+  text       String
+  link       String?
+  active     Int
+  duration   Int?
+  author_name String?
+  created_at BigInt
+
+  @@map("system_news")
+}
+
+model season_passes {
+  id          String  @id
+  season_id   String
+  name        String
+  description String
+  price_usdc  Float
+  emblem_url  String?
+  is_active   Int
+
+  @@map("season_passes")
+}
+
+model season_purchases {
+  user_id      Int
+  pass_id      String
+  season_id    String
+  purchased_at BigInt
+
+  @@id([user_id, pass_id])
+  @@map("season_purchases")
+}
+
+model game_states {
+  id                       Int     @id @default(autoincrement())
+  user_id                  Int     @unique
+  usdc                     Float
+  start_time               BigInt
+  claimed_referrals        Int
+  referral_bonus_claimed Int
+  last_updated_at          BigInt?
+  total_usdc_deposited     Float?
+  total_crypto_withdrawn   Float?
+  black_market_balance     Float?  @default(0)
+  server_updated_at        BigInt? @default(0)
+  usdc_bonus               Float?  @default(0)
+
+  @@map("game_states")
+}
+
+model settings {
+  key   String @id
+  value String
+
+  @@map("settings")
+}
+
+model stock {
+  user_id Int
+  item_id String
+  qty     Int
+
+  @@id([user_id, item_id])
+  @@map("stock")
+}
+
+model unopened_boxes {
+  user_id Int
+  box_id  String
+  qty     Int
+
+  @@id([user_id, box_id])
+  @@map("unopened_boxes")
+}
+
+model stored_batteries {
+  id             String @id
+  user_id        Int
+  item_id        String
+  current_charge Float
+
+  @@map("stored_batteries")
+}
+
+model placed_racks {
+  id               String  @id
+  user_id          Int
+  item_id          String
+  wiring_id        String?
+  battery_id       String?
+  current_charge   Float
+  is_on            Int
+  selected_coin_id String?
+  room_id          String?
+  slot_index       Int?    @default(0)
+
+  @@map("placed_racks")
+}
+
+model rack_slots {
+  rack_id         String
+  slot_index      Int
+  machine_item_id String?
+
+  @@id([rack_id, slot_index])
+  @@map("rack_slots")
+}
+
+model rack_multiplier_slots {
+  rack_id              String
+  slot_index           Int
+  multiplier_item_id   String?
+
+  @@id([rack_id, slot_index])
+  @@map("rack_multiplier_slots")
+}
+
+model player_listings {
+  id              String  @id
+  user_id         Int
+  item_id         String
+  price           Float
+  expires_at      BigInt
+  is_player       Int?
+  reserved_by     Int?
+  reserved_until  BigInt?
+  qty             Int?    @default(1)
+  status          String? @default("active")
+  buyer_paid_usdc Float?
+
+  @@map("player_listings")
+}
+
+model p2p_market_trade_history {
+  id                   BigInt @id @default(autoincrement())
+  created_at           BigInt
+  buyer_id             Int
+  seller_id            Int
+  item_id              String
+  qty                  Int
+  unit_price           Float
+  buyer_paid_usdc      Float
+  seller_received_usdc Float
+  tax_usdc             Float   @default(0)
+
+  @@map("p2p_market_trade_history")
+}
+
+model nft_items {
+  contract_address String
+  token_id         String
+  owner_address    String
+  metadata         String?
+
+  @@id([contract_address, token_id])
+  @@map("nft_items")
+}
+
+model sessions {
+  session_id       String  @id
+  user_id          Int
+  created_at       BigInt
+  expires_at       BigInt
+  original_user_id Int?
+  last_seen_at     BigInt? @default(0)
+
+  @@map("sessions")
+}
+
+model jwt_refresh_tokens {
+  id         BigInt  @id @default(autoincrement())
+  user_id    Int
+  token_hash String
+  family_id  String
+  expires_at BigInt
+  created_at BigInt
+  user_agent String?
+  ip         String?
+  revoked_at BigInt?
+
+  @@map("jwt_refresh_tokens")
+}
+
+model coin_balances {
+  user_id Int
+  coin_id String
+  amount  Float
+
+  @@id([user_id, coin_id])
+  @@map("coin_balances")
+}
+
+model coin_withdrawals {
+  user_id           Int
+  coin_id           String
+  total_withdrawn   Float
+
+  @@id([user_id, coin_id])
+  @@map("coin_withdrawals")
+}
+
+model admin_upgrades {
+  id                   String @id
+  name                 String
+  description          String?
+  price_usdc           Float
+  grant_usdc           Float? @default(0)
+  grant_access_level_id String?
+  is_active            Int
+  created_at           BigInt
+
+  @@map("admin_upgrades")
+}
+
+model admin_upgrade_items {
+  upgrade_id String
+  item_id    String
+  qty        Int
+
+  @@id([upgrade_id, item_id])
+  @@map("admin_upgrade_items")
+}
+
+model admin_upgrade_boxes {
+  upgrade_id String
+  box_id     String
+  qty        Int
+
+  @@id([upgrade_id, box_id])
+  @@map("admin_upgrade_boxes")
+}
+
+model admin_upgrade_passes {
+  upgrade_id String
+  pass_id    String
+  qty        Int
+
+  @@id([upgrade_id, pass_id])
+  @@map("admin_upgrade_passes")
+}
+
+model admin_upgrade_coins {
+  upgrade_id String
+  coin_id    String
+  amount     Float
+
+  @@id([upgrade_id, coin_id])
+  @@map("admin_upgrade_coins")
+}
+
+model season_pass_rewards {
+  id       Int    @id @default(autoincrement())
+  pass_id  String
+  type     String
+  item_id  String?
+  coin_id  String?
+  qty      Float
+
+  @@map("season_pass_rewards")
+}
+
+model admin_upgrade_purchases {
+  user_id      Int
+  upgrade_id   String
+  purchased_at BigInt
+
+  @@id([user_id, upgrade_id])
+  @@map("admin_upgrade_purchases")
+}
+
+model admin_upgrade_visibility {
+  upgrade_id      String
+  access_level_id String
+
+  @@id([upgrade_id, access_level_id])
+  @@map("admin_upgrade_visibility")
+}
+
+model player_news_submissions {
+  id         String @id
+  user_id    Int
+  text       String
+  link       String?
+  status     String
+  created_at BigInt
+
+  @@map("player_news_submissions")
+}
+
+model support_tickets {
+  id          String @id
+  user_id     Int
+  subject     String
+  message     String
+  attachments Json   @default(dbgenerated("'[]'::jsonb"))
+  status      String @default("open")
+  created_at  BigInt
+
+  @@map("support_tickets")
+}
+
+model support_ticket_replies {
+  id            String @id
+  ticket_id     String
+  admin_user_id Int
+  message       String
+  attachments   Json   @default(dbgenerated("'[]'::jsonb"))
+  created_at    BigInt
+
+  @@map("support_ticket_replies")
+}
+
+model support_ticket_player_replies {
+  id         String @id
+  ticket_id  String
+  user_id    Int
+  message    String
+  attachments Json  @default(dbgenerated("'[]'::jsonb"))
+  created_at BigInt
+
+  @@map("support_ticket_player_replies")
+}
+
+model rig_rooms {
+  id                        String @id
+  name                      String
+  initial_capacity          Int
+  max_capacity              Int
+  base_slot_price           Float
+  slot_price_increase_percent Float
+  allowed_levels            String?
+  allowed_season_pass_ids     String?
+  is_active                 Int    @default(1)
+  sort_order                Int    @default(0)
+
+  @@map("rig_rooms")
+}
+
+model user_rig_rooms {
+  user_id         Int
+  room_id         String
+  purchased_at    BigInt
+  unlocked_slots  Int?    @default(0)
+
+  @@id([user_id, room_id])
+  @@map("user_rig_rooms")
+}
+
+model workshop_slots {
+  user_id        Int
+  slot_index     Int
+  item_id        String?
+  internal_state String?
+  current_charge Float?  @default(0)
+  slot_charges   String?
+  slot_item_ids  String?
+
+  @@id([user_id, slot_index])
+  @@map("workshop_slots")
+}
+
+model player_claimed_boxes {
+  user_id     Int
+  box_id      String
+  claimed_at  BigInt
+
+  @@id([user_id, box_id])
+  @@map("player_claimed_boxes")
+}
+
+model daily_actions {
+  user_id           Int
+  action_key        String
+  last_performed_at BigInt
+
+  @@id([user_id, action_key])
+  @@map("daily_actions")
+}
+
+model game_activity_logs {
+  id         BigInt @id @default(autoincrement())
+  user_id    Int
+  action     String
+  meta       Json   @default(dbgenerated("'{}'::jsonb"))
+  created_at BigInt
+
+  @@map("game_activity_logs")
+}
+
+model promo_codes {
+  code             String  @id
+  loot_box_id      String?
+  upgrade_id       String?
+  admin_upgrade_id String?
+  type             String
+  is_active        Int?    @default(1)
+  created_at       BigInt
+  expires_at       BigInt?
+
+  @@map("promo_codes")
+}
+
+model promo_code_redemptions {
+  code               String
+  user_id            Int
+  redeemed_at        BigInt
+  reward_granted     Int?    @default(1)
+  won_item_id        String?
+  roulette_rolled_at BigInt?
+  roulette_claimed_at BigInt?
+
+  @@id([code, user_id])
+  @@map("promo_code_redemptions")
+}
+
+model mining_yield_history {
+  id               Int    @id @default(autoincrement())
+  coin_id          String
+  yield_per_hash   Float
+  block_reward     Float  @default(0)
+  network_hashrate Float  @default(0)
+  effective_at     BigInt
+
+  @@map("mining_yield_history")
+}
+
+model economy_settings {
+  id                              Int @id
+  black_market_enabled            Int?
+  hardware_market_enabled         Int?
+  market_tax_percent              Float?
+  black_market_price_band_percent Float? @default(20)
+
+  @@map("economy_settings")
+}
+
+model withdrawal_requests {
+  id             String  @id
+  user_id        Int
+  coin_id        String
+  amount_crypto  Float
+  amount_usdc    Float?
+  fee_amount     Float?  @default(0)
+  net_amount     Float?  @default(0)
+  tx_hash        String?
+  wallet_address String?
+  status         String
+  created_at     BigInt
+  processed_at   BigInt?
+
+  @@map("withdrawal_requests")
+}
+
+model wheel_prizes {
+  id      String @id
+  label   String
+  weight  Int
+  color   String
+  item_id String?
+
+  @@map("wheel_prizes")
+}
+
+model wheel_players {
+  username String @id
+  added_at BigInt
+
+  @@map("wheel_players")
+}
+
+model wallet_labels {
+  address    String @id
+  label      String
+  updated_at BigInt
+
+  @@map("wallet_labels")
+}
+
+model referral_models {
+  id                              Int     @id @default(autoincrement())
+  name                            String
+  description                     String?
+  sender_reward_usdc              Float?  @default(0)
+  receiver_reward_usdc            Float?  @default(0)
+  sender_loot_box_id             String?
+  receiver_loot_box_id           String?
+  deposit_commission_percent      Float?  @default(0)
+  hardware_commission_percent     Float?  @default(0)
+  black_market_commission_percent Float?  @default(0)
+  is_active                       Int?    @default(1)
+
+  @@map("referral_models")
+}
+
+model access_level_referral_models {
+  access_level_id   String  @id
+  referral_model_id Int?
+
+  @@map("access_level_referral_models")
+}
+
+model user_history_ips {
+  user_id      Int
+  ip           String
+  last_used_at BigInt
+
+  @@id([user_id, ip])
+  @@map("user_history_ips")
+}
+
+model device_fingerprint_logs {
+  id               BigInt @id @default(autoincrement())
+  user_id          Int
+  event_type       String
+  fingerprint_hash String
+  payload_json     String?
+  ip               String?
+  user_agent       String?
+  created_at       BigInt
+
+  @@map("device_fingerprint_logs")
+}
+
+model ip_blacklist {
+  ip       String @id
+  reason   String?
+  added_at BigInt
+
+  @@map("ip_blacklist")
+}
+
+model admin_access_logs {
+  id            Int    @id @default(autoincrement())
+  ip            String
+  attempted_url String
+  user_agent    String?
+  details       String?
+  created_at    BigInt
+
+  @@map("admin_access_logs")
+}
+
+model security_threat_scores {
+  ip           String @id
+  score        Int    @default(0)
+  window_start BigInt
+  updated_at   BigInt
+
+  @@map("security_threat_scores")
+}
+
+model transparency_entries {
+  id          Int    @id @default(autoincrement())
+  category    String
+  title       String
+  body        String?
+  amount_usdc Float?
+  link_url    String?
+  sort_order  Int    @default(0)
+  created_at  BigInt
+  updated_at  BigInt
+
+  @@map("transparency_entries")
+}
+
+model ui_display_labels {
+  key        String @id @db.VarChar(120)
+  value      String
+  updated_at BigInt
+
+  @@map("ui_display_labels")
+}
+
+model wheel_paid_pending {
+  user_id     Int    @id
+  won_item_id String
+  charged_usdc Float @default(1)
+  rolled_at   BigInt
+
+  @@map("wheel_paid_pending")
+}
+
+model charging_history {
+  id                   Int       @id @default(autoincrement())
+  user_email           String
+  action               String
+  workshop_slot_index  Int?
+  component_slot_id    String?
+  battery_instance_id  String?
+  battery_item_id      String?
+  charge_amount        Float?
+  timestamp            DateTime? @default(now()) @db.Timestamp(6)
+  stock_confirmed      Boolean?  @default(false)
+  details              Json?
+
+  @@map("charging_history")
+}
+
+model app_cache {
+  key        String   @id
+  value      Json?
+  updated_at DateTime? @db.Timestamp(6)
+
+  @@map("app_cache")
+}
+
+model partner_youtube_submissions {
+  id               String  @id
+  user_id          Int
+  title            String
+  youtube_url      String
+  youtube_video_id String
+  description      String  @default("")
+  status           String  @default("pending")
+  created_at       BigInt
+  reviewed_at      BigInt?
+  reviewed_by      Int?
+  reject_reason    String?
+
+  @@map("partner_youtube_submissions")
+}
+
+model partner_youtube_creator_profiles {
+  user_id     Int    @id
+  channel_url String @default("")
+  avatar_url  String @default("")
+  updated_at  BigInt @default(0)
+  updated_by  Int?
+
+  @@map("partner_youtube_creator_profiles")
+}
+
+model partner_youtube_manual_allowlist {
+  user_id  Int    @id
+  added_at BigInt
+  added_by Int?
+
+  @@map("partner_youtube_manual_allowlist")
+}

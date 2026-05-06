@@ -1,6 +1,7 @@
 import type { Pool, PoolClient } from 'pg';
 import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
+import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -141,14 +142,8 @@ export async function computeProgressForUser(
   activeProgressCalculations++;
   const client = await pool.connect();
   try {
-    const coinMap = new Map<string, { isActive: boolean }>();
-    const coinsRes = await client.query('SELECT id, is_active FROM mining_coins');
-    const coinIds: string[] = [];
-    coinsRes.rows.forEach((c) => {
-      const id = String(c.id);
-      coinMap.set(id, { isActive: !!c.is_active });
-      coinIds.push(id);
-    });
+    const coinMap = await getMiningCoinsActiveMap();
+    const coinIds: string[] = [...coinMap.keys()];
 
     const upgradesRes = await client.query('SELECT * FROM upgrades');
     const upgradesMap = new Map<string, Record<string, unknown>>();

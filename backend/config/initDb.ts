@@ -1,5 +1,10 @@
 import pool from './db.js';
 
+/**
+ * Garante colunas/tabelas legadas e migrações incrementais (DO $$ … $$).
+ * Instalação nova: o baseline em `prisma/migrations/*` cria o núcleo das tabelas; este ficheiro continua
+ * idempotente (`CREATE IF NOT EXISTS` / `ADD COLUMN IF NOT EXISTS`) para alinhar com BDs antigas e patches.
+ */
 export const initDb = async () => {
   const client = await pool.connect();
   try {

@@ -37,4 +37,5 @@ RUN npm run build:app
 ENV NODE_ENV=production
 EXPOSE 3000
 
-CMD ["node", "server.js"]
+# Prisma Migrate antes do Node: BD nova recebe o baseline; BD antiga deve ter baseline resolvido (ver comentário na migration).
+CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]

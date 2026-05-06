@@ -16,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import db from './dist/config/db.js';
 import { startMiningYieldCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
+import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { UI_DISPLAY_LABEL_KEY_SET } from './dist/config/uiDisplayLabelKeys.js';
 import { allowsAdminRouteAccess, permissionTabSetFromDbJson, resolveAdminRouteRequirement } from './dist/utils/adminRouteAuth.js';
@@ -56,13 +57,6 @@ process.on('uncaughtException', (err) => {
 });
 const WORKER_ROLE = process.env.WORKER_ROLE || 'ALL';
 console.log(`[Worker ${process.pid}] Started with Role: ${WORKER_ROLE}`);
-/** Por defeito só BACKGROUND/ALL agendam o sweep (cluster-safe). `DEPOSIT_SWEEP_ALL_WORKERS=1` repete em todos os workers (comportamento antigo). */
-function shouldScheduleDepositSweep() {
-    const v = String(process.env.DEPOSIT_SWEEP_ALL_WORKERS || '').trim().toLowerCase();
-    if (v === '1' || v === 'true' || v === 'yes')
-        return true;
-    return WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL';
-}
 function isValidSaveGameItemId(value) {
     return typeof value === 'string' && SAVE_GAME_ITEM_ID_RE.test(value);
 }
@@ -911,12 +905,7 @@ function buildCorsOriginSet() {
     add(primaryPublic);
     for (const part of String(process.env.CORS_ALLOWED_ORIGINS || '').split(','))
         add(part);
-    [
-        'https://genesisdao.tech',
-        'https://test.genesisdao.tech',
-        'https://minestation.tech',
-        'https://test.minestation.tech'
-    ].forEach(add);
+    ['https://genesisdao.tech', 'https://test.genesisdao.tech'].forEach(add);
     return s;
 }
 const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
@@ -926,7 +915,7 @@ const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
         process.env.SITE_URL ||
         process.env.VITE_APP_URL ||
         '') || '(nenhuma)';
-    console.log(`[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, genesisdao.tech, test.genesisdao.tech, minestation.tech, test.minestation.tech)`);
+    console.log(`[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, genesisdao.tech, test.genesisdao.tech)`);
 }
 /** Eventos de jogo para auditoria no admin (não falha o fluxo principal). */
 async function appendGameActivityLog(q, userId, action, meta) {
@@ -1435,13 +1424,7 @@ app.post('/api/player-activity-log', async (req, res) => {
     return res.json({ ok: true });
 });
 // CACHE REMOVIDO CONFORME SOLICITADO
-// --- DYNAMIC NETWORK HASHRATE & RANKING ---
-let globalNetworkStats = {
-    hashrates: {},
-    activeMiners: 0,
-    activeMinersByCoin: {},
-    ranking: []
-};
+// --- DYNAMIC NETWORK HASHRATE & RANKING (actualizado só em miningYieldCron; ver getGlobalNetworkStats) ---
 startMiningYieldCron(db);
 // --- CHARGING HISTORY ENDPOINTS ---
 app.get('/api/charging-history', authenticateToken, async (req, res) => {
@@ -5557,18 +5540,15 @@ async function computeAdminDashboardStatsUncached() {
 let dashboardStatsCache = null;
 let lastDashboardFetch = 0;
 const DASHBOARD_CACHE_TTL = 10000; // 10 seconds cache
-async function getAdminDashboardStatsCached() {
+app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
     const now = Date.now();
     if (dashboardStatsCache && (now - lastDashboardFetch < DASHBOARD_CACHE_TTL)) {
-        return dashboardStatsCache;
+        return res.json(dashboardStatsCache);
     }
-    dashboardStatsCache = await computeAdminDashboardStatsUncached();
-    lastDashboardFetch = Date.now();
-    return dashboardStatsCache;
-}
-app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
     try {
-        res.json(await getAdminDashboardStatsCached());
+        dashboardStatsCache = await computeAdminDashboardStatsUncached();
+        lastDashboardFetch = Date.now();
+        res.json(dashboardStatsCache);
     }
     catch (e) {
         console.error('[DashStats] Error:', e);
@@ -6777,15 +6757,19 @@ app.get('/api/game-state/:email', async (req, res) => {
         if (!u)
             return res.status(404).json({ error: 'User not found' });
         const now = Date.now();
+        console.log(`[GameState] Start for ${uid} at ${now}`);
         const t0 = performance.now();
         const progressRes = await computeProgressForUser(db, uid, now, !isAdminEdit);
         const t1 = performance.now();
+        console.log(`[GameState] computeProgress took ${(t1 - t0).toFixed(2)}ms`);
         if (!progressRes.ok) {
             const safeMsg = sanitizeApiMessage(progressRes.error, 240);
             console.warn(`[GameState] computeProgress failed uid=${uid}: ${safeMsg}`);
             return res.status(500).json({ error: safeMsg });
         }
         const offlineMined = progressRes.offlineMined || {};
+        // OPTIMIZATION: Parallelize independent DB queries
+        console.log(`[GameState] Starting Parallel DB Queries...`);
         const [gsRes, stockRes, unopenedBoxesRes, storedBatteriesRes, placedRacksRes, workshopSlotsRes, coinBalancesRes, dailyActionsRes, playerListingsRes, claimedBoxesRes] = await Promise.all([
             db.query('SELECT * FROM game_states WHERE user_id = $1', [uid]),
             db.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]),
@@ -6799,6 +6783,7 @@ app.get('/api/game-state/:email', async (req, res) => {
             db.query('SELECT box_id FROM player_claimed_boxes WHERE user_id = $1', [uid])
         ]);
         const t2 = performance.now();
+        console.log(`[GameState] DB Queries took ${(t2 - t1).toFixed(2)}ms`);
         const gs = gsRes.rows[0] || { usdc: 0, start_time: now, claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: now, black_market_balance: 0, server_updated_at: 0 };
         const stock = {};
         stockRes.rows.forEach(r => {
@@ -6941,7 +6926,7 @@ app.get('/api/game-state/:email', async (req, res) => {
                 fixClient.release();
             }
         }
-        const payload = {
+        res.json({
             usdc: gs.usdc,
             startTime: Number(gs.start_time),
             lastUpdatedAt: Number(gs.last_updated_at),
@@ -6959,12 +6944,9 @@ app.get('/api/game-state/:email', async (req, res) => {
             claimedBoxes,
             serverUpdatedAt: gs.server_updated_at || 0,
             offlineMined
-        };
+        });
         const t3 = performance.now();
-        if ((t3 - t0) >= 400) {
-            console.warn(`[GameState] slow uid=${uid} total=${(t3 - t0).toFixed(2)}ms progress=${(t1 - t0).toFixed(2)}ms db=${(t2 - t1).toFixed(2)}ms`);
-        }
-        res.json(payload);
+        console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
     }
     catch (e) {
         sendInternalErrorSafeMessage(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
@@ -8291,9 +8273,8 @@ app.get('/api/mining/coins', async (req, res) => {
 });
 app.post('/api/mining/coins', isAdmin, async (req, res) => {
     const c = req.body;
-    if (!c.name || !c.symbol) {
-        return res.status(400).json({ error: 'Nome e símbolo da moeda são obrigatórios.' });
-    }
+    if (!c.name || !c.symbol)
+        return res.status(400).json({ error: 'Name and Symbol are required' });
     const parseMiningNumeric = (v, fallback) => {
         if (typeof v === 'number' && Number.isFinite(v))
             return v;
@@ -8324,10 +8305,6 @@ app.post('/api/mining/coins', isAdmin, async (req, res) => {
         const priceUSD = (() => {
             const p = parseMiningNumeric(c.priceUSD, NaN);
             return Number.isFinite(p) && p >= 0 ? p : 1;
-        })();
-        const usdcRateVal = (() => {
-            const u = parseMiningNumeric(c.usdcRate, NaN);
-            return Number.isFinite(u) && u >= 0 ? u : priceUSD;
         })();
         const difficulty = Math.max(1, parseMiningNumeric(c.difficulty, 1));
         const multiplier = Math.max(1, parseMiningNumeric(c.multiplier, 1));
@@ -8811,168 +8788,16 @@ app.post('/api/admin/withdrawals/status', isAdmin, async (req, res) => {
             client.release();
     }
 });
-// --- NEW RANKING & STATS SYSTEM ---
-let isCalculatingRanking = false;
-const calculateHashratesAndRanking = async () => {
-    if (isCalculatingRanking) {
-        console.log('[Mining] Ranking calculation skipped (already running).');
-        return;
-    }
-    isCalculatingRanking = true;
-    const start = Date.now();
-    const client = await db.connect();
-    try {
-        // ... (rest of the function remains the same, just wrapping try/finally)
-        const activeRes = await client.query(`
-      SELECT pr.selected_coin_id, pr.id, pr.user_id, pr.battery_id, pr.current_charge, u.username
-      FROM placed_racks pr
-      JOIN users u ON pr.user_id = u.id
-      WHERE pr.is_on = 1 
-      AND pr.wiring_id IS NOT NULL 
-      AND pr.battery_id IS NOT NULL
-      AND u.is_blocked = 0
-      AND u.ranking_excluded = 0
-  `);
-        // Fetch Upgrades
-        const upsRes = await client.query('SELECT id, base_production, multiplier, power_capacity FROM upgrades');
-        const upsMap = new Map();
-        upsRes.rows.forEach(u => upsMap.set(u.id, u));
-        // Slots & Multipliers
-        const slotRes = await client.query('SELECT rack_id, machine_item_id FROM rack_slots');
-        const slotsMap = {};
-        slotRes.rows.forEach(s => {
-            if (!slotsMap[s.rack_id])
-                slotsMap[s.rack_id] = [];
-            slotsMap[s.rack_id].push(s.machine_item_id);
-        });
-        const multiRes = await client.query('SELECT rack_id, multiplier_item_id FROM rack_multiplier_slots');
-        const multiMap = {};
-        multiRes.rows.forEach(m => {
-            if (!multiMap[m.rack_id])
-                multiMap[m.rack_id] = [];
-            multiMap[m.rack_id].push(m.multiplier_item_id);
-        });
-        const coinTotals = {}; // CoinID -> Total Power
-        const userStats = new Map(); // UserId -> UStat
-        // Process Racks
-        for (const rack of activeRes.rows) {
-            const cid = String(rack.selected_coin_id);
-            if (!cid)
-                continue;
-            const batt = upsMap.get(rack.battery_id);
-            const isInfinite = batt && batt.power_capacity === -1;
-            // CONSISTENCY FIX: If user wants Ranking Logic, we must align with how ranking is usually displayed.
-            // Usually ranking shows TOTAL RAW POWER regardless of battery?
-            // But for "Active Miners", they must be mining. So charge > 0 makes sense.
-            // The user log showed 425 miners. My previous logic showed 425.
-            // The issue was frontend getting 0.
-            if (!isInfinite && rack.current_charge <= 0.001)
-                continue;
-            let base = 0;
-            (slotsMap[rack.id] || []).forEach(mid => {
-                const u = upsMap.get(mid);
-                if (u)
-                    base += (u.base_production || 0);
-            });
-            if (base <= 0)
-                continue;
-            let mult = 1;
-            (multiMap[rack.id] || []).forEach(mid => {
-                const u = upsMap.get(mid);
-                if (u)
-                    mult += (u.multiplier || 0);
-            });
-            const power = base * mult;
-            coinTotals[cid] = (coinTotals[cid] || 0) + power;
-            if (!userStats.has(rack.user_id)) {
-                userStats.set(rack.user_id, {
-                    user_id: rack.user_id,
-                    username: rack.username,
-                    coins: {}
-                });
-            }
-            const uStat = userStats.get(rack.user_id);
-            uStat.coins[cid] = (uStat.coins[cid] || 0) + power;
-        }
-        // Build Ranking & Counts
-        const activeMinersByCoin = {};
-        let totalActiveUsers = 0;
-        const rankingList = [];
-        userStats.forEach(u => {
-            const userCoins = Object.keys(u.coins);
-            if (userCoins.length > 0) {
-                totalActiveUsers++;
-                rankingList.push({
-                    ...u,
-                    totalPower: Object.values(u.coins).reduce((a, b) => Number(a) + Number(b), 0)
-                });
-                userCoins.forEach(cid => {
-                    if (u.coins[cid] > 0) {
-                        activeMinersByCoin[cid] = (activeMinersByCoin[cid] || 0) + 1;
-                    }
-                });
-            }
-        });
-        // Sort Ranking
-        rankingList.sort((a, b) => b.totalPower - a.totalPower);
-        // Update Global State (New)
-        const newState = {
-            hashrates: coinTotals,
-            activeMiners: totalActiveUsers,
-            activeMinersByCoin: activeMinersByCoin,
-            ranking: rankingList
-        };
-        globalNetworkStats = newState;
-        // Persist to DB for other workers (Critical for Load Balancing)
-        await client.query(`
-        INSERT INTO app_cache (key, value, updated_at)
-        VALUES ('network_stats', $1, NOW())
-        ON CONFLICT (key) DO UPDATE SET value = $1, updated_at = NOW()
-    `, [newState]);
-        // Update Legacy Globals (for existing endpoints)
-        miningRuntimeStats.globalNetworkHashrates.clear();
-        for (const [cid, val] of Object.entries(coinTotals)) {
-            miningRuntimeStats.globalNetworkHashrates.set(cid, Number(val) || 0);
-        }
-        miningRuntimeStats.globalActiveMiners = totalActiveUsers;
-        miningRuntimeStats.globalActiveMinersByCoin.clear();
-        for (const [cid, val] of Object.entries(activeMinersByCoin)) {
-            miningRuntimeStats.globalActiveMinersByCoin.set(cid, Number(val) || 0);
-        }
-        const duration = Date.now() - start;
-        if (duration > 1000) {
-            console.log(`[Mining] Ranking updated in ${duration}ms. Active Users: ${totalActiveUsers}`);
-        }
-    }
-    catch (e) {
-        console.error('Recalc Hashrates Error:', e);
-    }
-    finally {
-        client.release();
-        isCalculatingRanking = false;
-    }
-};
-// Start Timers for New Logic
-// Depósitos pendentes: por defeito só BACKGROUND/ALL (ver `shouldScheduleDepositSweep` / DEPOSIT_SWEEP_ALL_WORKERS).
-if (shouldScheduleDepositSweep()) {
-    setInterval(sweepPendingDepositsOnce, 90000);
-    setTimeout(sweepPendingDepositsOnce, 8000);
-    console.log(`[DepositSweep] agendado (pid=${process.pid}, role=${WORKER_ROLE})`);
-}
-else {
-    console.log(`[DepositSweep] omitido neste processo (pid=${process.pid}, role=${WORKER_ROLE}). Defina DEPOSIT_SWEEP_ALL_WORKERS=1 para replicar em todos os workers.`);
-}
-if (WORKER_ROLE === 'BACKGROUND' || WORKER_ROLE === 'ALL') {
-    // OPTIMIZATION: Increased from 10s to 60s to reduce CPU load
-    setInterval(calculateHashratesAndRanking, 60000);
-    setTimeout(calculateHashratesAndRanking, 5000);
-}
+// Ranking + hashrates: um único job em miningYieldCron (evita segundo scan pesado aqui).
+// Depósitos pendentes: todos os processos (API só / cluster); o crédito continua idempotente com lock por tx.
+setInterval(sweepPendingDepositsOnce, 90000);
+setTimeout(sweepPendingDepositsOnce, 8000);
 // Admin Ranking Endpoint
 app.get('/api/admin/ranking', isAdmin, async (req, res) => {
     try {
         const coinsRes = await db.query('SELECT id, name, symbol FROM mining_coins');
         // Intelligent Retrieval: Local Memory (Background Worker) vs DB Cache (API Worker)
-        let stats = globalNetworkStats;
+        let stats = getGlobalNetworkStats();
         if (!stats || !stats.ranking || stats.ranking.length === 0) {
             try {
                 const cacheRes = await db.query("SELECT value FROM app_cache WHERE key = 'network_stats'");
@@ -9098,7 +8923,7 @@ const startServer = async () => {
                             if (ws.readyState !== 1)
                                 return;
                             try {
-                                const data = await getAdminDashboardStatsCached();
+                                const data = await computeAdminDashboardStatsUncached();
                                 ws.send(JSON.stringify({ type: 'admin_dashboard', event: 'stats', data }));
                             }
                             catch (e) {

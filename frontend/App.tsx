@@ -43,6 +43,7 @@ import {
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import { trackSpaPageView } from './lib/analytics';
+import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
 import { MarketNews } from './components/MarketNews';
 import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
@@ -250,14 +251,8 @@ export default function App() {
   // Game State
   const [gameState, setGameState] = useState<GameState>(INITIAL_STATE);
   const gameStateRef = useRef(gameState);
-  /** Evita sobrepor ticks do poller de config do jogo (getMiningCoins + loja, etc.). */
-  const gameConfigPollInFlight = useRef(false);
 
-  const gameConfigPollMs = useMemo(() => {
-    const n = parseInt(String(import.meta.env.VITE_GAME_CONFIG_POLL_MS || ''), 10);
-    if (Number.isFinite(n) && n >= 5000 && n <= 120000) return n;
-    return 10_000;
-  }, []);
+
 
   const handleRewardComplete = useCallback(() => {
     setShowRewardModal(false);
@@ -266,6 +261,18 @@ export default function App() {
   useEffect(() => {
     gameStateRef.current = gameState;
   }, [gameState]);
+
+  /** Socket.IO (stack): tempo real paralelo ao WS legado do jogo. */
+  useEffect(() => {
+    const api = import.meta.env.VITE_API_URL?.trim();
+    if (!api) return;
+    const base = api.replace(/\/api\/?$/i, '');
+    if (!base) return;
+    useStackSocketStore.getState().connect(base);
+    return () => {
+      useStackSocketStore.getState().disconnect();
+    };
+  }, []);
 
   const [productionRate, setProductionRate] = useState(0);
   /** Hash por moeda + total vindos de `/ws/player-game` (BD). `null` = usar só cálculo local. */
@@ -582,6 +589,17 @@ export default function App() {
     })();
   }, [globalView, user]);
 
+  // POLLER: Keep Dynamic Hashrate Synced (Every 15s)
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const mc = await getMiningCoins();
+        setMiningCoins(mc);
+      } catch (e) { console.error("Hashrate Sync Failed", e); }
+    }, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   // WebSocket: cabeçalho do jogo — saldos (coin_balances + USDC) e hashrate alinhados à BD (~3,5s)
   useEffect(() => {
     if (!user || user.isAdmin || globalView !== 'game' || !saveLoaded) {
@@ -844,33 +862,24 @@ export default function App() {
     return () => clearInterval(saveInterval);
   }, [user, saveLoaded, runPlayerSaveWithRetries]);
 
-  // Atualizações globais (moedas de mineração, loja, níveis): um único intervalo — hashrate/saldos vêm do WS (~3,5s).
+  // Real-time Global Updates (Coins, Store, etc.)
   useEffect(() => {
-    if (!user || user.isAdmin || globalView !== 'game') return;
     const interval = setInterval(async () => {
-      if (gameConfigPollInFlight.current) return;
-      gameConfigPollInFlight.current = true;
-      try {
-        const [lv, mc, econ, lb, web3] = await Promise.all([
-          getAccessLevels(),
-          getMiningCoins(),
-          getEconomySettings(),
-          getLootBoxes(),
-          getWeb3Settings()
-        ]);
-        setAccessLevels(lv);
-        setMiningCoins(mc);
-        if (econ) setEconomySettings(econ);
-        setLootBoxDefs(lb);
-        if (web3) setWeb3SettingsState(web3);
-      } catch (e) {
-        console.error('[GameConfigPoll] falha ao sincronizar:', e);
-      } finally {
-        gameConfigPollInFlight.current = false;
-      }
-    }, gameConfigPollMs);
+      const [lv, mc, econ, lb, web3] = await Promise.all([
+        getAccessLevels(),
+        getMiningCoins(),
+        getEconomySettings(),
+        getLootBoxes(),
+        getWeb3Settings()
+      ]);
+      setAccessLevels(lv);
+      setMiningCoins(mc);
+      if (econ) setEconomySettings(econ);
+      setLootBoxDefs(lb);
+      if (web3) setWeb3SettingsState(web3);
+    }, 10000);
     return () => clearInterval(interval);
-  }, [user, globalView, gameConfigPollMs]);
+  }, []);
 
   // Auth Handlers
   const handleLogin = async (u: User) => {

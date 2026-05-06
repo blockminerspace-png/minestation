@@ -1,3 +1,6 @@
+# Um único compose na raiz: Postgres + Redis + Mongo + API + worker BullMQ (mesmo Dockerfile).
+# `docker compose up --build`
+
 services:
   db:
     image: postgres:16-alpine
@@ -13,6 +16,27 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mongo:
+    image: mongo:7
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   app:
     build:
       context: .
@@ -22,18 +46,39 @@ services:
     environment:
       PORT: "3000"
       NODE_ENV: production
-      # Sempre o serviço `db` na rede do compose. Não use DATABASE_URL do .env com localhost aqui —
-      # dentro do container localhost não é o Postgres.
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/minestation
+      REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/genesis_logs
     env_file:
       - path: .env
         required: false
     volumes:
-      # Persiste backups entre rebuilds da imagem (painel admin lista ficheiros nesta pasta).
       - ./backups:/app/backups
     depends_on:
       db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+
+  bull-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/workers/bullGenesisWorker.js"]
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      GENESIS_BULL_QUEUE: ${GENESIS_BULL_QUEUE:-genesis-maintenance}
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      redis:
+        condition: service_healthy
 
 volumes:
   pgdata:
+  redisdata:
+  mongodata:

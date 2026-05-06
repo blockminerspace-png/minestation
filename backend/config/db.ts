@@ -10,3 +10,6 @@ export const getClient = () => pool.connect();
 export const connect = () => pool.connect();
 
 export default pool;
+
+/** ORM do Postgres principal (uso gradual; o `pool` continua disponível). */
+export { prisma, connectPrisma, disconnectPrisma } from './prisma.js';
