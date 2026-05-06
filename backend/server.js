@@ -6575,10 +6575,12 @@ app.get('/api/game-state/:email', async (req, res) => {
                 fixClient.release();
             }
         }
+        // Prisma devolve BigInt em campos schema BigInt — nunca passar BigInt cru a `res.json()` (falha de serialização).
+        const serverUpdatedAtNum = Number(gs.server_updated_at ?? 0);
         res.json({
             usdc: gs.usdc,
             startTime: Number(gs.start_time),
-            lastUpdatedAt: Number(gs.last_updated_at),
+            lastUpdatedAt: Number(gs.last_updated_at ?? 0),
             claimedReferrals: gs.claimed_referrals,
             referralBonusClaimed: !!gs.referral_bonus_claimed,
             blackMarketBalance: gs.black_market_balance || 0,
@@ -6591,7 +6593,7 @@ app.get('/api/game-state/:email', async (req, res) => {
             playerListings,
             workshopSlots,
             claimedBoxes,
-            serverUpdatedAt: gs.server_updated_at || 0,
+            serverUpdatedAt: Number.isFinite(serverUpdatedAtNum) ? serverUpdatedAtNum : 0,
             offlineMined
         });
         const t3 = performance.now();

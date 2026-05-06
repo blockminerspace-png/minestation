@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "prisma generate && npm run build:server && node server.js",
     "build:cron": "tsc -p tsconfig.cron.json",
     "build:ts": "tsc -p tsconfig.json",
     "build:server": "npm run build:ts && tsc -p tsconfig.server.json",
