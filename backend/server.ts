@@ -8079,7 +8079,10 @@ app.get('/api/admin/market/listings', isAdmin, async (req, res) => {
       orderBy: [{ status: 'asc' }, { item_id: 'asc' }]
     });
     const sellerIds = [...new Set(listings.map((l) => l.user_id))];
-    const sellers =
+    type SellerRow = Prisma.usersGetPayload<{
+      select: { id: true; username: true; email: true };
+    }>;
+    const sellers: SellerRow[] =
       sellerIds.length === 0
         ? []
         : await prisma.users.findMany({
