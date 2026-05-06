@@ -1,5 +1,11 @@
+# Produção / VPS: contentores `app`, `app-bull-worker`, `app-postgres`, `app-redis`, `app-mongo`, `app-nginx`, `app-certbot`.
+# Não subir em simultâneo com o compose da raiz no mesmo host (nomes `app*` colidem).
+
+name: minestation
+
 services:
   db:
+    container_name: app-postgres
     image: postgres:16-alpine
     restart: always
     environment:
@@ -15,6 +21,7 @@ services:
       retries: 5
 
   redis:
+    container_name: app-redis
     image: redis:7-alpine
     restart: always
     command: redis-server --appendonly yes
@@ -27,6 +34,7 @@ services:
       retries: 5
 
   mongo:
+    container_name: app-mongo
     image: mongo:7
     restart: always
     volumes:
@@ -38,6 +46,7 @@ services:
       retries: 5
 
   app:
+    container_name: app
     build:
       context: ..
       dockerfile: Dockerfile
@@ -66,6 +75,7 @@ services:
         condition: service_healthy
 
   bull-worker:
+    container_name: app-bull-worker
     build:
       context: ..
       dockerfile: Dockerfile
@@ -82,6 +92,7 @@ services:
         condition: service_healthy
 
   nginx:
+    container_name: app-nginx
     image: nginx:stable-alpine
     restart: always
     ports:
@@ -95,6 +106,7 @@ services:
       - app
 
   certbot:
+    container_name: app-certbot
     image: certbot/certbot
     volumes:
       - ./certbot/conf:/etc/letsencrypt

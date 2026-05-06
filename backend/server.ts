@@ -40,12 +40,14 @@ import {
 import { initDb } from './dist/config/initDb.js';
 import { sendResetEmail } from './dist/utils/mailer.js';
 import {
+  COOKIE_ACCESS,
   getJwtAuthConfig,
   createResolveAuthMiddleware,
   issueJwtAuthCookies,
   handleJwtRefresh,
   revokeJwtRefreshForUser,
-  clearAuthCookies
+  clearAuthCookies,
+  verifyAccessToken
 } from './dist/src/auth/index.js';
 import { registerDeviceFingerprintAdminRoutes } from './dist/controllers/deviceFingerprintAdminController.js';
 import { registerP2pMarketRoutes } from './dist/controllers/p2pMarketController.js';
@@ -899,11 +901,20 @@ try {
   }
 }
 
+/**
+ * IP do cliente: por defeito **não** confia em CF-Connecting-IP / True-Client-IP (spoofing se o Node
+ * estiver exposto sem proxy que os remova). Com `TRUST_CF_CONNECTING_IP=1` (ex.: atrás da Cloudflare
+ * com origem só acessível via proxy), esses cabeçalhos passam a ter prioridade.
+ */
+const TRUST_CF_CONNECTING_IP = String(process.env.TRUST_CF_CONNECTING_IP || '').trim() === '1';
+
 const getClientIp = (req) => {
-  const cf = req.headers['cf-connecting-ip'];
-  if (cf && typeof cf === 'string') return cf.split(',')[0].trim();
-  const tci = req.headers['true-client-ip'];
-  if (tci && typeof tci === 'string') return tci.split(',')[0].trim();
+  if (TRUST_CF_CONNECTING_IP) {
+    const cf = req.headers['cf-connecting-ip'];
+    if (cf && typeof cf === 'string') return cf.split(',')[0].trim();
+    const tci = req.headers['true-client-ip'];
+    if (tci && typeof tci === 'string') return tci.split(',')[0].trim();
+  }
   // Preferir req.ip: com trust proxy definido, o Express aplica a cadeia correta de XFF
   // (evita primeiro hop spoofado e alinha com o mesmo IP usado em req.ip em setups com proxy).
   if (req.ip) {
@@ -914,6 +925,12 @@ const getClientIp = (req) => {
   if (forwarded) return String(forwarded).split(',')[0].trim();
   return req.socket.remoteAddress || 'unknown';
 };
+
+if (String(process.env.NODE_ENV || '').toLowerCase() === 'production' && !TRUST_CF_CONNECTING_IP) {
+  console.log(
+    '[Security] TRUST_CF_CONNECTING_IP não está a 1 — cabeçalhos CF-Connecting-IP / True-Client-IP ignorados. Defina TRUST_CF_CONNECTING_IP=1 quando o origin estiver só atrás da Cloudflare (ou proxy equivalente).'
+  );
+}
 
 const isIpFromUser = async (ip) => {
   try {
@@ -991,6 +1008,7 @@ function buildCorsOriginSet() {
     '';
   add(primaryPublic);
   for (const part of String(process.env.CORS_ALLOWED_ORIGINS || '').split(',')) add(part);
+  for (const part of String(process.env.CORS_EXTRA_ORIGINS || '').split(',')) add(part);
   ['https://genesisdao.tech', 'https://test.genesisdao.tech'].forEach(add);
   return s;
 }
@@ -1005,7 +1023,7 @@ const ALLOWED_CORS_ORIGINS = buildCorsOriginSet();
         ''
     ) || '(nenhuma)';
   console.log(
-    `[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, genesisdao.tech, test.genesisdao.tech)`
+    `[CORS] URL pública (.env): ${primary} | origens permitidas: ${ALLOWED_CORS_ORIGINS.size} (FRONTEND_URL, PUBLIC_URL, SITE_URL, CORS_ALLOWED_ORIGINS, CORS_EXTRA_ORIGINS, genesisdao.tech, test.genesisdao.tech)`
   );
 }
 
@@ -1036,6 +1054,13 @@ let adminDashboardWss: WebSocketServer | null = null;
 let playerGameHeaderWss: WebSocketServer | null = null;
 /** WebSocket: atualizações do mercado P2P (clientes ligam em /ws/market). */
 let marketWss: WebSocketServer | null = null;
+/** Limite de upgrades /ws/market por IP (mitigação DoS; por worker em cluster). */
+const marketWsConnectionsByIp = new Map<string, number>();
+const marketWsMaxPerIp = Math.min(
+  500,
+  Math.max(1, parseInt(String(process.env.MARKET_WS_MAX_PER_IP || '25'), 10) || 25)
+);
+
 function marketWsBroadcastLocal(payload) {
   if (!marketWss) return;
   const msg = JSON.stringify(payload);
@@ -1076,26 +1101,15 @@ const isAdmin = async (req, res, next) => {
 
   try {
     if (!uidForAdmin) {
-      const sid = parseCookies(req).sid;
-      if (!sid) {
+      const resolved = await resolveUserIdFromAccessCookieOrSid(req);
+      if (resolved) {
+        uidForAdmin = resolved;
+        req.userId = resolved;
+      } else {
         const fromUser = await isIpFromUser(ip);
         await logAccess(`No session cookie provided. IsKnownUser: ${fromUser}`);
         return res.status(401).json({ error: 'Não autenticado' });
       }
-      const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
-      const s = sRes.rows[0];
-      if (!s) {
-        console.warn(`[isAdmin] Blocked (IP: ${ip}): Session ${sid} not found in DB`);
-        await logAccess(`Invalid session ID: ${sid}`);
-        return res.status(401).json({ error: 'Sessão inválida' });
-      }
-      if (Number(s.expires_at) < Date.now()) {
-        console.warn(`[isAdmin] Blocked (IP: ${ip}): Session ${sid} expired`);
-        await logAccess(`Expired session: ${sid}`);
-        return res.status(401).json({ error: 'Sessão expirada' });
-      }
-      uidForAdmin = s.user_id;
-      req.userId = s.user_id;
     }
 
     const ctx = await loadAdminGateContext(uidForAdmin);
@@ -1121,34 +1135,47 @@ const isAdmin = async (req, res, next) => {
   }
 };
 
-/** Cookie `sid` + sessão válida + `is_admin` (upgrade WS /ws/admin-dashboard). */
+/** JWT access (`gm_access`) ou cookie `sid` — mesmo critério que o middleware HTTP. */
+async function resolveUserIdFromAccessCookieOrSid(req): Promise<number | null> {
+  const accessRaw = parseCookies(req)[COOKIE_ACCESS];
+  if (typeof accessRaw === 'string' && accessRaw.length > 0) {
+    try {
+      const v = verifyAccessToken(accessRaw);
+      const uid = Number(v.userId);
+      if (Number.isFinite(uid) && uid > 0) return uid;
+    } catch {
+      /* continuar para sid */
+    }
+  }
+  const sid = parseCookies(req).sid;
+  if (!sid) return null;
+  const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
+  const s = sRes.rows[0];
+  if (!s || Number(s.expires_at) < Date.now()) return null;
+  const uid = Number(s.user_id);
+  return Number.isFinite(uid) && uid > 0 ? uid : null;
+}
+
+/** JWT ou `sid` + sessão válida + `is_admin` (upgrade WS /ws/admin-dashboard). */
 async function resolveAdminUserIdFromWsUpgradeRequest(req) {
   try {
-    const sid = parseCookies(req).sid;
-    if (!sid) return null;
-    const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
-    const s = sRes.rows[0];
-    if (!s || Number(s.expires_at) < Date.now()) return null;
-    const ctx = await loadAdminGateContext(s.user_id);
+    const userId = await resolveUserIdFromAccessCookieOrSid(req);
+    if (userId == null) return null;
+    const ctx = await loadAdminGateContext(userId);
     if (!ctx) return null;
     if (!allowsAdminRouteAccess(ctx.isSuperAdmin, ctx.tabSet, { kind: 'tab', tab: 'dashboard' })) return null;
-    return s.user_id;
+    return userId;
   } catch (e) {
-    console.warn('[AdminDashWs] resolve session:', e.message);
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[AdminDashWs] resolve session:', msg);
     return null;
   }
 }
 
-/** Cookie `sid` + sessão válida (qualquer utilizador autenticado) para upgrade WS `/ws/player-game`. */
+/** JWT ou `sid` + sessão válida para upgrade WS `/ws/player-game`. */
 async function resolveSessionUserIdFromWsUpgradeRequest(req) {
   try {
-    const sid = parseCookies(req).sid;
-    if (!sid) return null;
-    const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
-    const s = sRes.rows[0];
-    if (!s || Number(s.expires_at) < Date.now()) return null;
-    const uid = Number(s.user_id);
-    return Number.isFinite(uid) && uid > 0 ? uid : null;
+    return await resolveUserIdFromAccessCookieOrSid(req);
   } catch (e) {
     console.warn('[PlayerGameWs] resolve session:', e instanceof Error ? e.message : String(e));
     return null;
@@ -1196,8 +1223,10 @@ if (enforceHttpsRedirect) {
       .toLowerCase();
     if (raw === 'https' || raw === 'wss') return next();
     if (raw === 'http' || raw === 'ws') {
-      const xfHost = req.get('X-Forwarded-Host') || req.get('Host') || req.hostname;
-      const hostOnly = String(xfHost).split(':')[0];
+      // Não usar X-Forwarded-Host (open redirect se o cliente injectar o cabeçalho até ao Node).
+      const hostHdr = String(req.get('Host') || req.hostname || '').trim();
+      const hostOnly = hostHdr.split(':')[0].toLowerCase();
+      if (!hostOnly || !/^[a-z0-9.-]+$/i.test(hostOnly)) return next();
       const path = req.originalUrl || req.url || '/';
       return res.redirect(308, `https://${hostOnly}${path}`);
     }
@@ -1264,7 +1293,6 @@ app.use(cors({
     if (!origin) return callback(null, true);
     if (origin.match(/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/)) return callback(null, true);
     if (ALLOWED_CORS_ORIGINS.has(origin)) return callback(null, true);
-    if (origin === 'http://149.56.81.30' || origin === 'https://149.56.81.30' || origin.includes('149.56.81.30')) return callback(null, true);
     console.error('CORS blocked origin:', origin);
     // [] = origem negada com resposta preflight válida (evita callback(Error) → next(err) sem cabeçalhos CORS).
     return callback(null, []);
@@ -5107,6 +5135,7 @@ app.get('/api/player-news/pending', isAdmin, async (req, res) => {
 });
 
 app.post('/api/player-news/submit', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
   const { email, text, link } = req.body || {};
   const PLAYER_NEWS_TEXT_MAX = 500;
   const PLAYER_NEWS_LINK_MAX = 2048;
@@ -5118,7 +5147,12 @@ app.post('/api/player-news/submit', async (req, res) => {
       : null;
   const client = await db.connect();
   try {
-    const uid = await getUserIdByEmail(email, req.ip);
+    const uid = req.userId;
+    const selfRes = await client.query('SELECT lower(trim(email::text)) AS em FROM users WHERE id = $1', [uid]);
+    const selfEmail = selfRes.rows[0]?.em;
+    if (!selfEmail || String(email).trim().toLowerCase() !== selfEmail) {
+      return res.status(403).json({ error: 'Email não corresponde à conta autenticada.' });
+    }
     const urowRes = await client.query('SELECT access_level_id FROM users WHERE id = $1', [uid]);
     const urow = urowRes.rows[0];
     const lvlRes = urow?.access_level_id ? await client.query('SELECT * FROM access_levels WHERE id = $1', [urow.access_level_id]) : { rows: [] };
@@ -9484,11 +9518,32 @@ const startServer = async () => {
     const pathOnly = (req.url || '').split('?')[0];
     if (pathOnly === '/ws/market') {
       try {
-        wss.handleUpgrade(req, socket, head, (ws) => {
-          ws.isAlive = true;
-          ws.on('pong', () => { ws.isAlive = true; });
-          ws.send(JSON.stringify({ type: 'market', event: 'hello' }));
-        });
+        const ipKey = getClientIp(req);
+        const cur = marketWsConnectionsByIp.get(ipKey) || 0;
+        if (cur >= marketWsMaxPerIp) {
+          socket.write('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+        marketWsConnectionsByIp.set(ipKey, cur + 1);
+        try {
+          wss.handleUpgrade(req, socket, head, (ws) => {
+            ws.isAlive = true;
+            ws.on('pong', () => { ws.isAlive = true; });
+            ws.on('close', () => {
+              const n = marketWsConnectionsByIp.get(ipKey) || 0;
+              if (n <= 1) marketWsConnectionsByIp.delete(ipKey);
+              else marketWsConnectionsByIp.set(ipKey, n - 1);
+            });
+            ws.send(JSON.stringify({ type: 'market', event: 'hello' }));
+          });
+        } catch {
+          const n = marketWsConnectionsByIp.get(ipKey) || 0;
+          if (n <= 1) marketWsConnectionsByIp.delete(ipKey);
+          else marketWsConnectionsByIp.set(ipKey, n - 1);
+          try { socket.destroy(); } catch (_) { /* ignore */ }
+          return;
+        }
       } catch (e) {
         try { socket.destroy(); } catch (_) { /* ignore */ }
       }

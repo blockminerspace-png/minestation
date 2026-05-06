@@ -1,8 +1,15 @@
 # Um único compose na raiz: Postgres + Redis + Mongo + API + worker BullMQ (mesmo Dockerfile).
 # `docker compose up --build`
+#
+# Contentores: `app` (site), `app-bull-worker`, `app-postgres`, `app-redis`, `app-mongo`.
+# Não correr em simultâneo com deployment/docker-compose.yml no mesmo host (nomes `app*` colidem).
+# Se já tinhas volumes com outro nome de project, migrar dados — mudar `name:` recria volumes vazios.
+
+name: minestation-dev
 
 services:
   db:
+    container_name: app-postgres
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
@@ -17,6 +24,7 @@ services:
       retries: 10
 
   redis:
+    container_name: app-redis
     image: redis:7-alpine
     command: redis-server --appendonly yes
     volumes:
@@ -28,6 +36,7 @@ services:
       retries: 10
 
   mongo:
+    container_name: app-mongo
     image: mongo:7
     volumes:
       - mongodata:/data/db
@@ -38,6 +47,7 @@ services:
       retries: 10
 
   app:
+    container_name: app
     build:
       context: .
       dockerfile: Dockerfile
@@ -63,6 +73,7 @@ services:
         condition: service_healthy
 
   bull-worker:
+    container_name: app-bull-worker
     build:
       context: .
       dockerfile: Dockerfile
