@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { SystemNews, AccessLevel } from '../types';
 import { PlusCircle, Newspaper, Edit, Trash2, ToggleLeft, ToggleRight, DollarSign, CheckCircle2, XCircle, Layout, Image as ImageIcon } from 'lucide-react';
+import { RemoteBannerImage } from './RemoteBannerImage';
 import { addOrUpdateNews, deleteNews, getNewsFee, setNewsFee, getPendingPlayerNews, approvePlayerNews, rejectPlayerNews, getNewsExpireDays, setNewsExpireDays, uploadAdImage } from '../services/api';
 
 interface AdminNewsProps {
@@ -195,7 +196,12 @@ export const AdminNews: React.FC<AdminNewsProps> = ({ newsList, setNewsList, acc
                             <div className="flex justify-center">
                                 <div className={`overflow-hidden rounded border border-slate-700 bg-slate-950 flex items-center justify-center ${adType === 'horizontal' ? 'w-[160px] h-[25px]' : 'w-[40px] h-[150px]'}`}>
                                     {imageUrl ? (
-                                        <img src={imageUrl} alt="Preview" className="w-full h-full object-cover" />
+                                        <RemoteBannerImage
+                                            src={imageUrl}
+                                            alt={newNewsText || 'Pré-visualização'}
+                                            className="w-full h-full object-cover"
+                                            failureHint="URL falhou (404/502/522)"
+                                        />
                                     ) : (
                                         <span className="text-[8px] text-slate-600 text-center px-1 leading-none">{newNewsText}</span>
                                     )}
@@ -220,7 +226,17 @@ export const AdminNews: React.FC<AdminNewsProps> = ({ newsList, setNewsList, acc
                         <div key={item.id} className="bg-slate-900 p-3 rounded-lg border border-slate-700 flex justify-between items-center group hover:border-amber-500/50 transition-colors">
                             <div className="flex items-center gap-3 overflow-hidden">
                                 <div className={`shrink-0 rounded border border-slate-800 bg-slate-950 overflow-hidden flex items-center justify-center ${item.adType === 'vertical' ? 'w-8 h-12' : 'w-12 h-6'}`}>
-                                    {item.imageUrl ? <img src={item.imageUrl} className="w-full h-full object-cover" /> : <Layout size={12} className="text-slate-700" />}
+                                    {item.imageUrl ? (
+                                        <RemoteBannerImage
+                                            src={item.imageUrl}
+                                            alt={item.text || 'Anúncio'}
+                                            className="w-full h-full object-cover"
+                                            failureHint="Falhou"
+                                            compact
+                                        />
+                                    ) : (
+                                        <Layout size={12} className="text-slate-700" />
+                                    )}
                                 </div>
                                 <div className="min-w-0">
                                     <div className="text-sm text-white font-bold truncate">{item.text || 'Sem texto'}</div>

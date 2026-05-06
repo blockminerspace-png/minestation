@@ -31,6 +31,8 @@ import {
   getMiningCoins,
   getMonetizationSettings,
   getGameNavLabels,
+  getPublicBootstrap,
+  getPublicBootstrapLite,
   performWorkshopInstantRecharge,
   saveGameState as apiSaveGameState,
   postServerRoomBulkBatteries,
@@ -47,6 +49,7 @@ import { trackSpaPageView } from './lib/analytics';
 import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
 import { MarketNews } from './components/MarketNews';
+import { RemoteBannerImage } from './components/RemoteBannerImage';
 import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
@@ -544,11 +547,30 @@ export default function App() {
     };
   }, []);
 
-  // Seed dynamic data from DB
+  // Seed dynamic data from DB (um GET /api/bootstrap em vez de 8 pedidos em paralelo)
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
+        const boot = await getPublicBootstrap();
+        if (cancelled) return;
+        if (boot) {
+          console.log('[Init] Loaded (bootstrap):', {
+            up: boot.upgrades.length,
+            lv: boot.accessLevels.length,
+            lb: boot.lootBoxes.length,
+            mc: boot.miningCoins.length
+          });
+          setGameUpgrades(boot.upgrades);
+          setAccessLevels(boot.accessLevels);
+          setLootBoxDefs(boot.lootBoxes);
+          setMiningCoins(boot.miningCoins);
+          if (boot.economySettings) setEconomySettings(boot.economySettings);
+          if (boot.web3Settings) setWeb3SettingsState(boot.web3Settings);
+          setVerticalAds(boot.systemNews.filter((n) => n.adType === 'vertical' && n.active));
+          setGameNavLabels({ ...DEFAULT_GAME_NAV_LABELS, ...boot.gameNavLabels });
+          return;
+        }
         const [up, lv, lb, mc, econ, web3, news, navLab] = await Promise.all([
           getUpgrades(),
           getAccessLevels(),
@@ -560,14 +582,14 @@ export default function App() {
           getGameNavLabels()
         ]);
         if (cancelled) return;
-        console.log('[Init] Loaded:', { up: up.length, lv: lv.length, lb: lb.length, mc: mc.length });
+        console.log('[Init] Loaded (fallback):', { up: up.length, lv: lv.length, lb: lb.length, mc: mc.length });
         setGameUpgrades(up);
         setAccessLevels(lv);
         setLootBoxDefs(lb);
         setMiningCoins(mc);
         if (econ) setEconomySettings(econ);
         if (web3) setWeb3SettingsState(web3);
-        setVerticalAds(news.filter(n => n.adType === 'vertical' && n.active));
+        setVerticalAds(news.filter((n) => n.adType === 'vertical' && n.active));
         setGameNavLabels({ ...DEFAULT_GAME_NAV_LABELS, ...navLab });
       } catch (e) {
         console.error('[Init] Fatal Error loading initial data:', e);
@@ -576,29 +598,6 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  useEffect(() => {
-    if (globalView !== 'game' || !user) return;
-    (async () => {
-      try {
-        const navLab = await getGameNavLabels();
-        setGameNavLabels({ ...DEFAULT_GAME_NAV_LABELS, ...navLab });
-      } catch {
-        /* manter rótulos */
-      }
-    })();
-  }, [globalView, user]);
-
-  // POLLER: Keep Dynamic Hashrate Synced (Every 15s)
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      try {
-        const mc = await getMiningCoins();
-        setMiningCoins(mc);
-      } catch (e) { console.error("Hashrate Sync Failed", e); }
-    }, 15000);
-    return () => clearInterval(interval);
   }, []);
 
   // WebSocket: cabeçalho do jogo — saldos (coin_balances + USDC) e hashrate alinhados à BD (~3,5s)
@@ -725,9 +724,12 @@ export default function App() {
     setProductionRate(calculateProduction(gameState.placedRacks, gameUpgrades));
   }, [gameState.placedRacks, gameUpgrades]);
 
-  // Game Loop (visual: bateria / oficina; saldo de moedas só no servidor)
+  // Game Loop (visual: bateria / oficina — só estado local; não faz fetch HTTP)
+  const VISUAL_TICK_MS = 2000;
   useEffect(() => {
     if (!user || user.isAdmin || !saveLoaded || gameUpgrades.length === 0) return;
+
+    const tickScale = VISUAL_TICK_MS / 1000;
 
     const interval = setInterval(() => {
       setGameState(prev => {
@@ -750,7 +752,7 @@ export default function App() {
             });
 
             if (watts > 0) {
-              const depletion = (watts / 3600) * 0.1;
+              const depletion = (watts / 3600) * 0.1 * tickScale;
               const newCharge = Math.max(0, r.currentCharge - depletion);
               if (newCharge !== r.currentCharge) {
                 changed = true;
@@ -820,9 +822,8 @@ export default function App() {
             const currentB = nextSlotCharges[batSlot.id] !== undefined ? nextSlotCharges[batSlot.id] : 0;
 
             if (currentB < maxB && internalBuffer > 0) {
-              // Transfer per tick (speed * 0.1). We allow parallelism by not strictly dividing speed, 
-              // but checking buffer availability. (Simulating powerful charger handling multiple loads)
-              const transfer = Math.min(speed * 0.1, internalBuffer, maxB - currentB);
+              // Transfer per tick (speed * 0.1 per second of sim). Scaled by VISUAL_TICK_MS.
+              const transfer = Math.min(speed * 0.1 * tickScale, internalBuffer, maxB - currentB);
 
               if (transfer > 0) {
                 internalBuffer -= transfer;
@@ -849,7 +850,7 @@ export default function App() {
         if (!changed) return prev;
         return { ...prev, workshopSlots: nextWorkshop, placedRacks: nextRacks };
       });
-    }, 1000); // Optimized: 1000ms (1s) instead of 100ms to save CPU
+    }, VISUAL_TICK_MS);
 
     return () => clearInterval(interval);
   }, [user, gameUpgrades, saveLoaded]);
@@ -863,24 +864,48 @@ export default function App() {
     return () => clearInterval(saveInterval);
   }, [user, saveLoaded, runPlayerSaveWithRetries]);
 
-  // Real-time Global Updates (Coins, Store, etc.)
+  // Atualizações globais (loja / economia / web3) — só com sessão; pausa em separador oculto para menos rede/CPU
   useEffect(() => {
-    const interval = setInterval(async () => {
-      const [lv, mc, econ, lb, web3] = await Promise.all([
-        getAccessLevels(),
-        getMiningCoins(),
-        getEconomySettings(),
-        getLootBoxes(),
-        getWeb3Settings()
-      ]);
-      setAccessLevels(lv);
-      setMiningCoins(mc);
-      if (econ) setEconomySettings(econ);
-      setLootBoxDefs(lb);
-      if (web3) setWeb3SettingsState(web3);
-    }, 10000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!user) return;
+    const tick = async () => {
+      if (document.visibilityState === 'hidden') return;
+      try {
+        const lite = await getPublicBootstrapLite();
+        if (lite) {
+          setAccessLevels(lite.accessLevels);
+          setMiningCoins(lite.miningCoins);
+          if (lite.economySettings) setEconomySettings(lite.economySettings);
+          setLootBoxDefs(lite.lootBoxes);
+          if (lite.web3Settings) setWeb3SettingsState(lite.web3Settings);
+          return;
+        }
+        const [lv, mc, econ, lb, web3] = await Promise.all([
+          getAccessLevels(),
+          getMiningCoins(),
+          getEconomySettings(),
+          getLootBoxes(),
+          getWeb3Settings()
+        ]);
+        setAccessLevels(lv);
+        setMiningCoins(mc);
+        if (econ) setEconomySettings(econ);
+        setLootBoxDefs(lb);
+        if (web3) setWeb3SettingsState(web3);
+      } catch (e) {
+        console.error('[Global refresh] failed', e);
+      }
+    };
+    void tick();
+    const interval = setInterval(tick, 10000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void tick();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [user]);
 
   // Auth Handlers
   const handleLogin = async (u: User) => {
@@ -2550,7 +2575,12 @@ export default function App() {
                 {verticalAds[0] ? (
                   <a href={verticalAds[0].link || '#'} target={verticalAds[0].link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
                     {verticalAds[0].imageUrl ? (
-                      <img src={verticalAds[0].imageUrl} alt={verticalAds[0].text} className="w-full h-full object-contain" />
+                      <RemoteBannerImage
+                        src={verticalAds[0].imageUrl}
+                        alt={verticalAds[0].text}
+                        className="w-full h-full object-contain"
+                        failureHint="Lateral — URL falhou"
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center p-4 text-center bg-slate-950/50">
                         <span className="text-xs text-amber-400 font-bold uppercase">{verticalAds[0].text}</span>
@@ -2558,10 +2588,11 @@ export default function App() {
                     )}
                   </a>
                 ) : (
-                  <img
+                  <RemoteBannerImage
                     src="/brain/c5bf420e-fa44-42f3-b118-ac4247fdd4b0/skyscrapers_ad_160x600_left_1768840833778.png"
                     alt="Lateral Esquerda"
                     className="w-full h-full object-contain"
+                    failureHint="Sem imagem"
                   />
                 )}
               </aside>
@@ -2768,7 +2799,12 @@ export default function App() {
                 {verticalAds[1] || verticalAds[0] ? (
                   <a href={(verticalAds[1] || verticalAds[0]).link || '#'} target={(verticalAds[1] || verticalAds[0]).link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
                     {(verticalAds[1] || verticalAds[0]).imageUrl ? (
-                      <img src={(verticalAds[1] || verticalAds[0]).imageUrl} alt={(verticalAds[1] || verticalAds[0]).text} className="w-full h-full object-contain" />
+                      <RemoteBannerImage
+                        src={(verticalAds[1] || verticalAds[0]).imageUrl!}
+                        alt={(verticalAds[1] || verticalAds[0]).text}
+                        className="w-full h-full object-contain"
+                        failureHint="Lateral — URL falhou"
+                      />
                     ) : (
                       <div className="w-full h-full flex items-center justify-center p-4 text-center bg-slate-950/50">
                         <span className="text-xs text-orange-400 font-bold uppercase">{(verticalAds[1] || verticalAds[0]).text}</span>
@@ -2776,10 +2812,11 @@ export default function App() {
                     )}
                   </a>
                 ) : (
-                  <img
+                  <RemoteBannerImage
                     src="/brain/c5bf420e-fa44-42f3-b118-ac4247fdd4b0/skyscrapers_ad_160x600_right_1768840857057.png"
                     alt="Lateral Direita"
                     className="w-full h-full object-contain"
+                    failureHint="Sem imagem"
                   />
                 )}
               </aside>

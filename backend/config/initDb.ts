@@ -429,6 +429,7 @@ export const initDb = async () => {
         current_charge DOUBLE PRECISION DEFAULT 0,
         slot_charges TEXT,
         slot_item_ids TEXT,
+        installed_at BIGINT DEFAULT 0,
         PRIMARY KEY (user_id, slot_index)
       );
 

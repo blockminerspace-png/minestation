@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { sendIfPrismaHttpError } from './prismaHttpResponse.js';
 
 const IS_PROD = process.env.NODE_ENV === 'production';
 
@@ -26,6 +27,12 @@ export function sendInternalError(res: Response, logTag: string, err: unknown): 
   }
 }
 
+/** Como `sendInternalError`, mas mapeia primeiro erros do cliente Prisma (P2002, timeouts, etc.). */
+export function sendInternalErrorOrPrisma(res: Response, logTag: string, err: unknown): void {
+  if (sendIfPrismaHttpError(res, err, logTag)) return;
+  sendInternalError(res, logTag, err);
+}
+
 /**
  * Igual a `sendInternalError`, mas em produção o corpo usa `publicMessage` (texto curto e seguro já definido pela rota).
  * Em desenvolvimento prefere a mensagem técnica quando existir.
@@ -45,6 +52,17 @@ export function sendInternalErrorSafeMessage(
     console.error(`[500] ${logTag}`, err);
     res.status(500).json({ error: msg || publicMessage });
   }
+}
+
+/** Como `sendInternalErrorSafeMessage`, mas trata erros Prisma antes do 500 genérico. */
+export function sendInternalErrorSafeMessageOrPrisma(
+  res: Response,
+  logTag: string,
+  err: unknown,
+  publicMessage: string
+): void {
+  if (sendIfPrismaHttpError(res, err, logTag)) return;
+  sendInternalErrorSafeMessage(res, logTag, err, publicMessage);
 }
 
 /**
@@ -94,4 +112,16 @@ export function sendInternalErrorShape(
     console.error(`[500] ${logTag}`, err);
     res.status(500).json({ ...extra, error: msg || publicErrorMessage });
   }
+}
+
+/** Como `sendInternalErrorShape`, mas trata erros Prisma antes do 500 genérico. */
+export function sendInternalErrorShapeOrPrisma(
+  res: Response,
+  logTag: string,
+  err: unknown,
+  extra: Record<string, unknown>,
+  publicErrorMessage: string = INTERNAL_ERROR_PUBLIC
+): void {
+  if (sendIfPrismaHttpError(res, err, logTag)) return;
+  sendInternalErrorShape(res, logTag, err, extra, publicErrorMessage);
 }

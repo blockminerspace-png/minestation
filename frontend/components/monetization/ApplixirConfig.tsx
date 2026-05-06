@@ -67,7 +67,7 @@ export const ApplixirConfig: React.FC<Props> = ({ settings, setSettings }) => {
                             type="password"
                             value={settings.applixirCallbackSecret}
                             onChange={e => setSettings({ ...settings, applixirCallbackSecret: e.target.value })}
-                            placeholder="Min. 8 caracteres"
+                            placeholder="Chave ou token"
                             className="w-full bg-slate-950 border border-slate-800 rounded-lg px-4 py-2 text-yellow-500 text-sm focus:border-yellow-600 outline-none transition-all font-mono"
                         />
                     </div>

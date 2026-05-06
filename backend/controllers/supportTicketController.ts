@@ -18,7 +18,7 @@ import {
   listTicketsForAdmin,
   updateSupportTicketStatus
 } from '../models/supportTicketModel.js';
-import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 import { compressUploadedMulterFiles } from '../lib/compressMediaAsset.js';
 
 const SUPPORT_UPLOAD_MAX = 12 * 1024 * 1024;
@@ -397,7 +397,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       }));
       res.json({ tickets: rows });
     } catch (e) {
-      sendInternalErrorSafeMessage(res, 'GET /api/admin/support-tickets', e, 'Erro ao listar tickets.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/admin/support-tickets', e, 'Erro ao listar tickets.');
     }
   });
 
@@ -417,7 +417,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       }
       res.json({ ok: true });
     } catch (e) {
-      sendInternalErrorSafeMessage(res, 'POST /api/admin/support-tickets/status', e, 'Erro ao atualizar estado.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/admin/support-tickets/status', e, 'Erro ao atualizar estado.');
     }
   });
 

@@ -11,7 +11,6 @@ import {
   REFERRAL_CODE_MAX,
   EMAIL_ADDRESS_MAX_LENGTH,
   PASSWORD_MAX,
-  PASSWORD_MIN,
   USERNAME_MAX,
   validateOptionalPolygonWallet,
   validateOptionalAccessLevelId,
@@ -35,7 +34,8 @@ describe('registrationValidation', () => {
 
   it('validateSignupPassword', () => {
     expect(validateSignupPassword(undefined, false).ok).toBe(true);
-    expect(validateSignupPassword('short', true).ok).toBe(false);
+    expect(validateSignupPassword('', true).ok).toBe(false);
+    expect(validateSignupPassword('a', true).ok).toBe(true);
     expect(validateSignupPassword('longenough', true).ok).toBe(true);
     expect(validateSignupPassword('x'.repeat(PASSWORD_MAX + 1), true).ok).toBe(false);
   });
@@ -67,9 +67,9 @@ describe('registrationValidation', () => {
   });
 
   it('validateLoginPassword length', () => {
+    expect(validateLoginPassword('a').ok).toBe(true);
     expect(validateLoginPassword('x'.repeat(PASSWORD_MAX)).ok).toBe(true);
     expect(validateLoginPassword('x'.repeat(PASSWORD_MAX + 1)).ok).toBe(false);
-    expect(validateLoginPassword('x'.repeat(PASSWORD_MIN - 1)).ok).toBe(false);
   });
 
   it('validateOptionalPolygonWallet', () => {

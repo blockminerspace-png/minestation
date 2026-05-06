@@ -1,6 +1,5 @@
 import type { Express, Request, Response } from 'express';
 import type bcryptjs from 'bcryptjs';
-import { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { executeUserPutCoreTransaction } from '../models/userPutCoreTransaction.js';
 import {
@@ -19,7 +18,7 @@ import {
 import { EmailPolicyError, getUserIdByEmail, IpLimitError } from '../models/userModel.js';
 import { insertDeviceFingerprintLog, sanitizeDeviceFingerprint } from '../models/deviceFingerprintModel.js';
 import { logUserAction } from '../lib/mongoLogs.js';
-import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { respondIfHttpControlledError, sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 
 export type UserRegistrationDeps = {
   bcrypt: typeof bcryptjs;
@@ -287,6 +286,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
       res.json({ ok: true });
     } catch (e: unknown) {
       console.error('[UserUpdate] Error:', e);
+      if (respondIfHttpControlledError(res, e)) return;
       if (e instanceof IpLimitError) {
         return res.status(403).json({
           error: e.message,
@@ -314,13 +314,7 @@ export function registerUserRoutes(app: Express, deps: UserRegistrationDeps): vo
       if (pg.code === 'EMAIL_POLICY') {
         return res.status(400).json({ ok: false, error: pg.message });
       }
-      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        return res.status(409).json({
-          error: 'Este e-mail ou nome de utilizador já está em uso.',
-          code: 'DUPLICATE'
-        });
-      }
-      sendInternalErrorSafeMessage(
+      sendInternalErrorSafeMessageOrPrisma(
         res,
         'PUT /api/user',
         e,

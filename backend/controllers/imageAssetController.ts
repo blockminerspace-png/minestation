@@ -5,6 +5,7 @@ import type { Express, Request, RequestHandler, Response } from 'express';
 import express from 'express';
 import multer from 'multer';
 import { prisma } from '../config/prisma.js';
+import { sendIfPrismaHttpError } from '../utils/prismaHttpResponse.js';
 import { compressMediaFileInPlace } from '../lib/compressMediaAsset.js';
 import {
   IMG_ADMIN_TARGET_SUBFOLDER_SET,
@@ -99,7 +100,8 @@ export function registerImageAssetRoutes(app: Express, deps: ImageAssetControlle
       if (!Number(adm?.is_admin ?? 0)) {
         return res.status(403).json({ error: 'Apenas administradores podem usar este upload.' });
       }
-    } catch {
+    } catch (e) {
+      if (sendIfPrismaHttpError(res, e, 'POST /api/upload-image admin check')) return;
       return res.status(500).json({ error: 'Falha ao verificar permissões.' });
     }
     const { dataUrl, originalName, assetFolder } = req.body || {};

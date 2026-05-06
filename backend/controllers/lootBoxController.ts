@@ -17,7 +17,7 @@ import {
   bodyLootBoxId,
   bodyOptionalDiscardQty
 } from '../validation/lootBoxValidation.js';
-import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 
 export type LootBoxAdminDeps = {
   isAdmin: RequestHandler;
@@ -99,7 +99,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
       }));
       res.json(resp);
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'loot-box', e, 'Erro ao listar caixas.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'loot-box', e, 'Erro ao listar caixas.');
     }
   });
 
@@ -161,7 +161,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
       console.error('[BoxOpen] Error:', err);
-      res.status(500).json({ error: 'Erro ao abrir caixa.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/loot-boxes/open', err, 'Erro ao abrir caixa.');
     }
   });
 
@@ -226,7 +226,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
       console.error('[BoxBuy] Error:', err);
-      res.status(500).json({ error: 'Erro ao comprar caixa.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/loot-boxes/buy', err, 'Erro ao comprar caixa.');
     }
   });
 
@@ -291,13 +291,144 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
       console.error('[BoxDiscard] Error:', err);
-      res.status(500).json({ error: 'Erro ao descartar caixa(s).' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/loot-boxes/discard', err, 'Erro ao descartar caixa(s).');
     }
   });
 }
 
+type IncomingLootBoxItem = {
+  id?: string;
+  type?: string;
+  minQty?: number;
+  maxQty?: number;
+  probability?: number;
+};
+
+type IncomingLootBox = {
+  id: string;
+  name: string;
+  description?: string;
+  price?: number;
+  trigger?: string;
+  icon?: string;
+  isActive?: boolean;
+  items?: IncomingLootBoxItem[];
+};
+
 export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps): void {
   const { isAdmin } = deps;
+
+  /** Upsert do catálogo de caixas (painel admin); antes em `pg` + `BEGIN` no server. */
+  app.post('/api/loot-boxes', isAdmin, async (req: Request, res: Response) => {
+    let boxes: unknown[];
+    let replaceCatalog = false;
+    if (Array.isArray(req.body)) {
+      boxes = req.body;
+      replaceCatalog = false;
+    } else if (req.body && typeof req.body === 'object' && Array.isArray((req.body as { boxes?: unknown }).boxes)) {
+      boxes = (req.body as { boxes: unknown[] }).boxes;
+      replaceCatalog = (req.body as { replaceCatalog?: unknown }).replaceCatalog === true;
+    } else {
+      res.status(400).json({
+        error: 'Body inválido: use { boxes: [], replaceCatalog?: boolean } ou um array (legado).'
+      });
+      return;
+    }
+
+    try {
+      await prisma.$transaction(
+        async (tx) => {
+          const validBoxes = (boxes as IncomingLootBox[]).filter(
+            (b) => b && b.id && typeof b.name === 'string' && String(b.name).trim()
+          );
+          const validIncomingIds = validBoxes.map((b) => String(b.id));
+
+          const triggersWithoutItemList = new Set(['roleta_code']);
+          for (const b of validBoxes) {
+            const active = b.isActive !== false;
+            const trig = String(b.trigger || 'shop');
+            const nItems = Array.isArray(b.items) ? b.items.filter((it) => it && it.id).length : 0;
+            if (active && !triggersWithoutItemList.has(trig) && nItems === 0) {
+              throw new LootBoxAdminUserError(400, {
+                error: `Caixa "${String(b.name).trim()}" (${b.id}): não pode ficar ativa sem prémios. Adicione itens ou desative a caixa. (Exceção: gatilho roleta por código.)`
+              });
+            }
+            if (active && (trig === 'shop' || trig === 'shop_once' || trig === 'special')) {
+              const p = Number(b.price);
+              if (!Number.isFinite(p) || p <= 0) {
+                throw new LootBoxAdminUserError(400, {
+                  error: `Caixa "${String(b.name).trim()}" (${b.id}): preço USDC inválido para venda na loja (use número > 0).`
+                });
+              }
+            }
+          }
+
+          for (const b of validBoxes) {
+            const id = String(b.id);
+            await tx.loot_boxes.upsert({
+              where: { id },
+              create: {
+                id,
+                name: b.name.trim(),
+                description: String(b.description ?? ''),
+                price: Number(b.price) || 0,
+                trigger: String(b.trigger || 'shop'),
+                icon: String(b.icon || '🎁'),
+                is_active: b.isActive === false ? 0 : 1
+              },
+              update: {
+                name: b.name.trim(),
+                description: String(b.description ?? ''),
+                price: Number(b.price) || 0,
+                trigger: String(b.trigger || 'shop'),
+                icon: String(b.icon || '🎁'),
+                is_active: b.isActive === false ? 0 : 1
+              }
+            });
+
+            await tx.loot_box_items.deleteMany({ where: { box_id: id } });
+
+            if (Array.isArray(b.items)) {
+              const rows = b.items
+                .filter((it): it is IncomingLootBoxItem & { id: string } => !!(it && it.id))
+                .map((it) => ({
+                  box_id: id,
+                  item_type: String(it.type || 'item'),
+                  item_id: String(it.id),
+                  min_qty: Math.floor(Number(it.minQty) || 1),
+                  max_qty: Math.floor(Number(it.maxQty) || 1),
+                  probability: Number(it.probability) || 0
+                }));
+              if (rows.length > 0) {
+                await tx.loot_box_items.createMany({ data: rows });
+              }
+            }
+          }
+
+          if (replaceCatalog) {
+            if (boxes.length === 0) {
+              await tx.loot_boxes.updateMany({ data: { is_active: 0 } });
+            } else if (validIncomingIds.length > 0) {
+              await tx.loot_boxes.updateMany({
+                where: { id: { notIn: validIncomingIds } },
+                data: { is_active: 0 }
+              });
+            }
+          }
+        },
+        { timeout: 60_000, maxWait: 10_000 }
+      );
+
+      res.json({ ok: true });
+    } catch (e: unknown) {
+      if (e instanceof LootBoxAdminUserError) {
+        res.status(e.status).json(e.body);
+        return;
+      }
+      console.error('[POST /api/loot-boxes] Fail:', e);
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Falha ao processar o pedido.');
+    }
+  });
 
   app.delete('/api/admin/loot-boxes/:boxId', isAdmin, async (req: Request, res: Response) => {
     const boxId = parseLootBoxId(req.params.boxId);
@@ -351,7 +482,7 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
         return;
       }
       console.error('[LootBoxAdminDelete] Error:', e);
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'loot-box', e, 'Falha ao apagar caixa.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'loot-box', e, 'Falha ao apagar caixa.');
     }
   });
 }

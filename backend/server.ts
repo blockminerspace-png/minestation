@@ -61,7 +61,17 @@ import {
 import { registerRoletaPlayerRoutes } from './dist/controllers/roletaController.js';
 import { fetchWheelPrizesForApiConfig } from './dist/models/roletaModel.js';
 import { grantAdminUpgradeRewardsInTx, grantPassRewardsInTx } from './dist/models/adminUpgradeGrantModel.js';
-import { pgSqlTx } from './dist/lib/sqlTransaction.js';
+import { pgSqlTx, prismaTxToPoolLikeClient } from './dist/lib/sqlTransaction.js';
+import { getPublicBootstrapPayload } from './dist/lib/publicBootstrapPayload.js';
+import { getProfilePageBundlePayload } from './dist/lib/meBundlesPayload.js';
+import {
+  getUpgradeAccountShopBundlePayload,
+  loadAdminUpgradesForUser,
+  loadAdminUpgradePurchaseIdsForUser,
+  loadMyRigRoomsForUser,
+  isEmailParamInvalid,
+  normalizeEmailParam
+} from './dist/lib/meUpgradeShopBundlePayload.js';
 import { runReferralCommissionOnTx } from './dist/models/referralCommissionModel.js';
 import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemController.js';
 import { runBulkRoomBattery, isValidRoomId } from './dist/lib/roomBatteryBulk.js';
@@ -83,9 +93,9 @@ import {
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
 import {
-  sendInternalError,
-  sendInternalErrorSafeMessage,
-  sendInternalErrorShape,
+  sendInternalErrorOrPrisma,
+  sendInternalErrorSafeMessageOrPrisma,
+  sendInternalErrorShapeOrPrisma,
   HttpControlledError,
   respondIfHttpControlledError
 } from './dist/utils/apiErrorResponse.js';
@@ -1380,6 +1390,40 @@ app.use((req, res, next) => {
 
 mountImageStaticMiddleware(app, IMG_UPLOADS_DIR, IMG_DIR);
 
+// --- Bootstrap SPA (catálogo + economia num único GET; ?lite=1 para refresh leve) ---
+app.get('/api/bootstrap', async (req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    res.setHeader('Pragma', 'no-cache');
+    const l = (req.query as { lite?: unknown }).lite;
+    const lite = l === '1' || String(l).toLowerCase() === 'true';
+    const data = await getPublicBootstrapPayload(req.userId, lite);
+    res.json(data);
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
+});
+
+app.get('/api/me/profile-bundle', authenticateToken, async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  try {
+    const data = await getProfilePageBundlePayload(req.userId);
+    res.json(data);
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
+});
+
+app.get('/api/me/upgrade-shop-bundle', authenticateToken, async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  try {
+    const data = await getUpgradeAccountShopBundlePayload(req.userId);
+    res.json(data);
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
+});
+
 // --- Moved utilities below ---
 
 /** Reduz writes em `users.last_active_at` e `user_history_ips` (hot path em todo pedido autenticado). Por worker. */
@@ -1624,7 +1668,7 @@ app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
     res.json(items);
   } catch (e) {
     console.error(e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1650,7 +1694,7 @@ app.post('/api/admin/wheel/config', isAdmin, async (req, res) => {
     });
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1664,7 +1708,7 @@ app.get('/api/admin/wheel/players', isAdmin, async (req, res) => {
       }))
     );
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1680,7 +1724,7 @@ app.post('/api/admin/wheel/players', isAdmin, async (req, res) => {
     });
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1702,7 +1746,7 @@ app.get('/api/admin/ranking', isAdmin, async (req, res) => {
     res.json(payload);
   } catch (e) {
     console.error('Admin Ranking Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1726,7 +1770,7 @@ app.post('/api/admin/update-coin-balance', isAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('Update Coin Balance Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -1776,7 +1820,7 @@ app.post('/api/admin/bulk-update-coin-balance', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Bulk Update Coin Balance Error:', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno no servidor.');
+    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno no servidor.');
   } finally {
     client.release();
   }
@@ -1870,7 +1914,7 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
 
   } catch (e) {
     console.error('Economy Stats Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -1938,7 +1982,7 @@ app.post('/api/admin/economy-settings', isAdmin, async (req, res) => {
     res.json({ ok: true, coin });
   } catch (e) {
     console.error('Update Economy Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1949,7 +1993,7 @@ app.delete('/api/admin/wheel/players/:username', isAdmin, async (req, res) => {
     await prisma.wheel_players.deleteMany({ where: { username: String(username) } });
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1965,7 +2009,7 @@ app.get('/api/wallet-labels', isAdmin, async (req, res) => {
       }))
     );
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1981,7 +2025,7 @@ app.post('/api/wallet-labels', isAdmin, async (req, res) => {
     });
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2033,53 +2077,31 @@ const assertPublicSignupEmailAllowed = (normalizedEmail) => {
 
 app.get('/api/admin-upgrades', async (req, res) => {
   try {
-    let isAdminUser = false;
-    let userRoomIds: string[] = [];
-    if (req.userId) {
-      const uRow = await prisma.users.findUnique({
-        where: { id: req.userId },
-        select: { is_admin: true }
-      });
-      if (uRow?.is_admin) isAdminUser = true;
-
-      const rooms = await prisma.user_rig_rooms.findMany({
-        where: { user_id: req.userId },
-        select: { room_id: true }
-      });
-      userRoomIds = rooms.map((r) => r.room_id);
-    }
-
-    const query = isAdminUser ? 'SELECT * FROM admin_upgrades ORDER BY created_at DESC' : 'SELECT * FROM admin_upgrades WHERE is_active = 1 ORDER BY created_at DESC';
-    const upsRes = await db.query(query);
-    const itemsRes = await db.query('SELECT * FROM admin_upgrade_items');
-    const boxesRes = await db.query('SELECT * FROM admin_upgrade_boxes');
-    const passesRes = await db.query('SELECT * FROM admin_upgrade_passes');
-    const coinsRes = await db.query('SELECT * FROM admin_upgrade_coins');
-    const visibilityRes = await db.query('SELECT * FROM admin_upgrade_visibility');
-
-    const itemsMap = itemsRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push({ itemId: r.item_id, qty: r.qty }); return acc; }, {});
-    const boxesMap = boxesRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push({ boxId: r.box_id, qty: r.qty }); return acc; }, {});
-    const passesMap = passesRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push(r.pass_id); return acc; }, {});
-    const coinsMap = coinsRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push({ coinId: r.coin_id, amount: r.amount }); return acc; }, {});
-    const visibilityMap = visibilityRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push(r.access_level_id); return acc; }, {});
-
-    const list = upsRes.rows.map(u => ({
-      id: u.id,
-      name: u.name,
-      description: u.description,
-      priceUsdc: u.price_usdc,
-      grantUsdc: u.grant_usdc,
-      grantAccessLevelId: u.grant_access_level_id,
-      isActive: !!u.is_active,
-      items: itemsMap[u.id] || [],
-      boxes: boxesMap[u.id] || [],
-      passes: passesMap[u.id] || [],
-      coins: coinsMap[u.id] || [],
-      visibleToAccessLevelIds: visibilityMap[u.id] || [],
-      alreadyOwned: (u.id === '53f0c699-0471-4e65-a147-17064e3aafe0' && userRoomIds.includes('room_1765936323521'))
-    }));
+    const list = await loadAdminUpgradesForUser(req.userId);
     res.json(list);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
+});
+
+app.get('/api/admin-upgrade-purchases/:email', authenticateToken, async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
+  const email = normalizeEmailParam(req.params.email);
+  if (isEmailParamInvalid(email)) {
+    return res.status(400).json({ error: 'Email inválido' });
+  }
+  try {
+    const uidRes = await db.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [email]);
+    if (!uidRes.rowCount) return res.status(404).json({ error: 'Usuário não encontrado' });
+    const uid = uidRes.rows[0].id;
+    if (Number(uid) !== Number(req.userId)) {
+      return res.status(403).json({ error: 'Acesso negado' });
+    }
+    const ids = await loadAdminUpgradePurchaseIdsForUser(Number(uid));
+    res.json(ids);
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
 });
 
 app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
@@ -2125,7 +2147,7 @@ app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Failed to save admin upgrade', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -2156,7 +2178,7 @@ app.delete('/api/admin-upgrades/:id', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Failed to delete admin upgrade', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -2243,7 +2265,7 @@ app.post('/api/admin-upgrades/purchase', async (req, res) => {
   } catch (e) {
     if (respondIfHttpControlledError(res, e)) return;
     console.error('Purchase error:', e);
-    sendInternalErrorShape(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
+    sendInternalErrorShapeOrPrisma(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
   }
 });
 
@@ -2279,7 +2301,8 @@ app.get('/api/upgrades', async (req, res) => {
         ? {
             AND: [
               { NOT: { id: { startsWith: 'temp_legacy_' } } },
-              { OR: [{ category: null }, { category: { not: 'legacy-temp' } }] }
+              { category: { not: 'legacy-temp' } },
+              { type: { not: 'legacy-temp' } }
             ]
           }
         : { is_active: 1 }
@@ -2321,7 +2344,7 @@ app.get('/api/upgrades', async (req, res) => {
     }));
     res.json(upgrades);
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2404,7 +2427,7 @@ app.post('/api/upgrades', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('[Upgrades API] Error saving upgrades:', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno ao salvar upgrades.');
+    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno ao salvar upgrades.');
   } finally {
     client.release();
   }
@@ -2574,7 +2597,7 @@ app.post('/api/upgrades/buy', async (req, res) => {
       return res.status(Number.isInteger(err.httpStatus) ? err.httpStatus : 400).json({ error: err.message });
     }
     console.error('[BuyUpgrades] Error:', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao processar compra.');
+    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao processar compra.');
   } finally {
     client.release();
   }
@@ -2615,7 +2638,7 @@ app.get('/api/monetization-settings', async (req, res) => {
     res.setHeader('Cache-Control', 'public, max-age=60');
     res.json(publicSettings);
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2625,7 +2648,7 @@ app.get('/api/admin/monetization-settings', isAdmin, async (req, res) => {
     res.setHeader('Cache-Control', 'no-store');
     res.json(settings);
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2656,7 +2679,7 @@ app.post('/api/monetization-settings', isAdmin, async (req, res) => {
     ]);
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2723,7 +2746,7 @@ app.post('/api/daily-boost', async (req, res) => {
     res.json({ ok: true, newCharge, boostAmount });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -2755,7 +2778,7 @@ app.post('/api/admin/reset-daily-boost', isAdmin, async (req, res) => {
       deletedRows: result.rowCount
     });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2785,7 +2808,7 @@ app.get('/api/admin/user-boxes', isAdmin, async (req, res) => {
 
     res.json({ boxes: boxesRes.rows });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2822,7 +2845,7 @@ app.post('/api/admin/delete-user-box', isAdmin, async (req, res) => {
       deletedQty: result.rows[0].qty
     });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -2929,7 +2952,7 @@ app.post('/api/workshop/recharge', async (req, res) => {
     res.json({ ok: true, newCharge: maxCap });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -2983,7 +3006,7 @@ app.post('/api/reward-ad', async (req, res) => {
     res.json({ ok: true, newCharge: maxCap, rewardMsg });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -3459,7 +3482,7 @@ app.post('/api/deposit/verify', async (req, res) => {
     return res.status(400).json({ error: out.error || 'Falha na validação' });
   } catch (e) {
     console.error('[DepositVerify]', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao validar transação.');
+    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao validar transação.');
   }
 });
 
@@ -3495,7 +3518,7 @@ app.get('/api/web3-settings', async (req, res) => {
       depositBaseDisabled: settingsFlagEnabled(settings.web3_deposit_base_disabled)
     });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -3540,7 +3563,7 @@ app.post('/api/web3-settings', isAdmin, async (req, res) => {
     await upsertSettingsEntries(upserts);
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -3597,7 +3620,7 @@ app.get('/api/economy-settings', async (req, res) => {
       blackMarketPriceBandPercent: band
     });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -3662,7 +3685,7 @@ app.post('/api/economy-settings', isAdmin, async (req, res) => {
 
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -3698,7 +3721,7 @@ app.get('/api/nfts', async (req, res) => {
       metadata: r.metadata ? JSON.parse(r.metadata) : null
     })));
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -3721,7 +3744,7 @@ app.post('/api/nfts/receive', isAdmin, async (req, res) => {
       ON CONFLICT (contract_address, token_id) DO UPDATE SET owner_address = $3`,
       [contract, tokenId, toAddress]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/nfts/send', async (req, res) => {
@@ -3760,14 +3783,14 @@ app.post('/api/nfts/send', async (req, res) => {
     if (!row || rowOwner !== fromNorm) return res.status(400).json({ error: 'Not owner' });
     await db.query('UPDATE nft_items SET owner_address = $1 WHERE contract_address = $2 AND token_id = $3', [toNorm, contract, tokenId]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 // --- ACCESS LEVELS ---
 app.get('/api/access-levels', async (req, res) => {
   try {
-    const rowsRes = await db.query('SELECT * FROM access_levels');
-    const levels = rowsRes.rows.map(r => ({
+    const rows = await prisma.access_levels.findMany();
+    const levels = rows.map((r) => ({
       id: r.id,
       name: r.name,
       description: r.description,
@@ -3780,7 +3803,7 @@ app.get('/api/access-levels', async (req, res) => {
       allowedPages: r.allowed_pages ? (() => { try { return JSON.parse(r.allowed_pages); } catch { return []; } })() : []
     }));
     res.json(levels);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/access-levels', isAdmin, async (req, res) => {
@@ -3831,7 +3854,7 @@ app.post('/api/access-levels', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('[POST /api/access-levels] Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -4095,7 +4118,7 @@ app.post('/api/server-room/bulk-batteries', async (req, res) => {
       return res.status(409).json({ error: e.message, forceReload: true });
     }
     console.error('[server-room/bulk-batteries]', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno.');
+    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno.');
   } finally {
     client.release();
   }
@@ -4164,7 +4187,7 @@ app.post('/api/server-room/room-coins', async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('[server-room/room-coins]', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno.');
+    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno.');
   } finally {
     client.release();
   }
@@ -4173,8 +4196,10 @@ app.post('/api/server-room/room-coins', async (req, res) => {
 // --- RIG ROOMS ---
 app.get('/api/rig-rooms', async (req, res) => {
   try {
-    const rowsRes = await db.query('SELECT * FROM rig_rooms ORDER BY sort_order ASC, name ASC');
-    const list = rowsRes.rows.map(r => ({
+    const rows = await prisma.rig_rooms.findMany({
+      orderBy: [{ sort_order: 'asc' }, { name: 'asc' }]
+    });
+    const list = rows.map((r) => ({
       id: r.id,
       name: r.name,
       initialCapacity: r.initial_capacity,
@@ -4188,7 +4213,7 @@ app.get('/api/rig-rooms', async (req, res) => {
       nftAutoArmario1Only: isNftAutoArmario1OnlyRoomRowFromDb(r)
     }));
     res.json(list);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/rig-rooms', isAdmin, async (req, res) => {
@@ -4260,7 +4285,7 @@ app.post('/api/rig-rooms', isAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -4277,68 +4302,11 @@ app.get('/api/my-rig-rooms/:email', async (req, res) => {
     if (Number(uid) !== Number(req.userId)) {
       return res.status(403).json({ error: 'Acesso negado' });
     }
-    const urowRes = await db.query('SELECT access_level_id FROM users WHERE id = $1', [uid]);
-    const urow = urowRes.rows[0];
-    const currentLvlId = urow?.access_level_id || null;
-
-    // Get all user's access levels
-    const userLvlsRes = await db.query('SELECT access_level_id FROM user_access_levels WHERE user_id = $1', [uid]);
-    const userLvlIds = userLvlsRes.rows.map(l => l.access_level_id);
-    // Include current level just in case it's not in the new table yet (safety)
-    if (currentLvlId && !userLvlIds.includes(currentLvlId)) {
-      userLvlIds.push(currentLvlId);
-    }
-
-    // Get user's purchased season passes
-    const passPurchRes = await db.query('SELECT pass_id FROM season_purchases WHERE user_id = $1', [uid]);
-    const userPassIds = passPurchRes.rows.map(p => p.pass_id);
-
-    const racksRoomRes = await db.query(
-      `SELECT DISTINCT
-         CASE
-           WHEN room_id IS NULL OR BTRIM(COALESCE(room_id, '')) = '' OR BTRIM(room_id) = 'main' THEN 'room_initial'
-           ELSE BTRIM(room_id)
-         END AS room_id
-       FROM placed_racks WHERE user_id = $1`,
-      [uid]
-    );
-    const roomIdsWithPlacedRacks = new Set(racksRoomRes.rows.map((row) => row.room_id));
-
-    const rowsRes = await db.query(`
-      SELECT 
-        rr.id, rr.name, rr.initial_capacity, rr.max_capacity, rr.base_slot_price, rr.slot_price_increase_percent, 
-        rr.allowed_levels, rr.allowed_season_pass_ids, rr.is_active, rr.sort_order, 
-        urr.purchased_at, urr.unlocked_slots 
-      FROM rig_rooms rr 
-      LEFT JOIN user_rig_rooms urr ON urr.room_id = rr.id AND urr.user_id = $1 
-      ORDER BY rr.sort_order ASC`, [uid]);
-    const list = rowsRes.rows.map(r => ({
-      id: r.id,
-      name: r.name,
-      initialCapacity: r.initial_capacity,
-      maxCapacity: r.max_capacity,
-      baseSlotPrice: r.base_slot_price,
-      slotPriceIncreasePercent: r.slot_price_increase_percent,
-      allowedLevels: r.allowed_levels ? (() => { try { return JSON.parse(r.allowed_levels); } catch { return []; } })() : [],
-      allowedSeasonPassIds: r.allowed_season_pass_ids ? (() => { try { return JSON.parse(r.allowed_season_pass_ids); } catch { return []; } })() : [],
-      isActive: !!r.is_active,
-      sortOrder: r.sort_order,
-      owned: !!r.purchased_at,
-      unlockedSlots: r.unlocked_slots || 0,
-      nftAutoArmario1Only: isNftAutoArmario1OnlyRoomRowFromDb(r)
-    })).filter(r => {
-      // Accessibility checks
-      const allowedLvl = Array.isArray(r.allowedLevels) ? r.allowedLevels : [];
-      const allowedSeason = Array.isArray(r.allowedSeasonPassIds) ? r.allowedSeasonPassIds : [];
-
-      const levelOk = allowedLvl.length === 0 || allowedLvl.some(lvl => userLvlIds.includes(lvl));
-      const seasonOk = allowedSeason.length === 0 || allowedSeason.some(passId => userPassIds.includes(passId));
-
-      const hasRacksHere = roomIdsWithPlacedRacks.has(r.id);
-      return r.owned || hasRacksHere || (levelOk && seasonOk);
-    });
+    const list = await loadMyRigRoomsForUser(Number(uid));
     res.json(list);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
 });
 
 app.post('/api/rig-rooms/purchase-slot', async (req, res) => {
@@ -4430,104 +4398,12 @@ app.post('/api/rig-rooms/purchase-slot', async (req, res) => {
       /* ignore */
     }
     console.error('[rig-rooms/purchase-slot]', e);
-    sendInternalErrorShape(res, 'rig-rooms/purchase-slot', e, { ok: false }, 'Erro ao comprar slot.');
+    sendInternalErrorShapeOrPrisma(res, 'rig-rooms/purchase-slot', e, { ok: false }, 'Erro ao comprar slot.');
   } finally {
     client.release();
   }
 });
-// --- LOOT BOXES (catálogo público + compra/abertura: dist/controllers/lootBoxController.js) ---
-app.post('/api/loot-boxes', isAdmin, async (req, res) => {
-  let boxes;
-  let replaceCatalog = false;
-  if (Array.isArray(req.body)) {
-    // Legado: array sozinho = upsert sem desativar o resto (evita apagar catálogo por saves parciais).
-    boxes = req.body;
-    replaceCatalog = false;
-  } else if (req.body && typeof req.body === 'object' && Array.isArray(req.body.boxes)) {
-    boxes = req.body.boxes;
-    replaceCatalog = req.body.replaceCatalog === true;
-  } else {
-    return res.status(400).json({ error: 'Body inválido: use { boxes: [], replaceCatalog?: boolean } ou um array (legado).' });
-  }
-
-  const client = await db.connect();
-  try {
-    await client.query('BEGIN');
-
-    const validBoxes = boxes.filter(
-      (b) => b && b.id && typeof b.name === 'string' && String(b.name).trim()
-    );
-    const validIncomingIds = validBoxes.map((b) => String(b.id));
-
-    const triggersWithoutItemList = new Set(['roleta_code']);
-    for (const b of validBoxes) {
-      const active = b.isActive !== false;
-      const trig = String(b.trigger || 'shop');
-      const nItems = Array.isArray(b.items) ? b.items.filter((it) => it && it.id).length : 0;
-      if (active && !triggersWithoutItemList.has(trig) && nItems === 0) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
-          error: `Caixa "${String(b.name).trim()}" (${b.id}): não pode ficar ativa sem prémios. Adicione itens ou desative a caixa. (Exceção: gatilho roleta por código.)`
-        });
-      }
-      if (active && (trig === 'shop' || trig === 'shop_once' || trig === 'special')) {
-        const p = Number(b.price);
-        if (!Number.isFinite(p) || p <= 0) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({
-            error: `Caixa "${String(b.name).trim()}" (${b.id}): preço USDC inválido para venda na loja (use número > 0).`
-          });
-        }
-      }
-    }
-
-    for (const b of validBoxes) {
-      // UPSERT the Box (rows stay in DB; removals are handled via is_active below)
-      await client.query(`
-        INSERT INTO loot_boxes (id, name, description, price, trigger, icon, is_active)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          description = EXCLUDED.description,
-          price = EXCLUDED.price,
-          trigger = EXCLUDED.trigger,
-          icon = EXCLUDED.icon,
-          is_active = EXCLUDED.is_active
-      `, [b.id, b.name.trim(), b.description || '', b.price || 0, b.trigger || 'shop', b.icon || '🎁', b.isActive === false ? 0 : 1]);
-
-      await client.query('DELETE FROM loot_box_items WHERE box_id = $1', [b.id]);
-
-      if (Array.isArray(b.items)) {
-        for (const it of b.items) {
-          if (!it.id) continue;
-          await client.query(`
-            INSERT INTO loot_box_items (box_id, item_type, item_id, min_qty, max_qty, probability)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `, [b.id, it.type || 'item', it.id, it.minQty || 1, it.maxQty || 1, it.probability || 0]);
-        }
-      }
-    }
-
-    // Só alinha “removidas da lista” no painel principal quando replaceCatalog=true (salvar catálogo completo).
-    if (replaceCatalog) {
-      if (boxes.length === 0) {
-        await client.query('UPDATE loot_boxes SET is_active = 0');
-      } else if (validIncomingIds.length > 0) {
-        await client.query(
-          'UPDATE loot_boxes SET is_active = 0 WHERE NOT (id = ANY($1::text[]))',
-          [validIncomingIds]
-        );
-      }
-    }
-
-    await client.query('COMMIT');
-    res.json({ ok: true });
-  } catch (e) {
-    await client.query('ROLLBACK');
-    console.error('[POST /api/loot-boxes] Fail:', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Falha ao processar o pedido.');
-  } finally { client.release(); }
-});
+// --- LOOT BOXES (catálogo admin POST em dist/controllers/lootBoxController.js) ---
 
 // --- SYSTEM NEWS ---
 app.get('/api/news', async (req, res) => {
@@ -4552,7 +4428,7 @@ app.get('/api/news', async (req, res) => {
       imageUrl: r.image_url ?? undefined
     }));
     res.json(list);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); } finally { client.release(); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); } finally { client.release(); }
 });
 
 app.post('/api/news', isAdmin, async (req, res) => {
@@ -4561,21 +4437,21 @@ app.post('/api/news', isAdmin, async (req, res) => {
     await db.query('INSERT INTO system_news (id,text,link,active,duration,author_name,created_at,ad_type,image_url) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) ON CONFLICT (id) DO UPDATE SET text = $2, link = $3, duration = $5, author_name = $6, ad_type = $8, image_url = $9',
       [id, text, link ?? null, 1, duration ?? null, authorName ?? 'Admin', Date.now(), adType ?? 'horizontal', imageUrl ?? null]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.delete('/api/news/:id', isAdmin, async (req, res) => {
   try {
     await db.query('DELETE FROM system_news WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/news-fee', async (req, res) => {
   try {
     const v = await getSettingValue('news_post_fee_usdc');
     res.json({ feeUsdc: v != null && v !== '' ? Number(v) || 0 : 0 });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/news-fee', isAdmin, async (req, res) => {
@@ -4584,14 +4460,14 @@ app.post('/api/news-fee', isAdmin, async (req, res) => {
   try {
     await upsertSettingsEntries([{ key: 'news_post_fee_usdc', value: String(val) }]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/news-expire-days', async (req, res) => {
   try {
     const v = await getSettingValue('news_post_expire_days');
     res.json({ days: v != null && v !== '' ? Number(v) || 0 : 0 });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/news-expire-days', isAdmin, async (req, res) => {
@@ -4600,7 +4476,7 @@ app.post('/api/news-expire-days', isAdmin, async (req, res) => {
   try {
     await upsertSettingsEntries([{ key: 'news_post_expire_days', value: String(val) }]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 // --- TRANSPARENCY (pools / tesouraria — jogadores + admin) ---
@@ -4622,15 +4498,13 @@ function mapTransparencyEntryRow(r) {
 
 app.get('/api/transparency', async (req, res) => {
   try {
-    const r = await db.query(
-      `SELECT id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at
-       FROM transparency_entries
-       ORDER BY sort_order ASC, id ASC`
-    );
-    res.json(r.rows.map((row) => mapTransparencyEntryRow(row)));
+    const rows = await prisma.transparency_entries.findMany({
+      orderBy: [{ sort_order: 'asc' }, { id: 'asc' }]
+    });
+    res.json(rows.map((row) => mapTransparencyEntryRow(row)));
   } catch (e) {
     console.error('[GET /api/transparency]', e);
-    res.status(500).json([]);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -4654,17 +4528,23 @@ app.post('/api/admin/transparency', isAdmin, async (req, res) => {
     const link = linkUrl != null ? String(linkUrl).trim() : '';
     if (link.length > 2048) return res.status(400).json({ error: 'Link longo demais' });
     const sort = Math.floor(Number(sortOrder)) || 0;
-    const now = Date.now();
-    const ins = await db.query(
-      `INSERT INTO transparency_entries (category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at`,
-      [String(category), t, b || null, amt, link || null, sort, now, now]
-    );
-    res.json(mapTransparencyEntryRow(ins.rows[0]));
+    const now = BigInt(Date.now());
+    const ins = await prisma.transparency_entries.create({
+      data: {
+        category: String(category),
+        title: t,
+        body: b || null,
+        amount_usdc: amt,
+        link_url: link || null,
+        sort_order: sort,
+        created_at: now,
+        updated_at: now
+      }
+    });
+    res.json(mapTransparencyEntryRow(ins));
   } catch (e) {
     console.error('[POST /api/admin/transparency]', e);
-    res.status(500).json({ error: 'Erro ao criar registro' });
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -4676,8 +4556,6 @@ app.put('/api/admin/transparency/:id', isAdmin, async (req, res) => {
     if (category != null && !TRANSPARENCY_CATEGORIES.has(String(category))) {
       return res.status(400).json({ error: 'Categoria inválida' });
     }
-    const ex = await db.query('SELECT id FROM transparency_entries WHERE id = $1', [id]);
-    if (!ex.rows[0]) return res.status(404).json({ error: 'Registro não encontrado' });
 
     const t = title != null ? String(title).trim() : null;
     if (t !== null) {
@@ -4707,13 +4585,10 @@ app.put('/api/admin/transparency/:id', isAdmin, async (req, res) => {
       linkVal = lk || null;
     }
     const sortVal = sortOrder !== undefined ? (Math.floor(Number(sortOrder)) || 0) : undefined;
-    const now = Date.now();
+    const now = BigInt(Date.now());
 
-    const cur = await db.query(
-      'SELECT category, title, body, amount_usdc, link_url, sort_order FROM transparency_entries WHERE id = $1',
-      [id]
-    );
-    const c = cur.rows[0];
+    const c = await prisma.transparency_entries.findUnique({ where: { id } });
+    if (!c) return res.status(404).json({ error: 'Registro não encontrado' });
     const nextCat = category != null ? String(category) : c.category;
     const nextTitle = t !== null ? t : c.title;
     const nextBody = bodyVal !== undefined ? bodyVal : c.body;
@@ -4721,17 +4596,22 @@ app.put('/api/admin/transparency/:id', isAdmin, async (req, res) => {
     const nextLink = linkVal !== undefined ? linkVal : c.link_url;
     const nextSort = sortVal !== undefined ? sortVal : c.sort_order;
 
-    const upd = await db.query(
-      `UPDATE transparency_entries
-       SET category = $1, title = $2, body = $3, amount_usdc = $4, link_url = $5, sort_order = $6, updated_at = $7
-       WHERE id = $8
-       RETURNING id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at`,
-      [nextCat, nextTitle, nextBody, nextAmt, nextLink, nextSort, now, id]
-    );
-    res.json(mapTransparencyEntryRow(upd.rows[0]));
+    const upd = await prisma.transparency_entries.update({
+      where: { id },
+      data: {
+        category: nextCat,
+        title: nextTitle,
+        body: nextBody,
+        amount_usdc: nextAmt,
+        link_url: nextLink,
+        sort_order: nextSort,
+        updated_at: now
+      }
+    });
+    res.json(mapTransparencyEntryRow(upd));
   } catch (e) {
     console.error('[PUT /api/admin/transparency/:id]', e);
-    res.status(500).json({ error: 'Erro ao atualizar' });
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -4739,21 +4619,21 @@ app.delete('/api/admin/transparency/:id', isAdmin, async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (!Number.isFinite(id) || id < 1) return res.status(400).json({ error: 'ID inválido' });
   try {
-    const r = await db.query('DELETE FROM transparency_entries WHERE id = $1 RETURNING id', [id]);
-    if (!r.rows[0]) return res.status(404).json({ error: 'Registro não encontrado' });
+    const r = await prisma.transparency_entries.deleteMany({ where: { id } });
+    if (r.count === 0) return res.status(404).json({ error: 'Registro não encontrado' });
     res.json({ ok: true });
   } catch (e) {
     console.error('[DELETE /api/admin/transparency/:id]', e);
-    res.status(500).json({ error: 'Erro ao remover' });
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
 // --- UI DISPLAY LABELS (textos do jogo editáveis pelo admin) ---
 app.get('/api/display-labels', async (req, res) => {
   try {
-    const r = await db.query('SELECT key, value FROM ui_display_labels ORDER BY key');
-    const obj = {};
-    for (const row of r.rows) {
+    const rows = await prisma.ui_display_labels.findMany({ orderBy: { key: 'asc' } });
+    const obj: Record<string, string> = {};
+    for (const row of rows) {
       const k = row.key != null ? String(row.key).trim() : '';
       const v = row.value != null ? String(row.value).trim() : '';
       if (k && v) obj[k] = v.slice(0, 200);
@@ -4761,7 +4641,7 @@ app.get('/api/display-labels', async (req, res) => {
     res.json(obj);
   } catch (e) {
     console.error('[GET /api/display-labels]', e);
-    res.json({});
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -4813,7 +4693,7 @@ app.get('/api/player-news/pending', isAdmin, async (req, res) => {
   try {
     const rowsRes = await db.query('SELECT p.id, p.user_id, p.text, p.link, p.status, p.created_at, u.username, u.email FROM player_news_submissions p JOIN users u ON u.id = p.user_id WHERE p.status = $1 ORDER BY p.created_at DESC', ['pending']);
     res.json(rowsRes.rows.map(r => ({ id: r.id, userId: r.user_id, username: r.username, email: r.email, text: r.text, link: r.link ?? undefined, status: r.status, createdAt: r.created_at })));
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/player-news/submit', async (req, res) => {
@@ -4861,7 +4741,7 @@ app.post('/api/player-news/submit', async (req, res) => {
     res.json({ ok: true, newUsdc: newBal });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -4884,7 +4764,7 @@ app.post('/api/player-news/approve', isAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -4897,7 +4777,7 @@ app.post('/api/player-news/reject', isAdmin, async (req, res) => {
     if (!row || row.status !== 'pending') return res.status(404).json({ error: 'Submission not found' });
     await db.query('UPDATE player_news_submissions SET status = $1 WHERE id = $2', ['rejected', id]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 // --- SEASON PASSES ---
@@ -4926,7 +4806,7 @@ app.get('/api/season-passes', async (req, res) => {
       });
     }
     res.json(passes);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/season-passes/:passId/purchases', isAdmin, async (req, res) => {
@@ -4947,7 +4827,7 @@ app.get('/api/season-passes/:passId/purchases', isAdmin, async (req, res) => {
       purchasedAt: parseInt(r.purchased_at)
     })));
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -4960,7 +4840,7 @@ app.delete('/api/season-passes/:passId/purchases/:userId', isAdmin, async (req, 
     console.log(`[SeasonPass] Admin revoked pass ${passId} for user ${userId}`);
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -5011,7 +4891,7 @@ app.post('/api/season-passes', isAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -5031,7 +4911,7 @@ app.get('/api/season-purchases/:email', async (req, res) => {
     const rowsRes = await db.query('SELECT pass_id, season_id, purchased_at FROM season_purchases WHERE user_id = $1', [uid]);
     const list = rowsRes.rows.map(r => ({ passId: r.pass_id, seasonId: r.season_id, purchasedAt: r.purchased_at }));
     res.json(list);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/season-pass/purchase', async (req, res) => {
@@ -5110,7 +4990,7 @@ app.post('/api/season-pass/purchase', async (req, res) => {
   } catch (e) {
     if (respondIfHttpControlledError(res, e)) return;
     console.error(`[Purchase] ❌ ERROR during purchase:`, e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -5143,7 +5023,7 @@ app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     if (respondIfHttpControlledError(res, e)) return;
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -5308,7 +5188,7 @@ app.get('/api/users', isAdmin, async (req, res) => {
     }));
 
     res.json({ users, total, pages: Math.ceil(total / limit), levels: lvRes.rows });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/admin/users/map', isAdmin, async (req, res) => {
@@ -5329,7 +5209,7 @@ app.get('/api/admin/users/map', isAdmin, async (req, res) => {
     `);
     res.json(resRows.rows);
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -5338,7 +5218,7 @@ app.get('/api/admin/referral-models', isAdmin, async (req, res) => {
   try {
     const rows = await db.query('SELECT * FROM referral_models ORDER BY id ASC');
     res.json(rows.rows);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/admin/referral-models', isAdmin, async (req, res) => {
@@ -5358,14 +5238,14 @@ app.post('/api/admin/referral-models', isAdmin, async (req, res) => {
         [name, description, sender_reward_usdc || 0, receiver_reward_usdc || 0, sender_loot_box_id || null, receiver_loot_box_id || null, is_active ? 1 : 0]);
       res.json({ ok: true });
     }
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.delete('/api/admin/referral-models/:id', isAdmin, async (req, res) => {
   try {
     await db.query('DELETE FROM referral_models WHERE id = $1', [req.params.id]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/admin/access-level-referral-assignments', isAdmin, async (req, res) => {
@@ -5375,7 +5255,7 @@ app.get('/api/admin/access-level-referral-assignments', isAdmin, async (req, res
       acc[r.access_level_id] = r.referral_model_id;
       return acc;
     }, {}));
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/admin/access-level-referral-assignments', isAdmin, async (req, res) => {
@@ -5394,7 +5274,7 @@ app.post('/api/admin/access-level-referral-assignments', isAdmin, async (req, re
     res.json({ ok: true });
   } catch (e) {
     await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -5541,7 +5421,7 @@ app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
     res.json(dashboardStatsCache);
   } catch (e) {
     console.error('[DashStats] Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -5636,7 +5516,7 @@ app.get('/api/leaderboard', async (req, res) => {
       power: Number(r.power)
     })));
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -5657,7 +5537,7 @@ app.get('/api/referrals/:email', async (req, res) => {
     }
     const rowsRes = await db.query('SELECT referred_username FROM referrals WHERE user_id = $1 ORDER BY id ASC', [uid]);
     res.json(rowsRes.rows.map(r => r.referred_username));
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/referrals/claim-code', async (req, res) => {
@@ -5703,7 +5583,7 @@ app.post('/api/referrals/claim-code', async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     if (client) await client.query('ROLLBACK');
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     if (client) client.release();
   }
@@ -5752,7 +5632,7 @@ app.post('/api/referrals/claim-reward', async (req, res) => {
   } catch (e) {
     if (client) await client.query('ROLLBACK');
     console.error('[ClaimReward] Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     if (client) client.release();
   }
@@ -5763,7 +5643,7 @@ app.get('/api/wheel/config', async (req, res) => {
     const items = await fetchWheelPrizesForApiConfig();
     res.json(items);
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -5805,7 +5685,7 @@ app.get('/api/mining-coins', async (req, res) => {
       };
     });
     res.json(coins);
-  } catch (e) { if (client) client.release(); sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { if (client) client.release(); sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/mining-coins', isAdmin, async (req, res) => {
@@ -5888,7 +5768,7 @@ app.post('/api/mining-coins', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('[SaveMiningCoin] Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -5997,7 +5877,7 @@ app.post('/api/login', async (req, res) => {
     });
   } catch (e) {
     console.error('[Login]', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -6007,17 +5887,46 @@ app.get('/api/session', async (req, res) => {
   let isImpersonating = false;
   let targetUserId = req.userId;
   try {
+    let sidSession: Record<string, unknown> | null = null;
     if (sid) {
       const s = await findSessionRow(sid);
       if (s && Number(s.expires_at) >= Date.now()) {
+        sidSession = s;
         isImpersonating = !!s.original_user_id;
         if (!targetUserId) targetUserId = s.user_id;
       }
     }
     if (!targetUserId) return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
 
-    const u = await findUserById(Number(targetUserId));
-    if (!u) return res.status(404).json({ error: 'User not found' });
+    const parsePositiveUserId = (raw: unknown): number | null => {
+      const n = Number(raw);
+      return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+    };
+
+    let uid = parsePositiveUserId(targetUserId);
+    let u = uid != null ? await findUserById(uid) : undefined;
+
+    /** JWT pode apontar para um id órfão após restore/migração; cookie `sid` pode ainda refletir outro utilizador válido. */
+    if (!u && sidSession) {
+      const sidUid = parsePositiveUserId(sidSession.user_id);
+      if (sidUid != null && sidUid !== uid) {
+        const u2 = await findUserById(sidUid);
+        if (u2) {
+          u = u2;
+          uid = sidUid;
+        }
+      }
+    }
+
+    if (!u) {
+      clearAuthCookies(res);
+      const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+      res.append('Set-Cookie', `sid=; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=0`);
+      return res.status(401).json({
+        error: 'Sessão inválida ou conta já não existe. Inicie sessão novamente.',
+        code: 'USER_NOT_FOUND'
+      });
+    }
 
     const userLvlIds = await listUserAccessLevelIds(u.id, u.access_level_id);
     let adminPerms = null;
@@ -6046,7 +5955,9 @@ app.get('/api/session', async (req, res) => {
       referredBy: u.referred_by,
       isImpersonating
     });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
 });
 
 app.post('/api/auth/refresh', async (req, res) => handleJwtRefresh(req, res, parseCookies));
@@ -6081,7 +5992,9 @@ app.post('/api/session', async (req, res) => {
     const { polygonWallet } = req.body || {};
     await updateUserPolygonAndAccess(uid, polygonWallet);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
 });
 
 app.get('/api/load-game', async (req, res) => {
@@ -6091,59 +6004,118 @@ app.get('/api/load-game', async (req, res) => {
     const uid = req.userId;
     await computeProgressForUser(db, uid, Date.now());
 
-    // Pegar tudo do DB
-    const gsRes = await db.query('SELECT * FROM game_states WHERE user_id = $1', [uid]);
-    const stockRes = await db.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]);
-    const boxRes = await db.query('SELECT box_id, qty FROM unopened_boxes WHERE user_id = $1', [uid]);
-    const batRes = await db.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]);
-    const rackRes = await db.query('SELECT * FROM placed_racks WHERE user_id = $1', [uid]);
-    const coinRes = await db.query('SELECT coin_id, amount FROM coin_balances WHERE user_id = $1', [uid]);
-    const workshopRes = await db.query('SELECT * FROM workshop_slots WHERE user_id = $1 ORDER BY slot_index', [uid]);
-    const dailyRes = await db.query('SELECT action_key, last_performed_at FROM daily_actions WHERE user_id = $1', [uid]);
-    const claimedRes = await db.query('SELECT box_id FROM player_claimed_boxes WHERE user_id = $1', [uid]);
-    const userRefRes = await db.query('SELECT referred_by, username, email FROM users WHERE id = $1', [uid]);
-    const u = userRefRes.rows[0];
+    const [
+      gsRow,
+      stockRows,
+      boxRows,
+      batRows,
+      rackRows,
+      coinRows,
+      workshopRows,
+      dailyRows,
+      claimedRows,
+      u
+    ] = await Promise.all([
+      prisma.game_states.findUnique({ where: { user_id: uid } }),
+      prisma.stock.findMany({ where: { user_id: uid } }),
+      prisma.unopened_boxes.findMany({ where: { user_id: uid } }),
+      prisma.stored_batteries.findMany({ where: { user_id: uid } }),
+      prisma.placed_racks.findMany({ where: { user_id: uid } }),
+      prisma.coin_balances.findMany({ where: { user_id: uid } }),
+      prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
+      prisma.daily_actions.findMany({ where: { user_id: uid } }),
+      prisma.player_claimed_boxes.findMany({ where: { user_id: uid }, select: { box_id: true } }),
+      prisma.users.findUnique({
+        where: { id: uid },
+        select: { referred_by: true, username: true, email: true }
+      })
+    ]);
 
-    const gs = gsRes.rows[0] || { usdc: 0, start_time: Date.now(), claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: Date.now() };
+    if (!u) {
+      return res.status(404).json({ error: 'Utilizador não encontrado' });
+    }
 
-    const stock = {};
-    stockRes.rows.forEach(r => {
+    const nowMs = Date.now();
+    const gs =
+      gsRow ||
+      ({
+        usdc: 0,
+        start_time: BigInt(nowMs),
+        claimed_referrals: 0,
+        referral_bonus_claimed: 0,
+        last_updated_at: BigInt(nowMs),
+        black_market_balance: 0
+      } as NonNullable<typeof gsRow>);
+
+    const stock: Record<string, number> = {};
+    stockRows.forEach((r) => {
       if (!isValidSaveGameItemId(r.item_id)) return;
       stock[r.item_id] = r.qty;
     });
-    const unopenedBoxes = {};
-    boxRes.rows.forEach(r => { unopenedBoxes[r.box_id] = r.qty; });
-    const storedBatteries = batRes.rows.map(r => ({ id: r.id, itemId: r.item_id, currentCharge: r.current_charge }));
+    const unopenedBoxes: Record<string, number> = {};
+    boxRows.forEach((r) => {
+      unopenedBoxes[r.box_id] = r.qty;
+    });
+    const storedBatteries = batRows.map((r) => ({
+      id: r.id,
+      itemId: r.item_id,
+      currentCharge: r.current_charge
+    }));
 
-    // Racks e Slots
-    const racks = [];
-    for (const r of rackRes.rows) {
-      const slotsRes = await db.query('SELECT slot_index, machine_item_id FROM rack_slots WHERE rack_id = $1 ORDER BY slot_index', [r.id]);
-      const multiRes = await db.query('SELECT slot_index, multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1 ORDER BY slot_index', [r.id]);
-
-      // Map to array by index
-      const slots = [];
-      slotsRes.rows.forEach(s => slots[s.slot_index] = s.machine_item_id);
-      const multiplierSlots = [];
-      multiRes.rows.forEach(m => multiplierSlots[m.slot_index] = m.multiplier_item_id);
-
-      racks.push({
-        id: r.id,
-        itemId: r.item_id,
-        slots,
-        multiplierSlots,
-        wiringId: r.wiring_id,
-        batteryId: r.battery_id,
-        currentCharge: r.current_charge,
-        isOn: !!r.is_on,
-        selectedCoinId: r.selected_coin_id,
-        roomId: normalizePlacedRackRoomId(r.room_id),
-        slotIndex: r.slot_index || 0
+    const racks: Array<{
+      id: string;
+      itemId: string;
+      slots: unknown[];
+      multiplierSlots: unknown[];
+      wiringId: string | null;
+      batteryId: string | null;
+      currentCharge: number;
+      isOn: boolean;
+      selectedCoinId: string | null;
+      roomId: string;
+      slotIndex: number;
+    }> = [];
+    const rackIds = rackRows.map((r) => r.id);
+    if (rackIds.length > 0) {
+      const [slotsList, multiList] = await Promise.all([
+        prisma.rack_slots.findMany({
+          where: { rack_id: { in: rackIds } },
+          orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+        }),
+        prisma.rack_multiplier_slots.findMany({
+          where: { rack_id: { in: rackIds } },
+          orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+        })
+      ]);
+      const slotsMap = new Map<string, unknown[]>();
+      const multipliersMap = new Map<string, unknown[]>();
+      slotsList.forEach((s) => {
+        if (!slotsMap.has(s.rack_id)) slotsMap.set(s.rack_id, []);
+        slotsMap.get(s.rack_id)![s.slot_index] = s.machine_item_id;
       });
+      multiList.forEach((m) => {
+        if (!multipliersMap.has(m.rack_id)) multipliersMap.set(m.rack_id, []);
+        multipliersMap.get(m.rack_id)![m.slot_index] = m.multiplier_item_id;
+      });
+      for (const r of rackRows) {
+        racks.push({
+          id: r.id,
+          itemId: r.item_id,
+          slots: slotsMap.get(r.id) || [],
+          multiplierSlots: multipliersMap.get(r.id) || [],
+          wiringId: r.wiring_id,
+          batteryId: r.battery_id,
+          currentCharge: r.current_charge,
+          isOn: !!r.is_on,
+          selectedCoinId: r.selected_coin_id,
+          roomId: normalizePlacedRackRoomId(r.room_id),
+          slotIndex: r.slot_index || 0
+        });
+      }
     }
 
     const workshopSlots = [null, null, null, null, null, null];
-    workshopRes.rows.forEach(w => {
+    workshopRows.forEach((w) => {
       if (w.slot_index >= 0 && w.slot_index < 6) {
         workshopSlots[w.slot_index] = {
           id: `ws_${uid}_${w.slot_index}`,
@@ -6157,20 +6129,20 @@ app.get('/api/load-game', async (req, res) => {
     });
 
     try {
-      await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(
-        db,
-        String(userRefRes.rows[0]?.email || ''),
-        workshopSlots
-      );
+      await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(db, String(u.email || ''), workshopSlots);
     } catch (e) {
       console.warn('[load-game] enrich workshop slotItemIds:', e instanceof Error ? e.message : String(e));
     }
 
-    const coinBalances = {};
-    coinRes.rows.forEach(c => { coinBalances[c.coin_id] = c.amount; });
+    const coinBalances: Record<string, number> = {};
+    coinRows.forEach((c) => {
+      coinBalances[c.coin_id] = c.amount;
+    });
 
-    const dailyActions = {};
-    dailyRes.rows.forEach(r => { dailyActions[r.action_key] = Number(r.last_performed_at); });
+    const dailyActions: Record<string, number> = {};
+    dailyRows.forEach((r) => {
+      dailyActions[r.action_key] = Number(r.last_performed_at);
+    });
 
     res.json({
       gameState: {
@@ -6188,29 +6160,39 @@ app.get('/api/load-game', async (req, res) => {
       placedRacks: racks,
       workshopSlots,
       coinBalances,
-      claimedBoxes: claimedRes.rows.map(r => r.box_id)
+      claimedBoxes: claimedRows.map((r) => r.box_id)
     });
 
-
     // Check for missing Referral Reward (Retroactive Fix)
-    // If user has referrer but bonus not claimed, grant it now
-    if (u && u.referred_by && gs && !gs.referral_bonus_claimed) {
-      // Async background fix - don't block response? Or block to ensure consistency?
-      // Blocking is safer for UI sync.
+    if (u.referred_by && gs && !gs.referral_bonus_claimed) {
       try {
-        const receiverBoxes = await db.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_receiver'");
-        for (const box of receiverBoxes.rows) {
-          await db.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, box.id]);
-          await db.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [uid, box.id, Date.now()]);
+        const receiverBoxes = await prisma.loot_boxes.findMany({
+          where: { trigger: 'referral_receiver' },
+          select: { id: true }
+        });
+        const claimedAt = BigInt(Date.now());
+        for (const box of receiverBoxes) {
+          await prisma.unopened_boxes.upsert({
+            where: { user_id_box_id: { user_id: uid, box_id: box.id } },
+            create: { user_id: uid, box_id: box.id, qty: 1 },
+            update: { qty: { increment: 1 } }
+          });
+          await prisma.player_claimed_boxes.createMany({
+            data: [{ user_id: uid, box_id: box.id, claimed_at: claimedAt }],
+            skipDuplicates: true
+          });
         }
-        await db.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
+        await prisma.game_states.updateMany({
+          where: { user_id: uid },
+          data: { referral_bonus_claimed: 1 }
+        });
         console.log(`[Retro Fix] Granted referral box to ${u.username}`);
       } catch (err) {
         console.error(`[Retro Fix] Failed for user ${uid}:`, err);
       }
     }
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -6232,7 +6214,7 @@ app.put('/api/users/block', isAdmin, async (req, res) => {
       data: { is_blocked: blocked ? 1 : 0 }
     });
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.put('/api/user', async (req, res) => {
@@ -6457,7 +6439,7 @@ app.put('/api/user', async (req, res) => {
         code: 'DUPLICATE'
       });
     }
-    sendInternalErrorSafeMessage(
+    sendInternalErrorSafeMessageOrPrisma(
       res,
       '[UserUpdate]',
       e,
@@ -6591,7 +6573,7 @@ app.delete('/api/user/:email', isAdmin, async (req, res) => {
     const result = await deleteUserByEmail(req.params.email, null);
     res.json(result);
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -6612,7 +6594,7 @@ app.post('/api/admin/bulk-delete', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('[Admin] Bulk delete failed:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -6650,7 +6632,7 @@ app.post('/api/admin/bulk-gift', isAdmin, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('[Admin] Bulk gift failed:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally { client.release(); }
 });
 
@@ -6690,8 +6672,7 @@ app.get('/api/game-state/:email', async (req, res) => {
   const isAdminEdit = req.headers['x-admin-edit'] === '1';
 
   try {
-    const uRes = await db.query('SELECT * FROM users WHERE id = $1', [uid]);
-    const u = uRes.rows[0];
+    const u = await prisma.users.findUnique({ where: { id: uid } });
     if (!u) return res.status(404).json({ error: 'User not found' });
 
     const now = Date.now();
@@ -6710,94 +6691,130 @@ app.get('/api/game-state/:email', async (req, res) => {
 
     const offlineMined = progressRes.offlineMined || {};
 
-    // OPTIMIZATION: Parallelize independent DB queries
-    console.log(`[GameState] Starting Parallel DB Queries...`);
+    console.log(`[GameState] Starting parallel Prisma reads...`);
     const [
-      gsRes,
-      stockRes,
-      unopenedBoxesRes,
-      storedBatteriesRes,
-      placedRacksRes,
-      workshopSlotsRes,
-      coinBalancesRes,
-      dailyActionsRes,
-      playerListingsRes,
-      claimedBoxesRes
+      gsRow,
+      stockRows,
+      unopenedRows,
+      storedBatRows,
+      rackRows,
+      workshopRows,
+      coinBalRows,
+      dailyRows,
+      listingRows,
+      claimedRows
     ] = await Promise.all([
-      db.query('SELECT * FROM game_states WHERE user_id = $1', [uid]),
-      db.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]),
-      db.query('SELECT box_id, qty FROM unopened_boxes WHERE user_id = $1', [uid]),
-      db.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]),
-      db.query('SELECT * FROM placed_racks WHERE user_id = $1', [uid]),
-      db.query('SELECT * FROM workshop_slots WHERE user_id = $1 ORDER BY slot_index', [uid]),
-      db.query('SELECT coin_id, amount FROM coin_balances WHERE user_id = $1', [uid]),
-      db.query('SELECT action_key, last_performed_at FROM daily_actions WHERE user_id = $1', [uid]),
-      db.query('SELECT l.*, u.username, u.email FROM player_listings l JOIN users u ON l.user_id = u.id WHERE l.user_id = $1', [uid]),
-      db.query('SELECT box_id FROM player_claimed_boxes WHERE user_id = $1', [uid])
+      prisma.game_states.findUnique({ where: { user_id: uid } }),
+      prisma.stock.findMany({ where: { user_id: uid } }),
+      prisma.unopened_boxes.findMany({ where: { user_id: uid } }),
+      prisma.stored_batteries.findMany({ where: { user_id: uid } }),
+      prisma.placed_racks.findMany({ where: { user_id: uid } }),
+      prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
+      prisma.coin_balances.findMany({ where: { user_id: uid } }),
+      prisma.daily_actions.findMany({ where: { user_id: uid } }),
+      prisma.player_listings.findMany({ where: { user_id: uid } }),
+      prisma.player_claimed_boxes.findMany({ where: { user_id: uid }, select: { box_id: true } })
     ]);
 
     const t2 = performance.now();
-    console.log(`[GameState] DB Queries took ${(t2 - t1).toFixed(2)}ms`);
+    console.log(`[GameState] Prisma reads took ${(t2 - t1).toFixed(2)}ms`);
 
-    const gs = gsRes.rows[0] || { usdc: 0, start_time: now, claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: now, black_market_balance: 0, server_updated_at: 0 };
+    const gs =
+      gsRow ||
+      ({
+        usdc: 0,
+        start_time: BigInt(now),
+        claimed_referrals: 0,
+        referral_bonus_claimed: 0,
+        last_updated_at: BigInt(now),
+        black_market_balance: 0,
+        server_updated_at: BigInt(0)
+      } as NonNullable<typeof gsRow>);
 
-    const stock = {};
-    stockRes.rows.forEach(r => {
+    const stock: Record<string, number> = {};
+    stockRows.forEach((r) => {
       if (!isValidSaveGameItemId(r.item_id)) return;
       stock[r.item_id] = r.qty;
     });
 
-    const unopenedBoxes = {};
-    unopenedBoxesRes.rows.forEach(r => { unopenedBoxes[r.box_id] = r.qty; });
+    const unopenedBoxes: Record<string, number> = {};
+    unopenedRows.forEach((r) => {
+      unopenedBoxes[r.box_id] = r.qty;
+    });
 
-    const storedBatteries = storedBatteriesRes.rows.map(r => ({ id: r.id, itemId: r.item_id, currentCharge: r.current_charge }));
+    const storedBatteries = storedBatRows.map((r) => ({
+      id: r.id,
+      itemId: r.item_id,
+      currentCharge: r.current_charge
+    }));
 
-    const coinBalances = {};
-    coinBalancesRes.rows.forEach(c => { coinBalances[c.coin_id] = c.amount; });
+    const coinBalances: Record<string, number> = {};
+    coinBalRows.forEach((c) => {
+      coinBalances[c.coin_id] = c.amount;
+    });
 
-    const dailyActions = {};
-    dailyActionsRes.rows.forEach(r => { dailyActions[r.action_key] = Number(r.last_performed_at); });
+    const dailyActions: Record<string, number> = {};
+    dailyRows.forEach((r) => {
+      dailyActions[r.action_key] = Number(r.last_performed_at);
+    });
 
-    const playerListings = playerListingsRes.rows.map(r => {
+    const sellerLabel = u.username || u.email || '';
+    const playerListings = listingRows.map((r) => {
       const q = Math.max(1, parseInt(String(r.qty ?? 1), 10) || 1);
       const unit = Number(r.price);
       return {
         id: r.id,
-        sellerName: r.username || r.email,
+        sellerName: sellerLabel,
         itemId: r.item_id,
         price: unit,
         lineTotal: unit * q,
-        expiresAt: r.expires_at,
+        expiresAt: Number(r.expires_at),
         isPlayer: !!r.is_player,
         qty: q,
         status: r.status
       };
     });
 
-    const claimedBoxes = claimedBoxesRes.rows.map(r => r.box_id);
+    const claimedBoxes = claimedRows.map((r) => r.box_id);
 
-    // OPTIMIZATION: Bulk fetch rack slots to avoid N+1 problem
-    const placedRacks = [];
-    const rackRows = placedRacksRes.rows;
+    const placedRacks: Array<{
+      id: string;
+      itemId: string;
+      slots: unknown[];
+      multiplierSlots: unknown[];
+      wiringId: string | null;
+      batteryId: string | null;
+      currentCharge: number;
+      isOn: boolean;
+      selectedCoinId: string | null;
+      roomId: string;
+      slotIndex: number;
+    }> = [];
     if (rackRows.length > 0) {
-      const rackIds = rackRows.map(r => r.id);
+      const rackIds = rackRows.map((r) => r.id);
 
-      const [slotsRes, multipliersRes] = await Promise.all([
-        db.query('SELECT rack_id, slot_index, machine_item_id FROM rack_slots WHERE rack_id = ANY($1) ORDER BY slot_index', [rackIds]),
-        db.query('SELECT rack_id, slot_index, multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = ANY($1) ORDER BY slot_index', [rackIds])
+      const [slotsList, multipliersList] = await Promise.all([
+        prisma.rack_slots.findMany({
+          where: { rack_id: { in: rackIds } },
+          orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+        }),
+        prisma.rack_multiplier_slots.findMany({
+          where: { rack_id: { in: rackIds } },
+          orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+        })
       ]);
 
-      const slotsMap = new Map();
-      const multipliersMap = new Map();
+      const slotsMap = new Map<string, unknown[]>();
+      const multipliersMap = new Map<string, unknown[]>();
 
-      slotsRes.rows.forEach(s => {
+      slotsList.forEach((s) => {
         if (!slotsMap.has(s.rack_id)) slotsMap.set(s.rack_id, []);
-        slotsMap.get(s.rack_id)[s.slot_index] = s.machine_item_id;
+        slotsMap.get(s.rack_id)![s.slot_index] = s.machine_item_id;
       });
 
-      multipliersRes.rows.forEach(m => {
+      multipliersList.forEach((m) => {
         if (!multipliersMap.has(m.rack_id)) multipliersMap.set(m.rack_id, []);
-        multipliersMap.get(m.rack_id)[m.slot_index] = m.multiplier_item_id;
+        multipliersMap.get(m.rack_id)![m.slot_index] = m.multiplier_item_id;
       });
 
       for (const r of rackRows) {
@@ -6818,7 +6835,7 @@ app.get('/api/game-state/:email', async (req, res) => {
     }
 
     const workshopSlots = [null, null, null, null, null, null];
-    workshopSlotsRes.rows.forEach(w => {
+    workshopRows.forEach((w) => {
       if (w.slot_index >= 0 && w.slot_index < 6) {
         workshopSlots[w.slot_index] = {
           id: `ws_${uid}_${w.slot_index}`,
@@ -6827,7 +6844,7 @@ app.get('/api/game-state/:email', async (req, res) => {
           currentCharge: w.current_charge ?? 0,
           slotCharges: safeWorkshopJsonObject(w.slot_charges, 'workshop_slots.slot_charges', uid),
           slotItemIds: safeWorkshopJsonObject(w.slot_item_ids, 'workshop_slots.slot_item_ids', uid),
-          installedAt: Number(w.installed_at || 0)
+          installedAt: Number(w.installed_at ?? 0)
         };
       }
     });
@@ -6917,7 +6934,7 @@ app.get('/api/game-state/:email', async (req, res) => {
     const t3 = performance.now();
     console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
   } catch (e) {
-    sendInternalErrorSafeMessage(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
+    sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
   }
 });
 
@@ -6962,16 +6979,18 @@ async function validatePlacedRacksForSave(dbq, racks) {
     }
   }
   if (upgradeIds.size > 0) {
-    const chk = await dbq.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [[...upgradeIds]]);
-    if (chk.rowCount !== upgradeIds.size) {
-      const have = new Set(chk.rows.map((x) => x.id));
-      const missing = [...upgradeIds].filter((id) => !have.has(id));
+    const ids = [...upgradeIds];
+    const chk = await prisma.upgrades.findMany({ where: { id: { in: ids } }, select: { id: true } });
+    if (chk.length !== upgradeIds.size) {
+      const have = new Set(chk.map((x) => x.id));
+      const missing = ids.filter((id) => !have.has(id));
       return { ok: false, error: `Item desconhecido no equipamento: ${missing.slice(0, 4).join(', ')}` };
     }
   }
   if (coinIds.size > 0) {
-    const cres = await dbq.query('SELECT id FROM mining_coins WHERE id = ANY($1::text[])', [[...coinIds]]);
-    if (cres.rowCount !== coinIds.size) {
+    const cids = [...coinIds];
+    const cres = await prisma.mining_coins.findMany({ where: { id: { in: cids } }, select: { id: true } });
+    if (cres.length !== coinIds.size) {
       return { ok: false, error: 'Moeda inválida numa rig.' };
     }
   }
@@ -6981,7 +7000,6 @@ async function validatePlacedRacksForSave(dbq, racks) {
 app.post('/api/save-game', async (req, res) => {
   const { changes, adminOverride, targetEmail } = req.body;
   if (!req.userId || !changes) return res.status(400).json({ error: 'Missing fields' });
-  const client = await db.connect();
   try {
     let uid = req.userId;
     const saveActivityLogs = [];
@@ -7006,55 +7024,60 @@ app.post('/api/save-game', async (req, res) => {
       }
     }
 
-    await client.query('BEGIN');
-    await client.query("SET statement_timeout = '20s'");
-
-    // LOCK ORDER FIX: Always lock the primary user record first to avoid deadlocks
-    await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
-
-    // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
-    // listagem P2P) cannot be overwritten by a save whose optimistic check ran before
-    // they committed.
-    const dbGsRes = await client.query('SELECT server_updated_at FROM game_states WHERE user_id = $1', [uid]);
-    const dbServerUpdatedAt = Number(dbGsRes.rows[0]?.server_updated_at || 0);
-    if (!effectiveAdminOverride && changes.lastLoadTime && dbServerUpdatedAt > Number(changes.lastLoadTime)) {
-      await client.query('ROLLBACK');
-      return res.json({ forceReload: true });
-    }
-
+    let finalServerUpdatedAt = Date.now();
     let nftAutoSanitized = false;
-    if (changes.placedRacks) {
-      if (!Array.isArray(changes.placedRacks)) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'placedRacks inválido.' });
-      }
-      // [] é truthy: evita apagar todas as rigs quando o cliente envia estado incompleto.
-      if (!effectiveAdminOverride && changes.placedRacks.length === 0) {
-        const prCountRes = await client.query('SELECT COUNT(*)::int AS c FROM placed_racks WHERE user_id = $1', [uid]);
-        const prCount = Number(prCountRes.rows[0]?.c ?? 0);
-        if (prCount > 0) {
-          console.warn(`[SaveGame] Rejeitado placedRacks vazio (servidor tem ${prCount} rig(s)) userId=${uid}`);
-          await client.query('ROLLBACK');
-          return res.status(409).json({
-            error:
-              'O estado enviado não inclui nenhuma rig, mas o servidor ainda guarda o teu equipamento. Recarrega a página (F5) para sincronizar.',
-            forceReload: true,
-          });
+    let nftAutoSyncPayload: {
+      placedRacks: unknown;
+      stock: Record<string, number>;
+      storedBatteries: Array<{ id: string; itemId: string; currentCharge: number }>;
+    } | null = null;
+
+    await prisma.$transaction(
+      async (tx) => {
+        const client = prismaTxToPoolLikeClient(tx);
+        await client.query("SET LOCAL statement_timeout = '20s'");
+
+        // LOCK ORDER FIX: Always lock the primary user record first to avoid deadlocks
+        await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
+
+        // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
+        // listagem P2P) cannot be overwritten by a save whose optimistic check ran before
+        // they committed.
+        const dbGsRes = await client.query('SELECT server_updated_at FROM game_states WHERE user_id = $1', [uid]);
+        const dbServerUpdatedAt = Number(dbGsRes.rows[0]?.server_updated_at || 0);
+        if (!effectiveAdminOverride && changes.lastLoadTime && dbServerUpdatedAt > Number(changes.lastLoadTime)) {
+          throw new HttpControlledError(200, { forceReload: true });
         }
-      }
-      nftAutoSanitized = await sanitizePlacedRacksNftAutoRoom(client, uid, changes, saveActivityLogs);
-      const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks);
-      if (!rackVal.ok) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: rackVal.error });
-      }
-    }
 
-    // ---------------------------------
+        nftAutoSanitized = false;
+        if (changes.placedRacks) {
+          if (!Array.isArray(changes.placedRacks)) {
+            throw new HttpControlledError(400, { error: 'placedRacks inválido.' });
+          }
+          // [] é truthy: evita apagar todas as rigs quando o cliente envia estado incompleto.
+          if (!effectiveAdminOverride && changes.placedRacks.length === 0) {
+            const prCountRes = await client.query('SELECT COUNT(*)::int AS c FROM placed_racks WHERE user_id = $1', [uid]);
+            const prCount = Number(prCountRes.rows[0]?.c ?? 0);
+            if (prCount > 0) {
+              console.warn(`[SaveGame] Rejeitado placedRacks vazio (servidor tem ${prCount} rig(s)) userId=${uid}`);
+              throw new HttpControlledError(409, {
+                error:
+                  'O estado enviado não inclui nenhuma rig, mas o servidor ainda guarda o teu equipamento. Recarrega a página (F5) para sincronizar.',
+                forceReload: true
+              });
+            }
+          }
+          nftAutoSanitized = await sanitizePlacedRacksNftAutoRoom(client, uid, changes, saveActivityLogs);
+          const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks);
+          if (!rackVal.ok) {
+            throw new HttpControlledError(400, { error: rackVal.error });
+          }
+        }
 
+        // ---------------------------------
 
-    const gs = changes.gameState || changes;
-    const finalServerUpdatedAt = Date.now();
+        const gs = changes.gameState || changes;
+        finalServerUpdatedAt = Date.now();
     if (gs) {
       const startTime = gs.startTime || Date.now();
       const lastUpdate = gs.lastUpdatedAt || Date.now();
@@ -7088,16 +7111,14 @@ app.post('/api/save-game', async (req, res) => {
       }
       if (gs.dailyActions) {
         if (typeof gs.dailyActions !== 'object' || Array.isArray(gs.dailyActions)) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({
+          throw new HttpControlledError(400, {
             error:
               'O formato dos dados diários (oficina) está incorrecto. Recarregue a página (F5).'
           });
         }
         const dv = validateDailyActionsForSave(gs.dailyActions, effectiveAdminOverride, Date.now());
         if (!dv.ok) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: dv.error });
+          throw new HttpControlledError(400, { error: dv.error });
         }
         if (dv.keys.length > 0) {
           await client.query(`
@@ -7115,19 +7136,17 @@ app.post('/api/save-game', async (req, res) => {
 
     if (changes.stock !== undefined && changes.stock !== null) {
       if (typeof changes.stock !== 'object' || Array.isArray(changes.stock)) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
+        throw new HttpControlledError(400, {
           error: 'O inventário foi enviado num formato inválido. Recarregue a página (F5).'
         });
       }
       const sv = await validateStockForSave(client, changes.stock);
       if (!sv.ok) {
-        await client.query('ROLLBACK');
         const samplesJson = JSON.stringify(sv.samples || []).slice(0, 900);
         console.warn(
           `[SaveGame] stock_validation_fail userId=${uid} reason=${sv.reason} sampleCount=${(sv.samples || []).length} keyCount=${Object.keys(changes.stock).length} samples=${samplesJson}`
         );
-        return res.status(400).json({ error: sv.error });
+        throw new HttpControlledError(400, { error: sv.error });
       }
       if (sv.itemIds.length > 0) {
         await client.query(`
@@ -7140,15 +7159,13 @@ app.post('/api/save-game', async (req, res) => {
 
     if (changes.unopenedBoxes !== undefined && changes.unopenedBoxes !== null) {
       if (typeof changes.unopenedBoxes !== 'object' || Array.isArray(changes.unopenedBoxes)) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
+        throw new HttpControlledError(400, {
           error: 'A lista de caixas foi enviada num formato inválido. Recarregue a página (F5).'
         });
       }
       const bv = await validateUnopenedBoxesForSave(client, changes.unopenedBoxes);
       if (!bv.ok) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: bv.error });
+        throw new HttpControlledError(400, { error: bv.error });
       }
       if (bv.boxIds.length > 0) {
         await client.query(`
@@ -7161,15 +7178,13 @@ app.post('/api/save-game', async (req, res) => {
 
     if (changes.storedBatteries) {
       if (!Array.isArray(changes.storedBatteries)) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
+        throw new HttpControlledError(400, {
           error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
         });
       }
       const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
       if (!batVal.ok) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: batVal.error });
+        throw new HttpControlledError(400, { error: batVal.error });
       }
       const incomingIds = changes.storedBatteries.map((b) => b.id);
       const batRm = await validateStoredBatteryWarehouseRemovalAllowed(
@@ -7369,8 +7384,7 @@ app.post('/api/save-game', async (req, res) => {
         adminOverride: effectiveAdminOverride
       });
       if (!wVal.ok) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: wVal.error });
+        throw new HttpControlledError(400, { error: wVal.error });
       }
       const workshopNorm = wVal.normalized;
 
@@ -7581,7 +7595,6 @@ app.post('/api/save-game', async (req, res) => {
           [uid, changes.claimedBoxes, Date.now()]);
       }
     }
-    let nftAutoSyncPayload = null;
     if (nftAutoSanitized && changes.placedRacks) {
       const stockRows = await client.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]);
       const stockObj = {};
@@ -7596,7 +7609,9 @@ app.post('/api/save-game', async (req, res) => {
       }));
       nftAutoSyncPayload = { placedRacks: changes.placedRacks, stock: stockObj, storedBatteries: bats };
     }
-    await client.query('COMMIT');
+    },
+    { timeout: 24000, maxWait: 5000 }
+    );
     for (const ev of saveActivityLogs) {
       await appendGameActivityLog(db, uid, ev.action, ev.meta);
     }
@@ -7616,7 +7631,7 @@ app.post('/api/save-game', async (req, res) => {
     }
     res.json(savePayload);
   } catch (e) {
-    await client.query('ROLLBACK');
+    if (respondIfHttpControlledError(res, e)) return;
     if (e instanceof StoredBatterySaveGuardError) {
       return res.status(409).json({ error: e.message, forceReload: true });
     }
@@ -7625,8 +7640,8 @@ app.post('/api/save-game', async (req, res) => {
       return res.status(400).json({ error: err.message });
     }
     console.error('[SaveGame] CRITICAL ERROR:', e);
-    sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
-  } finally { client.release(); }
+    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
+  }
 });
 
 // --- BACKUP SETTINGS API ---
@@ -7639,7 +7654,7 @@ app.get('/api/admin/backup-settings', isAdmin, async (req, res) => {
       intervalMinutes: parseInt(s.auto_backup_interval || '60', 10)
     });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -7653,7 +7668,7 @@ app.post('/api/admin/backup-settings', isAdmin, async (req, res) => {
 
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -7704,7 +7719,7 @@ app.get('/api/admin/recall-scan', isAdmin, async (req, res) => {
 
     res.json({ ok: true, summary, totalUsersChecked: totalUsers });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -7794,7 +7809,7 @@ app.post('/api/admin/recall-all-players-items', isAdmin, async (req, res) => {
 
   } catch (e) {
     console.error('[RecallAll] Erro critico no fluxo:', e);
-    sendInternalErrorShape(
+    sendInternalErrorShapeOrPrisma(
       res,
       'RecallAll',
       e,
@@ -7821,7 +7836,7 @@ app.post('/api/admin/impersonate', isAdmin, async (req, res) => {
     await db.query('UPDATE sessions SET user_id = $1, original_user_id = $2 WHERE session_id = $3', [targetId, adminId, sid]);
     clearAuthCookies(res);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/admin/stop-impersonate', async (req, res) => {
@@ -7840,21 +7855,21 @@ app.post('/api/admin/stop-impersonate', async (req, res) => {
     });
     await issueJwtAuthCookies(res, originalUid, req);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/stats/top-deposits', async (req, res) => {
   try {
     const resRows = await db.query('SELECT u.username, u.email, COALESCE(gs.total_usdc_deposited, 0) AS total FROM game_states gs JOIN users u ON u.id = gs.user_id ORDER BY total DESC LIMIT 10');
     res.json(resRows.rows.map(r => ({ username: r.username, email: r.email, totalUsdcDeposited: r.total })));
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/stats/top-withdrawals', async (req, res) => {
   try {
     const resRows = await db.query('SELECT u.username, u.email, COALESCE(gs.total_crypto_withdrawn, 0) AS total FROM game_states gs JOIN users u ON u.id = gs.user_id ORDER BY total DESC LIMIT 10');
     res.json(resRows.rows.map(r => ({ username: r.username, email: r.email, totalCryptoWithdrawn: r.total })));
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
@@ -7868,7 +7883,7 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
       activeMinersByCoin
     });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -7997,7 +8012,7 @@ app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
     });
   } catch (e) {
     console.error('Security Stats Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -8015,7 +8030,7 @@ app.post('/api/admin/security/blacklist', isAdmin, async (req, res) => {
       update: { reason: reason || 'Banned by Admin' }
     });
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.delete('/api/admin/security/blacklist/:ip', isAdmin, async (req, res) => {
@@ -8023,7 +8038,7 @@ app.delete('/api/admin/security/blacklist/:ip', isAdmin, async (req, res) => {
   try {
     await prisma.ip_blacklist.deleteMany({ where: { ip: String(ip) } });
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
@@ -8110,7 +8125,7 @@ app.get('/api/admin/market/listings', isAdmin, async (req, res) => {
         };
       })
     );
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 // --- PROMO CODES ---
@@ -8142,7 +8157,7 @@ app.get('/api/admin/promo-codes', isAdmin, async (req, res) => {
       };
     }));
     res.json(enriched);
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) => {
@@ -8163,7 +8178,7 @@ app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) 
       username: r.username,
       redeemedAt: Number(r.redeemed_at)
     })));
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
@@ -8191,7 +8206,7 @@ app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
       [code, lootBoxId || null, upgradeId || null, adminUpgradeId || null, type || 'per_player', now, expMs]
     );
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/admin/promo-codes/bulk-delete', isAdmin, async (req, res) => {
@@ -8221,7 +8236,7 @@ app.post('/api/admin/promo-codes/bulk-delete', isAdmin, async (req, res) => {
     } catch {
       /* ignore */
     }
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
   }
@@ -8233,7 +8248,7 @@ app.delete('/api/admin/promo-codes/:code', isAdmin, async (req, res) => {
     await db.query('DELETE FROM promo_code_redemptions WHERE code = $1', [code]);
     await db.query('DELETE FROM promo_codes WHERE code = $1', [code]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.put('/api/admin/promo-codes/:code/toggle', isAdmin, async (req, res) => {
@@ -8242,7 +8257,7 @@ app.put('/api/admin/promo-codes/:code/toggle', isAdmin, async (req, res) => {
     const { isActive } = req.body;
     await db.query('UPDATE promo_codes SET is_active = $1 WHERE code = $2', [isActive ? 1 : 0, code]);
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 // O backend agora é apenas API. O frontend é servido separadamente.
@@ -8256,7 +8271,7 @@ app.post('/api/admin/ranking-exclusion', isAdmin, async (req, res) => {
     dashboardStatsCache = null;
     lastDashboardFetch = 0;
     res.json({ ok: true });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 // --- GEMINI PROXY ENDPOINTS ---
@@ -8348,7 +8363,7 @@ app.get('/api/mining/coins', async (req, res) => {
     res.json(coins);
   } catch (e) {
     console.error(e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -8451,7 +8466,7 @@ name = EXCLUDED.name, symbol = EXCLUDED.symbol, network_hashrate = EXCLUDED.netw
     res.json({ ok: true, id });
   } catch (e) {
     console.error('Failed to save mining coin:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -8461,7 +8476,7 @@ app.delete('/api/mining/coins/:id', isAdmin, async (req, res) => {
     await db.query('DELETE FROM mining_coins WHERE id = $1', [id]);
     res.json({ ok: true });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -8622,7 +8637,7 @@ app.get('/api/exchange-settings', async (req, res) => {
       minExchangeAmount: min,
       exchangeFeePercent: fee
     });
-  } catch (e) { sendInternalError(res, req.originalUrl || 'api', e); }
+  } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
 app.post('/api/exchange-settings', isAdmin, async (req, res) => {
@@ -8641,7 +8656,7 @@ app.post('/api/exchange-settings', isAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch (e) {
     console.error('[API] Exchange Settings Save Error:', e); // DEBUG LOG
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -8833,7 +8848,7 @@ app.post('/api/withdraw', async (req, res) => {
   } catch (e) {
     if (client) await client.query('ROLLBACK');
     console.error('[Withdraw] Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     if (client) client.release();
   }
@@ -8867,7 +8882,7 @@ app.get('/api/admin/withdrawals', isAdmin, async (req, res) => {
       processedAt: r.processed_at ? Number(r.processed_at) : null
     })));
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -8914,7 +8929,7 @@ app.post('/api/admin/withdrawals/status', isAdmin, async (req, res) => {
   } catch (e) {
     if (client) await client.query('ROLLBACK');
     console.error('[AdminWithdrawStatus] Error:', e);
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     if (client) client.release();
   }
@@ -8946,7 +8961,7 @@ app.get('/api/admin/ranking', isAdmin, async (req, res) => {
       coins: coinsRes.rows
     });
   } catch (e) {
-    sendInternalError(res, req.originalUrl || 'api', e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 

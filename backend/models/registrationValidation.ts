@@ -1,4 +1,6 @@
 import { prisma } from '../config/prisma.js';
+import { HttpControlledError } from '../utils/apiErrorResponse.js';
+import { mapPrismaClientError } from '../utils/prismaHttpResponse.js';
 
 /** Cadastro público: apenas estes domínios (login continua permitindo qualquer e-mail já registado). */
 export const SIGNUP_ALLOWED_DOMAINS = new Set([
@@ -58,18 +60,17 @@ export type PolicyResult = { ok: true } | { ok: false; error: string };
  * Limite do **formulário de novo cadastro** (UI / política pública).
  * Login, recuperação e APIs de email usam o mesmo teto (`EMAIL_ADDRESS_MAX_LENGTH`).
  */
-export const SIGNUP_EMAIL_MAX_TOTAL = 35;
+export const SIGNUP_EMAIL_MAX_TOTAL = 50;
 
 /** Endereço completo: mesmo teto que o cadastro (política do produto). */
-export const EMAIL_ADDRESS_MAX_LENGTH = 35;
+export const EMAIL_ADDRESS_MAX_LENGTH = 50;
 
 export const USERNAME_MIN = 3;
-export const USERNAME_MAX = 35;
-export const PASSWORD_MIN = 8;
-/** Política pública: senha entre 8 e 10 caracteres (cadastro, login, recuperação, perfil). */
-export const PASSWORD_MAX = 10;
+export const USERNAME_MAX = 50;
+/** Política pública: senha sem mínimo de comprimento; teto 50 (cadastro, login, recuperação, perfil). */
+export const PASSWORD_MAX = 50;
 /** Código de indicação introduzido no registo (outro utilizador). */
-export const REFERRAL_CODE_MAX = 40;
+export const REFERRAL_CODE_MAX = 50;
 
 export function assertPublicSignupEmailAllowed(normalizedEmail: string): PolicyResult {
   if (normalizedEmail.length > SIGNUP_EMAIL_MAX_TOTAL) {
@@ -81,7 +82,14 @@ export function assertPublicSignupEmailAllowed(normalizedEmail: string): PolicyR
   }
   const local = normalizedEmail.slice(0, at);
   const domain = normalizedEmail.slice(at + 1).toLowerCase().trim();
-  if (!local || local.length > 64 || !domain || domain.includes('..') || domain.startsWith('.') || domain.endsWith('.')) {
+  if (
+    !local ||
+    !domain ||
+    local.length + 1 + domain.length > SIGNUP_EMAIL_MAX_TOTAL ||
+    domain.includes('..') ||
+    domain.startsWith('.') ||
+    domain.endsWith('.')
+  ) {
     return { ok: false, error: 'E-mail inválido.' };
   }
   if (/[<>'"\\]/.test(local) || /[<>'"\\]/.test(domain)) {
@@ -137,8 +145,8 @@ export function validateSignupPassword(raw: unknown, required: boolean): Passwor
   if (raw == null || typeof raw !== 'string') {
     return { ok: false, error: 'Defina uma palavra-passe.' };
   }
-  if (raw.length < PASSWORD_MIN) {
-    return { ok: false, error: `A palavra-passe deve ter pelo menos ${PASSWORD_MIN} caracteres.` };
+  if (raw.length === 0) {
+    return { ok: false, error: 'Defina uma palavra-passe.' };
   }
   if (raw.length > PASSWORD_MAX) {
     return {
@@ -185,7 +193,14 @@ export function validateLoginEmail(raw: unknown): PolicyResult {
   }
   const local = normalized.slice(0, at);
   const domain = normalized.slice(at + 1);
-  if (!local || local.length > 64 || !domain || domain.includes('..') || domain.startsWith('.') || domain.endsWith('.')) {
+  if (
+    !local ||
+    !domain ||
+    local.length + 1 + domain.length > EMAIL_ADDRESS_MAX_LENGTH ||
+    domain.includes('..') ||
+    domain.startsWith('.') ||
+    domain.endsWith('.')
+  ) {
     return { ok: false, error: 'Email inválido.' };
   }
   if (/[<>'"\\]/.test(local) || /[<>'"\\]/.test(domain)) {
@@ -198,12 +213,6 @@ export function validateLoginEmail(raw: unknown): PolicyResult {
 export function validateLoginPassword(raw: unknown): PolicyResult {
   if (raw == null || typeof raw !== 'string') {
     return { ok: false, error: 'Indique a palavra-passe.' };
-  }
-  if (raw.length < PASSWORD_MIN) {
-    return {
-      ok: false,
-      error: `Palavra-passe demasiado curta (mínimo ${PASSWORD_MIN} caracteres).`
-    };
   }
   if (raw.length > PASSWORD_MAX) {
     return {
@@ -262,6 +271,18 @@ export function validateOptionalAccessLevelId(raw: unknown): string | null | { e
   return raw;
 }
 
+function throwHttpFromPrisma(err: unknown, logCtx: string): never {
+  console.error(logCtx, err instanceof Error ? err.message : err);
+  const mapped = mapPrismaClientError(err);
+  if (mapped) {
+    throw new HttpControlledError(mapped.status, mapped.body);
+  }
+  throw new HttpControlledError(503, {
+    error: 'Não foi possível validar os dados. Tenta novamente.',
+    code: 'DB_READ'
+  });
+}
+
 /** Outro utilizador já usa este nome (comparação case-insensitive). */
 export async function getConflictingUserIdByUsername(
   username: string,
@@ -271,14 +292,18 @@ export async function getConflictingUserIdByUsername(
     excludeUserId != null && excludeUserId !== ''
       ? { not: Number(excludeUserId) }
       : undefined;
-  const r = await prisma.users.findFirst({
-    where: {
-      username: { equals: username, mode: 'insensitive' },
-      ...(ex != null ? { id: ex } : {})
-    },
-    select: { id: true }
-  });
-  return r?.id ?? null;
+  try {
+    const r = await prisma.users.findFirst({
+      where: {
+        username: { equals: username, mode: 'insensitive' },
+        ...(ex != null ? { id: ex } : {})
+      },
+      select: { id: true }
+    });
+    return r?.id ?? null;
+  } catch (e: unknown) {
+    throwHttpFromPrisma(e, '[getConflictingUserIdByUsername]');
+  }
 }
 
 /** E-mail já associado a outra conta. */
@@ -290,14 +315,18 @@ export async function getConflictingUserIdByEmail(
     excludeUserId != null && excludeUserId !== ''
       ? { not: Number(excludeUserId) }
       : undefined;
-  const r = await prisma.users.findFirst({
-    where: {
-      email: { equals: email, mode: 'insensitive' },
-      ...(ex != null ? { id: ex } : {})
-    },
-    select: { id: true }
-  });
-  return r?.id ?? null;
+  try {
+    const r = await prisma.users.findFirst({
+      where: {
+        email: { equals: email, mode: 'insensitive' },
+        ...(ex != null ? { id: ex } : {})
+      },
+      select: { id: true }
+    });
+    return r?.id ?? null;
+  } catch (e: unknown) {
+    throwHttpFromPrisma(e, '[getConflictingUserIdByEmail]');
+  }
 }
 
 export function validateAccessLevelIdsArray(raw: unknown): { ok: true; ids: string[] } | { ok: false; error: string } {

@@ -2,6 +2,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { GameState, Upgrade, User } from '../types';
 import { ShoppingCart, DollarSign, Package, Zap, Battery, Plus, Minus, Trash2, CheckCircle2, X, Hexagon, Clock, List, Cpu, Server, Plug, Wrench, Activity } from 'lucide-react';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
 
 interface UpgradeShopProps {
     gameState: GameState;
@@ -235,7 +236,11 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                             ${inCart > 0 ? 'bg-white dark:bg-slate-900 border-amber-200 dark:border-amber-800' : 'bg-slate-50 dark:bg-slate-950 border-slate-200 dark:border-slate-800'}
                           `}>
                                         {upgrade.image ? (
-                                            <img src={upgrade.image} alt={upgrade.name} className={`w-full h-full ${isRack ? 'object-contain' : 'object-cover'}`} />
+                                            <img
+                                                src={normalizePublicAssetUrl(upgrade.image) || upgrade.image}
+                                                alt={upgrade.name}
+                                                className={`w-full h-full ${isRack ? 'object-contain' : 'object-cover'}`}
+                                            />
                                         ) : (
                                             <span className="text-3xl relative z-10">{upgrade.icon}</span>
                                         )}

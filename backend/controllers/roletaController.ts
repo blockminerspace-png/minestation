@@ -12,7 +12,7 @@ import {
   normalizePromoCode,
   parseWonItemId
 } from '../validation/roletaValidation.js';
-import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 
 export type RoletaPlayerDeps = {
   authenticateToken: RequestHandler;
@@ -60,7 +60,8 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       return res.json({ code: code || null });
     } catch (e) {
       console.error('[Roleta pending-code]', e);
-      return res.status(500).json({ error: 'Erro interno' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/roleta/pending-code', e, 'Erro interno.');
+      return;
     }
   });
 
@@ -100,7 +101,7 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Wheel Roll]', e);
-      sendInternalErrorSafeMessage(res, 'POST /api/wheel/roll', e, 'Erro interno.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/wheel/roll', e, 'Erro interno.');
       return;
     }
   });
@@ -121,7 +122,8 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
       return res.json({ pending: Boolean(wonItemId), wonItemId });
     } catch (e) {
       console.error('[Wheel paid-pending]', e);
-      return res.status(500).json({ error: 'Erro interno' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/wheel/paid-pending', e, 'Erro interno.');
+      return;
     }
   });
 
@@ -159,7 +161,7 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Wheel paid-roll]', e);
-      sendInternalErrorSafeMessage(res, 'POST /api/wheel/paid-roll', e, 'Erro interno.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/wheel/paid-roll', e, 'Erro interno.');
       return;
     }
   });
@@ -196,7 +198,7 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Wheel paid-claim]', e);
-      sendInternalErrorSafeMessage(res, 'POST /api/wheel/paid-claim', e, 'Erro interno.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/wheel/paid-claim', e, 'Erro interno.');
       return;
     }
   });
@@ -242,7 +244,7 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[Roleta Claim]', e);
-      sendInternalErrorSafeMessage(res, 'POST /api/roleta/claim', e, 'Erro interno.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/roleta/claim', e, 'Erro interno.');
       return;
     }
   });

@@ -7,7 +7,6 @@ import { collectDeviceFingerprint } from '../utils/deviceFingerprint';
 import {
     AUTH_LOGIN_RECOVERY_EMAIL_MAX,
     AUTH_PASSWORD_MAX,
-    AUTH_PASSWORD_MIN,
     AUTH_REFERRAL_MAX,
     AUTH_SIGNUP_EMAIL_MAX,
     AUTH_USERNAME_MAX,
@@ -94,10 +93,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
     const handleRecoveryReset = async (e: React.FormEvent) => {
         e.preventDefault();
         setSuccessMessage(null);
-        if (password.length < AUTH_PASSWORD_MIN) {
-            setError(`A senha deve ter pelo menos ${AUTH_PASSWORD_MIN} caracteres.`);
-            return;
-        }
         if (password.length > AUTH_PASSWORD_MAX) {
             setError(`A senha pode ter no máximo ${AUTH_PASSWORD_MAX} caracteres.`);
             return;
@@ -149,10 +144,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
             const u = username.trim();
             if (u.length < AUTH_USERNAME_MIN || u.length > AUTH_USERNAME_MAX) {
                 setError(`O nome de utilizador deve ter entre ${AUTH_USERNAME_MIN} e ${AUTH_USERNAME_MAX} caracteres.`);
-                return;
-            }
-            if (password.length < AUTH_PASSWORD_MIN) {
-                setError(`A senha deve ter pelo menos ${AUTH_PASSWORD_MIN} caracteres.`);
                 return;
             }
             if (password.length > AUTH_PASSWORD_MAX) {
@@ -257,10 +248,6 @@ export const AuthPage: React.FC<AuthPageProps> = ({ onLogin, accessLevels = [] }
             }
             if (em.length > AUTH_LOGIN_RECOVERY_EMAIL_MAX) {
                 setError(`O email pode ter no máximo ${AUTH_LOGIN_RECOVERY_EMAIL_MAX} caracteres.`);
-                return;
-            }
-            if (pwd.length < AUTH_PASSWORD_MIN) {
-                setError(`Palavra-passe demasiado curta (mínimo ${AUTH_PASSWORD_MIN} caracteres).`);
                 return;
             }
             if (pwd.length > AUTH_PASSWORD_MAX) {

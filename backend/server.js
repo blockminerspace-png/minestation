@@ -33,7 +33,10 @@ import { registerLootBoxPlayerRoutes, registerLootBoxAdminRoutes } from './dist/
 import { registerRoletaPlayerRoutes } from './dist/controllers/roletaController.js';
 import { fetchWheelPrizesForApiConfig } from './dist/models/roletaModel.js';
 import { grantAdminUpgradeRewardsInTx, grantPassRewardsInTx } from './dist/models/adminUpgradeGrantModel.js';
-import { pgSqlTx } from './dist/lib/sqlTransaction.js';
+import { pgSqlTx, prismaTxToPoolLikeClient } from './dist/lib/sqlTransaction.js';
+import { getPublicBootstrapPayload } from './dist/lib/publicBootstrapPayload.js';
+import { getProfilePageBundlePayload } from './dist/lib/meBundlesPayload.js';
+import { getUpgradeAccountShopBundlePayload, loadAdminUpgradesForUser, loadAdminUpgradePurchaseIdsForUser, loadMyRigRoomsForUser, isEmailParamInvalid, normalizeEmailParam } from './dist/lib/meUpgradeShopBundlePayload.js';
 import { runReferralCommissionOnTx } from './dist/models/referralCommissionModel.js';
 import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemController.js';
 import { runBulkRoomBattery, isValidRoomId } from './dist/lib/roomBatteryBulk.js';
@@ -45,8 +48,10 @@ import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controlle
 import { createSupportTicketUploadMiddlewares, registerSupportTicketRoutes } from './dist/controllers/supportTicketController.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
-import { sendInternalError, sendInternalErrorSafeMessage, sendInternalErrorShape, HttpControlledError, respondIfHttpControlledError } from './dist/utils/apiErrorResponse.js';
+import { sendInternalErrorOrPrisma, sendInternalErrorSafeMessageOrPrisma, sendInternalErrorShapeOrPrisma, HttpControlledError, respondIfHttpControlledError } from './dist/utils/apiErrorResponse.js';
 import { appendGameActivityLogMongo, listGameActivityLogsMongo } from './dist/lib/mongoLogs.js';
+import { getSettingValue, getSettingsRecord, upsertSettingsEntries } from './dist/lib/settingsPrisma.js';
+import { getAdminMiningRankingPayload, getPublicMiningRankingPayload } from './dist/lib/miningRankingPrisma.js';
 import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
 import { ActivityThrottleMaps, resolveActivityThrottleConfig } from './dist/lib/activityThrottle.js';
 import { mountImageStaticMiddleware, registerImageAssetRoutes, runImageRootStartupOrganizeIfEnabled } from './dist/controllers/imageAssetController.js';
@@ -810,8 +815,8 @@ if (String(process.env.NODE_ENV || '').toLowerCase() === 'production' && !TRUST_
 }
 const isIpFromUser = async (ip) => {
     try {
-        const res = await db.query('SELECT 1 FROM user_history_ips WHERE ip = $1 LIMIT 1', [ip]);
-        return res.rowCount > 0;
+        const hit = await prisma.user_history_ips.findFirst({ where: { ip }, select: { user_id: true } });
+        return hit != null;
     }
     catch (e) {
         return false;
@@ -826,8 +831,8 @@ const checkIsAdmin = async (uid) => {
     if (!uid)
         return false;
     try {
-        const uRes = await db.query('SELECT is_admin FROM users WHERE id = $1', [uid]);
-        return !!uRes.rows[0]?.is_admin;
+        const r = await prisma.users.findUnique({ where: { id: uid }, select: { is_admin: true } });
+        return !!r?.is_admin;
     }
     catch (e) {
         console.error('[checkIsAdmin] Error:', e);
@@ -836,8 +841,15 @@ const checkIsAdmin = async (uid) => {
 };
 async function loadAdminGateContext(userId) {
     try {
-        const uRes = await db.query('SELECT is_admin, email, COALESCE(is_super_admin, 0) AS is_super_admin, admin_permissions FROM users WHERE id = $1', [userId]);
-        const row = uRes.rows[0];
+        const row = await prisma.users.findUnique({
+            where: { id: userId },
+            select: {
+                is_admin: true,
+                email: true,
+                is_super_admin: true,
+                admin_permissions: true
+            }
+        });
         if (!row || !row.is_admin)
             return null;
         let parsedPm = null;
@@ -1017,8 +1029,10 @@ async function resolveUserIdFromAccessCookieOrSid(req) {
     const sid = parseCookies(req).sid;
     if (!sid)
         return null;
-    const sRes = await db.query('SELECT user_id, expires_at FROM sessions WHERE session_id = $1', [sid]);
-    const s = sRes.rows[0];
+    const s = await prisma.sessions.findUnique({
+        where: { session_id: sid },
+        select: { user_id: true, expires_at: true }
+    });
     if (!s || Number(s.expires_at) < Date.now())
         return null;
     const uid = Number(s.user_id);
@@ -1142,8 +1156,8 @@ app.use(helmet({
 app.use(async (req, res, next) => {
     const ip = getClientIp(req);
     try {
-        const blRes = await db.query('SELECT 1 FROM ip_blacklist WHERE ip = $1', [ip]);
-        if (blRes.rowCount > 0) {
+        const blHit = await prisma.ip_blacklist.findUnique({ where: { ip }, select: { ip: true } });
+        if (blHit) {
             // Return JSON to avoid frontend parse errors
             return res.status(403).json({ error: 'Sua conexão foi bloqueada por razões de segurança.' });
         }
@@ -1234,6 +1248,42 @@ app.use((req, res, next) => {
     next();
 });
 mountImageStaticMiddleware(app, IMG_UPLOADS_DIR, IMG_DIR);
+// --- Bootstrap SPA (catálogo + economia num único GET; ?lite=1 para refresh leve) ---
+app.get('/api/bootstrap', async (req, res) => {
+    try {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+        res.setHeader('Pragma', 'no-cache');
+        const l = req.query.lite;
+        const lite = l === '1' || String(l).toLowerCase() === 'true';
+        const data = await getPublicBootstrapPayload(req.userId, lite);
+        res.json(data);
+    }
+    catch (e) {
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+    }
+});
+app.get('/api/me/profile-bundle', authenticateToken, async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
+    try {
+        const data = await getProfilePageBundlePayload(req.userId);
+        res.json(data);
+    }
+    catch (e) {
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+    }
+});
+app.get('/api/me/upgrade-shop-bundle', authenticateToken, async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
+    try {
+        const data = await getUpgradeAccountShopBundlePayload(req.userId);
+        res.json(data);
+    }
+    catch (e) {
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+    }
+});
 // --- Moved utilities below ---
 /** Reduz writes em `users.last_active_at` e `user_history_ips` (hot path em todo pedido autenticado). Por worker. */
 const activityThrottleMaps = new ActivityThrottleMaps(resolveActivityThrottleConfig());
@@ -1251,20 +1301,29 @@ app.use(async (req, res, next) => {
         const writeHistoryIp = activityThrottleMaps.shouldWriteHistoryIp(uid, ip, now);
         activityThrottleMaps.prune(now);
         if (writeLastActive) {
-            await db.query('UPDATE users SET last_active_at = $1 WHERE id = $2', [now, uid]);
+            await prisma.users.update({
+                where: { id: uid },
+                data: { last_active_at: BigInt(now) }
+            });
             activityThrottleMaps.markLastActiveWritten(uid, now);
         }
         const sid = parseCookies(req).sid;
         if (sid) {
             const seenThrottle = now - 45000;
-            await db.query('UPDATE sessions SET last_seen_at = $1 WHERE session_id = $2 AND (last_seen_at < $3 OR last_seen_at = 0)', [now, sid, seenThrottle]);
+            await prisma.sessions.updateMany({
+                where: {
+                    session_id: sid,
+                    OR: [{ last_seen_at: { lt: BigInt(seenThrottle) } }, { last_seen_at: BigInt(0) }]
+                },
+                data: { last_seen_at: BigInt(now) }
+            });
         }
         if (writeHistoryIp) {
-            await db.query(`
-      INSERT INTO user_history_ips (user_id, ip, last_used_at) 
-      VALUES ($1, $2, $3) 
-      ON CONFLICT (user_id, ip) DO UPDATE SET last_used_at = $3
-    `, [uid, ip, now]);
+            await prisma.user_history_ips.upsert({
+                where: { user_id_ip: { user_id: uid, ip } },
+                create: { user_id: uid, ip, last_used_at: BigInt(now) },
+                update: { last_used_at: BigInt(now) }
+            });
             activityThrottleMaps.markHistoryIpWritten(uid, ip, now);
         }
     }
@@ -1410,12 +1469,15 @@ startMiningYieldCron(db);
 // --- CHARGING HISTORY ENDPOINTS ---
 app.get('/api/charging-history', authenticateToken, async (req, res) => {
     try {
-        const userRes = await db.query('SELECT email FROM users WHERE id = $1', [req.userId]);
-        if (userRes.rowCount === 0)
+        const u = await prisma.users.findUnique({ where: { id: req.userId }, select: { email: true } });
+        if (!u)
             return res.status(404).json({ error: 'User not found' });
-        const email = userRes.rows[0].email;
-        const historyRes = await db.query('SELECT * FROM charging_history WHERE user_email = $1 ORDER BY timestamp DESC LIMIT 100', [email]);
-        res.json(historyRes.rows);
+        const rows = await prisma.charging_history.findMany({
+            where: { user_email: u.email },
+            orderBy: { timestamp: 'desc' },
+            take: 100
+        });
+        res.json(rows);
     }
     catch (e) {
         console.error('[ChargingHistory] Error fetching:', e);
@@ -1425,19 +1487,31 @@ app.get('/api/charging-history', authenticateToken, async (req, res) => {
 app.post('/api/charging-history/log', authenticateToken, async (req, res) => {
     const { action, workshop_slot_index, component_slot_id, battery_instance_id, battery_item_id, charge_amount, stock_confirmed, details } = req.body;
     try {
-        const userRes = await db.query('SELECT email FROM users WHERE id = $1', [req.userId]);
-        if (userRes.rowCount === 0)
+        const u = await prisma.users.findUnique({ where: { id: req.userId }, select: { email: true } });
+        if (!u)
             return res.status(404).json({ error: 'User not found' });
-        const email = userRes.rows[0].email;
-        await db.query(`
-      INSERT INTO charging_history (
-        user_email, action, workshop_slot_index, component_slot_id, 
-        battery_instance_id, battery_item_id, charge_amount, stock_confirmed, details
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-    `, [
-            email, action, workshop_slot_index, component_slot_id,
-            battery_instance_id, battery_item_id, charge_amount, !!stock_confirmed, details || {}
-        ]);
+        const detailsJson = details && typeof details === 'object' && !Array.isArray(details)
+            ? details
+            : {};
+        await prisma.charging_history.create({
+            data: {
+                user_email: u.email,
+                action: String(action ?? ''),
+                workshop_slot_index: workshop_slot_index === undefined || workshop_slot_index === null
+                    ? null
+                    : Number(workshop_slot_index),
+                component_slot_id: component_slot_id === undefined || component_slot_id === null
+                    ? null
+                    : String(component_slot_id),
+                battery_instance_id: battery_instance_id === undefined || battery_instance_id === null
+                    ? null
+                    : String(battery_instance_id),
+                battery_item_id: battery_item_id === undefined || battery_item_id === null ? null : String(battery_item_id),
+                charge_amount: charge_amount === undefined || charge_amount === null ? null : Number(charge_amount),
+                stock_confirmed: !!stock_confirmed,
+                details: detailsJson
+            }
+        });
         res.json({ ok: true });
     }
     catch (e) {
@@ -1453,36 +1527,45 @@ app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error(e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/wheel/config', isAdmin, async (req, res) => {
     const items = req.body; // Array of items
-    const client = await db.connect();
+    if (!Array.isArray(items)) {
+        return res.status(400).json({ error: 'Lista de prémios inválida' });
+    }
     try {
-        await client.query('BEGIN');
-        await client.query('DELETE FROM wheel_prizes'); // Replace all
-        for (const item of items) {
-            await client.query('INSERT INTO wheel_prizes (id, label, weight, color, item_id) VALUES ($1, $2, $3, $4, $5)', [item.id, item.label, item.weight, item.color, item.itemId]);
-        }
-        await client.query('COMMIT');
+        await prisma.$transaction(async (tx) => {
+            await tx.wheel_prizes.deleteMany({});
+            for (const item of items) {
+                await tx.wheel_prizes.create({
+                    data: {
+                        id: String(item.id),
+                        label: String(item.label),
+                        weight: Number(item.weight),
+                        color: String(item.color),
+                        item_id: item.itemId != null && String(item.itemId).trim() !== '' ? String(item.itemId) : null
+                    }
+                });
+            }
+        });
         res.json({ ok: true });
     }
     catch (e) {
-        await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/wheel/players', isAdmin, async (req, res) => {
     try {
-        const r = await db.query('SELECT * FROM wheel_players ORDER BY added_at DESC');
-        res.json(r.rows);
+        const rows = await prisma.wheel_players.findMany({ orderBy: { added_at: 'desc' } });
+        res.json(rows.map((r) => ({
+            username: r.username,
+            added_at: Number(r.added_at)
+        })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/wheel/players', isAdmin, async (req, res) => {
@@ -1490,186 +1573,38 @@ app.post('/api/admin/wheel/players', isAdmin, async (req, res) => {
     if (!username)
         return res.status(400).json({ error: 'Username required' });
     try {
-        await db.query('INSERT INTO wheel_players (username, added_at) VALUES ($1, $2) ON CONFLICT (username) DO UPDATE SET added_at = $2', [username, Date.now()]);
+        const at = BigInt(Date.now());
+        await prisma.wheel_players.upsert({
+            where: { username: String(username) },
+            create: { username: String(username), added_at: at },
+            update: { added_at: at }
+        });
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- MINING RANKING (PUBLIC) ---
 app.get('/api/ranking/public', authenticateToken, async (req, res) => {
-    const client = await db.connect();
     try {
-        const coinsRes = await client.query('SELECT id, name, symbol FROM mining_coins');
-        const coinsMap = new Map();
-        coinsRes.rows.forEach(c => coinsMap.set(c.id, c));
-        const upgradesRes = await client.query('SELECT * FROM upgrades');
-        const upgradesMap = new Map();
-        upgradesRes.rows.forEach(u => upgradesMap.set(u.id, u));
-        const racksRes = await client.query(`
-      SELECT pr.*, u.username 
-      FROM placed_racks pr
-      JOIN users u ON pr.user_id = u.id
-      WHERE pr.is_on = 1 
-      AND pr.wiring_id IS NOT NULL 
-      AND pr.battery_id IS NOT NULL
-      AND u.is_blocked = 0
-      AND u.ranking_excluded = 0
-    `);
-        const rankingData = new Map();
-        for (const rack of racksRes.rows) {
-            if (!rack.selected_coin_id)
-                continue;
-            const coinId = rack.selected_coin_id;
-            if (!coinsMap.has(coinId))
-                continue;
-            const battDef = upgradesMap.get(rack.battery_id);
-            const isInfinite = battDef && battDef.power_capacity === -1;
-            if (!isInfinite && rack.current_charge <= 0)
-                continue;
-            const slotsRes = await client.query('SELECT machine_item_id FROM rack_slots WHERE rack_id = $1', [rack.id]);
-            let rackBaseProd = 0;
-            slotsRes.rows.forEach(s => {
-                if (s.machine_item_id) {
-                    const up = upgradesMap.get(s.machine_item_id);
-                    if (up && up.base_production)
-                        rackBaseProd += up.base_production;
-                }
-            });
-            if (rackBaseProd === 0)
-                continue;
-            const multiRes = await client.query('SELECT multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1', [rack.id]);
-            let multiplierFactor = 1;
-            multiRes.rows.forEach(m => {
-                if (m.multiplier_item_id) {
-                    const up = upgradesMap.get(m.multiplier_item_id);
-                    if (up && up.multiplier)
-                        multiplierFactor += up.multiplier;
-                }
-            });
-            const totalPower = rackBaseProd * multiplierFactor;
-            if (!rankingData.has(rack.user_id)) {
-                rankingData.set(rack.user_id, {
-                    user_id: rack.user_id,
-                    username: rack.username,
-                    coins: {}
-                });
-            }
-            const uData = rankingData.get(rack.user_id);
-            if (!uData.coins[coinId])
-                uData.coins[coinId] = 0;
-            uData.coins[coinId] += totalPower;
-        }
-        const rankingList = Array.from(rankingData.values());
-        res.json({
-            timestamp: Date.now(),
-            ranking: rankingList,
-            coins: Array.from(coinsMap.values())
-        });
+        const payload = await getPublicMiningRankingPayload();
+        res.json(payload);
     }
     catch (e) {
         console.error('Public Ranking Error:', e);
         res.status(500).json({ error: 'Erro ao obter ranking.' });
     }
-    finally {
-        client.release();
-    }
 });
 // --- MINING RANKING ---
 app.get('/api/admin/ranking', isAdmin, async (req, res) => {
-    const client = await db.connect();
     try {
-        // Buscar todas as configurações necessárias
-        const coinsRes = await client.query('SELECT id, name, symbol FROM mining_coins');
-        const coinsMap = new Map();
-        coinsRes.rows.forEach(c => coinsMap.set(c.id, c));
-        const upgradesRes = await client.query('SELECT * FROM upgrades');
-        const upgradesMap = new Map();
-        upgradesRes.rows.forEach(u => upgradesMap.set(u.id, u));
-        // 1. Obter todos os usuários (que não estão bloqueados nem excluídos do ranking)
-        const usersRes = await client.query('SELECT id, username FROM users WHERE is_blocked = 0 AND ranking_excluded = 0');
-        const rankingData = new Map();
-        usersRes.rows.forEach(u => {
-            rankingData.set(u.id, {
-                user_id: u.id,
-                username: u.username,
-                coins: {}, // Poder de mineração
-                balances: {} // Saldo real
-            });
-        });
-        // 2. Buscar racks ativos para calcular PODER de mineração
-        const racksRes = await client.query(`
-      SELECT pr.* FROM placed_racks pr
-      JOIN users u ON pr.user_id = u.id
-      WHERE pr.is_on = 1 
-      AND pr.wiring_id IS NOT NULL 
-      AND pr.battery_id IS NOT NULL
-      AND u.is_blocked = 0
-      AND u.ranking_excluded = 0
-    `);
-        for (const rack of racksRes.rows) {
-            if (!rack.selected_coin_id || !coinsMap.has(rack.selected_coin_id))
-                continue;
-            const battDef = upgradesMap.get(rack.battery_id);
-            const isInfinite = battDef && battDef.power_capacity === -1;
-            if (!isInfinite && rack.current_charge <= 0)
-                continue;
-            const slotsRes = await client.query('SELECT machine_item_id FROM rack_slots WHERE rack_id = $1', [rack.id]);
-            let rackBaseProd = 0;
-            slotsRes.rows.forEach(s => {
-                if (s.machine_item_id) {
-                    const up = upgradesMap.get(s.machine_item_id);
-                    if (up && up.base_production)
-                        rackBaseProd += up.base_production;
-                }
-            });
-            if (rackBaseProd === 0)
-                continue;
-            const multiRes = await client.query('SELECT multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1', [rack.id]);
-            let multiplierFactor = 1;
-            multiRes.rows.forEach(m => {
-                if (m.multiplier_item_id) {
-                    const up = upgradesMap.get(m.multiplier_item_id);
-                    if (up && up.multiplier)
-                        multiplierFactor += up.multiplier;
-                }
-            });
-            const totalRackPower = rackBaseProd * multiplierFactor;
-            const userEntry = rankingData.get(rack.user_id);
-            if (userEntry) {
-                userEntry.coins[rack.selected_coin_id] = (userEntry.coins[rack.selected_coin_id] || 0) + totalRackPower;
-            }
-        }
-        // 3. Buscar saldos de moedas mineráveis
-        const coinIdsForBalances = Array.from(coinsMap.keys());
-        if (coinIdsForBalances.length > 0) {
-            const balancesRes = await client.query('SELECT user_id, coin_id, amount FROM coin_balances WHERE coin_id = ANY($1)', [coinIdsForBalances]);
-            balancesRes.rows.forEach(b => {
-                const userEntry = rankingData.get(b.user_id);
-                if (userEntry) {
-                    userEntry.balances[b.coin_id] = b.amount;
-                }
-            });
-        }
-        // 4. Formatar e filtrar (remover quem não tem nada)
-        const result = Array.from(rankingData.values()).filter(u => {
-            const hasPower = Object.values(u.coins).some(v => Number(v) > 0);
-            const hasBalance = Object.values(u.balances).some(v => Number(v) > 0);
-            return hasPower || hasBalance;
-        });
-        res.json({
-            timestamp: Date.now(),
-            ranking: result,
-            coins: Array.from(coinsMap.values())
-        });
+        const payload = await getAdminMiningRankingPayload();
+        res.json(payload);
     }
     catch (e) {
         console.error('Admin Ranking Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- COIN BALANCE UPDATE (ADMIN) ---
@@ -1690,7 +1625,7 @@ app.post('/api/admin/update-coin-balance', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Update Coin Balance Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -1735,7 +1670,7 @@ app.post('/api/admin/bulk-update-coin-balance', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('Bulk Update Coin Balance Error:', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno no servidor.');
+        sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno no servidor.');
     }
     finally {
         client.release();
@@ -1824,7 +1759,7 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Economy Stats Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -1845,8 +1780,7 @@ app.get('/api/admin/etherscan/treasury-token-txs', isAdmin, async (req, res) => 
     const legacyLaunchTreasury = '0x33d2406707e5e4b314d15784e73bb08f0c46db42'.toLowerCase();
     let configuredTreasury = '';
     try {
-        const cfg = await db.query("SELECT value FROM settings WHERE key = 'web3_deposit_wallet' LIMIT 1");
-        const raw = cfg.rows[0]?.value;
+        const raw = await getSettingValue('web3_deposit_wallet');
         if (typeof raw === 'string') {
             const t = raw.trim().toLowerCase();
             if (/^0x[a-f0-9]{40}$/.test(t))
@@ -1883,34 +1817,42 @@ app.post('/api/admin/economy-settings', isAdmin, async (req, res) => {
         return res.status(400).json({ error: 'Missing parameters' });
     }
     try {
-        const result = await db.query('UPDATE mining_coins SET network_hashrate = $1, block_reward = $2 WHERE id = $3 RETURNING *', [networkHashrate, blockReward, coinId]);
-        if (result.rowCount === 0)
+        const updated = await prisma.mining_coins.updateMany({
+            where: { id: String(coinId) },
+            data: { network_hashrate: Number(networkHashrate), block_reward: Number(blockReward) }
+        });
+        if (updated.count === 0)
             return res.status(404).json({ error: 'Coin not found' });
-        res.json({ ok: true, coin: result.rows[0] });
+        const coin = await prisma.mining_coins.findUnique({ where: { id: String(coinId) } });
+        res.json({ ok: true, coin });
     }
     catch (e) {
         console.error('Update Economy Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/wheel/players/:username', isAdmin, async (req, res) => {
     const { username } = req.params;
     try {
-        await db.query('DELETE FROM wheel_players WHERE username = $1', [username]);
+        await prisma.wheel_players.deleteMany({ where: { username: String(username) } });
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- WALLET LABELS ---
 app.get('/api/wallet-labels', isAdmin, async (req, res) => {
     try {
-        const r = await db.query('SELECT * FROM wallet_labels');
-        res.json(r.rows);
+        const rows = await prisma.wallet_labels.findMany();
+        res.json(rows.map((r) => ({
+            address: r.address,
+            label: r.label,
+            updated_at: Number(r.updated_at)
+        })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/wallet-labels', isAdmin, async (req, res) => {
@@ -1918,11 +1860,16 @@ app.post('/api/wallet-labels', isAdmin, async (req, res) => {
     if (!address || !label)
         return res.status(400).json({ error: 'Missing fields' });
     try {
-        await db.query('INSERT INTO wallet_labels (address, label, updated_at) VALUES ($1, $2, $3) ON CONFLICT (address) DO UPDATE SET label = $2, updated_at = $3', [address, label, Date.now()]);
+        const at = BigInt(Date.now());
+        await prisma.wallet_labels.upsert({
+            where: { address: String(address) },
+            create: { address: String(address), label: String(label), updated_at: at },
+            update: { label: String(label), updated_at: at }
+        });
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // API UTILITIES
@@ -1969,46 +1916,33 @@ const assertPublicSignupEmailAllowed = (normalizedEmail) => {
 // Concessão de pacotes / recompensas de pass: `grantAdminUpgradeRewardsInTx` e `grantPassRewardsInTx` em `models/adminUpgradeGrantModel.ts`.
 app.get('/api/admin-upgrades', async (req, res) => {
     try {
-        let isAdminUser = false;
-        let userRoomIds = [];
-        if (req.userId) {
-            const uRes = await db.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
-            if (uRes.rows[0]?.is_admin)
-                isAdminUser = true;
-            const userRooms = await db.query('SELECT room_id FROM user_rig_rooms WHERE user_id = $1', [req.userId]);
-            userRoomIds = userRooms.rows.map(r => r.room_id);
-        }
-        const query = isAdminUser ? 'SELECT * FROM admin_upgrades ORDER BY created_at DESC' : 'SELECT * FROM admin_upgrades WHERE is_active = 1 ORDER BY created_at DESC';
-        const upsRes = await db.query(query);
-        const itemsRes = await db.query('SELECT * FROM admin_upgrade_items');
-        const boxesRes = await db.query('SELECT * FROM admin_upgrade_boxes');
-        const passesRes = await db.query('SELECT * FROM admin_upgrade_passes');
-        const coinsRes = await db.query('SELECT * FROM admin_upgrade_coins');
-        const visibilityRes = await db.query('SELECT * FROM admin_upgrade_visibility');
-        const itemsMap = itemsRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push({ itemId: r.item_id, qty: r.qty }); return acc; }, {});
-        const boxesMap = boxesRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push({ boxId: r.box_id, qty: r.qty }); return acc; }, {});
-        const passesMap = passesRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push(r.pass_id); return acc; }, {});
-        const coinsMap = coinsRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push({ coinId: r.coin_id, amount: r.amount }); return acc; }, {});
-        const visibilityMap = visibilityRes.rows.reduce((acc, r) => { (acc[r.upgrade_id] = acc[r.upgrade_id] || []).push(r.access_level_id); return acc; }, {});
-        const list = upsRes.rows.map(u => ({
-            id: u.id,
-            name: u.name,
-            description: u.description,
-            priceUsdc: u.price_usdc,
-            grantUsdc: u.grant_usdc,
-            grantAccessLevelId: u.grant_access_level_id,
-            isActive: !!u.is_active,
-            items: itemsMap[u.id] || [],
-            boxes: boxesMap[u.id] || [],
-            passes: passesMap[u.id] || [],
-            coins: coinsMap[u.id] || [],
-            visibleToAccessLevelIds: visibilityMap[u.id] || [],
-            alreadyOwned: (u.id === '53f0c699-0471-4e65-a147-17064e3aafe0' && userRoomIds.includes('room_1765936323521'))
-        }));
+        const list = await loadAdminUpgradesForUser(req.userId);
         res.json(list);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+    }
+});
+app.get('/api/admin-upgrade-purchases/:email', authenticateToken, async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
+    const email = normalizeEmailParam(req.params.email);
+    if (isEmailParamInvalid(email)) {
+        return res.status(400).json({ error: 'Email inválido' });
+    }
+    try {
+        const uidRes = await db.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [email]);
+        if (!uidRes.rowCount)
+            return res.status(404).json({ error: 'Usuário não encontrado' });
+        const uid = uidRes.rows[0].id;
+        if (Number(uid) !== Number(req.userId)) {
+            return res.status(403).json({ error: 'Acesso negado' });
+        }
+        const ids = await loadAdminUpgradePurchaseIdsForUser(Number(uid));
+        res.json(ids);
+    }
+    catch (e) {
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
@@ -2051,7 +1985,7 @@ app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('Failed to save admin upgrade', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -2059,15 +1993,16 @@ app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
 });
 app.delete('/api/admin-upgrades/:id', isAdmin, async (req, res) => {
     const { id } = req.params;
+    const purchased = await prisma.admin_upgrade_purchases.findFirst({
+        where: { upgrade_id: String(id) },
+        select: { user_id: true }
+    });
+    if (purchased) {
+        return res.status(400).send('Este upgrade já foi comprado por usuários e não pode ser excluído.');
+    }
     const client = await db.connect();
     try {
         await client.query('BEGIN');
-        // Check for existing purchases
-        const check = await client.query('SELECT 1 FROM admin_upgrade_purchases WHERE upgrade_id = $1 LIMIT 1', [id]);
-        if (check.rows.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(400).send('Este upgrade já foi comprado por usuários e não pode ser excluído.');
-        }
         await client.query('DELETE FROM admin_upgrade_items WHERE upgrade_id = $1', [id]);
         await client.query('DELETE FROM admin_upgrade_boxes WHERE upgrade_id = $1', [id]);
         await client.query('DELETE FROM admin_upgrade_passes WHERE upgrade_id = $1', [id]);
@@ -2081,7 +2016,7 @@ app.delete('/api/admin-upgrades/:id', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('Failed to delete admin upgrade', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -2162,7 +2097,7 @@ app.post('/api/admin-upgrades/purchase', async (req, res) => {
         if (respondIfHttpControlledError(res, e))
             return;
         console.error('Purchase error:', e);
-        sendInternalErrorShape(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
+        sendInternalErrorShapeOrPrisma(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
     }
 });
 /** Caminhos de imagem relativos sem `/` inicial quebram no SPA; normaliza na API. */
@@ -2190,17 +2125,25 @@ app.get('/api/upgrades', async (req, res) => {
     try {
         let isAdminUser = false;
         if (req.userId) {
-            const uRes = await db.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
-            if (uRes.rows[0]?.is_admin)
+            const uRow = await prisma.users.findUnique({
+                where: { id: req.userId },
+                select: { is_admin: true }
+            });
+            if (uRow?.is_admin)
                 isAdminUser = true;
         }
-        const query = isAdminUser
-            ? "SELECT * FROM upgrades WHERE id !~ '^temp_legacy_' AND (category IS DISTINCT FROM 'legacy-temp')"
-            : 'SELECT * FROM upgrades WHERE is_active = 1';
-        const rowsRes = await db.query(query);
-        const rows = rowsRes.rows;
-        const compatRowsRes = await db.query('SELECT * FROM upgrade_compat_racks');
-        const compatRows = compatRowsRes.rows;
+        const rows = await prisma.upgrades.findMany({
+            where: isAdminUser
+                ? {
+                    AND: [
+                        { NOT: { id: { startsWith: 'temp_legacy_' } } },
+                        { category: { not: 'legacy-temp' } },
+                        { type: { not: 'legacy-temp' } }
+                    ]
+                }
+                : { is_active: 1 }
+        });
+        const compatRows = await prisma.upgrade_compat_racks.findMany();
         const compatMap = compatRows.reduce((acc, r) => {
             acc[r.upgrade_id] = acc[r.upgrade_id] || [];
             acc[r.upgrade_id].push(r.rack_id);
@@ -2225,7 +2168,7 @@ app.get('/api/upgrades', async (req, res) => {
             nftContract: r.nft_contract ?? undefined,
             nftTokenId: r.nft_token_id ?? undefined,
             maxGlobalStock: r.max_global_stock ?? undefined,
-            totalSold: r.total_sold ?? 0,
+            totalSold: Number(r.total_sold) || 0,
             image: normalizePublicAssetUrl(r.image) ?? undefined,
             layout: r.layout ? (() => { try {
                 return JSON.parse(r.layout);
@@ -2242,7 +2185,7 @@ app.get('/api/upgrades', async (req, res) => {
         res.json(upgrades);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/upgrades', isAdmin, async (req, res) => {
@@ -2318,7 +2261,7 @@ app.post('/api/upgrades', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[Upgrades API] Error saving upgrades:', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno ao salvar upgrades.');
+        sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno ao salvar upgrades.');
     }
     finally {
         client.release();
@@ -2345,15 +2288,14 @@ app.post('/api/upgrades/buy', async (req, res) => {
             return res.status(400).json({ error: 'Quantidade inválida.' });
         }
     }
+    const hwVal = await getSettingValue('hardware_market_enabled');
+    if (hwVal != null && hwVal !== '1') {
+        return res.status(403).json({ error: 'Mercado de hardware pausado.' });
+    }
     const client = await db.connect();
     try {
         const uid = req.userId;
         await client.query('BEGIN');
-        const hwDis = await client.query("SELECT value FROM settings WHERE key = 'hardware_market_enabled'");
-        if (hwDis.rows[0] && hwDis.rows[0].value !== '1') {
-            await client.query('ROLLBACK');
-            return res.status(403).json({ error: 'Mercado de hardware pausado.' });
-        }
         const upgradeIds = Object.keys(cart).sort();
         const upgradesRes = await client.query(`SELECT id, base_cost, name, sell_in_hardware_market, status, max_global_stock, total_sold,
               COALESCE(is_active, 1) AS ia, COALESCE(is_nft, 0) AS is_nft
@@ -2455,34 +2397,36 @@ app.post('/api/upgrades/buy', async (req, res) => {
             return res.status(Number.isInteger(err.httpStatus) ? err.httpStatus : 400).json({ error: err.message });
         }
         console.error('[BuyUpgrades] Error:', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao processar compra.');
+        sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao processar compra.');
     }
     finally {
         client.release();
     }
 });
 async function fetchMonetizationSettingsObject() {
-    const applixirEnabledRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_enabled'");
-    const applixirSiteIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_site_id'");
-    const applixirZoneIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_zone_id'");
-    const applixirAccountIdRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_account_id'");
-    const applixirRewardMsgRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_reward_message'");
-    const applixirCallbackSecretRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_callback_secret'");
-    const ezoicEnabledRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_enabled'");
-    const ezoicPubIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_publisher_id'");
-    const ezoicAppIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_app_id'");
-    const ezoicPlaceholderIdRes = await db.query("SELECT value FROM settings WHERE key = 'ezoic_placeholder_id'");
+    const s = await getSettingsRecord([
+        'applixir_enabled',
+        'applixir_site_id',
+        'applixir_zone_id',
+        'applixir_account_id',
+        'applixir_reward_message',
+        'applixir_callback_secret',
+        'ezoic_enabled',
+        'ezoic_publisher_id',
+        'ezoic_app_id',
+        'ezoic_placeholder_id'
+    ]);
     return {
-        applixirEnabled: (applixirEnabledRes.rows[0]?.value === '1'),
-        applixirSiteId: applixirSiteIdRes.rows[0]?.value || '',
-        applixirZoneId: applixirZoneIdRes.rows[0]?.value || '',
-        applixirAccountId: applixirAccountIdRes.rows[0]?.value || '',
-        applixirRewardMessage: applixirRewardMsgRes.rows[0]?.value || 'Parabéns! Você ganhou {reward} W/h',
-        applixirCallbackSecret: applixirCallbackSecretRes.rows[0]?.value || '',
-        ezoicEnabled: (ezoicEnabledRes.rows[0]?.value === '1'),
-        ezoicPublisherId: ezoicPubIdRes.rows[0]?.value || '',
-        ezoicAppId: ezoicAppIdRes.rows[0]?.value || '',
-        ezoicPlaceholderId: ezoicPlaceholderIdRes.rows[0]?.value || ''
+        applixirEnabled: s.applixir_enabled === '1',
+        applixirSiteId: s.applixir_site_id || '',
+        applixirZoneId: s.applixir_zone_id || '',
+        applixirAccountId: s.applixir_account_id || '',
+        applixirRewardMessage: s.applixir_reward_message || 'Parabéns! Você ganhou {reward} W/h',
+        applixirCallbackSecret: s.applixir_callback_secret || '',
+        ezoicEnabled: s.ezoic_enabled === '1',
+        ezoicPublisherId: s.ezoic_publisher_id || '',
+        ezoicAppId: s.ezoic_app_id || '',
+        ezoicPlaceholderId: s.ezoic_placeholder_id || ''
     };
 }
 /** Público: nunca envia applixirCallbackSecret (validação de reward fica no servidor). */
@@ -2494,7 +2438,7 @@ app.get('/api/monetization-settings', async (req, res) => {
         res.json(publicSettings);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/monetization-settings', isAdmin, async (req, res) => {
@@ -2504,34 +2448,33 @@ app.get('/api/admin/monetization-settings', isAdmin, async (req, res) => {
         res.json(settings);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/monetization-settings', isAdmin, async (req, res) => {
     const { applixirEnabled, applixirSiteId, applixirZoneId, applixirAccountId, applixirRewardMessage, applixirCallbackSecret, ezoicEnabled, ezoicPublisherId, ezoicAppId, ezoicPlaceholderId } = req.body || {};
-    const client = await db.connect();
     try {
-        await client.query('BEGIN');
-        const stmt = 'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value';
-        await client.query(stmt, ['applixir_enabled', applixirEnabled ? '1' : '0']);
-        await client.query(stmt, ['applixir_site_id', String(applixirSiteId || '')]);
-        await client.query(stmt, ['applixir_zone_id', String(applixirZoneId || '')]);
-        await client.query(stmt, ['applixir_account_id', String(applixirAccountId || '')]);
-        await client.query(stmt, ['applixir_reward_message', typeof applixirRewardMessage === 'string' ? applixirRewardMessage : 'Parabéns! Você ganhou {reward} W/h']);
-        await client.query(stmt, ['applixir_callback_secret', typeof applixirCallbackSecret === 'string' ? applixirCallbackSecret : '']);
-        await client.query(stmt, ['ezoic_enabled', ezoicEnabled ? '1' : '0']);
-        await client.query(stmt, ['ezoic_publisher_id', String(ezoicPublisherId || '')]);
-        await client.query(stmt, ['ezoic_app_id', String(ezoicAppId || '')]);
-        await client.query(stmt, ['ezoic_placeholder_id', String(ezoicPlaceholderId || '')]);
-        await client.query('COMMIT');
+        await upsertSettingsEntries([
+            { key: 'applixir_enabled', value: applixirEnabled ? '1' : '0' },
+            { key: 'applixir_site_id', value: String(applixirSiteId || '') },
+            { key: 'applixir_zone_id', value: String(applixirZoneId || '') },
+            { key: 'applixir_account_id', value: String(applixirAccountId || '') },
+            {
+                key: 'applixir_reward_message',
+                value: typeof applixirRewardMessage === 'string'
+                    ? applixirRewardMessage
+                    : 'Parabéns! Você ganhou {reward} W/h'
+            },
+            { key: 'applixir_callback_secret', value: typeof applixirCallbackSecret === 'string' ? applixirCallbackSecret : '' },
+            { key: 'ezoic_enabled', value: ezoicEnabled ? '1' : '0' },
+            { key: 'ezoic_publisher_id', value: String(ezoicPublisherId || '') },
+            { key: 'ezoic_app_id', value: String(ezoicAppId || '') },
+            { key: 'ezoic_placeholder_id', value: String(ezoicPlaceholderId || '') }
+        ]);
         res.json({ ok: true });
     }
     catch (e) {
-        await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- SYSTEM TIME & DAILY ACTIONS ---
@@ -2588,7 +2531,7 @@ app.post('/api/daily-boost', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -2616,7 +2559,7 @@ app.post('/api/admin/reset-daily-boost', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // ADMIN: Get user's unopened boxes
@@ -2641,7 +2584,7 @@ app.get('/api/admin/user-boxes', isAdmin, async (req, res) => {
         res.json({ boxes: boxesRes.rows });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // ADMIN: Delete a specific box from user's inventory
@@ -2672,7 +2615,7 @@ app.post('/api/admin/delete-user-box', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 function timingSafeSecretEqual(provided, expected) {
@@ -2688,8 +2631,7 @@ function timingSafeSecretEqual(provided, expected) {
 app.get('/api/applixir-callback', async (req, res) => {
     const { userId } = req.query;
     try {
-        const dbSecretRes = await db.query("SELECT value FROM settings WHERE key = 'applixir_callback_secret'");
-        const dbSecret = String(dbSecretRes.rows[0]?.value || '');
+        const dbSecret = String((await getSettingValue('applixir_callback_secret')) || '');
         if (!dbSecret)
             return res.status(503).send('Callback not configured');
         const hdrRaw = req.headers['x-applixir-callback-secret'] ||
@@ -2770,7 +2712,7 @@ app.post('/api/workshop/recharge', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -2810,13 +2752,12 @@ app.post('/api/reward-ad', async (req, res) => {
         await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [uid, actionKey, Date.now()]);
         await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, uid, wsIdx]);
         await client.query('COMMIT');
-        const msgRes = await client.query("SELECT value FROM settings WHERE key = 'applixir_reward_message'");
-        const rewardMsg = msgRes.rows[0]?.value || 'Parabéns! Sua estação foi totalmente carregada.';
+        const rewardMsg = (await getSettingValue('applixir_reward_message')) || 'Parabéns! Sua estação foi totalmente carregada.';
         res.json({ ok: true, newCharge: maxCap, rewardMsg });
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -3010,8 +2951,7 @@ async function loadDepositSettings() {
         'web3_deposit_bnb_disabled',
         'web3_deposit_base_disabled'
     ];
-    const web3Res = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [keys]);
-    return web3Res.rows.reduce((acc, r) => { acc[r.key] = r.value; return acc; }, {});
+    return getSettingsRecord(keys);
 }
 function resolveDepositNetwork(settings, network) {
     const net = (network || 'polygon').toLowerCase();
@@ -3284,7 +3224,7 @@ app.post('/api/deposit/verify', async (req, res) => {
     }
     catch (e) {
         console.error('[DepositVerify]', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao validar transação.');
+        sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao validar transação.');
     }
 });
 app.get('/api/web3-settings', async (req, res) => {
@@ -3298,8 +3238,7 @@ app.get('/api/web3-settings', async (req, res) => {
             'web3_withdraw_tokens',
             'web3_deposit_polygon_disabled', 'web3_deposit_bnb_disabled', 'web3_deposit_base_disabled'
         ];
-        const resArr = await db.query('SELECT key, value FROM settings WHERE key = ANY($1)', [keys]);
-        const settings = resArr.rows.reduce((acc, r) => { acc[r.key] = r.value; return acc; }, {});
+        const settings = await getSettingsRecord(keys);
         let withdrawTokens = [];
         try {
             withdrawTokens = settings.web3_withdraw_tokens ? JSON.parse(settings.web3_withdraw_tokens) : [];
@@ -3323,55 +3262,50 @@ app.get('/api/web3-settings', async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/web3-settings', isAdmin, async (req, res) => {
     const body = req.body || {};
     const { depositWallet, payoutWallet, depositTokenContract, depositTokenContractBnb, depositTokenContractBase, withdrawTokenName, withdrawTokenContract, withdrawTokens, minDepositUsdc, depositPolygonDisabled, depositBnbDisabled, depositBaseDisabled } = body;
-    const client = await db.connect();
+    const to01 = (v) => {
+        if (v === true || v === 1 || v === '1')
+            return '1';
+        if (v === false || v === 0 || v === '0' || v == null || v === '')
+            return '0';
+        if (typeof v === 'string' && v.toLowerCase() === 'true')
+            return '1';
+        if (typeof v === 'string' && v.toLowerCase() === 'false')
+            return '0';
+        return v ? '1' : '0';
+    };
     try {
-        await client.query('BEGIN');
-        const stmt = 'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value';
-        await client.query(stmt, ['web3_deposit_wallet', typeof depositWallet === 'string' ? depositWallet : '']);
-        await client.query(stmt, ['web3_payout_wallet', typeof payoutWallet === 'string' ? payoutWallet : '']);
-        await client.query(stmt, ['web3_deposit_token_contract', typeof depositTokenContract === 'string' ? depositTokenContract : '']);
-        await client.query(stmt, ['web3_deposit_token_contract_bnb', typeof depositTokenContractBnb === 'string' ? depositTokenContractBnb : '']);
-        await client.query(stmt, ['web3_deposit_token_contract_base', typeof depositTokenContractBase === 'string' ? depositTokenContractBase : '']);
-        await client.query(stmt, ['web3_min_deposit_usdc', typeof minDepositUsdc === 'number' ? String(minDepositUsdc) : '']);
-        await client.query(stmt, ['web3_withdraw_token_name', typeof withdrawTokenName === 'string' ? withdrawTokenName : '']);
-        await client.query(stmt, ['web3_withdraw_token_contract', typeof withdrawTokenContract === 'string' ? withdrawTokenContract : '']);
-        await client.query(stmt, ['web3_withdraw_tokens', Array.isArray(withdrawTokens) ? JSON.stringify(withdrawTokens) : '[]']);
-        const to01 = (v) => {
-            if (v === true || v === 1 || v === '1')
-                return '1';
-            if (v === false || v === 0 || v === '0' || v == null || v === '')
-                return '0';
-            if (typeof v === 'string' && v.toLowerCase() === 'true')
-                return '1';
-            if (typeof v === 'string' && v.toLowerCase() === 'false')
-                return '0';
-            return v ? '1' : '0';
-        };
+        const upserts = [
+            { key: 'web3_deposit_wallet', value: typeof depositWallet === 'string' ? depositWallet : '' },
+            { key: 'web3_payout_wallet', value: typeof payoutWallet === 'string' ? payoutWallet : '' },
+            { key: 'web3_deposit_token_contract', value: typeof depositTokenContract === 'string' ? depositTokenContract : '' },
+            { key: 'web3_deposit_token_contract_bnb', value: typeof depositTokenContractBnb === 'string' ? depositTokenContractBnb : '' },
+            { key: 'web3_deposit_token_contract_base', value: typeof depositTokenContractBase === 'string' ? depositTokenContractBase : '' },
+            { key: 'web3_min_deposit_usdc', value: typeof minDepositUsdc === 'number' ? String(minDepositUsdc) : '' },
+            { key: 'web3_withdraw_token_name', value: typeof withdrawTokenName === 'string' ? withdrawTokenName : '' },
+            { key: 'web3_withdraw_token_contract', value: typeof withdrawTokenContract === 'string' ? withdrawTokenContract : '' },
+            { key: 'web3_withdraw_tokens', value: Array.isArray(withdrawTokens) ? JSON.stringify(withdrawTokens) : '[]' }
+        ];
         // Só gravar flags se vierem no JSON; caso contrário JSON.stringify no cliente omite undefined e apagaria o bloqueio.
         if (Object.prototype.hasOwnProperty.call(body, 'depositPolygonDisabled')) {
-            await client.query(stmt, ['web3_deposit_polygon_disabled', to01(depositPolygonDisabled)]);
+            upserts.push({ key: 'web3_deposit_polygon_disabled', value: to01(depositPolygonDisabled) });
         }
         if (Object.prototype.hasOwnProperty.call(body, 'depositBnbDisabled')) {
-            await client.query(stmt, ['web3_deposit_bnb_disabled', to01(depositBnbDisabled)]);
+            upserts.push({ key: 'web3_deposit_bnb_disabled', value: to01(depositBnbDisabled) });
         }
         if (Object.prototype.hasOwnProperty.call(body, 'depositBaseDisabled')) {
-            await client.query(stmt, ['web3_deposit_base_disabled', to01(depositBaseDisabled)]);
+            upserts.push({ key: 'web3_deposit_base_disabled', value: to01(depositBaseDisabled) });
         }
-        await client.query('COMMIT');
+        await upsertSettingsEntries(upserts);
         res.json({ ok: true });
     }
     catch (e) {
-        await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- ECONOMY ---
@@ -3381,17 +3315,28 @@ app.get('/api/economy-settings', async (req, res) => {
         res.setHeader('Pragma', 'no-cache');
         const rowRes = await db.query('SELECT black_market_enabled, hardware_market_enabled, market_tax_percent, black_market_price_band_percent FROM economy_settings WHERE id = 1');
         const row = rowRes.rows[0];
-        const hwRes = await db.query("SELECT value FROM settings WHERE key = 'hardware_market_enabled'");
-        const bkRes = await db.query("SELECT value FROM settings WHERE key = 'black_market_enabled'");
-        const hw = row ? Number(row.hardware_market_enabled) !== 0 : (hwRes.rows[0] ? hwRes.rows[0].value === '1' : true);
-        const bk = row ? Number(row.black_market_enabled) !== 0 : (bkRes.rows[0] ? bkRes.rows[0].value === '1' : true);
+        const set = await getSettingsRecord([
+            'hardware_market_enabled',
+            'black_market_enabled',
+            'market_tax_percent',
+            'black_market_price_band_percent'
+        ]);
+        const hw = row
+            ? Number(row.hardware_market_enabled) !== 0
+            : set.hardware_market_enabled != null
+                ? set.hardware_market_enabled === '1'
+                : true;
+        const bk = row
+            ? Number(row.black_market_enabled) !== 0
+            : set.black_market_enabled != null
+                ? set.black_market_enabled === '1'
+                : true;
         let tax = NaN;
         if (row && row.market_tax_percent != null && row.market_tax_percent !== '') {
             tax = Number(row.market_tax_percent);
         }
         if (!Number.isFinite(tax)) {
-            const taxRes = await db.query("SELECT value FROM settings WHERE key = 'market_tax_percent'");
-            tax = taxRes.rows[0] ? Number(taxRes.rows[0].value) : 0;
+            tax = set.market_tax_percent != null ? Number(set.market_tax_percent) : 0;
         }
         if (!Number.isFinite(tax))
             tax = 0;
@@ -3402,13 +3347,10 @@ app.get('/api/economy-settings', async (req, res) => {
             if (Number.isFinite(b))
                 band = Math.min(200, Math.max(0, b));
         }
-        else {
-            const bandRes = await db.query("SELECT value FROM settings WHERE key = 'black_market_price_band_percent'");
-            if (bandRes.rows[0]) {
-                const b = Number(bandRes.rows[0].value);
-                if (Number.isFinite(b))
-                    band = Math.min(200, Math.max(0, b));
-            }
+        else if (set.black_market_price_band_percent != null && set.black_market_price_band_percent !== '') {
+            const b = Number(set.black_market_price_band_percent);
+            if (Number.isFinite(b))
+                band = Math.min(200, Math.max(0, b));
         }
         res.json({
             hardwareMarketEnabled: hw,
@@ -3418,59 +3360,79 @@ app.get('/api/economy-settings', async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/economy-settings', isAdmin, async (req, res) => {
     const { hardwareMarketEnabled, blackMarketEnabled, marketTaxPercent, blackMarketPriceBandPercent } = req.body || {};
-    const client = await db.connect();
     try {
-        await client.query('BEGIN');
-        const stmt = 'INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value';
-        await client.query(stmt, ['hardware_market_enabled', hardwareMarketEnabled ? '1' : '0']);
-        await client.query(stmt, ['black_market_enabled', blackMarketEnabled ? '1' : '0']);
         const tax = Math.min(100, Math.max(0, Number(marketTaxPercent) || 0));
-        await client.query(stmt, ['market_tax_percent', String(tax)]);
         let band = Number(blackMarketPriceBandPercent);
         if (!Number.isFinite(band)) {
-            const prev = await client.query('SELECT black_market_price_band_percent FROM economy_settings WHERE id = 1');
-            const prevRow = prev.rows[0];
-            const prevBand = prevRow && prevRow.black_market_price_band_percent != null
-                ? Number(prevRow.black_market_price_band_percent)
-                : NaN;
+            const prev = await prisma.economy_settings.findUnique({
+                where: { id: 1 },
+                select: { black_market_price_band_percent: true }
+            });
+            const prevBand = prev?.black_market_price_band_percent != null ? Number(prev.black_market_price_band_percent) : NaN;
             band = Number.isFinite(prevBand) ? prevBand : 20;
         }
         if (!Number.isFinite(band))
             band = 20;
         band = Math.min(200, Math.max(0, band));
-        await client.query(stmt, ['black_market_price_band_percent', String(band)]);
-        await client.query(`
-      INSERT INTO economy_settings (id, black_market_enabled, hardware_market_enabled, market_tax_percent, black_market_price_band_percent)
-      VALUES (1, $1, $2, $3, $4)
-      ON CONFLICT (id) DO UPDATE SET
-        black_market_enabled = EXCLUDED.black_market_enabled,
-        hardware_market_enabled = EXCLUDED.hardware_market_enabled,
-        market_tax_percent = EXCLUDED.market_tax_percent,
-        black_market_price_band_percent = EXCLUDED.black_market_price_band_percent`, [blackMarketEnabled ? 1 : 0, hardwareMarketEnabled ? 1 : 0, tax, band]);
-        await client.query('COMMIT');
+        const bm = blackMarketEnabled ? 1 : 0;
+        const hm = hardwareMarketEnabled ? 1 : 0;
+        await prisma.$transaction([
+            prisma.settings.upsert({
+                where: { key: 'hardware_market_enabled' },
+                create: { key: 'hardware_market_enabled', value: hardwareMarketEnabled ? '1' : '0' },
+                update: { value: hardwareMarketEnabled ? '1' : '0' }
+            }),
+            prisma.settings.upsert({
+                where: { key: 'black_market_enabled' },
+                create: { key: 'black_market_enabled', value: blackMarketEnabled ? '1' : '0' },
+                update: { value: blackMarketEnabled ? '1' : '0' }
+            }),
+            prisma.settings.upsert({
+                where: { key: 'market_tax_percent' },
+                create: { key: 'market_tax_percent', value: String(tax) },
+                update: { value: String(tax) }
+            }),
+            prisma.settings.upsert({
+                where: { key: 'black_market_price_band_percent' },
+                create: { key: 'black_market_price_band_percent', value: String(band) },
+                update: { value: String(band) }
+            }),
+            prisma.economy_settings.upsert({
+                where: { id: 1 },
+                create: {
+                    id: 1,
+                    black_market_enabled: bm,
+                    hardware_market_enabled: hm,
+                    market_tax_percent: tax,
+                    black_market_price_band_percent: band
+                },
+                update: {
+                    black_market_enabled: bm,
+                    hardware_market_enabled: hm,
+                    market_tax_percent: tax,
+                    black_market_price_band_percent: band
+                }
+            })
+        ]);
         res.json({ ok: true });
     }
     catch (e) {
-        await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/nfts', async (req, res) => {
     const contract = req.query.contract;
     const owner = req.query.owner;
     try {
-        const contractsRes = await db.query("SELECT value FROM settings WHERE key = 'web3_nft_contracts'");
+        const contractsRaw = await getSettingValue('web3_nft_contracts');
         let allowed = [];
         try {
-            allowed = contractsRes.rows[0]?.value ? JSON.parse(contractsRes.rows[0].value) : [];
+            allowed = contractsRaw ? JSON.parse(contractsRaw) : [];
         }
         catch {
             allowed = [];
@@ -3496,16 +3458,16 @@ app.get('/api/nfts', async (req, res) => {
         })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/nfts/receive', isAdmin, async (req, res) => {
     const { contract, tokenId, toAddress } = req.body || {};
     try {
-        const contractsRowRes = await db.query("SELECT value FROM settings WHERE key = 'web3_nft_contracts'");
+        const contractsRaw = await getSettingValue('web3_nft_contracts');
         let allowed = [];
         try {
-            allowed = contractsRowRes.rows[0]?.value ? JSON.parse(contractsRowRes.rows[0].value) : [];
+            allowed = contractsRaw ? JSON.parse(contractsRaw) : [];
         }
         catch {
             allowed = [];
@@ -3521,7 +3483,7 @@ app.post('/api/nfts/receive', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/nfts/send', async (req, res) => {
@@ -3529,10 +3491,10 @@ app.post('/api/nfts/send', async (req, res) => {
         return res.status(401).json({ error: 'Não autenticado' });
     const { contract, tokenId, fromAddress, toAddress } = req.body || {};
     try {
-        const contractsRowRes = await db.query("SELECT value FROM settings WHERE key = 'web3_nft_contracts'");
+        const contractsRaw = await getSettingValue('web3_nft_contracts');
         let allowed = [];
         try {
-            allowed = contractsRowRes.rows[0]?.value ? JSON.parse(contractsRowRes.rows[0].value) : [];
+            allowed = contractsRaw ? JSON.parse(contractsRaw) : [];
         }
         catch {
             allowed = [];
@@ -3562,14 +3524,14 @@ app.post('/api/nfts/send', async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- ACCESS LEVELS ---
 app.get('/api/access-levels', async (req, res) => {
     try {
-        const rowsRes = await db.query('SELECT * FROM access_levels');
-        const levels = rowsRes.rows.map(r => ({
+        const rows = await prisma.access_levels.findMany();
+        const levels = rows.map((r) => ({
             id: r.id,
             name: r.name,
             description: r.description,
@@ -3589,7 +3551,7 @@ app.get('/api/access-levels', async (req, res) => {
         res.json(levels);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/access-levels', isAdmin, async (req, res) => {
@@ -3637,7 +3599,7 @@ app.post('/api/access-levels', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[POST /api/access-levels] Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -3893,7 +3855,7 @@ app.post('/api/server-room/bulk-batteries', async (req, res) => {
             return res.status(409).json({ error: e.message, forceReload: true });
         }
         console.error('[server-room/bulk-batteries]', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno.');
+        sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno.');
     }
     finally {
         client.release();
@@ -3954,7 +3916,7 @@ app.post('/api/server-room/room-coins', async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[server-room/room-coins]', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro interno.');
+        sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno.');
     }
     finally {
         client.release();
@@ -3963,8 +3925,10 @@ app.post('/api/server-room/room-coins', async (req, res) => {
 // --- RIG ROOMS ---
 app.get('/api/rig-rooms', async (req, res) => {
     try {
-        const rowsRes = await db.query('SELECT * FROM rig_rooms ORDER BY sort_order ASC, name ASC');
-        const list = rowsRes.rows.map(r => ({
+        const rows = await prisma.rig_rooms.findMany({
+            orderBy: [{ sort_order: 'asc' }, { name: 'asc' }]
+        });
+        const list = rows.map((r) => ({
             id: r.id,
             name: r.name,
             initialCapacity: r.initial_capacity,
@@ -3990,7 +3954,7 @@ app.get('/api/rig-rooms', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/rig-rooms', isAdmin, async (req, res) => {
@@ -4062,7 +4026,7 @@ app.post('/api/rig-rooms', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4083,71 +4047,11 @@ app.get('/api/my-rig-rooms/:email', async (req, res) => {
         if (Number(uid) !== Number(req.userId)) {
             return res.status(403).json({ error: 'Acesso negado' });
         }
-        const urowRes = await db.query('SELECT access_level_id FROM users WHERE id = $1', [uid]);
-        const urow = urowRes.rows[0];
-        const currentLvlId = urow?.access_level_id || null;
-        // Get all user's access levels
-        const userLvlsRes = await db.query('SELECT access_level_id FROM user_access_levels WHERE user_id = $1', [uid]);
-        const userLvlIds = userLvlsRes.rows.map(l => l.access_level_id);
-        // Include current level just in case it's not in the new table yet (safety)
-        if (currentLvlId && !userLvlIds.includes(currentLvlId)) {
-            userLvlIds.push(currentLvlId);
-        }
-        // Get user's purchased season passes
-        const passPurchRes = await db.query('SELECT pass_id FROM season_purchases WHERE user_id = $1', [uid]);
-        const userPassIds = passPurchRes.rows.map(p => p.pass_id);
-        const racksRoomRes = await db.query(`SELECT DISTINCT
-         CASE
-           WHEN room_id IS NULL OR BTRIM(COALESCE(room_id, '')) = '' OR BTRIM(room_id) = 'main' THEN 'room_initial'
-           ELSE BTRIM(room_id)
-         END AS room_id
-       FROM placed_racks WHERE user_id = $1`, [uid]);
-        const roomIdsWithPlacedRacks = new Set(racksRoomRes.rows.map((row) => row.room_id));
-        const rowsRes = await db.query(`
-      SELECT 
-        rr.id, rr.name, rr.initial_capacity, rr.max_capacity, rr.base_slot_price, rr.slot_price_increase_percent, 
-        rr.allowed_levels, rr.allowed_season_pass_ids, rr.is_active, rr.sort_order, 
-        urr.purchased_at, urr.unlocked_slots 
-      FROM rig_rooms rr 
-      LEFT JOIN user_rig_rooms urr ON urr.room_id = rr.id AND urr.user_id = $1 
-      ORDER BY rr.sort_order ASC`, [uid]);
-        const list = rowsRes.rows.map(r => ({
-            id: r.id,
-            name: r.name,
-            initialCapacity: r.initial_capacity,
-            maxCapacity: r.max_capacity,
-            baseSlotPrice: r.base_slot_price,
-            slotPriceIncreasePercent: r.slot_price_increase_percent,
-            allowedLevels: r.allowed_levels ? (() => { try {
-                return JSON.parse(r.allowed_levels);
-            }
-            catch {
-                return [];
-            } })() : [],
-            allowedSeasonPassIds: r.allowed_season_pass_ids ? (() => { try {
-                return JSON.parse(r.allowed_season_pass_ids);
-            }
-            catch {
-                return [];
-            } })() : [],
-            isActive: !!r.is_active,
-            sortOrder: r.sort_order,
-            owned: !!r.purchased_at,
-            unlockedSlots: r.unlocked_slots || 0,
-            nftAutoArmario1Only: isNftAutoArmario1OnlyRoomRowFromDb(r)
-        })).filter(r => {
-            // Accessibility checks
-            const allowedLvl = Array.isArray(r.allowedLevels) ? r.allowedLevels : [];
-            const allowedSeason = Array.isArray(r.allowedSeasonPassIds) ? r.allowedSeasonPassIds : [];
-            const levelOk = allowedLvl.length === 0 || allowedLvl.some(lvl => userLvlIds.includes(lvl));
-            const seasonOk = allowedSeason.length === 0 || allowedSeason.some(passId => userPassIds.includes(passId));
-            const hasRacksHere = roomIdsWithPlacedRacks.has(r.id);
-            return r.owned || hasRacksHere || (levelOk && seasonOk);
-        });
+        const list = await loadMyRigRoomsForUser(Number(uid));
         res.json(list);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/rig-rooms/purchase-slot', async (req, res) => {
@@ -4229,107 +4133,19 @@ app.post('/api/rig-rooms/purchase-slot', async (req, res) => {
             /* ignore */
         }
         console.error('[rig-rooms/purchase-slot]', e);
-        sendInternalErrorShape(res, 'rig-rooms/purchase-slot', e, { ok: false }, 'Erro ao comprar slot.');
+        sendInternalErrorShapeOrPrisma(res, 'rig-rooms/purchase-slot', e, { ok: false }, 'Erro ao comprar slot.');
     }
     finally {
         client.release();
     }
 });
-// --- LOOT BOXES (catálogo público + compra/abertura: dist/controllers/lootBoxController.js) ---
-app.post('/api/loot-boxes', isAdmin, async (req, res) => {
-    let boxes;
-    let replaceCatalog = false;
-    if (Array.isArray(req.body)) {
-        // Legado: array sozinho = upsert sem desativar o resto (evita apagar catálogo por saves parciais).
-        boxes = req.body;
-        replaceCatalog = false;
-    }
-    else if (req.body && typeof req.body === 'object' && Array.isArray(req.body.boxes)) {
-        boxes = req.body.boxes;
-        replaceCatalog = req.body.replaceCatalog === true;
-    }
-    else {
-        return res.status(400).json({ error: 'Body inválido: use { boxes: [], replaceCatalog?: boolean } ou um array (legado).' });
-    }
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        const validBoxes = boxes.filter((b) => b && b.id && typeof b.name === 'string' && String(b.name).trim());
-        const validIncomingIds = validBoxes.map((b) => String(b.id));
-        const triggersWithoutItemList = new Set(['roleta_code']);
-        for (const b of validBoxes) {
-            const active = b.isActive !== false;
-            const trig = String(b.trigger || 'shop');
-            const nItems = Array.isArray(b.items) ? b.items.filter((it) => it && it.id).length : 0;
-            if (active && !triggersWithoutItemList.has(trig) && nItems === 0) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    error: `Caixa "${String(b.name).trim()}" (${b.id}): não pode ficar ativa sem prémios. Adicione itens ou desative a caixa. (Exceção: gatilho roleta por código.)`
-                });
-            }
-            if (active && (trig === 'shop' || trig === 'shop_once' || trig === 'special')) {
-                const p = Number(b.price);
-                if (!Number.isFinite(p) || p <= 0) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({
-                        error: `Caixa "${String(b.name).trim()}" (${b.id}): preço USDC inválido para venda na loja (use número > 0).`
-                    });
-                }
-            }
-        }
-        for (const b of validBoxes) {
-            // UPSERT the Box (rows stay in DB; removals are handled via is_active below)
-            await client.query(`
-        INSERT INTO loot_boxes (id, name, description, price, trigger, icon, is_active)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
-        ON CONFLICT (id) DO UPDATE SET
-          name = EXCLUDED.name,
-          description = EXCLUDED.description,
-          price = EXCLUDED.price,
-          trigger = EXCLUDED.trigger,
-          icon = EXCLUDED.icon,
-          is_active = EXCLUDED.is_active
-      `, [b.id, b.name.trim(), b.description || '', b.price || 0, b.trigger || 'shop', b.icon || '🎁', b.isActive === false ? 0 : 1]);
-            await client.query('DELETE FROM loot_box_items WHERE box_id = $1', [b.id]);
-            if (Array.isArray(b.items)) {
-                for (const it of b.items) {
-                    if (!it.id)
-                        continue;
-                    await client.query(`
-            INSERT INTO loot_box_items (box_id, item_type, item_id, min_qty, max_qty, probability)
-            VALUES ($1, $2, $3, $4, $5, $6)
-          `, [b.id, it.type || 'item', it.id, it.minQty || 1, it.maxQty || 1, it.probability || 0]);
-                }
-            }
-        }
-        // Só alinha “removidas da lista” no painel principal quando replaceCatalog=true (salvar catálogo completo).
-        if (replaceCatalog) {
-            if (boxes.length === 0) {
-                await client.query('UPDATE loot_boxes SET is_active = 0');
-            }
-            else if (validIncomingIds.length > 0) {
-                await client.query('UPDATE loot_boxes SET is_active = 0 WHERE NOT (id = ANY($1::text[]))', [validIncomingIds]);
-            }
-        }
-        await client.query('COMMIT');
-        res.json({ ok: true });
-    }
-    catch (e) {
-        await client.query('ROLLBACK');
-        console.error('[POST /api/loot-boxes] Fail:', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Falha ao processar o pedido.');
-    }
-    finally {
-        client.release();
-    }
-});
+// --- LOOT BOXES (catálogo admin POST em dist/controllers/lootBoxController.js) ---
 // --- SYSTEM NEWS ---
 app.get('/api/news', async (req, res) => {
     const client = await db.connect();
     try {
-        const expRowRes = await client.query('SELECT value FROM settings WHERE key = $1', ['news_post_expire_days']);
-        const expRow = expRowRes.rows[0];
-        const expDays = expRow ? Number(expRow.value) || 0 : 0;
+        const expRaw = await getSettingValue('news_post_expire_days');
+        const expDays = expRaw != null && expRaw !== '' ? Number(expRaw) || 0 : 0;
         if (expDays > 0) {
             const cutoff = Date.now() - expDays * 24 * 3600 * 1000;
             await client.query('DELETE FROM system_news WHERE created_at < $1', [cutoff]);
@@ -4349,7 +4165,7 @@ app.get('/api/news', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4362,7 +4178,7 @@ app.post('/api/news', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/news/:id', isAdmin, async (req, res) => {
@@ -4371,49 +4187,47 @@ app.delete('/api/news/:id', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/news-fee', async (req, res) => {
     try {
-        const resRow = await db.query('SELECT value FROM settings WHERE key = $1', ['news_post_fee_usdc']);
-        const row = resRow.rows[0];
-        res.json({ feeUsdc: row ? Number(row.value) || 0 : 0 });
+        const v = await getSettingValue('news_post_fee_usdc');
+        res.json({ feeUsdc: v != null && v !== '' ? Number(v) || 0 : 0 });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/news-fee', isAdmin, async (req, res) => {
     const { feeUsdc } = req.body || {};
     const val = isFinite(Number(feeUsdc)) ? Number(feeUsdc) : 0;
     try {
-        await db.query('INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = $2', ['news_post_fee_usdc', String(val)]);
+        await upsertSettingsEntries([{ key: 'news_post_fee_usdc', value: String(val) }]);
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/news-expire-days', async (req, res) => {
     try {
-        const resRow = await db.query('SELECT value FROM settings WHERE key = $1', ['news_post_expire_days']);
-        const row = resRow.rows[0];
-        res.json({ days: row ? Number(row.value) || 0 : 0 });
+        const v = await getSettingValue('news_post_expire_days');
+        res.json({ days: v != null && v !== '' ? Number(v) || 0 : 0 });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/news-expire-days', isAdmin, async (req, res) => {
     const { days } = req.body || {};
     const val = Math.max(0, Math.floor(Number(days) || 0));
     try {
-        await db.query('INSERT INTO settings (key,value) VALUES ($1,$2) ON CONFLICT (key) DO UPDATE SET value = $2', ['news_post_expire_days', String(val)]);
+        await upsertSettingsEntries([{ key: 'news_post_expire_days', value: String(val) }]);
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- TRANSPARENCY (pools / tesouraria — jogadores + admin) ---
@@ -4435,14 +4249,14 @@ function mapTransparencyEntryRow(r) {
 }
 app.get('/api/transparency', async (req, res) => {
     try {
-        const r = await db.query(`SELECT id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at
-       FROM transparency_entries
-       ORDER BY sort_order ASC, id ASC`);
-        res.json(r.rows.map((row) => mapTransparencyEntryRow(row)));
+        const rows = await prisma.transparency_entries.findMany({
+            orderBy: [{ sort_order: 'asc' }, { id: 'asc' }]
+        });
+        res.json(rows.map((row) => mapTransparencyEntryRow(row)));
     }
     catch (e) {
         console.error('[GET /api/transparency]', e);
-        res.status(500).json([]);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/transparency', isAdmin, async (req, res) => {
@@ -4470,15 +4284,24 @@ app.post('/api/admin/transparency', isAdmin, async (req, res) => {
         if (link.length > 2048)
             return res.status(400).json({ error: 'Link longo demais' });
         const sort = Math.floor(Number(sortOrder)) || 0;
-        const now = Date.now();
-        const ins = await db.query(`INSERT INTO transparency_entries (category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at`, [String(category), t, b || null, amt, link || null, sort, now, now]);
-        res.json(mapTransparencyEntryRow(ins.rows[0]));
+        const now = BigInt(Date.now());
+        const ins = await prisma.transparency_entries.create({
+            data: {
+                category: String(category),
+                title: t,
+                body: b || null,
+                amount_usdc: amt,
+                link_url: link || null,
+                sort_order: sort,
+                created_at: now,
+                updated_at: now
+            }
+        });
+        res.json(mapTransparencyEntryRow(ins));
     }
     catch (e) {
         console.error('[POST /api/admin/transparency]', e);
-        res.status(500).json({ error: 'Erro ao criar registro' });
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.put('/api/admin/transparency/:id', isAdmin, async (req, res) => {
@@ -4490,9 +4313,6 @@ app.put('/api/admin/transparency/:id', isAdmin, async (req, res) => {
         if (category != null && !TRANSPARENCY_CATEGORIES.has(String(category))) {
             return res.status(400).json({ error: 'Categoria inválida' });
         }
-        const ex = await db.query('SELECT id FROM transparency_entries WHERE id = $1', [id]);
-        if (!ex.rows[0])
-            return res.status(404).json({ error: 'Registro não encontrado' });
         const t = title != null ? String(title).trim() : null;
         if (t !== null) {
             if (!t)
@@ -4527,24 +4347,33 @@ app.put('/api/admin/transparency/:id', isAdmin, async (req, res) => {
             linkVal = lk || null;
         }
         const sortVal = sortOrder !== undefined ? (Math.floor(Number(sortOrder)) || 0) : undefined;
-        const now = Date.now();
-        const cur = await db.query('SELECT category, title, body, amount_usdc, link_url, sort_order FROM transparency_entries WHERE id = $1', [id]);
-        const c = cur.rows[0];
+        const now = BigInt(Date.now());
+        const c = await prisma.transparency_entries.findUnique({ where: { id } });
+        if (!c)
+            return res.status(404).json({ error: 'Registro não encontrado' });
         const nextCat = category != null ? String(category) : c.category;
         const nextTitle = t !== null ? t : c.title;
         const nextBody = bodyVal !== undefined ? bodyVal : c.body;
         const nextAmt = amtVal !== undefined ? amtVal : c.amount_usdc;
         const nextLink = linkVal !== undefined ? linkVal : c.link_url;
         const nextSort = sortVal !== undefined ? sortVal : c.sort_order;
-        const upd = await db.query(`UPDATE transparency_entries
-       SET category = $1, title = $2, body = $3, amount_usdc = $4, link_url = $5, sort_order = $6, updated_at = $7
-       WHERE id = $8
-       RETURNING id, category, title, body, amount_usdc, link_url, sort_order, created_at, updated_at`, [nextCat, nextTitle, nextBody, nextAmt, nextLink, nextSort, now, id]);
-        res.json(mapTransparencyEntryRow(upd.rows[0]));
+        const upd = await prisma.transparency_entries.update({
+            where: { id },
+            data: {
+                category: nextCat,
+                title: nextTitle,
+                body: nextBody,
+                amount_usdc: nextAmt,
+                link_url: nextLink,
+                sort_order: nextSort,
+                updated_at: now
+            }
+        });
+        res.json(mapTransparencyEntryRow(upd));
     }
     catch (e) {
         console.error('[PUT /api/admin/transparency/:id]', e);
-        res.status(500).json({ error: 'Erro ao atualizar' });
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/transparency/:id', isAdmin, async (req, res) => {
@@ -4552,22 +4381,22 @@ app.delete('/api/admin/transparency/:id', isAdmin, async (req, res) => {
     if (!Number.isFinite(id) || id < 1)
         return res.status(400).json({ error: 'ID inválido' });
     try {
-        const r = await db.query('DELETE FROM transparency_entries WHERE id = $1 RETURNING id', [id]);
-        if (!r.rows[0])
+        const r = await prisma.transparency_entries.deleteMany({ where: { id } });
+        if (r.count === 0)
             return res.status(404).json({ error: 'Registro não encontrado' });
         res.json({ ok: true });
     }
     catch (e) {
         console.error('[DELETE /api/admin/transparency/:id]', e);
-        res.status(500).json({ error: 'Erro ao remover' });
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- UI DISPLAY LABELS (textos do jogo editáveis pelo admin) ---
 app.get('/api/display-labels', async (req, res) => {
     try {
-        const r = await db.query('SELECT key, value FROM ui_display_labels ORDER BY key');
+        const rows = await prisma.ui_display_labels.findMany({ orderBy: { key: 'asc' } });
         const obj = {};
-        for (const row of r.rows) {
+        for (const row of rows) {
             const k = row.key != null ? String(row.key).trim() : '';
             const v = row.value != null ? String(row.value).trim() : '';
             if (k && v)
@@ -4577,7 +4406,7 @@ app.get('/api/display-labels', async (req, res) => {
     }
     catch (e) {
         console.error('[GET /api/display-labels]', e);
-        res.json({});
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/display-labels', isAdmin, async (req, res) => {
@@ -4632,7 +4461,7 @@ app.get('/api/player-news/pending', isAdmin, async (req, res) => {
         res.json(rowsRes.rows.map(r => ({ id: r.id, userId: r.user_id, username: r.username, email: r.email, text: r.text, link: r.link ?? undefined, status: r.status, createdAt: r.created_at })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/player-news/submit', async (req, res) => {
@@ -4663,8 +4492,8 @@ app.post('/api/player-news/submit', async (req, res) => {
             return res.status(400).json({ error: 'Access level inactive' });
         if (!lvl.news_posting_enabled)
             return res.status(403).json({ error: 'Posting disabled for level' });
-        const feeRowRes = await client.query('SELECT value FROM settings WHERE key = $1', ['news_post_fee_usdc']);
-        const fee = feeRowRes.rows[0] ? Number(feeRowRes.rows[0].value) || 0 : 0;
+        const feeRaw = await getSettingValue('news_post_fee_usdc');
+        const fee = feeRaw != null && feeRaw !== '' ? Number(feeRaw) || 0 : 0;
         const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
         const bal = gsRes.rows[0]?.usdc ?? 0;
         if (bal < fee)
@@ -4681,7 +4510,7 @@ app.post('/api/player-news/submit', async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4707,7 +4536,7 @@ app.post('/api/player-news/approve', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4726,7 +4555,7 @@ app.post('/api/player-news/reject', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- SEASON PASSES ---
@@ -4756,7 +4585,7 @@ app.get('/api/season-passes', async (req, res) => {
         res.json(passes);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/season-passes/:passId/purchases', isAdmin, async (req, res) => {
@@ -4778,7 +4607,7 @@ app.get('/api/season-passes/:passId/purchases', isAdmin, async (req, res) => {
         })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/season-passes/:passId/purchases/:userId', isAdmin, async (req, res) => {
@@ -4791,7 +4620,7 @@ app.delete('/api/season-passes/:passId/purchases/:userId', isAdmin, async (req, 
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/season-passes', isAdmin, async (req, res) => {
@@ -4834,7 +4663,7 @@ app.post('/api/season-passes', isAdmin, async (req, res) => {
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -4860,7 +4689,7 @@ app.get('/api/season-purchases/:email', async (req, res) => {
         res.json(list);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/season-pass/purchase', async (req, res) => {
@@ -4932,7 +4761,7 @@ app.post('/api/season-pass/purchase', async (req, res) => {
         if (respondIfHttpControlledError(res, e))
             return;
         console.error(`[Purchase] ❌ ERROR during purchase:`, e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
@@ -4965,7 +4794,7 @@ app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
     catch (e) {
         if (respondIfHttpControlledError(res, e))
             return;
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- USERS ---
@@ -5116,7 +4945,7 @@ app.get('/api/users', isAdmin, async (req, res) => {
         res.json({ users, total, pages: Math.ceil(total / limit), levels: lvRes.rows });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/users/map', isAdmin, async (req, res) => {
@@ -5138,7 +4967,7 @@ app.get('/api/admin/users/map', isAdmin, async (req, res) => {
         res.json(resRows.rows);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- ADVANCED REFERRALS ---
@@ -5148,7 +4977,7 @@ app.get('/api/admin/referral-models', isAdmin, async (req, res) => {
         res.json(rows.rows);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/referral-models', isAdmin, async (req, res) => {
@@ -5169,7 +4998,7 @@ app.post('/api/admin/referral-models', isAdmin, async (req, res) => {
         }
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/referral-models/:id', isAdmin, async (req, res) => {
@@ -5178,7 +5007,7 @@ app.delete('/api/admin/referral-models/:id', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/access-level-referral-assignments', isAdmin, async (req, res) => {
@@ -5190,7 +5019,7 @@ app.get('/api/admin/access-level-referral-assignments', isAdmin, async (req, res
         }, {}));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/access-level-referral-assignments', isAdmin, async (req, res) => {
@@ -5211,7 +5040,7 @@ app.post('/api/admin/access-level-referral-assignments', isAdmin, async (req, re
     }
     catch (e) {
         await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -5349,7 +5178,7 @@ app.get('/api/admin/dashboard-stats', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('[DashStats] Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/update-permissions', isAdmin, async (req, res) => {
@@ -5440,7 +5269,7 @@ app.get('/api/leaderboard', async (req, res) => {
         })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- REFERRALS ---
@@ -5463,7 +5292,7 @@ app.get('/api/referrals/:email', async (req, res) => {
         res.json(rowsRes.rows.map(r => r.referred_username));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/referrals/claim-code', async (req, res) => {
@@ -5514,7 +5343,7 @@ app.post('/api/referrals/claim-code', async (req, res) => {
     catch (e) {
         if (client)
             await client.query('ROLLBACK');
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -5558,7 +5387,7 @@ app.post('/api/referrals/claim-reward', async (req, res) => {
         if (client)
             await client.query('ROLLBACK');
         console.error('[ClaimReward] Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -5571,7 +5400,7 @@ app.get('/api/wheel/config', async (req, res) => {
         res.json(items);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- MINING COINS ---
@@ -5615,7 +5444,7 @@ app.get('/api/mining-coins', async (req, res) => {
     catch (e) {
         if (client)
             client.release();
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/mining-coins', isAdmin, async (req, res) => {
@@ -5693,7 +5522,7 @@ app.post('/api/mining-coins', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[SaveMiningCoin] Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -5797,7 +5626,7 @@ app.post('/api/login', async (req, res) => {
     }
     catch (e) {
         console.error('[Login]', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/session', async (req, res) => {
@@ -5806,9 +5635,11 @@ app.get('/api/session', async (req, res) => {
     let isImpersonating = false;
     let targetUserId = req.userId;
     try {
+        let sidSession = null;
         if (sid) {
             const s = await findSessionRow(sid);
             if (s && Number(s.expires_at) >= Date.now()) {
+                sidSession = s;
                 isImpersonating = !!s.original_user_id;
                 if (!targetUserId)
                     targetUserId = s.user_id;
@@ -5816,9 +5647,32 @@ app.get('/api/session', async (req, res) => {
         }
         if (!targetUserId)
             return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
-        const u = await findUserById(Number(targetUserId));
-        if (!u)
-            return res.status(404).json({ error: 'User not found' });
+        const parsePositiveUserId = (raw) => {
+            const n = Number(raw);
+            return Number.isFinite(n) && n > 0 ? Math.floor(n) : null;
+        };
+        let uid = parsePositiveUserId(targetUserId);
+        let u = uid != null ? await findUserById(uid) : undefined;
+        /** JWT pode apontar para um id órfão após restore/migração; cookie `sid` pode ainda refletir outro utilizador válido. */
+        if (!u && sidSession) {
+            const sidUid = parsePositiveUserId(sidSession.user_id);
+            if (sidUid != null && sidUid !== uid) {
+                const u2 = await findUserById(sidUid);
+                if (u2) {
+                    u = u2;
+                    uid = sidUid;
+                }
+            }
+        }
+        if (!u) {
+            clearAuthCookies(res);
+            const secure = process.env.NODE_ENV === 'production' ? '; Secure' : '';
+            res.append('Set-Cookie', `sid=; Path=/; HttpOnly; SameSite=Lax${secure}; Max-Age=0`);
+            return res.status(401).json({
+                error: 'Sessão inválida ou conta já não existe. Inicie sessão novamente.',
+                code: 'USER_NOT_FOUND'
+            });
+        }
         const userLvlIds = await listUserAccessLevelIds(u.id, u.access_level_id);
         let adminPerms = null;
         try {
@@ -5850,7 +5704,7 @@ app.get('/api/session', async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/auth/refresh', async (req, res) => handleJwtRefresh(req, res, parseCookies));
@@ -5889,7 +5743,7 @@ app.post('/api/session', async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/load-game', async (req, res) => {
@@ -5898,54 +5752,92 @@ app.get('/api/load-game', async (req, res) => {
     try {
         const uid = req.userId;
         await computeProgressForUser(db, uid, Date.now());
-        // Pegar tudo do DB
-        const gsRes = await db.query('SELECT * FROM game_states WHERE user_id = $1', [uid]);
-        const stockRes = await db.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]);
-        const boxRes = await db.query('SELECT box_id, qty FROM unopened_boxes WHERE user_id = $1', [uid]);
-        const batRes = await db.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]);
-        const rackRes = await db.query('SELECT * FROM placed_racks WHERE user_id = $1', [uid]);
-        const coinRes = await db.query('SELECT coin_id, amount FROM coin_balances WHERE user_id = $1', [uid]);
-        const workshopRes = await db.query('SELECT * FROM workshop_slots WHERE user_id = $1 ORDER BY slot_index', [uid]);
-        const dailyRes = await db.query('SELECT action_key, last_performed_at FROM daily_actions WHERE user_id = $1', [uid]);
-        const claimedRes = await db.query('SELECT box_id FROM player_claimed_boxes WHERE user_id = $1', [uid]);
-        const userRefRes = await db.query('SELECT referred_by, username, email FROM users WHERE id = $1', [uid]);
-        const u = userRefRes.rows[0];
-        const gs = gsRes.rows[0] || { usdc: 0, start_time: Date.now(), claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: Date.now() };
+        const [gsRow, stockRows, boxRows, batRows, rackRows, coinRows, workshopRows, dailyRows, claimedRows, u] = await Promise.all([
+            prisma.game_states.findUnique({ where: { user_id: uid } }),
+            prisma.stock.findMany({ where: { user_id: uid } }),
+            prisma.unopened_boxes.findMany({ where: { user_id: uid } }),
+            prisma.stored_batteries.findMany({ where: { user_id: uid } }),
+            prisma.placed_racks.findMany({ where: { user_id: uid } }),
+            prisma.coin_balances.findMany({ where: { user_id: uid } }),
+            prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
+            prisma.daily_actions.findMany({ where: { user_id: uid } }),
+            prisma.player_claimed_boxes.findMany({ where: { user_id: uid }, select: { box_id: true } }),
+            prisma.users.findUnique({
+                where: { id: uid },
+                select: { referred_by: true, username: true, email: true }
+            })
+        ]);
+        if (!u) {
+            return res.status(404).json({ error: 'Utilizador não encontrado' });
+        }
+        const nowMs = Date.now();
+        const gs = gsRow ||
+            {
+                usdc: 0,
+                start_time: BigInt(nowMs),
+                claimed_referrals: 0,
+                referral_bonus_claimed: 0,
+                last_updated_at: BigInt(nowMs),
+                black_market_balance: 0
+            };
         const stock = {};
-        stockRes.rows.forEach(r => {
+        stockRows.forEach((r) => {
             if (!isValidSaveGameItemId(r.item_id))
                 return;
             stock[r.item_id] = r.qty;
         });
         const unopenedBoxes = {};
-        boxRes.rows.forEach(r => { unopenedBoxes[r.box_id] = r.qty; });
-        const storedBatteries = batRes.rows.map(r => ({ id: r.id, itemId: r.item_id, currentCharge: r.current_charge }));
-        // Racks e Slots
+        boxRows.forEach((r) => {
+            unopenedBoxes[r.box_id] = r.qty;
+        });
+        const storedBatteries = batRows.map((r) => ({
+            id: r.id,
+            itemId: r.item_id,
+            currentCharge: r.current_charge
+        }));
         const racks = [];
-        for (const r of rackRes.rows) {
-            const slotsRes = await db.query('SELECT slot_index, machine_item_id FROM rack_slots WHERE rack_id = $1 ORDER BY slot_index', [r.id]);
-            const multiRes = await db.query('SELECT slot_index, multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1 ORDER BY slot_index', [r.id]);
-            // Map to array by index
-            const slots = [];
-            slotsRes.rows.forEach(s => slots[s.slot_index] = s.machine_item_id);
-            const multiplierSlots = [];
-            multiRes.rows.forEach(m => multiplierSlots[m.slot_index] = m.multiplier_item_id);
-            racks.push({
-                id: r.id,
-                itemId: r.item_id,
-                slots,
-                multiplierSlots,
-                wiringId: r.wiring_id,
-                batteryId: r.battery_id,
-                currentCharge: r.current_charge,
-                isOn: !!r.is_on,
-                selectedCoinId: r.selected_coin_id,
-                roomId: normalizePlacedRackRoomId(r.room_id),
-                slotIndex: r.slot_index || 0
+        const rackIds = rackRows.map((r) => r.id);
+        if (rackIds.length > 0) {
+            const [slotsList, multiList] = await Promise.all([
+                prisma.rack_slots.findMany({
+                    where: { rack_id: { in: rackIds } },
+                    orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+                }),
+                prisma.rack_multiplier_slots.findMany({
+                    where: { rack_id: { in: rackIds } },
+                    orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+                })
+            ]);
+            const slotsMap = new Map();
+            const multipliersMap = new Map();
+            slotsList.forEach((s) => {
+                if (!slotsMap.has(s.rack_id))
+                    slotsMap.set(s.rack_id, []);
+                slotsMap.get(s.rack_id)[s.slot_index] = s.machine_item_id;
             });
+            multiList.forEach((m) => {
+                if (!multipliersMap.has(m.rack_id))
+                    multipliersMap.set(m.rack_id, []);
+                multipliersMap.get(m.rack_id)[m.slot_index] = m.multiplier_item_id;
+            });
+            for (const r of rackRows) {
+                racks.push({
+                    id: r.id,
+                    itemId: r.item_id,
+                    slots: slotsMap.get(r.id) || [],
+                    multiplierSlots: multipliersMap.get(r.id) || [],
+                    wiringId: r.wiring_id,
+                    batteryId: r.battery_id,
+                    currentCharge: r.current_charge,
+                    isOn: !!r.is_on,
+                    selectedCoinId: r.selected_coin_id,
+                    roomId: normalizePlacedRackRoomId(r.room_id),
+                    slotIndex: r.slot_index || 0
+                });
+            }
         }
         const workshopSlots = [null, null, null, null, null, null];
-        workshopRes.rows.forEach(w => {
+        workshopRows.forEach((w) => {
             if (w.slot_index >= 0 && w.slot_index < 6) {
                 workshopSlots[w.slot_index] = {
                     id: `ws_${uid}_${w.slot_index}`,
@@ -5958,15 +5850,19 @@ app.get('/api/load-game', async (req, res) => {
             }
         });
         try {
-            await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(db, String(userRefRes.rows[0]?.email || ''), workshopSlots);
+            await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(db, String(u.email || ''), workshopSlots);
         }
         catch (e) {
             console.warn('[load-game] enrich workshop slotItemIds:', e instanceof Error ? e.message : String(e));
         }
         const coinBalances = {};
-        coinRes.rows.forEach(c => { coinBalances[c.coin_id] = c.amount; });
+        coinRows.forEach((c) => {
+            coinBalances[c.coin_id] = c.amount;
+        });
         const dailyActions = {};
-        dailyRes.rows.forEach(r => { dailyActions[r.action_key] = Number(r.last_performed_at); });
+        dailyRows.forEach((r) => {
+            dailyActions[r.action_key] = Number(r.last_performed_at);
+        });
         res.json({
             gameState: {
                 usdc: gs.usdc,
@@ -5983,20 +5879,31 @@ app.get('/api/load-game', async (req, res) => {
             placedRacks: racks,
             workshopSlots,
             coinBalances,
-            claimedBoxes: claimedRes.rows.map(r => r.box_id)
+            claimedBoxes: claimedRows.map((r) => r.box_id)
         });
         // Check for missing Referral Reward (Retroactive Fix)
-        // If user has referrer but bonus not claimed, grant it now
-        if (u && u.referred_by && gs && !gs.referral_bonus_claimed) {
-            // Async background fix - don't block response? Or block to ensure consistency?
-            // Blocking is safer for UI sync.
+        if (u.referred_by && gs && !gs.referral_bonus_claimed) {
             try {
-                const receiverBoxes = await db.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_receiver'");
-                for (const box of receiverBoxes.rows) {
-                    await db.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, box.id]);
-                    await db.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [uid, box.id, Date.now()]);
+                const receiverBoxes = await prisma.loot_boxes.findMany({
+                    where: { trigger: 'referral_receiver' },
+                    select: { id: true }
+                });
+                const claimedAt = BigInt(Date.now());
+                for (const box of receiverBoxes) {
+                    await prisma.unopened_boxes.upsert({
+                        where: { user_id_box_id: { user_id: uid, box_id: box.id } },
+                        create: { user_id: uid, box_id: box.id, qty: 1 },
+                        update: { qty: { increment: 1 } }
+                    });
+                    await prisma.player_claimed_boxes.createMany({
+                        data: [{ user_id: uid, box_id: box.id, claimed_at: claimedAt }],
+                        skipDuplicates: true
+                    });
                 }
-                await db.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
+                await prisma.game_states.updateMany({
+                    where: { user_id: uid },
+                    data: { referral_bonus_claimed: 1 }
+                });
                 console.log(`[Retro Fix] Granted referral box to ${u.username}`);
             }
             catch (err) {
@@ -6005,12 +5912,15 @@ app.get('/api/load-game', async (req, res) => {
         }
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 async function markServerUpdate(uid) {
     try {
-        await db.query('UPDATE game_states SET server_updated_at = $1 WHERE user_id = $2', [Date.now(), uid]);
+        await prisma.game_states.updateMany({
+            where: { user_id: uid },
+            data: { server_updated_at: BigInt(Date.now()) }
+        });
     }
     catch (e) {
         console.error('Failed to mark server update', e);
@@ -6019,11 +5929,15 @@ async function markServerUpdate(uid) {
 app.put('/api/users/block', isAdmin, async (req, res) => {
     const { email, blocked } = req.body;
     try {
-        await db.query('UPDATE users SET is_blocked = $1 WHERE email = $2', [blocked ? 1 : 0, email]);
+        const em = String(email || '').trim();
+        await prisma.users.updateMany({
+            where: { email: { equals: em, mode: 'insensitive' } },
+            data: { is_blocked: blocked ? 1 : 0 }
+        });
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.put('/api/user', async (req, res) => {
@@ -6036,15 +5950,18 @@ app.put('/api/user', async (req, res) => {
         let uid;
         if (req.userId) {
             // Check if admin
-            const uAdminRes = await db.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
-            const isAdmin = uAdminRes.rows[0]?.is_admin;
+            const actor = await prisma.users.findUnique({
+                where: { id: req.userId },
+                select: { is_admin: true }
+            });
+            const isAdmin = actor?.is_admin;
             if (isAdmin) {
                 let resolvedAdminTarget = false;
                 if (u.id != null && String(u.id).trim() !== '') {
                     const idNum = parseInt(String(u.id).trim(), 10);
                     if (Number.isFinite(idNum) && idNum > 0) {
-                        const idRow = await db.query('SELECT id FROM users WHERE id = $1', [idNum]);
-                        if (idRow.rows[0]) {
+                        const idRow = await prisma.users.findUnique({ where: { id: idNum }, select: { id: true } });
+                        if (idRow) {
                             uid = idNum;
                             resolvedAdminTarget = true;
                         }
@@ -6054,11 +5971,14 @@ app.put('/api/user', async (req, res) => {
                     if (!normalizedEmail) {
                         return res.status(400).json({ error: 'ID ou email do utilizador a editar é obrigatório.' });
                     }
-                    const byEmail = await db.query('SELECT id FROM users WHERE LOWER(email) = $1', [normalizedEmail]);
-                    if (!byEmail.rows[0]) {
+                    const byEmail = await prisma.users.findFirst({
+                        where: { email: { equals: normalizedEmail, mode: 'insensitive' } },
+                        select: { id: true }
+                    });
+                    if (!byEmail) {
                         return res.status(404).json({ error: 'Utilizador não encontrado para este email. Não foi criada conta nova (evita erros de digitação).' });
                     }
-                    uid = byEmail.rows[0].id;
+                    uid = byEmail.id;
                 }
             }
             else {
@@ -6226,7 +6146,7 @@ app.put('/api/user', async (req, res) => {
                 code: 'DUPLICATE'
             });
         }
-        sendInternalErrorSafeMessage(res, '[UserUpdate]', e, 'Erro interno no servidor durante o registro.');
+        sendInternalErrorSafeMessageOrPrisma(res, '[UserUpdate]', e, 'Erro interno no servidor durante o registro.');
     }
 });
 async function deleteUserByEmail(email, client) {
@@ -6343,7 +6263,7 @@ app.delete('/api/user/:email', isAdmin, async (req, res) => {
         res.json(result);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/bulk-delete', isAdmin, async (req, res) => {
@@ -6364,7 +6284,7 @@ app.post('/api/admin/bulk-delete', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[Admin] Bulk delete failed:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -6408,7 +6328,7 @@ app.post('/api/admin/bulk-gift', isAdmin, async (req, res) => {
     catch (e) {
         await client.query('ROLLBACK');
         console.error('[Admin] Bulk gift failed:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -6454,8 +6374,7 @@ app.get('/api/game-state/:email', async (req, res) => {
     }
     const isAdminEdit = req.headers['x-admin-edit'] === '1';
     try {
-        const uRes = await db.query('SELECT * FROM users WHERE id = $1', [uid]);
-        const u = uRes.rows[0];
+        const u = await prisma.users.findUnique({ where: { id: uid } });
         if (!u)
             return res.status(404).json({ error: 'User not found' });
         const now = Date.now();
@@ -6470,69 +6389,92 @@ app.get('/api/game-state/:email', async (req, res) => {
             return res.status(500).json({ error: safeMsg });
         }
         const offlineMined = progressRes.offlineMined || {};
-        // OPTIMIZATION: Parallelize independent DB queries
-        console.log(`[GameState] Starting Parallel DB Queries...`);
-        const [gsRes, stockRes, unopenedBoxesRes, storedBatteriesRes, placedRacksRes, workshopSlotsRes, coinBalancesRes, dailyActionsRes, playerListingsRes, claimedBoxesRes] = await Promise.all([
-            db.query('SELECT * FROM game_states WHERE user_id = $1', [uid]),
-            db.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]),
-            db.query('SELECT box_id, qty FROM unopened_boxes WHERE user_id = $1', [uid]),
-            db.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]),
-            db.query('SELECT * FROM placed_racks WHERE user_id = $1', [uid]),
-            db.query('SELECT * FROM workshop_slots WHERE user_id = $1 ORDER BY slot_index', [uid]),
-            db.query('SELECT coin_id, amount FROM coin_balances WHERE user_id = $1', [uid]),
-            db.query('SELECT action_key, last_performed_at FROM daily_actions WHERE user_id = $1', [uid]),
-            db.query('SELECT l.*, u.username, u.email FROM player_listings l JOIN users u ON l.user_id = u.id WHERE l.user_id = $1', [uid]),
-            db.query('SELECT box_id FROM player_claimed_boxes WHERE user_id = $1', [uid])
+        console.log(`[GameState] Starting parallel Prisma reads...`);
+        const [gsRow, stockRows, unopenedRows, storedBatRows, rackRows, workshopRows, coinBalRows, dailyRows, listingRows, claimedRows] = await Promise.all([
+            prisma.game_states.findUnique({ where: { user_id: uid } }),
+            prisma.stock.findMany({ where: { user_id: uid } }),
+            prisma.unopened_boxes.findMany({ where: { user_id: uid } }),
+            prisma.stored_batteries.findMany({ where: { user_id: uid } }),
+            prisma.placed_racks.findMany({ where: { user_id: uid } }),
+            prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
+            prisma.coin_balances.findMany({ where: { user_id: uid } }),
+            prisma.daily_actions.findMany({ where: { user_id: uid } }),
+            prisma.player_listings.findMany({ where: { user_id: uid } }),
+            prisma.player_claimed_boxes.findMany({ where: { user_id: uid }, select: { box_id: true } })
         ]);
         const t2 = performance.now();
-        console.log(`[GameState] DB Queries took ${(t2 - t1).toFixed(2)}ms`);
-        const gs = gsRes.rows[0] || { usdc: 0, start_time: now, claimed_referrals: 0, referral_bonus_claimed: 0, last_updated_at: now, black_market_balance: 0, server_updated_at: 0 };
+        console.log(`[GameState] Prisma reads took ${(t2 - t1).toFixed(2)}ms`);
+        const gs = gsRow ||
+            {
+                usdc: 0,
+                start_time: BigInt(now),
+                claimed_referrals: 0,
+                referral_bonus_claimed: 0,
+                last_updated_at: BigInt(now),
+                black_market_balance: 0,
+                server_updated_at: BigInt(0)
+            };
         const stock = {};
-        stockRes.rows.forEach(r => {
+        stockRows.forEach((r) => {
             if (!isValidSaveGameItemId(r.item_id))
                 return;
             stock[r.item_id] = r.qty;
         });
         const unopenedBoxes = {};
-        unopenedBoxesRes.rows.forEach(r => { unopenedBoxes[r.box_id] = r.qty; });
-        const storedBatteries = storedBatteriesRes.rows.map(r => ({ id: r.id, itemId: r.item_id, currentCharge: r.current_charge }));
+        unopenedRows.forEach((r) => {
+            unopenedBoxes[r.box_id] = r.qty;
+        });
+        const storedBatteries = storedBatRows.map((r) => ({
+            id: r.id,
+            itemId: r.item_id,
+            currentCharge: r.current_charge
+        }));
         const coinBalances = {};
-        coinBalancesRes.rows.forEach(c => { coinBalances[c.coin_id] = c.amount; });
+        coinBalRows.forEach((c) => {
+            coinBalances[c.coin_id] = c.amount;
+        });
         const dailyActions = {};
-        dailyActionsRes.rows.forEach(r => { dailyActions[r.action_key] = Number(r.last_performed_at); });
-        const playerListings = playerListingsRes.rows.map(r => {
+        dailyRows.forEach((r) => {
+            dailyActions[r.action_key] = Number(r.last_performed_at);
+        });
+        const sellerLabel = u.username || u.email || '';
+        const playerListings = listingRows.map((r) => {
             const q = Math.max(1, parseInt(String(r.qty ?? 1), 10) || 1);
             const unit = Number(r.price);
             return {
                 id: r.id,
-                sellerName: r.username || r.email,
+                sellerName: sellerLabel,
                 itemId: r.item_id,
                 price: unit,
                 lineTotal: unit * q,
-                expiresAt: r.expires_at,
+                expiresAt: Number(r.expires_at),
                 isPlayer: !!r.is_player,
                 qty: q,
                 status: r.status
             };
         });
-        const claimedBoxes = claimedBoxesRes.rows.map(r => r.box_id);
-        // OPTIMIZATION: Bulk fetch rack slots to avoid N+1 problem
+        const claimedBoxes = claimedRows.map((r) => r.box_id);
         const placedRacks = [];
-        const rackRows = placedRacksRes.rows;
         if (rackRows.length > 0) {
-            const rackIds = rackRows.map(r => r.id);
-            const [slotsRes, multipliersRes] = await Promise.all([
-                db.query('SELECT rack_id, slot_index, machine_item_id FROM rack_slots WHERE rack_id = ANY($1) ORDER BY slot_index', [rackIds]),
-                db.query('SELECT rack_id, slot_index, multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = ANY($1) ORDER BY slot_index', [rackIds])
+            const rackIds = rackRows.map((r) => r.id);
+            const [slotsList, multipliersList] = await Promise.all([
+                prisma.rack_slots.findMany({
+                    where: { rack_id: { in: rackIds } },
+                    orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+                }),
+                prisma.rack_multiplier_slots.findMany({
+                    where: { rack_id: { in: rackIds } },
+                    orderBy: [{ rack_id: 'asc' }, { slot_index: 'asc' }]
+                })
             ]);
             const slotsMap = new Map();
             const multipliersMap = new Map();
-            slotsRes.rows.forEach(s => {
+            slotsList.forEach((s) => {
                 if (!slotsMap.has(s.rack_id))
                     slotsMap.set(s.rack_id, []);
                 slotsMap.get(s.rack_id)[s.slot_index] = s.machine_item_id;
             });
-            multipliersRes.rows.forEach(m => {
+            multipliersList.forEach((m) => {
                 if (!multipliersMap.has(m.rack_id))
                     multipliersMap.set(m.rack_id, []);
                 multipliersMap.get(m.rack_id)[m.slot_index] = m.multiplier_item_id;
@@ -6554,7 +6496,7 @@ app.get('/api/game-state/:email', async (req, res) => {
             }
         }
         const workshopSlots = [null, null, null, null, null, null];
-        workshopSlotsRes.rows.forEach(w => {
+        workshopRows.forEach((w) => {
             if (w.slot_index >= 0 && w.slot_index < 6) {
                 workshopSlots[w.slot_index] = {
                     id: `ws_${uid}_${w.slot_index}`,
@@ -6563,7 +6505,7 @@ app.get('/api/game-state/:email', async (req, res) => {
                     currentCharge: w.current_charge ?? 0,
                     slotCharges: safeWorkshopJsonObject(w.slot_charges, 'workshop_slots.slot_charges', uid),
                     slotItemIds: safeWorkshopJsonObject(w.slot_item_ids, 'workshop_slots.slot_item_ids', uid),
-                    installedAt: Number(w.installed_at || 0)
+                    installedAt: Number(w.installed_at ?? 0)
                 };
             }
         });
@@ -6651,7 +6593,7 @@ app.get('/api/game-state/:email', async (req, res) => {
         console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
     }
     catch (e) {
-        sendInternalErrorSafeMessage(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
+        sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
     }
 });
 const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
@@ -6713,16 +6655,18 @@ async function validatePlacedRacksForSave(dbq, racks) {
         }
     }
     if (upgradeIds.size > 0) {
-        const chk = await dbq.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [[...upgradeIds]]);
-        if (chk.rowCount !== upgradeIds.size) {
-            const have = new Set(chk.rows.map((x) => x.id));
-            const missing = [...upgradeIds].filter((id) => !have.has(id));
+        const ids = [...upgradeIds];
+        const chk = await prisma.upgrades.findMany({ where: { id: { in: ids } }, select: { id: true } });
+        if (chk.length !== upgradeIds.size) {
+            const have = new Set(chk.map((x) => x.id));
+            const missing = ids.filter((id) => !have.has(id));
             return { ok: false, error: `Item desconhecido no equipamento: ${missing.slice(0, 4).join(', ')}` };
         }
     }
     if (coinIds.size > 0) {
-        const cres = await dbq.query('SELECT id FROM mining_coins WHERE id = ANY($1::text[])', [[...coinIds]]);
-        if (cres.rowCount !== coinIds.size) {
+        const cids = [...coinIds];
+        const cres = await prisma.mining_coins.findMany({ where: { id: { in: cids } }, select: { id: true } });
+        if (cres.length !== coinIds.size) {
             return { ok: false, error: 'Moeda inválida numa rig.' };
         }
     }
@@ -6732,72 +6676,75 @@ app.post('/api/save-game', async (req, res) => {
     const { changes, adminOverride, targetEmail } = req.body;
     if (!req.userId || !changes)
         return res.status(400).json({ error: 'Missing fields' });
-    const client = await db.connect();
     try {
         let uid = req.userId;
         const saveActivityLogs = [];
         // Security: Only allow adminOverride if user is actually admin
         let effectiveAdminOverride = false;
         if (adminOverride) {
-            const uAdminRes = await client.query('SELECT is_admin FROM users WHERE id = $1', [req.userId]);
-            if (uAdminRes.rows[0]?.is_admin) {
+            const adminActor = await prisma.users.findUnique({
+                where: { id: req.userId },
+                select: { is_admin: true }
+            });
+            if (adminActor?.is_admin) {
                 effectiveAdminOverride = true;
                 // If admin provided a targetEmail, switch context to that user
                 if (targetEmail) {
                     const te = String(targetEmail).trim().toLowerCase();
-                    const tUserRes = await client.query('SELECT id FROM users WHERE lower(trim(email::text)) = $1', [te]);
-                    if (tUserRes.rows[0]) {
-                        uid = tUserRes.rows[0].id;
+                    const tRows = await prisma.$queryRaw `
+            SELECT id FROM users WHERE lower(trim(email::text)) = ${te} LIMIT 1
+          `;
+                    if (tRows[0])
+                        uid = tRows[0].id;
+                }
+            }
+        }
+        let finalServerUpdatedAt = Date.now();
+        let nftAutoSanitized = false;
+        let nftAutoSyncPayload = null;
+        await prisma.$transaction(async (tx) => {
+            const client = prismaTxToPoolLikeClient(tx);
+            await client.query("SET LOCAL statement_timeout = '20s'");
+            // LOCK ORDER FIX: Always lock the primary user record first to avoid deadlocks
+            await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
+            // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
+            // listagem P2P) cannot be overwritten by a save whose optimistic check ran before
+            // they committed.
+            const dbGsRes = await client.query('SELECT server_updated_at FROM game_states WHERE user_id = $1', [uid]);
+            const dbServerUpdatedAt = Number(dbGsRes.rows[0]?.server_updated_at || 0);
+            if (!effectiveAdminOverride && changes.lastLoadTime && dbServerUpdatedAt > Number(changes.lastLoadTime)) {
+                throw new HttpControlledError(200, { forceReload: true });
+            }
+            nftAutoSanitized = false;
+            if (changes.placedRacks) {
+                if (!Array.isArray(changes.placedRacks)) {
+                    throw new HttpControlledError(400, { error: 'placedRacks inválido.' });
+                }
+                // [] é truthy: evita apagar todas as rigs quando o cliente envia estado incompleto.
+                if (!effectiveAdminOverride && changes.placedRacks.length === 0) {
+                    const prCountRes = await client.query('SELECT COUNT(*)::int AS c FROM placed_racks WHERE user_id = $1', [uid]);
+                    const prCount = Number(prCountRes.rows[0]?.c ?? 0);
+                    if (prCount > 0) {
+                        console.warn(`[SaveGame] Rejeitado placedRacks vazio (servidor tem ${prCount} rig(s)) userId=${uid}`);
+                        throw new HttpControlledError(409, {
+                            error: 'O estado enviado não inclui nenhuma rig, mas o servidor ainda guarda o teu equipamento. Recarrega a página (F5) para sincronizar.',
+                            forceReload: true
+                        });
                     }
                 }
-            }
-        }
-        await client.query('BEGIN');
-        await client.query("SET statement_timeout = '20s'");
-        // LOCK ORDER FIX: Always lock the primary user record first to avoid deadlocks
-        await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
-        // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
-        // listagem P2P) cannot be overwritten by a save whose optimistic check ran before
-        // they committed.
-        const dbGsRes = await client.query('SELECT server_updated_at FROM game_states WHERE user_id = $1', [uid]);
-        const dbServerUpdatedAt = Number(dbGsRes.rows[0]?.server_updated_at || 0);
-        if (!effectiveAdminOverride && changes.lastLoadTime && dbServerUpdatedAt > Number(changes.lastLoadTime)) {
-            await client.query('ROLLBACK');
-            return res.json({ forceReload: true });
-        }
-        let nftAutoSanitized = false;
-        if (changes.placedRacks) {
-            if (!Array.isArray(changes.placedRacks)) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: 'placedRacks inválido.' });
-            }
-            // [] é truthy: evita apagar todas as rigs quando o cliente envia estado incompleto.
-            if (!effectiveAdminOverride && changes.placedRacks.length === 0) {
-                const prCountRes = await client.query('SELECT COUNT(*)::int AS c FROM placed_racks WHERE user_id = $1', [uid]);
-                const prCount = Number(prCountRes.rows[0]?.c ?? 0);
-                if (prCount > 0) {
-                    console.warn(`[SaveGame] Rejeitado placedRacks vazio (servidor tem ${prCount} rig(s)) userId=${uid}`);
-                    await client.query('ROLLBACK');
-                    return res.status(409).json({
-                        error: 'O estado enviado não inclui nenhuma rig, mas o servidor ainda guarda o teu equipamento. Recarrega a página (F5) para sincronizar.',
-                        forceReload: true,
-                    });
+                nftAutoSanitized = await sanitizePlacedRacksNftAutoRoom(client, uid, changes, saveActivityLogs);
+                const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks);
+                if (!rackVal.ok) {
+                    throw new HttpControlledError(400, { error: rackVal.error });
                 }
             }
-            nftAutoSanitized = await sanitizePlacedRacksNftAutoRoom(client, uid, changes, saveActivityLogs);
-            const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks);
-            if (!rackVal.ok) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: rackVal.error });
-            }
-        }
-        // ---------------------------------
-        const gs = changes.gameState || changes;
-        const finalServerUpdatedAt = Date.now();
-        if (gs) {
-            const startTime = gs.startTime || Date.now();
-            const lastUpdate = gs.lastUpdatedAt || Date.now();
-            await client.query(`
+            // ---------------------------------
+            const gs = changes.gameState || changes;
+            finalServerUpdatedAt = Date.now();
+            if (gs) {
+                const startTime = gs.startTime || Date.now();
+                const lastUpdate = gs.lastUpdatedAt || Date.now();
+                await client.query(`
         INSERT INTO game_states (user_id, start_time, last_updated_at, server_updated_at, claimed_referrals, referral_bonus_claimed, black_market_balance)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         ON CONFLICT (user_id) DO UPDATE SET
@@ -6807,476 +6754,466 @@ app.post('/api/save-game', async (req, res) => {
           claimed_referrals = EXCLUDED.claimed_referrals,
           referral_bonus_claimed = EXCLUDED.referral_bonus_claimed,
           black_market_balance = EXCLUDED.black_market_balance`, [uid, startTime, lastUpdate, finalServerUpdatedAt, gs.claimedReferrals || 0, gs.referralBonusClaimed ? 1 : 0, gs.blackMarketBalance || 0]);
-            if (effectiveAdminOverride) {
-                if (gs.usdc !== undefined) {
-                    await client.query('UPDATE game_states SET usdc = $1 WHERE user_id = $2', [gs.usdc, uid]);
-                }
-                if (changes.coinBalances) {
-                    const coinIds = Object.keys(changes.coinBalances);
-                    const amounts = Object.values(changes.coinBalances);
-                    if (coinIds.length > 0) {
-                        await client.query(`
+                if (effectiveAdminOverride) {
+                    if (gs.usdc !== undefined) {
+                        await client.query('UPDATE game_states SET usdc = $1 WHERE user_id = $2', [gs.usdc, uid]);
+                    }
+                    if (changes.coinBalances) {
+                        const coinIds = Object.keys(changes.coinBalances);
+                        const amounts = Object.values(changes.coinBalances);
+                        if (coinIds.length > 0) {
+                            await client.query(`
                INSERT INTO coin_balances (user_id, coin_id, amount) 
                SELECT $1, unnest($2::text[]), unnest($3::numeric[])
                ON CONFLICT (user_id, coin_id) DO UPDATE SET amount = EXCLUDED.amount`, [uid, coinIds, amounts]);
+                        }
                     }
                 }
-            }
-            if (gs.dailyActions) {
-                if (typeof gs.dailyActions !== 'object' || Array.isArray(gs.dailyActions)) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({
-                        error: 'O formato dos dados diários (oficina) está incorrecto. Recarregue a página (F5).'
-                    });
-                }
-                const dv = validateDailyActionsForSave(gs.dailyActions, effectiveAdminOverride, Date.now());
-                if (!dv.ok) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({ error: dv.error });
-                }
-                if (dv.keys.length > 0) {
-                    await client.query(`
+                if (gs.dailyActions) {
+                    if (typeof gs.dailyActions !== 'object' || Array.isArray(gs.dailyActions)) {
+                        throw new HttpControlledError(400, {
+                            error: 'O formato dos dados diários (oficina) está incorrecto. Recarregue a página (F5).'
+                        });
+                    }
+                    const dv = validateDailyActionsForSave(gs.dailyActions, effectiveAdminOverride, Date.now());
+                    if (!dv.ok) {
+                        throw new HttpControlledError(400, { error: dv.error });
+                    }
+                    if (dv.keys.length > 0) {
+                        await client.query(`
             INSERT INTO daily_actions (user_id, action_key, last_performed_at) 
             SELECT $1, unnest($2::text[]), unnest($3::numeric[])
             ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at`, [uid, dv.keys, dv.vals]);
+                    }
                 }
             }
-        }
-        if (changes.stock !== undefined && changes.stock !== null) {
-            if (typeof changes.stock !== 'object' || Array.isArray(changes.stock)) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    error: 'O inventário foi enviado num formato inválido. Recarregue a página (F5).'
-                });
-            }
-            const sv = await validateStockForSave(client, changes.stock);
-            if (!sv.ok) {
-                await client.query('ROLLBACK');
-                const samplesJson = JSON.stringify(sv.samples || []).slice(0, 900);
-                console.warn(`[SaveGame] stock_validation_fail userId=${uid} reason=${sv.reason} sampleCount=${(sv.samples || []).length} keyCount=${Object.keys(changes.stock).length} samples=${samplesJson}`);
-                return res.status(400).json({ error: sv.error });
-            }
-            if (sv.itemIds.length > 0) {
-                await client.query(`
+            if (changes.stock !== undefined && changes.stock !== null) {
+                if (typeof changes.stock !== 'object' || Array.isArray(changes.stock)) {
+                    throw new HttpControlledError(400, {
+                        error: 'O inventário foi enviado num formato inválido. Recarregue a página (F5).'
+                    });
+                }
+                const sv = await validateStockForSave(client, changes.stock);
+                if (!sv.ok) {
+                    const samplesJson = JSON.stringify(sv.samples || []).slice(0, 900);
+                    console.warn(`[SaveGame] stock_validation_fail userId=${uid} reason=${sv.reason} sampleCount=${(sv.samples || []).length} keyCount=${Object.keys(changes.stock).length} samples=${samplesJson}`);
+                    throw new HttpControlledError(400, { error: sv.error });
+                }
+                if (sv.itemIds.length > 0) {
+                    await client.query(`
           INSERT INTO stock (user_id, item_id, qty) 
           SELECT $1, unnest($2::text[]), unnest($3::int[])
           ON CONFLICT (user_id, item_id) DO UPDATE SET qty = EXCLUDED.qty`, [uid, sv.itemIds, sv.qtys]);
+                }
             }
-        }
-        if (changes.unopenedBoxes !== undefined && changes.unopenedBoxes !== null) {
-            if (typeof changes.unopenedBoxes !== 'object' || Array.isArray(changes.unopenedBoxes)) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    error: 'A lista de caixas foi enviada num formato inválido. Recarregue a página (F5).'
-                });
-            }
-            const bv = await validateUnopenedBoxesForSave(client, changes.unopenedBoxes);
-            if (!bv.ok) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: bv.error });
-            }
-            if (bv.boxIds.length > 0) {
-                await client.query(`
+            if (changes.unopenedBoxes !== undefined && changes.unopenedBoxes !== null) {
+                if (typeof changes.unopenedBoxes !== 'object' || Array.isArray(changes.unopenedBoxes)) {
+                    throw new HttpControlledError(400, {
+                        error: 'A lista de caixas foi enviada num formato inválido. Recarregue a página (F5).'
+                    });
+                }
+                const bv = await validateUnopenedBoxesForSave(client, changes.unopenedBoxes);
+                if (!bv.ok) {
+                    throw new HttpControlledError(400, { error: bv.error });
+                }
+                if (bv.boxIds.length > 0) {
+                    await client.query(`
           INSERT INTO unopened_boxes (user_id, box_id, qty) 
           SELECT $1, unnest($2::text[]), unnest($3::int[])
           ON CONFLICT (user_id, box_id) DO UPDATE SET qty = EXCLUDED.qty`, [uid, bv.boxIds, bv.qtys]);
+                }
             }
-        }
-        if (changes.storedBatteries) {
-            if (!Array.isArray(changes.storedBatteries)) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({
-                    error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
-                });
-            }
-            const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
-            if (!batVal.ok) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: batVal.error });
-            }
-            const incomingIds = changes.storedBatteries.map((b) => b.id);
-            const batRm = await validateStoredBatteryWarehouseRemovalAllowed(client, uid, incomingIds, { placedRacks: changes.placedRacks, workshopSlots: changes.workshopSlots }, effectiveAdminOverride);
-            if (!batRm.ok) {
-                throw new StoredBatterySaveGuardError(batRm.error);
-            }
-            // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores),
-            // desde que cada id retirado do armazém apareça montada nas rigs ou oficina (validação acima).
-            if (incomingIds.length > 0) {
-                await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, incomingIds]);
-            }
-            else {
-                await client.query('DELETE FROM stored_batteries WHERE user_id = $1', [uid]);
-            }
-            if (changes.storedBatteries.length > 0) {
-                const bIds = changes.storedBatteries.map(b => b.id);
-                const bItemIds = changes.storedBatteries.map(b => b.itemId);
-                const bCharges = changes.storedBatteries.map(b => b.currentCharge || 0);
-                await client.query(`
+            if (changes.storedBatteries) {
+                if (!Array.isArray(changes.storedBatteries)) {
+                    throw new HttpControlledError(400, {
+                        error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
+                    });
+                }
+                const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
+                if (!batVal.ok) {
+                    throw new HttpControlledError(400, { error: batVal.error });
+                }
+                const incomingIds = changes.storedBatteries.map((b) => b.id);
+                const batRm = await validateStoredBatteryWarehouseRemovalAllowed(client, uid, incomingIds, { placedRacks: changes.placedRacks, workshopSlots: changes.workshopSlots }, effectiveAdminOverride);
+                if (!batRm.ok) {
+                    throw new StoredBatterySaveGuardError(batRm.error);
+                }
+                // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores),
+                // desde que cada id retirado do armazém apareça montada nas rigs ou oficina (validação acima).
+                if (incomingIds.length > 0) {
+                    await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, incomingIds]);
+                }
+                else {
+                    await client.query('DELETE FROM stored_batteries WHERE user_id = $1', [uid]);
+                }
+                if (changes.storedBatteries.length > 0) {
+                    const bIds = changes.storedBatteries.map(b => b.id);
+                    const bItemIds = changes.storedBatteries.map(b => b.itemId);
+                    const bCharges = changes.storedBatteries.map(b => b.currentCharge || 0);
+                    await client.query(`
           INSERT INTO stored_batteries (id, user_id, item_id, current_charge) 
           SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[])
           ON CONFLICT (id) DO UPDATE SET current_charge = EXCLUDED.current_charge, item_id = EXCLUDED.item_id`, [uid, bIds, bItemIds, bCharges]);
+                }
             }
-        }
-        if (changes.placedRacks) {
-            const ts = new Date().toISOString();
-            const prevRacksRes = await client.query(`SELECT id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id,
+            if (changes.placedRacks) {
+                const ts = new Date().toISOString();
+                const prevRacksRes = await client.query(`SELECT id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id,
                 COALESCE(NULLIF(BTRIM(room_id::text), ''), 'room_initial') AS room_id, slot_index
          FROM placed_racks WHERE user_id = $1`, [uid]);
-            const prevMap = new Map(prevRacksRes.rows.map((row) => [row.id, row]));
-            const nextIdSet = new Set(changes.placedRacks.map((r) => r.id));
-            for (const row of prevRacksRes.rows) {
-                if (!nextIdSet.has(row.id)) {
-                    const [slots, multis] = await Promise.all([
-                        client.query('SELECT slot_index, machine_item_id FROM rack_slots WHERE rack_id = $1 ORDER BY slot_index', [row.id]),
-                        client.query('SELECT slot_index, multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1 ORDER BY slot_index', [row.id])
-                    ]);
-                    const dismantledParts = {
-                        chassis: row.item_id,
-                        wiring: row.wiring_id,
-                        battery: row.battery_id,
-                        miners: slots.rows.filter((s) => s.machine_item_id).map((s) => ({ slot: s.slot_index, id: s.machine_item_id })),
-                        multipliers: multis.rows.filter((m) => m.multiplier_item_id).map((m) => ({ slot: m.slot_index, id: m.multiplier_item_id }))
-                    };
-                    console.log(`[RackDismantle] ts=${ts} userId=${uid} rackId=${row.id} parts=${JSON.stringify(dismantledParts)}`);
-                    saveActivityLogs.push({ action: 'rack_dismantle', meta: { rackId: row.id, parts: dismantledParts } });
+                const prevMap = new Map(prevRacksRes.rows.map((row) => [row.id, row]));
+                const nextIdSet = new Set(changes.placedRacks.map((r) => r.id));
+                for (const row of prevRacksRes.rows) {
+                    if (!nextIdSet.has(row.id)) {
+                        const [slots, multis] = await Promise.all([
+                            client.query('SELECT slot_index, machine_item_id FROM rack_slots WHERE rack_id = $1 ORDER BY slot_index', [row.id]),
+                            client.query('SELECT slot_index, multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1 ORDER BY slot_index', [row.id])
+                        ]);
+                        const dismantledParts = {
+                            chassis: row.item_id,
+                            wiring: row.wiring_id,
+                            battery: row.battery_id,
+                            miners: slots.rows.filter((s) => s.machine_item_id).map((s) => ({ slot: s.slot_index, id: s.machine_item_id })),
+                            multipliers: multis.rows.filter((m) => m.multiplier_item_id).map((m) => ({ slot: m.slot_index, id: m.multiplier_item_id }))
+                        };
+                        console.log(`[RackDismantle] ts=${ts} userId=${uid} rackId=${row.id} parts=${JSON.stringify(dismantledParts)}`);
+                        saveActivityLogs.push({ action: 'rack_dismantle', meta: { rackId: row.id, parts: dismantledParts } });
+                    }
                 }
-            }
-            for (const r of changes.placedRacks) {
-                if (!prevMap.has(r.id)) {
-                    console.log(`[RackPlace] ts=${ts} userId=${uid} rackId=${r.id} itemId=${r.itemId} room=${r.roomId ?? ''} slotIndex=${r.slotIndex ?? 0}`);
-                    saveActivityLogs.push({
-                        action: 'rack_place',
-                        meta: { rackId: r.id, itemId: r.itemId, room: r.roomId ?? '', slotIndex: r.slotIndex ?? 0 }
-                    });
+                for (const r of changes.placedRacks) {
+                    if (!prevMap.has(r.id)) {
+                        console.log(`[RackPlace] ts=${ts} userId=${uid} rackId=${r.id} itemId=${r.itemId} room=${r.roomId ?? ''} slotIndex=${r.slotIndex ?? 0}`);
+                        saveActivityLogs.push({
+                            action: 'rack_place',
+                            meta: { rackId: r.id, itemId: r.itemId, room: r.roomId ?? '', slotIndex: r.slotIndex ?? 0 }
+                        });
+                    }
                 }
-            }
-            const prevSlotsRes = await client.query(`SELECT s.rack_id, s.slot_index, s.machine_item_id
+                const prevSlotsRes = await client.query(`SELECT s.rack_id, s.slot_index, s.machine_item_id
          FROM rack_slots s
          INNER JOIN placed_racks pr ON pr.id = s.rack_id AND pr.user_id = $1
          ORDER BY s.rack_id, s.slot_index`, [uid]);
-            const prevMultRes = await client.query(`SELECT s.rack_id, s.slot_index, s.multiplier_item_id
+                const prevMultRes = await client.query(`SELECT s.rack_id, s.slot_index, s.multiplier_item_id
          FROM rack_multiplier_slots s
          INNER JOIN placed_racks pr ON pr.id = s.rack_id AND pr.user_id = $1
          ORDER BY s.rack_id, s.slot_index`, [uid]);
-            const prevMachSig = (rackId) => prevSlotsRes.rows
-                .filter((x) => x.rack_id === rackId)
-                .sort((a, b) => a.slot_index - b.slot_index)
-                .map((x) => String(x.machine_item_id || ''))
-                .join('|');
-            const prevMultiSig = (rackId) => prevMultRes.rows
-                .filter((x) => x.rack_id === rackId)
-                .sort((a, b) => a.slot_index - b.slot_index)
-                .map((x) => String(x.multiplier_item_id || ''))
-                .join('|');
-            let miningUpdateLogs = 0;
-            for (const r of changes.placedRacks) {
-                if (!prevMap.has(r.id))
-                    continue;
-                const prow = prevMap.get(r.id);
-                if (!prow)
-                    continue;
-                const changed = [];
-                if (String(prow.item_id || '') !== String(r.itemId || ''))
-                    changed.push('chassis');
-                if (String(prow.wiring_id || '') !== String(r.wiringId || ''))
-                    changed.push('wiring');
-                if (String(prow.battery_id || '') !== String(r.batteryId || ''))
-                    changed.push('battery');
-                if (Number(prow.is_on) !== (r.isOn ? 1 : 0))
-                    changed.push('power');
-                if (Number(prow.current_charge || 0) !== Number(r.currentCharge || 0))
-                    changed.push('charge');
-                if (String(prow.selected_coin_id || '') !== String(r.selectedCoinId || ''))
-                    changed.push('coin');
-                if (String(prow.room_id || '') !== String(normalizePlacedRackRoomId(r.roomId)))
-                    changed.push('room');
-                if (Number(prow.slot_index || 0) !== Number(r.slotIndex || 0))
-                    changed.push('slot');
-                const nextMach = Array.isArray(r.slots) ? r.slots.map((x) => String(x || '')).join('|') : '';
-                const nextMult = Array.isArray(r.multiplierSlots) ? r.multiplierSlots.map((x) => String(x || '')).join('|') : '';
-                if (prevMachSig(r.id) !== nextMach)
-                    changed.push('miners');
-                if (prevMultiSig(r.id) !== nextMult)
-                    changed.push('multipliers');
-                if (changed.length > 0 && miningUpdateLogs < 48) {
-                    saveActivityLogs.push({ action: 'mining_rack_update', meta: { rackId: r.id, changed } });
-                    miningUpdateLogs++;
+                const prevMachSig = (rackId) => prevSlotsRes.rows
+                    .filter((x) => x.rack_id === rackId)
+                    .sort((a, b) => a.slot_index - b.slot_index)
+                    .map((x) => String(x.machine_item_id || ''))
+                    .join('|');
+                const prevMultiSig = (rackId) => prevMultRes.rows
+                    .filter((x) => x.rack_id === rackId)
+                    .sort((a, b) => a.slot_index - b.slot_index)
+                    .map((x) => String(x.multiplier_item_id || ''))
+                    .join('|');
+                let miningUpdateLogs = 0;
+                for (const r of changes.placedRacks) {
+                    if (!prevMap.has(r.id))
+                        continue;
+                    const prow = prevMap.get(r.id);
+                    if (!prow)
+                        continue;
+                    const changed = [];
+                    if (String(prow.item_id || '') !== String(r.itemId || ''))
+                        changed.push('chassis');
+                    if (String(prow.wiring_id || '') !== String(r.wiringId || ''))
+                        changed.push('wiring');
+                    if (String(prow.battery_id || '') !== String(r.batteryId || ''))
+                        changed.push('battery');
+                    if (Number(prow.is_on) !== (r.isOn ? 1 : 0))
+                        changed.push('power');
+                    if (Number(prow.current_charge || 0) !== Number(r.currentCharge || 0))
+                        changed.push('charge');
+                    if (String(prow.selected_coin_id || '') !== String(r.selectedCoinId || ''))
+                        changed.push('coin');
+                    if (String(prow.room_id || '') !== String(normalizePlacedRackRoomId(r.roomId)))
+                        changed.push('room');
+                    if (Number(prow.slot_index || 0) !== Number(r.slotIndex || 0))
+                        changed.push('slot');
+                    const nextMach = Array.isArray(r.slots) ? r.slots.map((x) => String(x || '')).join('|') : '';
+                    const nextMult = Array.isArray(r.multiplierSlots) ? r.multiplierSlots.map((x) => String(x || '')).join('|') : '';
+                    if (prevMachSig(r.id) !== nextMach)
+                        changed.push('miners');
+                    if (prevMultiSig(r.id) !== nextMult)
+                        changed.push('multipliers');
+                    if (changed.length > 0 && miningUpdateLogs < 48) {
+                        saveActivityLogs.push({ action: 'mining_rack_update', meta: { rackId: r.id, changed } });
+                        miningUpdateLogs++;
+                    }
                 }
-            }
-            const currentRackIds = changes.placedRacks.map(r => r.id);
-            if (currentRackIds.length > 0) {
-                // Optimized range delete
-                const removedRacksQuery = 'SELECT id FROM placed_racks WHERE user_id = $1 AND NOT (id = ANY($2::text[]))';
-                await client.query(`DELETE FROM rack_slots WHERE rack_id IN (${removedRacksQuery})`, [uid, currentRackIds]);
-                await client.query(`DELETE FROM rack_multiplier_slots WHERE rack_id IN (${removedRacksQuery})`, [uid, currentRackIds]);
-                await client.query('DELETE FROM placed_racks WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, currentRackIds]);
-            }
-            else {
-                await client.query('DELETE FROM rack_slots WHERE rack_id IN (SELECT id FROM placed_racks WHERE user_id = $1)', [uid]);
-                await client.query('DELETE FROM rack_multiplier_slots WHERE rack_id IN (SELECT id FROM placed_racks WHERE user_id = $1)', [uid]);
-                await client.query('DELETE FROM placed_racks WHERE user_id = $1', [uid]);
-            }
-            if (changes.placedRacks.length > 0) {
-                const rIds = changes.placedRacks.map(r => r.id);
-                const rItems = changes.placedRacks.map(r => r.itemId);
-                const rWirings = changes.placedRacks.map(r => r.wiringId || null);
-                const rBatteries = changes.placedRacks.map(r => r.batteryId || null);
-                const rCharges = changes.placedRacks.map(r => r.currentCharge || 0);
-                const rOns = changes.placedRacks.map(r => r.isOn ? 1 : 0);
-                const rCoins = changes.placedRacks.map(r => r.selectedCoinId || null);
-                const rRooms = changes.placedRacks.map((r) => normalizePlacedRackRoomId(r.roomId));
-                const rSlotIdxs = changes.placedRacks.map(r => r.slotIndex || 0);
-                await client.query(`
+                const currentRackIds = changes.placedRacks.map(r => r.id);
+                if (currentRackIds.length > 0) {
+                    // Optimized range delete
+                    const removedRacksQuery = 'SELECT id FROM placed_racks WHERE user_id = $1 AND NOT (id = ANY($2::text[]))';
+                    await client.query(`DELETE FROM rack_slots WHERE rack_id IN (${removedRacksQuery})`, [uid, currentRackIds]);
+                    await client.query(`DELETE FROM rack_multiplier_slots WHERE rack_id IN (${removedRacksQuery})`, [uid, currentRackIds]);
+                    await client.query('DELETE FROM placed_racks WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, currentRackIds]);
+                }
+                else {
+                    await client.query('DELETE FROM rack_slots WHERE rack_id IN (SELECT id FROM placed_racks WHERE user_id = $1)', [uid]);
+                    await client.query('DELETE FROM rack_multiplier_slots WHERE rack_id IN (SELECT id FROM placed_racks WHERE user_id = $1)', [uid]);
+                    await client.query('DELETE FROM placed_racks WHERE user_id = $1', [uid]);
+                }
+                if (changes.placedRacks.length > 0) {
+                    const rIds = changes.placedRacks.map(r => r.id);
+                    const rItems = changes.placedRacks.map(r => r.itemId);
+                    const rWirings = changes.placedRacks.map(r => r.wiringId || null);
+                    const rBatteries = changes.placedRacks.map(r => r.batteryId || null);
+                    const rCharges = changes.placedRacks.map(r => r.currentCharge || 0);
+                    const rOns = changes.placedRacks.map(r => r.isOn ? 1 : 0);
+                    const rCoins = changes.placedRacks.map(r => r.selectedCoinId || null);
+                    const rRooms = changes.placedRacks.map((r) => normalizePlacedRackRoomId(r.roomId));
+                    const rSlotIdxs = changes.placedRacks.map(r => r.slotIndex || 0);
+                    await client.query(`
           INSERT INTO placed_racks (id, user_id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id, room_id, slot_index)
           SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), unnest($6::numeric[]), unnest($7::int[]), unnest($8::text[]), unnest($9::text[]), unnest($10::int[])
           ON CONFLICT (id) DO UPDATE SET
             item_id = EXCLUDED.item_id, wiring_id = EXCLUDED.wiring_id, battery_id = EXCLUDED.battery_id,
             current_charge = EXCLUDED.current_charge, is_on = EXCLUDED.is_on, selected_coin_id = EXCLUDED.selected_coin_id,
             room_id = EXCLUDED.room_id, slot_index = EXCLUDED.slot_index`, [uid, rIds, rItems, rWirings, rBatteries, rCharges, rOns, rCoins, rRooms, rSlotIdxs]);
-                // Bulk Delete existing slots for updated racks
-                await client.query('DELETE FROM rack_slots WHERE rack_id = ANY($1)', [rIds]);
-                await client.query('DELETE FROM rack_multiplier_slots WHERE rack_id = ANY($1)', [rIds]);
-                const allSlotsRackId = [];
-                const allSlotsIdx = [];
-                const allSlotsItem = [];
-                const allMultiRackId = [];
-                const allMultiIdx = [];
-                const allMultiItem = [];
-                for (const r of changes.placedRacks) {
-                    if (r.slots) {
-                        for (let i = 0; i < r.slots.length; i++) {
-                            if (r.slots[i]) {
-                                allSlotsRackId.push(r.id);
-                                allSlotsIdx.push(i);
-                                allSlotsItem.push(r.slots[i]);
+                    // Bulk Delete existing slots for updated racks
+                    await client.query('DELETE FROM rack_slots WHERE rack_id = ANY($1)', [rIds]);
+                    await client.query('DELETE FROM rack_multiplier_slots WHERE rack_id = ANY($1)', [rIds]);
+                    const allSlotsRackId = [];
+                    const allSlotsIdx = [];
+                    const allSlotsItem = [];
+                    const allMultiRackId = [];
+                    const allMultiIdx = [];
+                    const allMultiItem = [];
+                    for (const r of changes.placedRacks) {
+                        if (r.slots) {
+                            for (let i = 0; i < r.slots.length; i++) {
+                                if (r.slots[i]) {
+                                    allSlotsRackId.push(r.id);
+                                    allSlotsIdx.push(i);
+                                    allSlotsItem.push(r.slots[i]);
+                                }
+                            }
+                        }
+                        if (r.multiplierSlots) {
+                            for (let i = 0; i < r.multiplierSlots.length; i++) {
+                                if (r.multiplierSlots[i]) {
+                                    allMultiRackId.push(r.id);
+                                    allMultiIdx.push(i);
+                                    allMultiItem.push(r.multiplierSlots[i]);
+                                }
                             }
                         }
                     }
-                    if (r.multiplierSlots) {
-                        for (let i = 0; i < r.multiplierSlots.length; i++) {
-                            if (r.multiplierSlots[i]) {
-                                allMultiRackId.push(r.id);
-                                allMultiIdx.push(i);
-                                allMultiItem.push(r.multiplierSlots[i]);
+                    if (allSlotsRackId.length > 0) {
+                        await client.query(`INSERT INTO rack_slots (rack_id, slot_index, machine_item_id) SELECT unnest($1::text[]), unnest($2::int[]), unnest($3::text[])`, [allSlotsRackId, allSlotsIdx, allSlotsItem]);
+                    }
+                    if (allMultiRackId.length > 0) {
+                        await client.query(`INSERT INTO rack_multiplier_slots (rack_id, slot_index, multiplier_item_id) SELECT unnest($1::text[]), unnest($2::int[]), unnest($3::text[])`, [allMultiRackId, allMultiIdx, allMultiItem]);
+                    }
+                }
+            }
+            if (changes.workshopSlots) {
+                const wVal = await validateWorkshopSlotsPayloadForSave(client, changes.workshopSlots, {
+                    adminOverride: effectiveAdminOverride
+                });
+                if (!wVal.ok) {
+                    throw new HttpControlledError(400, { error: wVal.error });
+                }
+                const workshopNorm = wVal.normalized;
+                const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge, slot_charges, slot_item_ids FROM workshop_slots WHERE user_id = $1', [uid]);
+                const existingSlots = {};
+                existingSlotsRes.rows.forEach((r) => {
+                    let parsed_slot_item_ids = {};
+                    if (r.slot_item_ids) {
+                        try {
+                            const raw = r.slot_item_ids;
+                            const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+                            if (o && typeof o === 'object' && !Array.isArray(o)) {
+                                for (const [k, v] of Object.entries(o)) {
+                                    if (typeof v === 'string' && v.trim())
+                                        parsed_slot_item_ids[k] = v.trim();
+                                }
                             }
+                        }
+                        catch {
+                            parsed_slot_item_ids = {};
+                        }
+                    }
+                    existingSlots[r.slot_index] = { ...r, parsed_slot_item_ids };
+                });
+                const workshopItemIds = workshopNorm.map((w) => w?.itemId).filter((id) => !!id);
+                const slotRefIds = [];
+                for (const w of workshopNorm) {
+                    if (w?.slotItemIds) {
+                        for (const sid of Object.values(w.slotItemIds)) {
+                            if (typeof sid === 'string' && sid)
+                                slotRefIds.push(sid);
                         }
                     }
                 }
-                if (allSlotsRackId.length > 0) {
-                    await client.query(`INSERT INTO rack_slots (rack_id, slot_index, machine_item_id) SELECT unnest($1::text[]), unnest($2::int[]), unnest($3::text[])`, [allSlotsRackId, allSlotsIdx, allSlotsItem]);
-                }
-                if (allMultiRackId.length > 0) {
-                    await client.query(`INSERT INTO rack_multiplier_slots (rack_id, slot_index, multiplier_item_id) SELECT unnest($1::text[]), unnest($2::int[]), unnest($3::text[])`, [allMultiRackId, allMultiIdx, allMultiItem]);
-                }
-            }
-        }
-        if (changes.workshopSlots) {
-            const wVal = await validateWorkshopSlotsPayloadForSave(client, changes.workshopSlots, {
-                adminOverride: effectiveAdminOverride
-            });
-            if (!wVal.ok) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: wVal.error });
-            }
-            const workshopNorm = wVal.normalized;
-            const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge, slot_charges, slot_item_ids FROM workshop_slots WHERE user_id = $1', [uid]);
-            const existingSlots = {};
-            existingSlotsRes.rows.forEach((r) => {
-                let parsed_slot_item_ids = {};
-                if (r.slot_item_ids) {
-                    try {
-                        const raw = r.slot_item_ids;
-                        const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                        if (o && typeof o === 'object' && !Array.isArray(o)) {
-                            for (const [k, v] of Object.entries(o)) {
-                                if (typeof v === 'string' && v.trim())
-                                    parsed_slot_item_ids[k] = v.trim();
-                            }
-                        }
-                    }
-                    catch {
-                        parsed_slot_item_ids = {};
-                    }
-                }
-                existingSlots[r.slot_index] = { ...r, parsed_slot_item_ids };
-            });
-            const workshopItemIds = workshopNorm.map((w) => w?.itemId).filter((id) => !!id);
-            const slotRefIds = [];
-            for (const w of workshopNorm) {
-                if (w?.slotItemIds) {
-                    for (const sid of Object.values(w.slotItemIds)) {
-                        if (typeof sid === 'string' && sid)
-                            slotRefIds.push(sid);
-                    }
-                }
-            }
-            for (const row of Object.values(existingSlots)) {
-                const p = row?.parsed_slot_item_ids;
-                if (!p)
-                    continue;
-                for (const v of Object.values(p)) {
-                    if (typeof v === 'string' && v.trim())
-                        slotRefIds.push(v.trim());
-                }
-            }
-            const existingItemIds = Object.values(existingSlots)
-                .map((s) => s.item_id)
-                .filter((id) => typeof id === 'string' && !!id);
-            const allWorkshopTargetIds = [...new Set([...workshopItemIds, ...existingItemIds, ...slotRefIds])];
-            const workshopUpgradesMap = new Map();
-            if (allWorkshopTargetIds.length > 0) {
-                const upRes = await client.query('SELECT id, type, category, base_production, power_capacity FROM upgrades WHERE id = ANY($1::text[])', [allWorkshopTargetIds]);
-                upRes.rows.forEach((u) => workshopUpgradesMap.set(u.id, u));
-            }
-            const capSlotCharges = (charges, slotItemIds) => {
-                if (!slotItemIds)
-                    return { ...charges };
-                const out = { ...charges };
-                for (const key of Object.keys(out)) {
-                    const iid = slotItemIds[key];
-                    if (!iid)
+                for (const row of Object.values(existingSlots)) {
+                    const p = row?.parsed_slot_item_ids;
+                    if (!p)
                         continue;
-                    const defB = workshopUpgradesMap.get(String(iid));
-                    const maxB = Number(defB?.power_capacity);
-                    if (Number.isFinite(maxB) && maxB >= 0 && out[key] > maxB)
-                        out[key] = maxB;
+                    for (const v of Object.values(p)) {
+                        if (typeof v === 'string' && v.trim())
+                            slotRefIds.push(v.trim());
+                    }
                 }
-                return out;
-            };
-            const wsUserIds = [];
-            const wsSlotIdxs = [];
-            const wsItemIds = [];
-            const wsInternalStates = [];
-            const wsCharges = [];
-            const wsSlotCharges = [];
-            const wsSlotItemIds = [];
-            const wsInstalledAts = [];
-            for (let i = 0; i < workshopNorm.length; i++) {
-                const w = workshopNorm[i];
-                const existing = existingSlots[i];
-                if (w && w.itemId) {
-                    const defStruct = workshopUpgradesMap.get(String(w.itemId));
-                    const maxCapStruct = Number(defStruct?.power_capacity);
-                    // Só limpar bancada interna quando o jogador troca o modelo na BD — não quando é a
-                    // primeira persistência (linha inexistente ou slot vazio), senão o save apaga as
-                    // baterias que já vinham no payload do cliente.
-                    const hadItemInDb = !!existing &&
-                        existing.item_id != null &&
-                        String(String(existing.item_id).trim()) !== '';
-                    const structureIdChanged = hadItemInDb && String(existing.item_id) !== String(w.itemId);
-                    const isFirstPersistOfSlot = !hadItemInDb;
-                    let finalCharge = w.currentCharge || 0;
-                    let finalSlotCharges = w.slotCharges ? { ...w.slotCharges } : {};
-                    let internalPayload = w.internalSlots && Object.keys(w.internalSlots).length ? { ...w.internalSlots } : {};
-                    let slotItemIdsPayload = w.slotItemIds && Object.keys(w.slotItemIds).length ? { ...w.slotItemIds } : null;
-                    let validInstalledAt = Date.now();
-                    if (isFirstPersistOfSlot || structureIdChanged) {
-                        console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
-                        saveActivityLogs.push({ action: 'workshop_place', meta: { slotIndex: i, itemId: w.itemId } });
+                const existingItemIds = Object.values(existingSlots)
+                    .map((s) => s.item_id)
+                    .filter((id) => typeof id === 'string' && !!id);
+                const allWorkshopTargetIds = [...new Set([...workshopItemIds, ...existingItemIds, ...slotRefIds])];
+                const workshopUpgradesMap = new Map();
+                if (allWorkshopTargetIds.length > 0) {
+                    const upRes = await client.query('SELECT id, type, category, base_production, power_capacity FROM upgrades WHERE id = ANY($1::text[])', [allWorkshopTargetIds]);
+                    upRes.rows.forEach((u) => workshopUpgradesMap.set(u.id, u));
+                }
+                const capSlotCharges = (charges, slotItemIds) => {
+                    if (!slotItemIds)
+                        return { ...charges };
+                    const out = { ...charges };
+                    for (const key of Object.keys(out)) {
+                        const iid = slotItemIds[key];
+                        if (!iid)
+                            continue;
+                        const defB = workshopUpgradesMap.get(String(iid));
+                        const maxB = Number(defB?.power_capacity);
+                        if (Number.isFinite(maxB) && maxB >= 0 && out[key] > maxB)
+                            out[key] = maxB;
                     }
-                    if (structureIdChanged && !effectiveAdminOverride) {
-                        finalCharge = 0;
-                        finalSlotCharges = {};
-                        internalPayload = {};
-                        slotItemIdsPayload = null;
-                    }
-                    else if (hadItemInDb && String(existing.item_id) === String(w.itemId)) {
-                        if (existing.slot_charges) {
-                            try {
-                                const dbSlotCharges = typeof existing.slot_charges === 'string'
-                                    ? JSON.parse(existing.slot_charges)
-                                    : existing.slot_charges;
-                                for (const [sid, dbVal] of Object.entries(dbSlotCharges)) {
-                                    if (finalSlotCharges[sid] !== undefined && Number(dbVal) > Number(finalSlotCharges[sid])) {
-                                        finalSlotCharges[sid] = Number(dbVal);
+                    return out;
+                };
+                const wsUserIds = [];
+                const wsSlotIdxs = [];
+                const wsItemIds = [];
+                const wsInternalStates = [];
+                const wsCharges = [];
+                const wsSlotCharges = [];
+                const wsSlotItemIds = [];
+                const wsInstalledAts = [];
+                for (let i = 0; i < workshopNorm.length; i++) {
+                    const w = workshopNorm[i];
+                    const existing = existingSlots[i];
+                    if (w && w.itemId) {
+                        const defStruct = workshopUpgradesMap.get(String(w.itemId));
+                        const maxCapStruct = Number(defStruct?.power_capacity);
+                        // Só limpar bancada interna quando o jogador troca o modelo na BD — não quando é a
+                        // primeira persistência (linha inexistente ou slot vazio), senão o save apaga as
+                        // baterias que já vinham no payload do cliente.
+                        const hadItemInDb = !!existing &&
+                            existing.item_id != null &&
+                            String(String(existing.item_id).trim()) !== '';
+                        const structureIdChanged = hadItemInDb && String(existing.item_id) !== String(w.itemId);
+                        const isFirstPersistOfSlot = !hadItemInDb;
+                        let finalCharge = w.currentCharge || 0;
+                        let finalSlotCharges = w.slotCharges ? { ...w.slotCharges } : {};
+                        let internalPayload = w.internalSlots && Object.keys(w.internalSlots).length ? { ...w.internalSlots } : {};
+                        let slotItemIdsPayload = w.slotItemIds && Object.keys(w.slotItemIds).length ? { ...w.slotItemIds } : null;
+                        let validInstalledAt = Date.now();
+                        if (isFirstPersistOfSlot || structureIdChanged) {
+                            console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
+                            saveActivityLogs.push({ action: 'workshop_place', meta: { slotIndex: i, itemId: w.itemId } });
+                        }
+                        if (structureIdChanged && !effectiveAdminOverride) {
+                            finalCharge = 0;
+                            finalSlotCharges = {};
+                            internalPayload = {};
+                            slotItemIdsPayload = null;
+                        }
+                        else if (hadItemInDb && String(existing.item_id) === String(w.itemId)) {
+                            if (existing.slot_charges) {
+                                try {
+                                    const dbSlotCharges = typeof existing.slot_charges === 'string'
+                                        ? JSON.parse(existing.slot_charges)
+                                        : existing.slot_charges;
+                                    for (const [sid, dbVal] of Object.entries(dbSlotCharges)) {
+                                        if (finalSlotCharges[sid] !== undefined && Number(dbVal) > Number(finalSlotCharges[sid])) {
+                                            finalSlotCharges[sid] = Number(dbVal);
+                                        }
                                     }
                                 }
-                            }
-                            catch (e) {
-                                console.warn(`[SaveGame] Error parsing existing slot_charges for slot ${i}:`, e instanceof Error ? e.message : String(e));
-                            }
-                        }
-                        if (Number(existing.current_charge) > finalCharge) {
-                            finalCharge = Number(existing.current_charge);
-                        }
-                        validInstalledAt = Number(existing.installed_at || Date.now());
-                        const dbSlotItemMap = existing
-                            .parsed_slot_item_ids;
-                        if (dbSlotItemMap && Object.keys(dbSlotItemMap).length > 0 && Object.keys(internalPayload).length > 0) {
-                            const merged = { ...(slotItemIdsPayload || {}) };
-                            let touched = false;
-                            for (const k of Object.keys(internalPayload)) {
-                                if (!merged[k] && dbSlotItemMap[k]) {
-                                    merged[k] = String(dbSlotItemMap[k]);
-                                    touched = true;
+                                catch (e) {
+                                    console.warn(`[SaveGame] Error parsing existing slot_charges for slot ${i}:`, e instanceof Error ? e.message : String(e));
                                 }
                             }
-                            if (touched && Object.keys(merged).length > 0)
-                                slotItemIdsPayload = merged;
-                        }
-                    }
-                    if (Number.isFinite(maxCapStruct) && maxCapStruct > 0) {
-                        finalCharge = Math.min(finalCharge, maxCapStruct);
-                    }
-                    finalSlotCharges = capSlotCharges(finalSlotCharges, slotItemIdsPayload);
-                    wsUserIds.push(uid);
-                    wsSlotIdxs.push(i);
-                    wsItemIds.push(w.itemId);
-                    wsInternalStates.push(Object.keys(internalPayload).length ? JSON.stringify(internalPayload) : null);
-                    wsCharges.push(finalCharge);
-                    wsSlotCharges.push(JSON.stringify(finalSlotCharges));
-                    wsSlotItemIds.push(slotItemIdsPayload ? JSON.stringify(slotItemIdsPayload) : null);
-                    wsInstalledAts.push(validInstalledAt);
-                }
-                else {
-                    if (existing && existing.item_id) {
-                        console.log(`[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`);
-                        saveActivityLogs.push({ action: 'workshop_dismantle', meta: { slotIndex: i, itemId: existing.item_id } });
-                        const itemDef = workshopUpgradesMap.get(String(existing.item_id));
-                        if (itemDef && String(itemDef.type).toLowerCase() === 'charger') {
-                            if (Number(existing.current_charge) > 0.001) {
-                                throw Object.assign(new Error('Não é possível remover um carregador com carga.'), {
-                                    workshopClientError: true
-                                });
+                            if (Number(existing.current_charge) > finalCharge) {
+                                finalCharge = Number(existing.current_charge);
+                            }
+                            validInstalledAt = Number(existing.installed_at || Date.now());
+                            const dbSlotItemMap = existing
+                                .parsed_slot_item_ids;
+                            if (dbSlotItemMap && Object.keys(dbSlotItemMap).length > 0 && Object.keys(internalPayload).length > 0) {
+                                const merged = { ...(slotItemIdsPayload || {}) };
+                                let touched = false;
+                                for (const k of Object.keys(internalPayload)) {
+                                    if (!merged[k] && dbSlotItemMap[k]) {
+                                        merged[k] = String(dbSlotItemMap[k]);
+                                        touched = true;
+                                    }
+                                }
+                                if (touched && Object.keys(merged).length > 0)
+                                    slotItemIdsPayload = merged;
                             }
                         }
+                        if (Number.isFinite(maxCapStruct) && maxCapStruct > 0) {
+                            finalCharge = Math.min(finalCharge, maxCapStruct);
+                        }
+                        finalSlotCharges = capSlotCharges(finalSlotCharges, slotItemIdsPayload);
+                        wsUserIds.push(uid);
+                        wsSlotIdxs.push(i);
+                        wsItemIds.push(w.itemId);
+                        wsInternalStates.push(Object.keys(internalPayload).length ? JSON.stringify(internalPayload) : null);
+                        wsCharges.push(finalCharge);
+                        wsSlotCharges.push(JSON.stringify(finalSlotCharges));
+                        wsSlotItemIds.push(slotItemIdsPayload ? JSON.stringify(slotItemIdsPayload) : null);
+                        wsInstalledAts.push(validInstalledAt);
                     }
-                    await client.query('UPDATE workshop_slots SET item_id = NULL, installed_at = 0 WHERE user_id = $1 AND slot_index = $2', [uid, i]);
+                    else {
+                        if (existing && existing.item_id) {
+                            console.log(`[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`);
+                            saveActivityLogs.push({ action: 'workshop_dismantle', meta: { slotIndex: i, itemId: existing.item_id } });
+                            const itemDef = workshopUpgradesMap.get(String(existing.item_id));
+                            if (itemDef && String(itemDef.type).toLowerCase() === 'charger') {
+                                if (Number(existing.current_charge) > 0.001) {
+                                    throw Object.assign(new Error('Não é possível remover um carregador com carga.'), {
+                                        workshopClientError: true
+                                    });
+                                }
+                            }
+                        }
+                        await client.query('UPDATE workshop_slots SET item_id = NULL, installed_at = 0 WHERE user_id = $1 AND slot_index = $2', [uid, i]);
+                    }
                 }
-            }
-            if (wsUserIds.length > 0) {
-                await client.query(`
+                if (wsUserIds.length > 0) {
+                    await client.query(`
           INSERT INTO workshop_slots (user_id, slot_index, item_id, internal_state, current_charge, slot_charges, slot_item_ids, installed_at)
           SELECT unnest($1::int[]), unnest($2::int[]), unnest($3::text[]), unnest($4::text[]), unnest($5::numeric[]), unnest($6::text[]), unnest($7::text[]), unnest($8::numeric[])
           ON CONFLICT (user_id, slot_index) DO UPDATE SET
             item_id = EXCLUDED.item_id, internal_state = EXCLUDED.internal_state, current_charge = EXCLUDED.current_charge,
             slot_charges = EXCLUDED.slot_charges, slot_item_ids = EXCLUDED.slot_item_ids, installed_at = EXCLUDED.installed_at`, [wsUserIds, wsSlotIdxs, wsItemIds, wsInternalStates, wsCharges, wsSlotCharges, wsSlotItemIds, wsInstalledAts]);
+                }
             }
-        }
-        if (changes.claimedBoxes) {
-            if (changes.claimedBoxes.length > 0) {
-                await client.query(`
+            if (changes.claimedBoxes) {
+                if (changes.claimedBoxes.length > 0) {
+                    await client.query(`
           INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) 
           SELECT $1, unnest($2::text[]), $3
           ON CONFLICT (user_id, box_id) DO NOTHING`, [uid, changes.claimedBoxes, Date.now()]);
+                }
             }
-        }
-        let nftAutoSyncPayload = null;
-        if (nftAutoSanitized && changes.placedRacks) {
-            const stockRows = await client.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]);
-            const stockObj = {};
-            stockRows.rows.forEach((r) => {
-                stockObj[r.item_id] = r.qty;
-            });
-            const batRows = await client.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]);
-            const bats = batRows.rows.map((r) => ({
-                id: r.id,
-                itemId: r.item_id,
-                currentCharge: Number(r.current_charge) || 0
-            }));
-            nftAutoSyncPayload = { placedRacks: changes.placedRacks, stock: stockObj, storedBatteries: bats };
-        }
-        await client.query('COMMIT');
+            if (nftAutoSanitized && changes.placedRacks) {
+                const stockRows = await client.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]);
+                const stockObj = {};
+                stockRows.rows.forEach((r) => {
+                    stockObj[r.item_id] = r.qty;
+                });
+                const batRows = await client.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]);
+                const bats = batRows.rows.map((r) => ({
+                    id: r.id,
+                    itemId: r.item_id,
+                    currentCharge: Number(r.current_charge) || 0
+                }));
+                nftAutoSyncPayload = { placedRacks: changes.placedRacks, stock: stockObj, storedBatteries: bats };
+            }
+        }, { timeout: 24000, maxWait: 5000 });
         for (const ev of saveActivityLogs) {
             await appendGameActivityLog(db, uid, ev.action, ev.meta);
         }
@@ -7290,7 +7227,8 @@ app.post('/api/save-game', async (req, res) => {
         res.json(savePayload);
     }
     catch (e) {
-        await client.query('ROLLBACK');
+        if (respondIfHttpControlledError(res, e))
+            return;
         if (e instanceof StoredBatterySaveGuardError) {
             return res.status(409).json({ error: e.message, forceReload: true });
         }
@@ -7299,35 +7237,34 @@ app.post('/api/save-game', async (req, res) => {
             return res.status(400).json({ error: err.message });
         }
         console.error('[SaveGame] CRITICAL ERROR:', e);
-        sendInternalErrorSafeMessage(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
-    }
-    finally {
-        client.release();
+        sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
     }
 });
 // --- BACKUP SETTINGS API ---
 app.get('/api/admin/backup-settings', isAdmin, async (req, res) => {
     try {
-        const enabledRes = await db.query("SELECT value FROM settings WHERE key = 'auto_backup_enabled'");
-        const intervalRes = await db.query("SELECT value FROM settings WHERE key = 'auto_backup_interval'");
+        const s = await getSettingsRecord(['auto_backup_enabled', 'auto_backup_interval']);
+        const en = s.auto_backup_enabled;
         res.json({
-            enabled: enabledRes.rows[0]?.value === '1' || enabledRes.rows[0]?.value === 'true',
-            intervalMinutes: parseInt(intervalRes.rows[0]?.value || '60')
+            enabled: en === '1' || en === 'true',
+            intervalMinutes: parseInt(s.auto_backup_interval || '60', 10)
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/backup-settings', isAdmin, async (req, res) => {
     const { enabled, intervalMinutes } = req.body;
     try {
-        await db.query("INSERT INTO settings (key, value) VALUES ('auto_backup_enabled', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [enabled ? 'true' : 'false']);
-        await db.query("INSERT INTO settings (key, value) VALUES ('auto_backup_interval', $1) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", [String(intervalMinutes)]);
+        await upsertSettingsEntries([
+            { key: 'auto_backup_enabled', value: enabled ? 'true' : 'false' },
+            { key: 'auto_backup_interval', value: String(intervalMinutes) }
+        ]);
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // Start scheduler (give DB a moment to be ready if needed, though db.query usually handles pool)
@@ -7376,7 +7313,7 @@ app.get('/api/admin/recall-scan', isAdmin, async (req, res) => {
         res.json({ ok: true, summary, totalUsersChecked: totalUsers });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -7463,7 +7400,7 @@ app.post('/api/admin/recall-all-players-items', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('[RecallAll] Erro critico no fluxo:', e);
-        sendInternalErrorShape(res, 'RecallAll', e, { ok: false, report }, 'Erro no fluxo. Consulta o relatório em anexo.');
+        sendInternalErrorShapeOrPrisma(res, 'RecallAll', e, { ok: false, report }, 'Erro no fluxo. Consulta o relatório em anexo.');
     }
     finally {
         client.release();
@@ -7489,7 +7426,7 @@ app.post('/api/admin/impersonate', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/stop-impersonate', async (req, res) => {
@@ -7511,7 +7448,7 @@ app.post('/api/admin/stop-impersonate', async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/stats/top-deposits', async (req, res) => {
@@ -7520,7 +7457,7 @@ app.get('/api/stats/top-deposits', async (req, res) => {
         res.json(resRows.rows.map(r => ({ username: r.username, email: r.email, totalUsdcDeposited: r.total })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/stats/top-withdrawals', async (req, res) => {
@@ -7529,7 +7466,7 @@ app.get('/api/stats/top-withdrawals', async (req, res) => {
         res.json(resRows.rows.map(r => ({ username: r.username, email: r.email, totalCryptoWithdrawn: r.total })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
@@ -7543,7 +7480,7 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
@@ -7594,11 +7531,12 @@ app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
       LIMIT 100
     `);
         // 5. IP Blacklist (+ utilizadores com mesmo IP em registo ou histórico de login)
-        const blacklistRes = await client.query(`
-      SELECT * FROM ip_blacklist 
-      ORDER BY added_at DESC
-    `);
-        const blRows = blacklistRes.rows;
+        const blPrisma = await prisma.ip_blacklist.findMany({ orderBy: { added_at: 'desc' } });
+        const blRows = blPrisma.map((r) => ({
+            ip: r.ip,
+            reason: r.reason,
+            added_at: Number(r.added_at)
+        }));
         const ipKeys = [
             ...new Set(blRows
                 .map((r) => String(r.ip ?? '').trim())
@@ -7657,7 +7595,7 @@ app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
     }
     catch (e) {
         console.error('Security Stats Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -7668,21 +7606,27 @@ app.post('/api/admin/security/blacklist', isAdmin, async (req, res) => {
     if (!ip)
         return res.status(400).json({ error: 'IP requerido' });
     try {
-        await db.query('INSERT INTO ip_blacklist (ip, reason, added_at) VALUES ($1, $2, $3) ON CONFLICT (ip) DO UPDATE SET reason = $2', [ip, reason || 'Banned by Admin', Date.now()]);
+        const ipStr = String(ip);
+        const at = BigInt(Date.now());
+        await prisma.ip_blacklist.upsert({
+            where: { ip: ipStr },
+            create: { ip: ipStr, reason: reason || 'Banned by Admin', added_at: at },
+            update: { reason: reason || 'Banned by Admin' }
+        });
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/admin/security/blacklist/:ip', isAdmin, async (req, res) => {
     const { ip } = req.params;
     try {
-        await db.query('DELETE FROM ip_blacklist WHERE ip = $1', [ip]);
+        await prisma.ip_blacklist.deleteMany({ where: { ip: String(ip) } });
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
@@ -7692,12 +7636,15 @@ app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
         const limit = Math.min(200, Math.max(1, parseInt(String(req.query.limit || '80'), 10) || 80));
         let uid = null;
         if (rawQ) {
-            const u = await db.query(`SELECT id FROM users
-         WHERE lower(trim(email::text)) = $1 OR lower(trim(username::text)) = $1`, [rawQ]);
-            if (!u.rows[0]) {
+            const uRows = await prisma.$queryRaw `
+        SELECT id FROM users
+        WHERE lower(trim(email::text)) = ${rawQ} OR lower(trim(username::text)) = ${rawQ}
+        LIMIT 1
+      `;
+            if (!uRows[0]) {
                 return res.status(404).json({ error: 'Utilizador não encontrado (email ou username).' });
             }
-            uid = u.rows[0].id;
+            uid = uRows[0].id;
         }
         else if (Number.isFinite(uidParsed) && uidParsed > 0) {
             uid = uidParsed;
@@ -7729,14 +7676,25 @@ app.get('/api/admin/user-activity', isAdmin, async (req, res) => {
 // --- ADMIN MARKET ---
 app.get('/api/admin/market/listings', isAdmin, async (req, res) => {
     try {
-        const resRows = await db.query('SELECT l.*, u.username, u.email FROM player_listings l JOIN users u ON l.user_id = u.id ORDER BY l.status, l.item_id');
-        res.json(resRows.rows.map((l) => {
+        const listings = await prisma.player_listings.findMany({
+            orderBy: [{ status: 'asc' }, { item_id: 'asc' }]
+        });
+        const sellerIds = [...new Set(listings.map((l) => l.user_id))];
+        const sellers = sellerIds.length === 0
+            ? []
+            : await prisma.users.findMany({
+                where: { id: { in: sellerIds } },
+                select: { id: true, username: true, email: true }
+            });
+        const sellerMap = new Map(sellers.map((u) => [u.id, u]));
+        res.json(listings.map((l) => {
+            const su = sellerMap.get(l.user_id);
             const q = Math.max(1, parseInt(String(l.qty ?? 1), 10) || 1);
             const unit = Number(l.price);
             return {
                 id: l.id,
                 sellerId: l.user_id,
-                sellerName: l.username || l.email,
+                sellerName: (su?.username || su?.email) ?? '',
                 itemId: l.item_id,
                 price: unit,
                 qty: q,
@@ -7749,7 +7707,7 @@ app.get('/api/admin/market/listings', isAdmin, async (req, res) => {
         }));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- PROMO CODES ---
@@ -7782,7 +7740,7 @@ app.get('/api/admin/promo-codes', isAdmin, async (req, res) => {
         res.json(enriched);
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) => {
@@ -7804,7 +7762,7 @@ app.get('/api/admin/loot-box-redemptions/:lootBoxId', isAdmin, async (req, res) 
         })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
@@ -7832,7 +7790,7 @@ app.post('/api/admin/promo-codes', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/promo-codes/bulk-delete', isAdmin, async (req, res) => {
@@ -7864,7 +7822,7 @@ app.post('/api/admin/promo-codes/bulk-delete', isAdmin, async (req, res) => {
         catch {
             /* ignore */
         }
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         client.release();
@@ -7878,7 +7836,7 @@ app.delete('/api/admin/promo-codes/:code', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.put('/api/admin/promo-codes/:code/toggle', isAdmin, async (req, res) => {
@@ -7889,7 +7847,7 @@ app.put('/api/admin/promo-codes/:code/toggle', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // O backend agora é apenas API. O frontend é servido separadamente.
@@ -7905,7 +7863,7 @@ app.post('/api/admin/ranking-exclusion', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 // --- GEMINI PROXY ENDPOINTS ---
@@ -7990,7 +7948,7 @@ app.get('/api/mining/coins', async (req, res) => {
     }
     catch (e) {
         console.error(e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/mining/coins', isAdmin, async (req, res) => {
@@ -8083,7 +8041,7 @@ name = EXCLUDED.name, symbol = EXCLUDED.symbol, network_hashrate = EXCLUDED.netw
     }
     catch (e) {
         console.error('Failed to save mining coin:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.delete('/api/mining/coins/:id', isAdmin, async (req, res) => {
@@ -8093,7 +8051,7 @@ app.delete('/api/mining/coins/:id', isAdmin, async (req, res) => {
         res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 /** Redefinição por email: envia link sem exigir carteira (resposta uniforme para não enumerar contas). */
@@ -8111,11 +8069,14 @@ app.post('/api/request-password-reset', passwordResetRequestLimiter, async (req,
         return res.status(400).json({ error: 'Indique um email válido.' });
     }
     try {
-        const r = await db.query('SELECT email FROM users WHERE lower(email) = lower($1)', [raw]);
-        if (r.rows.length === 0) {
+        const row = await prisma.users.findFirst({
+            where: { email: { equals: raw, mode: 'insensitive' } },
+            select: { email: true }
+        });
+        if (!row) {
             return res.json(genericOk);
         }
-        const email = r.rows[0].email;
+        const email = row.email;
         const timestamp = Date.now();
         const resetPayload = JSON.stringify({ email, expiry: timestamp + 60 * 60 * 1000 });
         const signature = crypto.createHmac('sha256', process.env.JWT_SECRET || 'secret').update(resetPayload).digest('hex');
@@ -8228,10 +8189,9 @@ app.use(express.static(path.join(__dirname, '../frontend/dist')));
 // --- EXCHANGE ---
 app.get('/api/exchange-settings', async (req, res) => {
     try {
-        const minRes = await db.query('SELECT value FROM settings WHERE key = $1', ['exchange_min_usdc']);
-        const feeRes = await db.query('SELECT value FROM settings WHERE key = $1', ['exchange_fee_percent']);
-        const min = (minRes.rows.length > 0 && minRes.rows[0].value !== null) ? Number(minRes.rows[0].value) : 0.1;
-        const fee = (feeRes.rows.length > 0 && feeRes.rows[0].value !== null) ? Number(feeRes.rows[0].value) : 0;
+        const s = await getSettingsRecord(['exchange_min_usdc', 'exchange_fee_percent']);
+        const min = s.exchange_min_usdc != null && s.exchange_min_usdc !== '' ? Number(s.exchange_min_usdc) : 0.1;
+        const fee = s.exchange_fee_percent != null && s.exchange_fee_percent !== '' ? Number(s.exchange_fee_percent) : 0;
         console.log('[API] GET Exchange Settings:', { min, fee }); // DEBUG LOG
         res.set('Cache-Control', 'no-store');
         res.json({
@@ -8240,7 +8200,7 @@ app.get('/api/exchange-settings', async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/exchange-settings', isAdmin, async (req, res) => {
@@ -8248,27 +8208,17 @@ app.post('/api/exchange-settings', isAdmin, async (req, res) => {
     const min = Math.max(0, Number(minExchangeAmount) || 0);
     const fee = Math.max(0, Math.min(100, Number(exchangeFeePercent) || 0));
     try {
-        const client = await db.connect();
-        try {
-            console.log('[API] Saving Exchange Settings:', { min, fee }); // DEBUG LOG
-            await client.query('BEGIN');
-            await client.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', ['exchange_min_usdc', String(min)]);
-            await client.query('INSERT INTO settings (key, value) VALUES ($1, $2) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value', ['exchange_fee_percent', String(fee)]);
-            await client.query('COMMIT');
-            console.log('[API] Exchange Settings Saved Successfully'); // DEBUG LOG
-            res.json({ ok: true });
-        }
-        catch (e) {
-            console.error('[API] Exchange Settings Save Error:', e); // DEBUG LOG
-            await client.query('ROLLBACK');
-            throw e;
-        }
-        finally {
-            client.release();
-        }
+        console.log('[API] Saving Exchange Settings:', { min, fee }); // DEBUG LOG
+        await upsertSettingsEntries([
+            { key: 'exchange_min_usdc', value: String(min) },
+            { key: 'exchange_fee_percent', value: String(fee) }
+        ]);
+        console.log('[API] Exchange Settings Saved Successfully'); // DEBUG LOG
+        res.json({ ok: true });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        console.error('[API] Exchange Settings Save Error:', e); // DEBUG LOG
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/exchange/sell', async (req, res) => {
@@ -8283,13 +8233,12 @@ app.post('/api/exchange/sell', async (req, res) => {
     if (!Number.isFinite(pct) || pct <= 0 || pct > 1) {
         return res.status(400).json({ error: 'Percentual inválido (use entre 0 e 1, ex.: 0.5).' });
     }
+    const exSet = await getSettingsRecord(['exchange_min_usdc', 'exchange_fee_percent']);
+    const minUsdc = Math.max(0, Number(exSet.exchange_min_usdc)) || 0.1;
+    const feePercent = Math.max(0, Math.min(100, Number(exSet.exchange_fee_percent) || 0));
     const client = await db.connect();
     try {
         const uid = req.userId;
-        const minRes = await client.query('SELECT value FROM settings WHERE key = $1', ['exchange_min_usdc']);
-        const feeRes = await client.query('SELECT value FROM settings WHERE key = $1', ['exchange_fee_percent']);
-        const minUsdc = Math.max(0, Number(minRes.rows[0]?.value)) || 0.1;
-        const feePercent = Math.max(0, Math.min(100, Number(feeRes.rows[0]?.value) || 0));
         await client.query('BEGIN');
         const coinRes = await client.query(`SELECT id, name, usdc_rate, COALESCE(show_in_exchange, 1) AS sx, is_active
        FROM mining_coins WHERE id = $1`, [cid]);
@@ -8394,11 +8343,14 @@ app.post('/api/withdraw', async (req, res) => {
         }
         const amountUsdc = amount * (coin.usdc_rate || 0);
         // 3. Buscar taxa do token nas configurações
-        const settingsRes = await client.query("SELECT value FROM settings WHERE key = 'web3_withdraw_tokens'");
+        const withdrawTokensRaw = await getSettingValue('web3_withdraw_tokens');
         let withdrawTokens = [];
         try {
-            const rawVal = settingsRes.rows[0]?.value;
-            withdrawTokens = rawVal ? (typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal) : [];
+            withdrawTokens = withdrawTokensRaw
+                ? typeof withdrawTokensRaw === 'string'
+                    ? JSON.parse(withdrawTokensRaw)
+                    : withdrawTokensRaw
+                : [];
         }
         catch (parseErr) {
             console.error('[Withdraw] Settings parse error:', parseErr);
@@ -8427,7 +8379,7 @@ app.post('/api/withdraw', async (req, res) => {
         if (client)
             await client.query('ROLLBACK');
         console.error('[Withdraw] Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -8463,7 +8415,7 @@ app.get('/api/admin/withdrawals', isAdmin, async (req, res) => {
         })));
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 app.post('/api/admin/withdrawals/status', isAdmin, async (req, res) => {
@@ -8503,7 +8455,7 @@ app.post('/api/admin/withdrawals/status', isAdmin, async (req, res) => {
         if (client)
             await client.query('ROLLBACK');
         console.error('[AdminWithdrawStatus] Error:', e);
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
     finally {
         if (client)
@@ -8537,7 +8489,7 @@ app.get('/api/admin/ranking', isAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        sendInternalError(res, req.originalUrl || 'api', e);
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
 const startServer = async () => {

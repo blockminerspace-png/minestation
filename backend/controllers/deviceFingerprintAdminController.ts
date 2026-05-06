@@ -1,6 +1,6 @@
 import type { Express, Request, Response, RequestHandler } from 'express';
 import { listDeviceFingerprintLogs } from '../models/deviceFingerprintModel.js';
-import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 
 export type DeviceFingerprintAdminDeps = {
   isAdmin: RequestHandler;
@@ -30,7 +30,7 @@ export function registerDeviceFingerprintAdminRoutes(app: Express, deps: DeviceF
       });
       res.json({ rows, total, limit, offset });
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, 'GET /api/admin/device-fingerprints', e, 'Erro ao listar fingerprints.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/admin/device-fingerprints', e, 'Erro ao listar fingerprints.');
     }
   });
 }

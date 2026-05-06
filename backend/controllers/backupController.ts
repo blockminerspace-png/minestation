@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import type { Express, RequestHandler } from 'express';
 import { prisma } from '../config/prisma.js';
+import { sendIfPrismaHttpError } from '../utils/prismaHttpResponse.js';
 import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import type { PgCliSpawnOptions } from '../config/database.js';
 
@@ -470,6 +471,7 @@ export function registerBackupRoutes(app: Express, deps: BackupControllerDeps): 
           error: 'Restauro SQLite requer o pacote opcional better-sqlite3 (`npm install better-sqlite3`).'
         });
       }
+      if (sendIfPrismaHttpError(res, e, 'POST /api/admin/restore')) return;
       res.status(500).json({ error: 'Erro no restore: ' + sanitizeApiMessage(toErrorMessage(e), 200) });
     }
   });

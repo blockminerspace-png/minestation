@@ -396,6 +396,151 @@ export async function getGameNavLabels(): Promise<Record<string, string>> {
   }
 }
 
+/** Catálogo + economia + notícias + menu num único GET (`GET /api/bootstrap`). */
+export type PublicBootstrapPayload = {
+  upgrades: Upgrade[];
+  accessLevels: AccessLevel[];
+  lootBoxes: LootBox[];
+  miningCoins: MiningCoin[];
+  economySettings: EconomySettings | null;
+  web3Settings: Web3Settings | null;
+  systemNews: SystemNews[];
+  gameNavLabels: Record<string, string>;
+};
+
+export type PublicBootstrapLitePayload = Pick<
+  PublicBootstrapPayload,
+  'accessLevels' | 'miningCoins' | 'economySettings' | 'lootBoxes' | 'web3Settings'
+>;
+
+function normalizePublicBootstrapPayload(raw: unknown): PublicBootstrapPayload | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const d = raw as Record<string, unknown>;
+  return {
+    upgrades: Array.isArray(d.upgrades) ? (d.upgrades as Upgrade[]) : [],
+    accessLevels: Array.isArray(d.accessLevels) ? (d.accessLevels as AccessLevel[]) : [],
+    lootBoxes: Array.isArray(d.lootBoxes) ? (d.lootBoxes as LootBox[]) : [],
+    miningCoins: Array.isArray(d.miningCoins) ? (d.miningCoins as MiningCoin[]) : [],
+    economySettings:
+      d.economySettings != null && typeof d.economySettings === 'object' && !Array.isArray(d.economySettings)
+        ? (d.economySettings as EconomySettings)
+        : null,
+    web3Settings:
+      d.web3Settings != null && typeof d.web3Settings === 'object' && !Array.isArray(d.web3Settings)
+        ? (d.web3Settings as Web3Settings)
+        : null,
+    systemNews: Array.isArray(d.systemNews) ? (d.systemNews as SystemNews[]) : [],
+    gameNavLabels:
+      d.gameNavLabels != null && typeof d.gameNavLabels === 'object' && !Array.isArray(d.gameNavLabels)
+        ? (d.gameNavLabels as Record<string, string>)
+        : {}
+  };
+}
+
+export async function getPublicBootstrap(): Promise<PublicBootstrapPayload | null> {
+  try {
+    const res = await apiFetch(`${base}/bootstrap`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    return normalizePublicBootstrapPayload(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Subconjunto para refresh periódico (`GET /api/bootstrap?lite=1`). */
+export async function getPublicBootstrapLite(): Promise<PublicBootstrapLitePayload | null> {
+  try {
+    const res = await apiFetch(`${base}/bootstrap?lite=1`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    const norm = normalizePublicBootstrapPayload(
+      raw && typeof raw === 'object'
+        ? { ...(raw as object), upgrades: [], systemNews: [], gameNavLabels: {} }
+        : null
+    );
+    if (!norm) return null;
+    return {
+      accessLevels: norm.accessLevels,
+      miningCoins: norm.miningCoins,
+      economySettings: norm.economySettings,
+      lootBoxes: norm.lootBoxes,
+      web3Settings: norm.web3Settings
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type ProfilePageBundle = {
+  seasonPasses: SeasonPass[];
+  seasonPurchases: SeasonPurchase[];
+  accessLevels: AccessLevel[];
+  referrals: string[];
+  lootBoxes: LootBox[];
+  newsFee: number;
+  profileGame: { usdc: number; claimedReferrals: number };
+};
+
+/** Resposta de `GET /api/me/upgrade-shop-bundle` (página Upgrade). */
+export type UpgradeShopBundle = {
+  seasonPasses: SeasonPass[];
+  seasonPurchases: SeasonPurchase[];
+  adminUpgrades: AdminUpgrade[];
+  upgrades: Upgrade[];
+  lootBoxes: LootBox[];
+  adminUpgradePurchases: string[];
+  miningCoins: MiningCoin[];
+  rigRooms: RigRoom[];
+};
+
+export async function getUpgradeShopBundle(): Promise<UpgradeShopBundle | null> {
+  try {
+    const res = await apiFetch(`${base}/me/upgrade-shop-bundle`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    if (!raw || typeof raw !== 'object') return null;
+    const d = raw as Record<string, unknown>;
+    return {
+      seasonPasses: Array.isArray(d.seasonPasses) ? (d.seasonPasses as SeasonPass[]) : [],
+      seasonPurchases: Array.isArray(d.seasonPurchases) ? (d.seasonPurchases as SeasonPurchase[]) : [],
+      adminUpgrades: Array.isArray(d.adminUpgrades) ? (d.adminUpgrades as AdminUpgrade[]) : [],
+      upgrades: Array.isArray(d.upgrades) ? (d.upgrades as Upgrade[]) : [],
+      lootBoxes: Array.isArray(d.lootBoxes) ? (d.lootBoxes as LootBox[]) : [],
+      adminUpgradePurchases: Array.isArray(d.adminUpgradePurchases) ? (d.adminUpgradePurchases as string[]) : [],
+      miningCoins: Array.isArray(d.miningCoins) ? (d.miningCoins as MiningCoin[]) : [],
+      rigRooms: Array.isArray(d.rigRooms) ? (d.rigRooms as RigRoom[]) : []
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getProfilePageBundle(): Promise<ProfilePageBundle | null> {
+  try {
+    const res = await apiFetch(`${base}/me/profile-bundle`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    if (!raw || typeof raw !== 'object') return null;
+    const d = raw as Record<string, unknown>;
+    const pg = d.profileGame as { usdc?: unknown; claimedReferrals?: unknown } | undefined;
+    return {
+      seasonPasses: Array.isArray(d.seasonPasses) ? (d.seasonPasses as SeasonPass[]) : [],
+      seasonPurchases: Array.isArray(d.seasonPurchases) ? (d.seasonPurchases as SeasonPurchase[]) : [],
+      accessLevels: Array.isArray(d.accessLevels) ? (d.accessLevels as AccessLevel[]) : [],
+      referrals: Array.isArray(d.referrals) ? (d.referrals as string[]) : [],
+      lootBoxes: Array.isArray(d.lootBoxes) ? (d.lootBoxes as LootBox[]) : [],
+      newsFee: typeof d.newsFee === 'number' && Number.isFinite(d.newsFee) ? d.newsFee : Number(d.newsFee) || 0,
+      profileGame: {
+        usdc: Number(pg?.usdc ?? 0) || 0,
+        claimedReferrals: Number(pg?.claimedReferrals ?? 0) || 0
+      }
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** Salva rótulos do menu (admin) em POST /api/admin/display-labels. */
 export async function saveGameNavLabels(labels: Record<string, string>): Promise<Record<string, string>> {
   const payload: Record<string, string> = {};
@@ -1194,7 +1339,8 @@ export async function getSession(): Promise<User | null> {
   try {
     const res = await apiFetch(`${base}/session`);
     if (!res.ok) {
-      if (res.status === 401) setSessionHint(false);
+      /** 404/401 após migração ou conta removida: limpar hint evita martelar APIs com cookies fantasma. */
+      if (res.status === 401 || res.status === 404) setSessionHint(false);
       return null;
     }
     setSessionHint(true);

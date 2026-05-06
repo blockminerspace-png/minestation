@@ -3,7 +3,7 @@ import type { Prisma } from '@prisma/client';
 import { prisma } from '../config/prisma.js';
 import { runPromoCodeRedeemInTransaction, type GrantAdminUpgradeRewardsFn } from '../models/promoRedeemModel.js';
 import { RoletaAppError, normalizePromoCode } from '../validation/roletaValidation.js';
-import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 
 export type PromoRedeemDeps = {
   parseCookies: (req: Request) => { sid?: string };
@@ -107,7 +107,7 @@ export function registerPromoRedeemRoutes(app: Express, deps: PromoRedeemDeps): 
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[redeem-code]', e);
-      sendInternalErrorSafeMessage(res, 'POST /api/promo/redeem', e, 'Erro interno.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/promo/redeem', e, 'Erro interno.');
       return;
     }
   });

@@ -4,7 +4,18 @@ import type { Config } from 'dompurify';
 import type { LucideIcon } from 'lucide-react';
 import { AccessLevel, User, SeasonPass, SeasonPurchase, AdminUpgrade, Upgrade, LootBox, MiningCoin, RigRoom } from '../types';
 import { Crown, CheckCircle2, ShieldCheck, Zap, Rocket, Gift } from 'lucide-react';
-import { getSeasonPasses, getSeasonPurchases, getAdminUpgrades, purchaseAdminUpgrade, getUpgrades, getLootBoxes, getAdminUpgradePurchases, getMiningCoins, getMyRigRooms } from '../services/api';
+import {
+  getSeasonPasses,
+  getSeasonPurchases,
+  getAdminUpgrades,
+  purchaseAdminUpgrade,
+  getUpgrades,
+  getLootBoxes,
+  getAdminUpgradePurchases,
+  getMiningCoins,
+  getMyRigRooms,
+  getUpgradeShopBundle
+} from '../services/api';
 import { appendUsdcShortfallLine } from '../utils/playerMoneyMessages';
 
 interface UpgradeAccountProps {
@@ -146,6 +157,20 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
     let mounted = true;
     setLoadingPasses(true);
     (async () => {
+      const bundle = await getUpgradeShopBundle();
+      if (!mounted) return;
+      if (bundle) {
+        setSeasonPasses(bundle.seasonPasses.filter((p) => p.isActive));
+        setSeasonPurchases(bundle.seasonPurchases);
+        setAdminUpgrades(bundle.adminUpgrades);
+        setGameItems(bundle.upgrades);
+        setLootBoxDefs(bundle.lootBoxes);
+        setAdminUpgradePurchases(bundle.adminUpgradePurchases);
+        setMiningCoins(bundle.miningCoins || []);
+        setUserRooms(bundle.rigRooms || []);
+        setLoadingPasses(false);
+        return;
+      }
       const [passes, purchases, offers, items, boxes, adminPurch, coins, rooms] = await Promise.all([
         getSeasonPasses(),
         user?.email ? getSeasonPurchases(user.email) : Promise.resolve([]),
@@ -157,7 +182,7 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
         user?.email ? getMyRigRooms(user.email) : Promise.resolve([])
       ]);
       if (!mounted) return;
-      setSeasonPasses(passes.filter(p => p.isActive));
+      setSeasonPasses(passes.filter((p) => p.isActive));
       setSeasonPurchases(purchases);
       setAdminUpgrades(offers);
       setGameItems(items);
@@ -167,7 +192,9 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({ user, accessLeve
       setUserRooms(rooms || []);
       setLoadingPasses(false);
     })();
-    return () => { mounted = false; };
+    return () => {
+      mounted = false;
+    };
   }, [user]);
 
   const handleBuyAdminUpgrade = async (offer: AdminUpgrade) => {

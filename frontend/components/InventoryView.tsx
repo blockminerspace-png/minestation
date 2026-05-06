@@ -2,6 +2,7 @@
 import React from 'react';
 import { Upgrade, StoredBattery } from '../types';
 import { Package, Zap, Battery, Activity, Save, Hexagon } from 'lucide-react';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
 
 interface InventoryViewProps {
     stock: Record<string, number>;
@@ -92,7 +93,11 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatte
                                     <div className="flex justify-between items-start mb-3">
                                         <div className="w-10 h-10 bg-slate-50 dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 flex items-center justify-center text-xl text-yellow-500 overflow-hidden">
                                             {def.image ? (
-                                                <img src={def.image} alt={def.name} className="w-full h-full object-cover" />
+                                                <img
+                                                    src={normalizePublicAssetUrl(def.image) || def.image}
+                                                    alt={def.name}
+                                                    className="w-full h-full object-cover"
+                                                />
                                             ) : (
                                                 def.icon
                                             )}
@@ -146,7 +151,7 @@ export const InventoryView: React.FC<InventoryViewProps> = ({ stock, storedBatte
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                                 {itemsByCategory[category].map((item) => {
-                                    const hasImage = item.image;
+                                    const hasImage = normalizePublicAssetUrl(item.image) || item.image;
                                     const isRack = item.type === 'infrastructure';
                                     const isMachine = item.type === 'machine';
 

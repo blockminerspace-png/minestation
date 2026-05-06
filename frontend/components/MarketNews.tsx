@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { getSystemNews } from '../services/api';
 import { SystemNews } from '../types';
+import { RemoteBannerImage } from './RemoteBannerImage';
 
 export const MarketNews: React.FC = () => {
     const [ads, setAds] = useState<SystemNews[]>([]);
@@ -37,7 +38,12 @@ export const MarketNews: React.FC = () => {
                             className="relative group overflow-hidden rounded-lg border border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)] transition-all hover:shadow-[0_0_20px_rgba(245,158,11,0.2)] hover:border-amber-400/50 flex-shrink-0 w-[320px] h-[50px] block"
                         >
                             {ad.imageUrl ? (
-                                <img src={ad.imageUrl} alt={ad.text} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                                <RemoteBannerImage
+                                    src={ad.imageUrl}
+                                    alt={ad.text}
+                                    className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                    failureHint="Banner indisponível"
+                                />
                             ) : (
                                 <div className="w-full h-full bg-slate-950 flex items-center justify-center p-2 text-center">
                                     <span className="text-[10px] text-amber-400 font-bold uppercase truncate">{ad.text}</span>
@@ -48,7 +54,12 @@ export const MarketNews: React.FC = () => {
                 ) : (
                     placeholders.map(p => (
                         <div key={p.id} className={`relative group overflow-hidden rounded-lg border ${p.color === 'cyan' ? 'border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)] hover:border-amber-400/50' : 'border-orange-500/30 shadow-[0_0_15px_rgba(194,65,12,0.1)] hover:border-orange-400/50'} transition-all flex-shrink-0 w-[320px] h-[50px]`}>
-                            <img src={p.img} alt={p.label} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
+                            <RemoteBannerImage
+                                src={p.img}
+                                alt={p.label}
+                                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                                failureHint="Placeholder"
+                            />
                             <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1 pointer-events-none">
                                 <span className={`text-[10px] ${p.color === 'cyan' ? 'text-amber-400' : 'text-orange-400'} font-bold tracking-tighter uppercase`}>{p.label}</span>
                             </div>

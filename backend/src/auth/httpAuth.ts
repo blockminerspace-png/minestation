@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import { prisma } from '../../config/prisma.js';
+import { sendIfPrismaHttpError } from '../../utils/prismaHttpResponse.js';
 import { COOKIE_ACCESS, COOKIE_REFRESH, getJwtAuthConfig } from './config.js';
 import { signAccessToken, verifyAccessToken } from './jwtService.js';
 import { revokeAllRefreshForUser, insertRefreshToken, rotateRefreshToken } from './refreshTokenStore.js';
@@ -117,6 +118,7 @@ export async function handleJwtRefresh(req: Request, res: Response, parseCookies
     return res.json({ ok: true });
   } catch (e: unknown) {
     console.error('[JWT] /auth/refresh:', e);
+    if (sendIfPrismaHttpError(res, e, 'POST /api/auth/refresh')) return;
     clearAuthCookies(res);
     return res.status(500).json({ error: 'Erro ao renovar sessão.', code: 'AUTH_REFRESH_ERROR' });
   }

@@ -20,7 +20,7 @@ import {
   type PlayerListingRow
 } from '../models/p2pMarketModel.js';
 import { logUserAction } from '../lib/mongoLogs.js';
-import { sendInternalErrorSafeMessage, sendInternalErrorShape } from '../utils/apiErrorResponse.js';
+import { sendInternalErrorSafeMessageOrPrisma, sendInternalErrorShapeOrPrisma } from '../utils/apiErrorResponse.js';
 
 export type P2pMarketDeps = {
   emitMarketWs: (payload: Record<string, unknown>) => void;
@@ -96,7 +96,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
       const list = Array.isArray(rows) ? rows : [];
       res.json(list.map((l: PlayerListingRow) => mapListingForClient(l, now)));
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro ao listar.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro ao listar.');
     }
   });
 
@@ -166,7 +166,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         res.json({ purchases: [], sales: [] });
         return;
       }
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro ao ler histórico.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro ao ler histórico.');
     }
   });
 
@@ -307,7 +307,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         res.status(e.status).json(e.body);
         return;
       }
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro ao criar anúncio.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro ao criar anúncio.');
     }
   });
 
@@ -364,7 +364,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         res.status(e.status).json(e.body);
         return;
       }
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro.');
     }
   });
 
@@ -416,7 +416,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
       logUserAction(userId, 'p2p_listing_reserve', { listingId, reservedUntil });
       res.json({ ok: true, reservedUntil });
     } catch (e: unknown) {
-      sendInternalErrorShape(res, req.originalUrl || 'p2p', e, { ok: false }, 'Erro.');
+      sendInternalErrorShapeOrPrisma(res, req.originalUrl || 'p2p', e, { ok: false }, 'Erro.');
     }
   });
 
@@ -451,7 +451,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
       }
       res.json({ ok: true });
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro.');
     }
   });
 
@@ -737,7 +737,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         res.status(e.status).json(e.body);
         return;
       }
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro.');
     }
   });
 
@@ -778,7 +778,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         })
       );
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro.');
     }
   });
 
@@ -837,7 +837,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         res.status(e.status).json(e.body);
         return;
       }
-      sendInternalErrorSafeMessage(res, req.originalUrl || 'p2p', e, 'Erro.');
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro.');
     }
   });
 }

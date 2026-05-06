@@ -537,6 +537,7 @@ model workshop_slots {
   current_charge Float?  @default(0)
   slot_charges   String?
   slot_item_ids  String?
+  installed_at   BigInt? @default(0)
 
   @@id([user_id, slot_index])
   @@map("workshop_slots")

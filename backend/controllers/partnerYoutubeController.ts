@@ -27,6 +27,7 @@ import {
   sanitizePartnerCreatorAvatarUrl,
   sanitizePartnerCreatorChannelUrl
 } from '../utils/partnerYoutubeHelpers.js';
+import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 
 export type AppendGameActivityLog = (
   _q: unknown,
@@ -73,7 +74,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       });
     } catch (e) {
       console.error('[GET /api/partner-videos/public]', e);
-      res.status(500).json({ error: 'Erro ao listar vídeos.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/partner-videos/public', e, 'Erro ao listar vídeos.');
     }
   });
 
@@ -108,7 +109,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       });
     } catch (e) {
       console.error('[GET /api/partner-videos/my]', e);
-      res.status(500).json({ error: 'Erro ao carregar envios.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/partner-videos/my', e, 'Erro ao carregar envios.');
     }
   });
 
@@ -174,7 +175,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       res.json({ ok: true, id, status: 'pending' });
     } catch (e) {
       console.error('[POST /api/partner-videos/submit]', e);
-      res.status(500).json({ error: 'Erro ao guardar envio.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/partner-videos/submit', e, 'Erro ao guardar envio.');
     }
   });
 
@@ -207,7 +208,12 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
         userId = ids[0];
       } catch (e) {
         console.error('[POST /api/admin/partner-youtube-allowlist] lookup', e);
-        res.status(500).json({ error: 'Erro ao procurar utilizador.' });
+        sendInternalErrorSafeMessageOrPrisma(
+          res,
+          'POST /api/admin/partner-youtube-allowlist lookup',
+          e,
+          'Erro ao procurar utilizador.'
+        );
         return;
       }
     } else {
@@ -222,7 +228,12 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       res.json({ ok: true, inserted, userId });
     } catch (e) {
       console.error('[POST /api/admin/partner-youtube-allowlist]', e);
-      res.status(500).json({ error: 'Erro ao adicionar à lista.' });
+      sendInternalErrorSafeMessageOrPrisma(
+        res,
+        'POST /api/admin/partner-youtube-allowlist',
+        e,
+        'Erro ao adicionar à lista.'
+      );
     }
   });
 
@@ -245,7 +256,12 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       res.json({ ok: true, userId: targetId });
     } catch (e) {
       console.error('[DELETE /api/admin/partner-youtube-allowlist/:userId]', e);
-      res.status(500).json({ error: 'Erro ao remover da lista.' });
+      sendInternalErrorSafeMessageOrPrisma(
+        res,
+        'DELETE /api/admin/partner-youtube-allowlist/:userId',
+        e,
+        'Erro ao remover da lista.'
+      );
     }
   });
 
@@ -265,7 +281,12 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       });
     } catch (e) {
       console.error('[GET /api/admin/partner-youtube-partners]', e);
-      res.status(500).json({ error: 'Erro ao listar parceiros.' });
+      sendInternalErrorSafeMessageOrPrisma(
+        res,
+        'GET /api/admin/partner-youtube-partners',
+        e,
+        'Erro ao listar parceiros.'
+      );
     }
   });
 
@@ -294,7 +315,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       });
     } catch (e) {
       console.error('[GET /api/admin/partner-videos]', e);
-      res.status(500).json({ error: 'Erro ao listar envios.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/admin/partner-videos', e, 'Erro ao listar envios.');
     }
   });
 
@@ -318,7 +339,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       res.json({ ok: true });
     } catch (e) {
       console.error('[POST /api/admin/partner-videos/:id/approve]', e);
-      res.status(500).json({ error: 'Erro ao aprovar.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/admin/partner-videos/:id/approve', e, 'Erro ao aprovar.');
     }
   });
 
@@ -344,7 +365,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       res.json({ ok: true });
     } catch (e) {
       console.error('[POST /api/admin/partner-videos/:id/reject]', e);
-      res.status(500).json({ error: 'Erro ao recusar.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/admin/partner-videos/:id/reject', e, 'Erro ao recusar.');
     }
   });
 
@@ -362,7 +383,12 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       });
     } catch (e) {
       console.error('[GET /api/admin/partner-youtube-creators/:userId]', e);
-      res.status(500).json({ error: 'Erro ao carregar perfil.' });
+      sendInternalErrorSafeMessageOrPrisma(
+        res,
+        'GET /api/admin/partner-youtube-creators/:userId',
+        e,
+        'Erro ao carregar perfil.'
+      );
     }
   });
 
@@ -401,7 +427,12 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       res.json({ ok: true, channelUrl, avatarUrl });
     } catch (e) {
       console.error('[PUT /api/admin/partner-youtube-creators/:userId]', e);
-      res.status(500).json({ error: 'Erro ao guardar perfil (verifica se o utilizador existe).' });
+      sendInternalErrorSafeMessageOrPrisma(
+        res,
+        'PUT /api/admin/partner-youtube-creators/:userId',
+        e,
+        'Erro ao guardar perfil (verifica se o utilizador existe).'
+      );
     }
   });
 
@@ -424,7 +455,7 @@ export function registerPartnerYoutubeRoutes(app: Express, deps: PartnerYoutubeD
       res.json({ ok: true });
     } catch (e) {
       console.error('[DELETE /api/admin/partner-videos/:id]', e);
-      res.status(500).json({ error: 'Erro ao apagar.' });
+      sendInternalErrorSafeMessageOrPrisma(res, 'DELETE /api/admin/partner-videos/:id', e, 'Erro ao apagar.');
     }
   });
 }

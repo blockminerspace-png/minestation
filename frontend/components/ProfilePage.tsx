@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
 import { User, SeasonPass, SeasonPurchase, AccessLevel, LootBox, GameState } from '@/types';
-import { AUTH_PASSWORD_MAX, AUTH_PASSWORD_MIN, AUTH_REFERRAL_MAX, AUTH_USERNAME_MAX, AUTH_USERNAME_MIN } from '../constants/authLimits';
+import { AUTH_PASSWORD_MAX, AUTH_REFERRAL_MAX, AUTH_USERNAME_MAX, AUTH_USERNAME_MIN } from '../constants/authLimits';
 import { PLAYER_NEWS_LINK_MAX, PLAYER_NEWS_TEXT_MAX } from '../constants/formLimits';
 import { User as UserIcon, Lock, Mail, Save, AlertCircle, CheckCircle2, Wallet, ShieldCheck, Share2, Copy, Newspaper, Unplug } from 'lucide-react';
-import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState } from '@/services/api';
+import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState, getProfilePageBundle } from '@/services/api';
 
 interface ProfilePageProps {
   user: User;
@@ -110,8 +110,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
       setMessage({ type: 'error', text: "Senha atual incorreta." });
       return;
     }
-    if (newPass.length < AUTH_PASSWORD_MIN) {
-      setMessage({ type: 'error', text: `A nova senha deve ter pelo menos ${AUTH_PASSWORD_MIN} caracteres.` });
+    if (!newPass.length) {
+      setMessage({ type: 'error', text: 'Indique a nova palavra-passe.' });
       return;
     }
     if (newPass.length > AUTH_PASSWORD_MAX) {
@@ -164,11 +164,30 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
 
   useEffect(() => {
     const load = async () => {
-      const [passes, purchases, levels, refs, boxes] = await Promise.all([getSeasonPasses(), getSeasonPurchases(user.email), getAccessLevels(), getReferrals(user.email), getLootBoxes()]);
+      const bundle = await getProfilePageBundle();
+      if (bundle) {
+        setSeasonPasses(bundle.seasonPasses);
+        setSeasonPurchases(bundle.seasonPurchases);
+        setAccessLevels(bundle.accessLevels);
+        setReferrals((bundle.referrals || []).filter((r) => r !== user.username));
+        setLootBoxesState(bundle.lootBoxes);
+        setNewsFeeState(bundle.newsFee);
+        setUsdcBal(bundle.profileGame.usdc);
+        setClaimedReferralsCount(bundle.profileGame.claimedReferrals);
+        setGameSave({ claimedReferrals: bundle.profileGame.claimedReferrals });
+        return;
+      }
+      const [passes, purchases, levels, refs, boxes] = await Promise.all([
+        getSeasonPasses(),
+        getSeasonPurchases(user.email),
+        getAccessLevels(),
+        getReferrals(user.email),
+        getLootBoxes()
+      ]);
       setSeasonPasses(passes);
       setSeasonPurchases(purchases);
       setAccessLevels(levels);
-      setReferrals((refs || []).filter(r => r !== user.username));
+      setReferrals((refs || []).filter((r) => r !== user.username));
       setLootBoxesState(boxes);
       const fee = await getNewsFee();
       setNewsFeeState(fee);
@@ -180,8 +199,8 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
         setGameSave(gs);
       }
     };
-    load();
-  }, [user.email]);
+    void load();
+  }, [user.email, user.username]);
 
   const currentLevelName = (() => {
     const lvl = accessLevels.find(l => l.id === user.accessLevelId);

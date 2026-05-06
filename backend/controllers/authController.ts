@@ -13,7 +13,7 @@ import {
 } from '../models/authModel.js';
 import { insertDeviceFingerprintLog, sanitizeDeviceFingerprint } from '../models/deviceFingerprintModel.js';
 import { logUserAction } from '../lib/mongoLogs.js';
-import { sendInternalErrorSafeMessage } from '../utils/apiErrorResponse.js';
+import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 import { resolveIsSuperAdminFromUserRow } from '../utils/legacySuperAdmin.js';
 import {
   validateLoginEmail,
@@ -174,7 +174,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
         referredBy: u.referred_by
       });
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, 'POST /api/login', e, 'Erro ao iniciar sessão.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/login', e, 'Erro ao iniciar sessão.');
     }
   });
 
@@ -189,7 +189,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       const userLvlIds = await listUserAccessLevelIds(u.id as string | number, u.access_level_id);
       res.json(buildSessionUserJson(u, s, userLvlIds));
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, 'GET /api/session', e, 'Erro ao carregar sessão.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/session', e, 'Erro ao carregar sessão.');
     }
   });
 
@@ -211,7 +211,7 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
       logUserAction(Number.isFinite(wid) ? wid : null, 'wallet_link', {});
       res.json({ ok: true });
     } catch (e: unknown) {
-      sendInternalErrorSafeMessage(res, 'POST /api/session', e, 'Erro ao atualizar sessão.');
+      sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/session', e, 'Erro ao atualizar sessão.');
     }
   });
 }
