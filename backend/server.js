@@ -6351,6 +6351,23 @@ function safeWorkshopJsonObject(raw, label, userId) {
         return {};
     }
 }
+function normalizeJsonSafeNumbers(value) {
+    if (typeof value === 'bigint') {
+        const num = Number(value);
+        return (Number.isFinite(num) ? num : 0);
+    }
+    if (Array.isArray(value)) {
+        return value.map((entry) => normalizeJsonSafeNumbers(entry));
+    }
+    if (value && typeof value === 'object') {
+        const normalized = {};
+        for (const [key, entry] of Object.entries(value)) {
+            normalized[key] = normalizeJsonSafeNumbers(entry);
+        }
+        return normalized;
+    }
+    return value;
+}
 // --- GAME STATE ---
 app.get('/api/game-state/:email', async (req, res) => {
     let email = req.params.email;
@@ -6577,7 +6594,7 @@ app.get('/api/game-state/:email', async (req, res) => {
         }
         // Prisma devolve BigInt em campos schema BigInt — nunca passar BigInt cru a `res.json()` (falha de serialização).
         const serverUpdatedAtNum = Number(gs.server_updated_at ?? 0);
-        res.json({
+        res.json(normalizeJsonSafeNumbers({
             usdc: gs.usdc,
             startTime: Number(gs.start_time),
             lastUpdatedAt: Number(gs.last_updated_at ?? 0),
@@ -6595,7 +6612,7 @@ app.get('/api/game-state/:email', async (req, res) => {
             claimedBoxes,
             serverUpdatedAt: Number.isFinite(serverUpdatedAtNum) ? serverUpdatedAtNum : 0,
             offlineMined
-        });
+        }));
         const t3 = performance.now();
         console.log(`[GameState] Total processing took ${(t3 - t0).toFixed(2)}ms`);
     }
