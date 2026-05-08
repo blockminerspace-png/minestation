@@ -33,7 +33,7 @@
     "@prisma/client": "^6.19.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "bcryptjs": "*",
-    "bullmq": "^5.63.0",
+    "bullmq": "^5.76.6",
     "cors": "*",
     "dotenv": "*",
     "ethers": "^6.15.0",
