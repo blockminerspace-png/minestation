@@ -9355,6 +9355,15 @@ const startServer = async () => {
     console.error('[DB] Failed to initialize PostgreSQL:', e);
   }
 
+  // Pedidos `/img/*` não servidos pelo static acima não devem cair no SPA (HTML 200 quebra <img> / fundos CSS).
+  app.use((req, res, next) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+    const p = req.path || '';
+    if (p !== '/img' && !p.startsWith('/img/')) return next();
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(404).type('text/plain').send('Not Found');
+  });
+
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
   });

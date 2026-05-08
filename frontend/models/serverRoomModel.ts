@@ -2,6 +2,19 @@ import type { PlacedRack, StoredBattery, Upgrade } from '../types';
 import { NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from '../types';
 import { batteryTierScore, poolEntryEnergyWh } from './roomBatteryModel';
 
+/** `rack.batteryId` pode ser id de instância (`stored_batteries.id`) ou id de catálogo (`upgrades.id`). */
+export function resolvePlacedRackBatteryCatalogId(
+  rack: PlacedRack,
+  storedBatteries: StoredBattery[] | null | undefined
+): string | null {
+  const bid = rack.batteryId != null ? String(rack.batteryId).trim() : '';
+  if (!bid) return null;
+  const row = (storedBatteries || []).find((b) => b.id === bid);
+  const cat = row?.itemId != null ? String(row.itemId).trim() : '';
+  if (cat) return cat;
+  return bid;
+}
+
 export type ServerRoomSelectionType = 'machine' | 'battery' | 'wiring' | 'multiplier' | 'rack';
 
 export interface ServerRoomSelectionContext {
@@ -35,9 +48,14 @@ export function calculateRackConsumptionWatts(rack: PlacedRack, upgrades: Upgrad
 }
 
 /** Segundos até 0 Wh ao ritmo atual (Wh × 3600 / W), alinhado ao servidor. */
-export function estimateRackBatteryRuntimeSeconds(rack: PlacedRack, upgrades: Upgrade[]): number | null {
-  if (!rack.batteryId) return null;
-  const battery = upgrades.find((u) => u.id === rack.batteryId);
+export function estimateRackBatteryRuntimeSeconds(
+  rack: PlacedRack,
+  upgrades: Upgrade[],
+  storedBatteries?: StoredBattery[] | null
+): number | null {
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+  if (!catalogId) return null;
+  const battery = upgrades.find((u) => u.id === catalogId);
   if (!battery || battery.powerCapacity === -1) return null;
   const watts = calculateRackConsumptionWatts(rack, upgrades);
   if (watts <= 0) return null;
@@ -75,34 +93,49 @@ export function formatBatteryRuntimeShortPt(totalSec: number): string {
 }
 
 /** Texto curto para o CMD (sem caixa colorida). */
-export function getRackBatteryRuntimeShortLabel(rack: PlacedRack, upgrades: Upgrade[]): string {
+export function getRackBatteryRuntimeShortLabel(
+  rack: PlacedRack,
+  upgrades: Upgrade[],
+  storedBatteries?: StoredBattery[] | null
+): string {
   if (!rack.batteryId) return '—';
-  const battery = upgrades.find((u) => u.id === rack.batteryId);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+  const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
   if (!battery) return '—';
   if (battery.powerCapacity === -1) return '∞';
-  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades);
+  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries);
   if (sec == null) return '—';
   return `~${formatBatteryRuntimeShortPt(sec)}`;
 }
 
 /** Tooltip / acessibilidade (explicação completa). */
-export function getRackBatteryRuntimeHint(rack: PlacedRack, upgrades: Upgrade[]): string {
+export function getRackBatteryRuntimeHint(
+  rack: PlacedRack,
+  upgrades: Upgrade[],
+  storedBatteries?: StoredBattery[] | null
+): string {
   if (!rack.batteryId) return 'Sem bateria instalada.';
-  const battery = upgrades.find((u) => u.id === rack.batteryId);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+  const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
   if (!battery) return '';
   if (battery.powerCapacity === -1) return 'Bateria ilimitada.';
   const watts = calculateRackConsumptionWatts(rack, upgrades);
   if (watts <= 0) return 'Sem consumo (0 W): a carga não desce com o equipamento atual.';
-  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades);
+  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries);
   if (sec == null) return '';
   const w = watts;
   return `Autonomia estimada: ~${formatBatteryRuntimeShortPt(sec)} até 0 Wh ao consumo atual (${w} W). Com a rig desligada a bateria não gasta.`;
 }
 
-export function calculatePlacedRacksProductionHashrate(racks: PlacedRack[], upgrades: Upgrade[]): number {
+export function calculatePlacedRacksProductionHashrate(
+  racks: PlacedRack[],
+  upgrades: Upgrade[],
+  storedBatteries?: StoredBattery[] | null
+): number {
   let total = 0;
   racks.forEach((rack) => {
-    const battery = upgrades.find((u) => u.id === rack.batteryId);
+    const cat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+    const battery = cat ? upgrades.find((u) => u.id === cat) : null;
     const isInfinite = battery && battery.powerCapacity === -1;
     const isOperational =
       rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);

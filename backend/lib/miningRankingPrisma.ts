@@ -1,4 +1,5 @@
 import { prisma } from '../config/db.js';
+import { resolvePlacedRackBatteryCatalogId } from './placedRackBatteryCatalog.js';
 
 type CoinLite = { id: string; name: string; symbol: string };
 
@@ -73,6 +74,20 @@ export async function getPublicMiningRankingPayload(): Promise<{
   const slotsByRack = groupByRackId(allSlots);
   const multByRack = groupByRackId(allMult);
 
+  const storedBattRows =
+    eligibleIds.length === 0
+      ? []
+      : await prisma.stored_batteries.findMany({
+          where: { user_id: { in: eligibleIds } },
+          select: { id: true, item_id: true }
+        });
+  const storedBattCatalogByInstanceId = new Map<string, string>();
+  for (const sb of storedBattRows) {
+    const iid = String(sb.id ?? '').trim();
+    const itemId = String(sb.item_id ?? '').trim();
+    if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
+  }
+
   const rankingData = new Map<number, PublicRankingUser>();
 
   for (const rack of racks) {
@@ -80,7 +95,8 @@ export async function getPublicMiningRankingPayload(): Promise<{
     const coinId = rack.selected_coin_id;
     if (!coinsMap.has(coinId)) continue;
 
-    const battDef = upgradesMap.get(rack.battery_id ?? '');
+    const battKey = resolvePlacedRackBatteryCatalogId(rack.battery_id, storedBattCatalogByInstanceId);
+    const battDef = battKey ? upgradesMap.get(battKey) : undefined;
     const isInfinite = battDef && battDef.power_capacity === -1;
     if (!isInfinite && rack.current_charge <= 0) continue;
 
@@ -186,10 +202,25 @@ export async function getAdminMiningRankingPayload(): Promise<{
   const slotsByRack = groupByRackId(allSlots);
   const multByRack = groupByRackId(allMult);
 
+  const storedBattRowsAdmin =
+    eligibleIds.length === 0
+      ? []
+      : await prisma.stored_batteries.findMany({
+          where: { user_id: { in: eligibleIds } },
+          select: { id: true, item_id: true }
+        });
+  const storedBattCatalogByInstanceIdAdmin = new Map<string, string>();
+  for (const sb of storedBattRowsAdmin) {
+    const iid = String(sb.id ?? '').trim();
+    const itemId = String(sb.item_id ?? '').trim();
+    if (iid && itemId) storedBattCatalogByInstanceIdAdmin.set(iid, itemId);
+  }
+
   for (const rack of racks) {
     if (!rack.selected_coin_id || !coinsMap.has(rack.selected_coin_id)) continue;
 
-    const battDef = upgradesMap.get(rack.battery_id ?? '');
+    const battKey = resolvePlacedRackBatteryCatalogId(rack.battery_id, storedBattCatalogByInstanceIdAdmin);
+    const battDef = battKey ? upgradesMap.get(battKey) : undefined;
     const isInfinite = battDef && battDef.power_capacity === -1;
     if (!isInfinite && rack.current_charge <= 0) continue;
 

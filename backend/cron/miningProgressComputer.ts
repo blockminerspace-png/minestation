@@ -3,6 +3,7 @@ import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
 import { miningCreditCapNowMs } from './miningWallClockGrid.js';
+import { resolvePlacedRackBatteryCatalogId } from '../lib/placedRackBatteryCatalog.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -214,6 +215,14 @@ export async function computeProgressForUser(
     const racksRes = await client.query('SELECT * FROM placed_racks WHERE user_id = $1', [userId]);
     const rows = racksRes.rows as Array<Record<string, unknown>>;
 
+    const storedBattRes = await client.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [userId]);
+    const storedBattCatalogByInstanceId = new Map<string, string>();
+    for (const sb of storedBattRes.rows as Array<{ id?: unknown; item_id?: unknown }>) {
+      const iid = String(sb.id ?? '').trim();
+      const itemId = String(sb.item_id ?? '').trim();
+      if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
+    }
+
     if (rows.length > 0) {
       const rackIds = rows.map((r) => String(r.id));
       const allSlotsRes = await client.query(
@@ -242,7 +251,8 @@ export async function computeProgressForUser(
         const rid = String(r.id);
         const slots = slotsMap.get(rid) || [];
         const multiplierSlots = multiMap.get(rid) || [];
-        const battDef = r.battery_id ? upgradesMap.get(String(r.battery_id)) : null;
+        const battKey = resolvePlacedRackBatteryCatalogId(r.battery_id, storedBattCatalogByInstanceId);
+        const battDef = battKey ? upgradesMap.get(String(battKey)) : null;
         const powerCap = battDef ? parseFiniteNumberLenient(battDef.power_capacity, 'rack.batt_cap') : NaN;
         const isInfinite = battDef && powerCap === -1;
 

@@ -10,6 +10,7 @@ import {
   mergeBatteryWidgetsIfAbsent,
   getRackBatteryRuntimeHint,
   getRackBatteryRuntimeShortLabel,
+  resolvePlacedRackBatteryCatalogId,
   formatRackEnergyWh,
   listInfrastructureInStock,
   listItemsForSelection,
@@ -230,8 +231,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     }, [placedRacks, currentRoom]);
 
     const roomTotalProduction = useMemo(() => {
-        return calculatePlacedRacksProductionHashrate(currentRoomRacks, upgrades);
-    }, [currentRoomRacks, upgrades]);
+        return calculatePlacedRacksProductionHashrate(currentRoomRacks, upgrades, storedBatteries);
+    }, [currentRoomRacks, upgrades, storedBatteries]);
 
     const roomPlacedCount = currentRoomRacks.length;
 
@@ -688,17 +689,18 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                     const rackSkin = normalizePublicAssetUrl(rackDef?.image);
 
                     const totalWatts = calculateRackConsumptionWatts(rack, upgrades);
-                    const finalProd = calculatePlacedRacksProductionHashrate([rack], upgrades);
+                    const finalProd = calculatePlacedRacksProductionHashrate([rack], upgrades, storedBatteries);
 
-                    const battery = upgrades.find(u => u.id === rack.batteryId);
+                    const batteryCatalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+                    const battery = batteryCatalogId ? upgrades.find((u) => u.id === batteryCatalogId) : null;
                     const isInfinite = battery && battery.powerCapacity === -1;
                     const chargePercent = battery && battery.powerCapacity && !isInfinite
                         ? (rack.currentCharge / battery.powerCapacity) * 100
                         : (isInfinite ? 100 : 0);
 
                     const isOperational = rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
-                    const batteryRuntimeShort = getRackBatteryRuntimeShortLabel(rack, upgrades);
-                    const batteryRuntimeHint = getRackBatteryRuntimeHint(rack, upgrades);
+                    const batteryRuntimeShort = getRackBatteryRuntimeShortLabel(rack, upgrades, storedBatteries);
+                    const batteryRuntimeHint = getRackBatteryRuntimeHint(rack, upgrades, storedBatteries);
 
                     const layoutToUse = mergeBatteryWidgetsIfAbsent(
                       rackDef?.layout || (rackDef ? getDefaultRackLayout(rackDef) : { canvasWidth: 500, canvasHeight: 600, slots: [] })
@@ -760,7 +762,16 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                 slot.type === 'wiring' ? rack.wiringId :
                                                                     slot.type === 'battery' ? rack.batteryId : null;
 
-                                                        const item = slotContent ? upgrades.find(u => u.id === slotContent) : null;
+                                                        const catalogForBatterySlot =
+                                                            slot.type === 'battery' ? batteryCatalogId : null;
+                                                        const item =
+                                                            slot.type === 'battery'
+                                                                ? catalogForBatterySlot
+                                                                    ? upgrades.find((u) => u.id === catalogForBatterySlot)
+                                                                    : null
+                                                                : slotContent
+                                                                  ? upgrades.find((u) => u.id === slotContent)
+                                                                  : null;
                                                         const itemImg = normalizePublicAssetUrl(item?.image);
 
                                                         const handleClick = () => {
@@ -1154,7 +1165,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                 {(() => {
                                     const rack = placedRacks.find(r => r.id === configRackId)!;
                                     const wiring = rack.wiringId ? upgrades.find(u => u.id === rack.wiringId) : null;
-                                    const battery = rack.batteryId ? upgrades.find(u => u.id === rack.batteryId) : null;
+                                    const battCat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+                                    const battery = battCat ? upgrades.find((u) => u.id === battCat) : null;
                                     const machineDefs = rack.slots.map(sid => sid ? upgrades.find(u => u.id === sid) || null : null).filter(Boolean) as Upgrade[];
                                     const baseProd = machineDefs.reduce((acc, u) => acc + (u.baseProduction || 0), 0);
                                     let mult = 1;

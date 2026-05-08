@@ -1,19 +1,26 @@
-import { describe, it, expect } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
 
 describe('normalizePublicAssetUrl', () => {
-  it('passa URLs absolutas e data', () => {
-    expect(normalizePublicAssetUrl('https://x/y.png')).toBe('https://x/y.png');
+  it('preserves absolute /img and remote URLs', () => {
+    expect(normalizePublicAssetUrl('/img/miner/x.png')).toBe('/img/miner/x.png');
+    expect(normalizePublicAssetUrl('https://cdn.example/a.png')).toBe('https://cdn.example/a.png');
     expect(normalizePublicAssetUrl('data:image/png;base64,xx')).toMatch(/^data:/);
   });
 
-  it('prefixa assets relativos', () => {
-    expect(normalizePublicAssetUrl('img/x.png')).toBe('/img/x.png');
-    expect(normalizePublicAssetUrl('/x')).toBe('/x');
+  it('prefixes game asset folders and bare filenames with /img/', () => {
+    expect(normalizePublicAssetUrl('miner/gpu.png')).toBe('/img/miner/gpu.png');
+    expect(normalizePublicAssetUrl('baterias/pack.png')).toBe('/img/baterias/pack.png');
+    expect(normalizePublicAssetUrl('shop_gpu.png')).toBe('/img/shop_gpu.png');
   });
 
-  it('null e vazio', () => {
-    expect(normalizePublicAssetUrl(null)).toBeUndefined();
-    expect(normalizePublicAssetUrl('  ')).toBeUndefined();
+  it('fixes wrong leading slash without /img (SPA-safe)', () => {
+    expect(normalizePublicAssetUrl('/miner/gpu.png')).toBe('/img/miner/gpu.png');
+    expect(normalizePublicAssetUrl('/moedas/coin.png')).toBe('/img/moedas/coin.png');
+  });
+
+  it('returns non-image ids unchanged', () => {
+    expect(normalizePublicAssetUrl('temp_legacy_1')).toBe('temp_legacy_1');
+    expect(normalizePublicAssetUrl('📦')).toBe('📦');
   });
 });

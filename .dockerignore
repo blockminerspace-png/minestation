@@ -8,7 +8,8 @@ backend/node_modules
 admin/node_modules
 **/node_modules
 backups
-uploads
+# Só a pasta na raiz do contexto — não excluir `backend/img/uploads` (anúncios/suporte em imagem).
+/uploads
 export-suporte
 frontend/dist
 deployment/certbot

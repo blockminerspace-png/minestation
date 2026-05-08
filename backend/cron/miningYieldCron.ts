@@ -1,4 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
+import { resolvePlacedRackBatteryCatalogId } from '../lib/placedRackBatteryCatalog.js';
 import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeForLog } from '../lib/safeText.js';
 import { miningRuntimeStats } from './miningRuntimeStats.js';
@@ -107,6 +108,14 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
     const upsMap = new Map<string, { base_production?: unknown; multiplier?: unknown; power_capacity?: unknown }>();
     upsRes.rows.forEach((u) => upsMap.set(String(u.id), u));
 
+    const storedBattAll = await client.query('SELECT id, item_id FROM stored_batteries');
+    const storedBattCatalogByInstanceId = new Map<string, string>();
+    for (const sb of storedBattAll.rows as Array<{ id?: unknown; item_id?: unknown }>) {
+      const iid = String(sb.id ?? '').trim();
+      const itemId = String(sb.item_id ?? '').trim();
+      if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
+    }
+
     const slotRes = await client.query('SELECT rack_id, machine_item_id FROM rack_slots');
     const slotsMap: Record<string, string[]> = {};
     slotRes.rows.forEach((s) => {
@@ -138,7 +147,8 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
         const cid = String(rack.selected_coin_id);
         if (!cid) continue;
 
-        const batt = upsMap.get(String(rack.battery_id));
+        const battKey = resolvePlacedRackBatteryCatalogId(rack.battery_id, storedBattCatalogByInstanceId);
+        const batt = battKey ? upsMap.get(String(battKey)) : undefined;
         const powerCap = batt ? parseFiniteNumberLenient(batt.power_capacity, 'rack.battery_power_cap') : 0;
         const isInfinite = powerCap === -1;
         const charge = parseFiniteNumberLenient(rack.current_charge, 'rack.charge');
