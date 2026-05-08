@@ -59,6 +59,7 @@ export function writeMaintenanceFlagFile(active: boolean): void {
 export async function syncMaintenanceFlagFromDatabase(): Promise<void> {
   const { active } = await readMaintenanceState();
   writeMaintenanceFlagFile(active);
+  bumpMaintenanceCache();
 }
 
 async function invalidateAllSessions(): Promise<{ sessions: number; jwtRefresh: number }> {
@@ -69,6 +70,38 @@ async function invalidateAllSessions(): Promise<{ sessions: number; jwtRefresh: 
   return { sessions: s.count, jwtRefresh: j.count };
 }
 
+async function invalidateSessionsExceptUser(
+  exemptUserId: number
+): Promise<{ sessions: number; jwtRefresh: number }> {
+  const uid = Math.floor(Number(exemptUserId));
+  if (!Number.isFinite(uid) || uid <= 0) {
+    return invalidateAllSessions();
+  }
+  const [s, j] = await Promise.all([
+    prisma.sessions.deleteMany({ where: { NOT: { user_id: uid } } }),
+    prisma.jwt_refresh_tokens.deleteMany({ where: { NOT: { user_id: uid } } })
+  ]);
+  return { sessions: s.count, jwtRefresh: j.count };
+}
+
+let maintCache: { at: number; active: boolean; message: string | null } | null = null;
+const MAINT_CACHE_MS = 2500;
+
+/** Cache curto para o middleware HTTP não bater na BD em cada pedido. */
+export async function getMaintenanceActiveCached(): Promise<{ active: boolean; message: string | null }> {
+  const now = Date.now();
+  if (maintCache && now - maintCache.at < MAINT_CACHE_MS) {
+    return { active: maintCache.active, message: maintCache.message };
+  }
+  const st = await readMaintenanceState();
+  maintCache = { at: now, active: st.active, message: st.message };
+  return { active: st.active, message: st.message };
+}
+
+export function bumpMaintenanceCache(): void {
+  maintCache = null;
+}
+
 /**
  * Liga ou desliga manutenção: `settings` + ficheiro para Nginx.
  * Ao ligar: remove todas as sessões (`sid`) e refresh JWT (logout geral).
@@ -76,6 +109,8 @@ async function invalidateAllSessions(): Promise<{ sessions: number; jwtRefresh: 
 export async function applyMaintenanceMode(opts: {
   active: boolean;
   message?: string | null;
+  /** Sessões deste utilizador mantêm-se (ex.: super-admin que acabou de ligar manutenção). */
+  exemptUserId?: number | null;
 }): Promise<{ active: boolean; message: string | null; invalidated?: { sessions: number; jwtRefresh: number } }> {
   const active = !!opts.active;
   let message: string | null =
@@ -99,8 +134,15 @@ export async function applyMaintenanceMode(opts: {
 
   let invalidated: { sessions: number; jwtRefresh: number } | undefined;
   if (active) {
-    invalidated = await invalidateAllSessions();
+    const ex = opts.exemptUserId;
+    if (ex != null && typeof ex === 'number' && Number.isFinite(ex) && ex > 0) {
+      invalidated = await invalidateSessionsExceptUser(ex);
+    } else {
+      invalidated = await invalidateAllSessions();
+    }
   }
+
+  bumpMaintenanceCache();
 
   const st = await readMaintenanceState();
   return { active: st.active, message: st.message, invalidated };

@@ -456,6 +456,24 @@ function normalizePublicBootstrapPayload(raw: unknown): PublicBootstrapPayload |
   };
 }
 
+export type PublicMaintenancePayload = { active: boolean; message: string | null };
+
+/** Sem cookies / auth; usado pelo SPA para mostrar ecrã de manutenção. */
+export async function getPublicMaintenance(): Promise<PublicMaintenancePayload | null> {
+  try {
+    const res = await fetch(`${base}/public/maintenance`, { credentials: 'omit' });
+    if (!res.ok) return null;
+    const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!raw || typeof raw !== 'object') return null;
+    const active = raw.active === true;
+    const message =
+      raw.message != null && String(raw.message).trim() ? String(raw.message).trim() : null;
+    return { active, message };
+  } catch {
+    return null;
+  }
+}
+
 export async function getPublicBootstrap(): Promise<PublicBootstrapPayload | null> {
   try {
     const res = await apiFetch(`${base}/bootstrap`);

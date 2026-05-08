@@ -117,7 +117,8 @@ import {
 import {
   applyMaintenanceMode,
   readMaintenanceState,
-  syncMaintenanceFlagFromDatabase
+  syncMaintenanceFlagFromDatabase,
+  getMaintenanceActiveCached
 } from './dist/lib/maintenanceMode.js';
 import {
   getAdminMiningRankingPayload,
@@ -1417,6 +1418,59 @@ app.use((req, res, next) => {
     return res.status(404).end();
   }
   next();
+});
+
+/** Estado de manutenção para o SPA (sem auth). */
+app.get('/api/public/maintenance', async (_req, res) => {
+  try {
+    res.setHeader('Cache-Control', 'no-store');
+    const st = await getMaintenanceActiveCached();
+    res.json({ active: st.active, message: st.message });
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, '/api/public/maintenance', e);
+  }
+});
+
+/** Com manutenção ativa na BD: bloqueia APIs para não-super-admin (Nginx pode não ver a flag no mesmo volume). */
+app.use(async (req, res, next) => {
+  try {
+    const pathOnly = req.path || '';
+    if (!pathOnly.startsWith('/api/')) return next();
+
+    const st = await getMaintenanceActiveCached();
+    if (!st.active) return next();
+
+    if (pathOnly === '/api/public/maintenance') return next();
+    if (pathOnly.startsWith('/api/admin/maintenance')) return next();
+
+    if (req.userId && typeof req.userId === 'number') {
+      const u = await prisma.users.findUnique({
+        where: { id: req.userId },
+        select: { is_super_admin: true, is_admin: true, email: true }
+      });
+      if (
+        u &&
+        resolveIsSuperAdminFromUserRow({
+          is_super_admin: u.is_super_admin,
+          is_admin: u.is_admin,
+          email: u.email
+        })
+      ) {
+        return next();
+      }
+    }
+
+    return res
+      .status(503)
+      .set('Retry-After', '120')
+      .json({
+        error: 'Manutenção em curso. Voltamos em breve.',
+        code: 'MAINTENANCE',
+        message: st.message
+      });
+  } catch (e) {
+    next(e);
+  }
 });
 
 mountImageStaticMiddleware(app, IMG_UPLOADS_DIR, IMG_DIR);
@@ -9354,7 +9408,9 @@ app.post('/api/admin/maintenance', isAdmin, async (req, res) => {
     const body = (req.body || {}) as { active?: unknown; message?: unknown };
     const active = body.active === true || body.active === 1 || body.active === '1' || body.active === 'true';
     const message = typeof body.message === 'string' ? body.message : undefined;
-    const out = await applyMaintenanceMode({ active, message });
+    const exemptUserId =
+      active && typeof req.userId === 'number' && Number.isFinite(req.userId) && req.userId > 0 ? req.userId : null;
+    const out = await applyMaintenanceMode({ active, message, exemptUserId });
     res.json({ ok: true, ...out });
   } catch (e) {
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);

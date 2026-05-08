@@ -807,11 +807,11 @@ export async function validateWorkshopSlotsPayloadForSave(
         const ref = `bancada ${i + 1}/${slotKey}`;
         const prev = seenBatteryInstanceIds.get(instId);
         if (prev) {
-          return {
-            ok: false,
-            error:
-              `A mesma bateria não pode estar instalada em dois slots da oficina ao mesmo tempo (${prev} e ${ref}). Recarregue a página (F5) para sincronizar.`
-          };
+          delete internalSlots[slotKey];
+          console.warn(
+            `[WorkshopSave] dedupe_battery_instance kept=${prev} removed=${ref} inst=${instId.slice(0, 10)}…`
+          );
+          continue;
         }
         seenBatteryInstanceIds.set(instId, ref);
       }
@@ -827,6 +827,7 @@ export async function validateWorkshopSlotsPayloadForSave(
         };
       }
       for (const [k, v] of Object.entries(w.slotCharges)) {
+        if (!(k in internalSlots)) continue;
         if (k.length > 200) {
           return {
             ok: false,
@@ -864,6 +865,7 @@ export async function validateWorkshopSlotsPayloadForSave(
       }
       slotItemIds = {};
       for (const [k, v] of Object.entries(w.slotItemIds)) {
+        if (!(k in internalSlots)) continue;
         if (k.length > 200) {
           return {
             ok: false,

@@ -341,9 +341,9 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ users, gameUpgra
                             <div className="min-w-0">
                                 <h2 className="font-bold text-white text-base">Manutenção pública</h2>
                                 <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-                                    Com manutenção ativa, <span className="text-slate-400">genesisdao.tech</span> (e www) mostram a página estática via Nginx.
-                                    <span className="text-slate-400"> dev.genesisdao.tech</span> continua a ir sempre à app, sem este bloqueio.
-                                    Ao ativar, todas as sessões de jogador são invalidadas (logout geral).
+                                    Com manutenção ativa, <span className="text-slate-400">genesisdao.tech</span> (e www) podem mostrar a página estática via Nginx (se o volume da flag estiver partilhado com o Nginx).
+                                    A app mostra também um ecrã de manutenção aos jogadores. A tua sessão de <span className="text-slate-400">super administrador</span> mantém-se para poderes desligar o modo aqui.
+                                    As outras sessões são invalidadas (logout geral).
                                 </p>
                             </div>
                         </div>

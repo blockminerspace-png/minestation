@@ -77,6 +77,8 @@ services:
         required: false
     volumes:
       - ./backups:/app/backups
+      # Alinha com produção: ficheiro maintenance.flag visível ao Nginx se usares proxy com o mesmo volume.
+      - maintenance_shared:/var/www/maintenance
     depends_on:
       db:
         condition: service_healthy
@@ -107,3 +109,4 @@ volumes:
   pgdata:
   redisdata:
   mongodata:
+  maintenance_shared:

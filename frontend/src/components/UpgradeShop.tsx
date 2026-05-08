@@ -44,6 +44,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
     const filteredUpgrades = useMemo(() => {
         return displayUpgrades.filter(u => {
             if (filterType === 'all') return true;
+            if (filterType === 'nft') return !!u.isNft;
             return u.type === filterType;
         }).sort((a, b) => a.baseCost - b.baseCost);
     }, [displayUpgrades, filterType]);
@@ -200,6 +201,9 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                         </button>
                         <button onClick={() => setFilterType('charger')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'charger' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
                             <Wrench size={14} /> Carregadores
+                        </button>
+                        <button onClick={() => setFilterType('nft')} className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${filterType === 'nft' ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}>
+                            <Hexagon size={14} /> NFTs
                         </button>
                     </div>
 

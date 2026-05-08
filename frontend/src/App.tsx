@@ -33,6 +33,7 @@ import {
   getGameNavLabels,
   getPublicBootstrap,
   getPublicBootstrapLite,
+  getPublicMaintenance,
   performWorkshopInstantRecharge,
   saveGameState as apiSaveGameState,
   postServerRoomBulkBatteries,
@@ -70,6 +71,7 @@ import { trackSpaPageView } from './lib/analytics';
 import { gamePathFromView, gameViewFromEnglishPathname, isEnglishGameSpaPath, isGamePathView } from './lib/gamePathRoutes';
 import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './types/bulkRoomBattery';
+import { PublicMaintenanceScreen } from './components/PublicMaintenanceScreen';
 import { MarketNews } from './components/MarketNews';
 import { RemoteBannerImage } from './components/RemoteBannerImage';
 import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
@@ -279,6 +281,8 @@ export default function App() {
   const [timeOffset, setTimeOffset] = useState<number>(0);
   const [web3SettingsState, setWeb3SettingsState] = useState<Web3Settings | null>(null);
   const [monetizationSettings, setMonetizationSettings] = useState<MonetizationSettings | null>(null);
+  const [publicMaintenance, setPublicMaintenance] = useState<{ active: boolean; message: string | null } | null>(null);
+  const [sessionResolved, setSessionResolved] = useState(false);
 
   // Game State
   const [gameState, setGameState] = useState<GameState>(INITIAL_STATE);
@@ -626,6 +630,26 @@ export default function App() {
     }
   }, [theme]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let iv: ReturnType<typeof setInterval> | undefined;
+    const tick = async () => {
+      try {
+        const m = await getPublicMaintenance();
+        if (cancelled) return;
+        setPublicMaintenance(m ?? { active: false, message: null });
+      } catch {
+        if (!cancelled) setPublicMaintenance({ active: false, message: null });
+      }
+    };
+    void tick();
+    iv = setInterval(tick, 25000);
+    return () => {
+      cancelled = true;
+      if (iv) clearInterval(iv);
+    };
+  }, []);
+
   const toggleTheme = () => {
     setTheme(prev => prev === 'dark' ? 'light' : 'dark');
   };
@@ -668,6 +692,8 @@ export default function App() {
           setGlobalView('home');
           setTimeOffset(0);
         }
+      } finally {
+        if (!cancelled) setSessionResolved(true);
       }
     })();
     return () => {
@@ -2066,6 +2092,33 @@ export default function App() {
           finalInstanceId = preCalculatedId || crypto.randomUUID();
         }
 
+        const fid = String(finalInstanceId);
+        for (let wi = 0; wi < nw.length; wi++) {
+          const wsb = nw[wi];
+          if (!wsb) continue;
+          const int0 = { ...(wsb.internalSlots || {}) };
+          const ch0 = { ...(wsb.slotCharges || {}) };
+          const it0 = { ...(wsb.slotItemIds || {}) };
+          let altered = false;
+          for (const sk of Object.keys(int0)) {
+            if (String(int0[sk]) === fid && !(wi === wsIdx && sk === slotId)) {
+              delete int0[sk];
+              delete ch0[sk];
+              delete it0[sk];
+              altered = true;
+            }
+          }
+          if (altered) {
+            nw[wi] = { ...wsb, internalSlots: int0, slotCharges: ch0, slotItemIds: it0 };
+          }
+        }
+        const curWs = nw[wsIdx];
+        if (curWs) {
+          item.internalSlots = { ...(curWs.internalSlots || {}) };
+          item.slotCharges = { ...(curWs.slotCharges || {}) };
+          item.slotItemIds = { ...(curWs.slotItemIds || {}) };
+        }
+
         item.internalSlots = { ...item.internalSlots, [slotId]: finalInstanceId! };
         item.slotCharges = { ...item.slotCharges, [slotId]: initCharge };
         item.slotItemIds = { ...(item.slotItemIds || {}), [slotId]: actualItemId };
@@ -2527,6 +2580,37 @@ export default function App() {
   };
   const formatMoney = (val: number) => val < 0.01 && val > 0 ? val.toFixed(3) : val.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const formatHash = (val: number) => val === 0 ? "0 H/s" : (val < 0.0001 ? val.toFixed(8) + " H/s" : Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 2 }).format(val) + " H/s");
+
+  if (publicMaintenance === null) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-950 text-amber-500 gap-3">
+        <RefreshCw className="animate-spin" size={32} aria-hidden />
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">A carregar…</span>
+      </div>
+    );
+  }
+
+  if (publicMaintenance.active === true && !sessionResolved) {
+    return (
+      <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-950 text-amber-500 gap-3">
+        <RefreshCw className="animate-spin" size={32} aria-hidden />
+        <span className="text-xs font-bold uppercase tracking-wider text-slate-500">A verificar sessão…</span>
+      </div>
+    );
+  }
+
+  const maintenanceBlocksSpa = publicMaintenance.active === true && user?.isSuperAdmin !== true;
+  if (maintenanceBlocksSpa) {
+    return (
+      <PublicMaintenanceScreen
+        message={publicMaintenance.message}
+        onRetry={async () => {
+          const m = await getPublicMaintenance();
+          setPublicMaintenance(m ?? { active: false, message: null });
+        }}
+      />
+    );
+  }
 
   return (
     <div className="h-screen min-h-0 w-full min-w-0 max-w-full flex flex-col bg-slate-50 dark:bg-[#0f0c08] text-slate-800 dark:text-slate-200 font-sans selection:bg-amber-500/30 overflow-hidden transition-colors duration-300">
