@@ -27,6 +27,7 @@ import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
 import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisStack/init.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
+import { resolvePlacedRackBatteryCatalogId } from './dist/lib/placedRackBatteryCatalog.js';
 
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
@@ -4140,7 +4141,7 @@ app.post('/api/server-room/bulk-batteries', async (req, res) => {
       return res.status(400).json({ error: out.message });
     }
 
-    const rackVal = await validatePlacedRacksForSave(client, out.next.placedRacks);
+    const rackVal = await validatePlacedRacksForSave(client, out.next.placedRacks, uid);
     if (!rackVal.ok) {
       await client.query('ROLLBACK');
       return res.status(400).json({ error: rackVal.error });
@@ -7123,9 +7124,23 @@ app.get('/api/game-state/:email', async (req, res) => {
 
 const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
 
-async function validatePlacedRacksForSave(dbq, racks) {
+async function validatePlacedRacksForSave(dbq, racks, userId) {
   if (!Array.isArray(racks)) return { ok: false, error: 'placedRacks inválido.' };
   if (racks.length > 350) return { ok: false, error: 'Número de rigs excede o permitido.' };
+  const storedBattCatalogByInstanceId = new Map();
+  const uidNum = Number(userId);
+  if (Number.isFinite(uidNum) && uidNum > 0) {
+    try {
+      const sb = await dbq.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uidNum]);
+      for (const row of sb.rows || []) {
+        const iid = String(row.id ?? '').trim();
+        const itemId = String(row.item_id ?? '').trim();
+        if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
+      }
+    } catch (e) {
+      console.warn('[validatePlacedRacksForSave] stored_batteries:', e instanceof Error ? e.message : String(e));
+    }
+  }
   const nftRoomIds = await resolveNftAutoArmario1OnlyRoomIds(dbq);
   const upgradeIds = new Set();
   const coinIds = new Set();
@@ -7138,14 +7153,20 @@ async function validatePlacedRacksForSave(dbq, racks) {
       return { ok: false, error: 'Na sala NFTs AUTO só é permitido o chassis Rack H1 NFT Collection.' };
     }
     if (r.wiringId && !RACK_ID_RE.test(String(r.wiringId))) return { ok: false, error: 'Fiação inválida.' };
-    if (r.batteryId && !RACK_ID_RE.test(String(r.batteryId))) return { ok: false, error: 'Bateria inválida.' };
+    if (r.batteryId != null && String(r.batteryId).trim() !== '' && !RACK_ID_RE.test(String(r.batteryId))) {
+      return { ok: false, error: 'Bateria inválida.' };
+    }
     if (r.slots != null && !Array.isArray(r.slots)) return { ok: false, error: 'Slots inválidos.' };
     if (r.slots && r.slots.length > 128) return { ok: false, error: 'Demasiados slots de máquina.' };
     if (r.multiplierSlots != null && !Array.isArray(r.multiplierSlots)) return { ok: false, error: 'Slots de multiplicador inválidos.' };
     if (r.multiplierSlots && r.multiplierSlots.length > 64) return { ok: false, error: 'Demasiados multiplicadores.' };
     if (r.itemId) upgradeIds.add(String(r.itemId));
     if (r.wiringId) upgradeIds.add(String(r.wiringId));
-    if (r.batteryId) upgradeIds.add(String(r.batteryId));
+    if (r.batteryId != null && String(r.batteryId).trim() !== '') {
+      const bidRaw = String(r.batteryId).trim();
+      const battCat = resolvePlacedRackBatteryCatalogId(bidRaw, storedBattCatalogByInstanceId);
+      if (battCat) upgradeIds.add(battCat);
+    }
     for (const s of r.slots || []) {
       if (!s) continue;
       if (!RACK_ID_RE.test(String(s))) return { ok: false, error: 'Peça inválida num slot.' };
@@ -7278,7 +7299,7 @@ async function handleSaveGamePost(req, res) {
             }
           }
           nftAutoSanitized = await sanitizePlacedRacksNftAutoRoom(client, uid, changes, saveActivityLogs);
-          const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks);
+          const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks, uid);
           if (!rackVal.ok) {
             throw new HttpControlledError(400, { error: rackVal.error });
           }

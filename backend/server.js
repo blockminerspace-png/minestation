@@ -21,6 +21,7 @@ import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
 import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisStack/init.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
+import { resolvePlacedRackBatteryCatalogId } from './dist/lib/placedRackBatteryCatalog.js';
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
 function roundMiningEconomyField8Decimals(n) {
@@ -66,6 +67,7 @@ import { runReferralCommissionOnTx } from './dist/models/referralCommissionModel
 import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemController.js';
 import { runBulkRoomBattery, isValidRoomId } from './dist/lib/roomBatteryBulk.js';
 import { loadUserStock, loadUserStoredBatteries, loadUserPlacedRacksWithSlots, loadUpgradesWithCompat, persistStockStoredBatteriesPlacedRacks } from './dist/lib/serverRoomPersistence.js';
+import { mergeSaveGameSlicePayload } from './dist/lib/gameSaveSliceMerge.js';
 import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
@@ -1202,7 +1204,8 @@ app.use(cors({
         // [] = origem negada com resposta preflight válida (evita callback(Error) → next(err) sem cabeçalhos CORS).
         return callback(null, []);
     },
-    credentials: true
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Edit', 'X-Game-Save-Domain']
 }));
 const parseRateLimit = (raw, fallback, min, max) => {
     const n = parseInt(String(raw ?? ''), 10);
@@ -3865,7 +3868,7 @@ app.post('/api/server-room/bulk-batteries', async (req, res) => {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: out.message });
         }
-        const rackVal = await validatePlacedRacksForSave(client, out.next.placedRacks);
+        const rackVal = await validatePlacedRacksForSave(client, out.next.placedRacks, uid);
         if (!rackVal.ok) {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: rackVal.error });
@@ -6738,11 +6741,27 @@ app.get('/api/game-state/:email', async (req, res) => {
     }
 });
 const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
-async function validatePlacedRacksForSave(dbq, racks) {
+async function validatePlacedRacksForSave(dbq, racks, userId) {
     if (!Array.isArray(racks))
         return { ok: false, error: 'placedRacks inválido.' };
     if (racks.length > 350)
         return { ok: false, error: 'Número de rigs excede o permitido.' };
+    const storedBattCatalogByInstanceId = new Map();
+    const uidNum = Number(userId);
+    if (Number.isFinite(uidNum) && uidNum > 0) {
+        try {
+            const sb = await dbq.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uidNum]);
+            for (const row of sb.rows || []) {
+                const iid = String(row.id ?? '').trim();
+                const itemId = String(row.item_id ?? '').trim();
+                if (iid && itemId)
+                    storedBattCatalogByInstanceId.set(iid, itemId);
+            }
+        }
+        catch (e) {
+            console.warn('[validatePlacedRacksForSave] stored_batteries:', e instanceof Error ? e.message : String(e));
+        }
+    }
     const nftRoomIds = await resolveNftAutoArmario1OnlyRoomIds(dbq);
     const upgradeIds = new Set();
     const coinIds = new Set();
@@ -6759,8 +6778,9 @@ async function validatePlacedRacksForSave(dbq, racks) {
         }
         if (r.wiringId && !RACK_ID_RE.test(String(r.wiringId)))
             return { ok: false, error: 'Fiação inválida.' };
-        if (r.batteryId && !RACK_ID_RE.test(String(r.batteryId)))
+        if (r.batteryId != null && String(r.batteryId).trim() !== '' && !RACK_ID_RE.test(String(r.batteryId))) {
             return { ok: false, error: 'Bateria inválida.' };
+        }
         if (r.slots != null && !Array.isArray(r.slots))
             return { ok: false, error: 'Slots inválidos.' };
         if (r.slots && r.slots.length > 128)
@@ -6773,8 +6793,12 @@ async function validatePlacedRacksForSave(dbq, racks) {
             upgradeIds.add(String(r.itemId));
         if (r.wiringId)
             upgradeIds.add(String(r.wiringId));
-        if (r.batteryId)
-            upgradeIds.add(String(r.batteryId));
+        if (r.batteryId != null && String(r.batteryId).trim() !== '') {
+            const bidRaw = String(r.batteryId).trim();
+            const battCat = resolvePlacedRackBatteryCatalogId(bidRaw, storedBattCatalogByInstanceId);
+            if (battCat)
+                upgradeIds.add(battCat);
+        }
         for (const s of r.slots || []) {
             if (!s)
                 continue;
@@ -6813,7 +6837,7 @@ async function validatePlacedRacksForSave(dbq, racks) {
     }
     return { ok: true };
 }
-app.post('/api/save-game', async (req, res) => {
+async function handleSaveGamePost(req, res) {
     const { changes, adminOverride, targetEmail } = req.body;
     if (!req.userId || !changes)
         return res.status(400).json({ error: 'Missing fields' });
@@ -6848,6 +6872,31 @@ app.post('/api/save-game', async (req, res) => {
             await client.query("SET LOCAL statement_timeout = '20s'");
             // LOCK ORDER FIX: Always lock the primary user record first to avoid deadlocks
             await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
+            const saveDomainRaw = String(req.headers['x-game-save-domain'] || '')
+                .trim()
+                .toLowerCase();
+            const saveDomain = saveDomainRaw === 'inventory' || saveDomainRaw === 'servers' || saveDomainRaw === 'workshop'
+                ? saveDomainRaw
+                : '';
+            if (saveDomain) {
+                if (effectiveAdminOverride) {
+                    throw new HttpControlledError(400, {
+                        error: 'Gravação por domínio (X-Game-Save-Domain) não combina com adminOverride.'
+                    });
+                }
+                if (saveDomain === 'inventory' && changes.stock == null && changes.storedBatteries == null) {
+                    throw new HttpControlledError(400, {
+                        error: 'Domínio inventory: envie stock e/ou storedBatteries no corpo.'
+                    });
+                }
+                if (saveDomain === 'servers' && changes.placedRacks == null) {
+                    throw new HttpControlledError(400, { error: 'Domínio servers: envie placedRacks.' });
+                }
+                if (saveDomain === 'workshop' && changes.workshopSlots == null) {
+                    throw new HttpControlledError(400, { error: 'Domínio workshop: envie workshopSlots.' });
+                }
+                await mergeSaveGameSlicePayload(client, Number(uid), saveDomain, changes);
+            }
             // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
             // listagem P2P) cannot be overwritten by a save whose optimistic check ran before
             // they committed.
@@ -6874,7 +6923,7 @@ app.post('/api/save-game', async (req, res) => {
                     }
                 }
                 nftAutoSanitized = await sanitizePlacedRacksNftAutoRoom(client, uid, changes, saveActivityLogs);
-                const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks);
+                const rackVal = await validatePlacedRacksForSave(client, changes.placedRacks, uid);
                 if (!rackVal.ok) {
                     throw new HttpControlledError(400, { error: rackVal.error });
                 }
@@ -7380,6 +7429,62 @@ app.post('/api/save-game', async (req, res) => {
         console.error('[SaveGame] CRITICAL ERROR:', e);
         sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
     }
+}
+app.post('/api/save-game', handleSaveGamePost);
+/** Gravação só de estoque + baterias no armazém (mesma transação que /api/save-game + merge na BD). */
+app.post('/api/game/save-inventory', async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? b.changes : null;
+    const stock = nested != null ? nested.stock : b.stock;
+    const storedBatteries = nested != null ? nested.storedBatteries : b.storedBatteries;
+    const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
+    if (stock === undefined && storedBatteries === undefined) {
+        return res.status(400).json({ error: 'Envie stock e/ou storedBatteries (corpo plano ou changes).' });
+    }
+    req.headers['x-game-save-domain'] = 'inventory';
+    req.body = {
+        changes: { lastLoadTime, stock, storedBatteries },
+        adminOverride: false
+    };
+    return handleSaveGamePost(req, res);
+});
+/** Gravação só de rigs/salas (placed_racks + slots). */
+app.post('/api/game/save-servers', async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? b.changes : null;
+    const placedRacks = nested != null ? nested.placedRacks : b.placedRacks;
+    const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
+    if (placedRacks == null) {
+        return res.status(400).json({ error: 'Envie placedRacks (corpo plano ou changes).' });
+    }
+    req.headers['x-game-save-domain'] = 'servers';
+    req.body = {
+        changes: { lastLoadTime, placedRacks },
+        adminOverride: false
+    };
+    return handleSaveGamePost(req, res);
+});
+/** Gravação só da oficina (workshop_slots). */
+app.post('/api/game/save-workshop', async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+    const b = req.body && typeof req.body === 'object' ? req.body : {};
+    const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? b.changes : null;
+    const workshopSlots = nested != null ? nested.workshopSlots : b.workshopSlots;
+    const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
+    if (workshopSlots == null) {
+        return res.status(400).json({ error: 'Envie workshopSlots (corpo plano ou changes).' });
+    }
+    req.headers['x-game-save-domain'] = 'workshop';
+    req.body = {
+        changes: { lastLoadTime, workshopSlots },
+        adminOverride: false
+    };
+    return handleSaveGamePost(req, res);
 });
 // --- BACKUP SETTINGS API ---
 app.get('/api/admin/backup-settings', isAdmin, async (req, res) => {
@@ -8749,6 +8854,16 @@ const startServer = async () => {
     catch (e) {
         console.error('[DB] Failed to initialize PostgreSQL:', e);
     }
+    // Pedidos `/img/*` não servidos pelo static acima não devem cair no SPA (HTML 200 quebra <img> / fundos CSS).
+    app.use((req, res, next) => {
+        if (req.method !== 'GET' && req.method !== 'HEAD')
+            return next();
+        const p = req.path || '';
+        if (p !== '/img' && !p.startsWith('/img/'))
+            return next();
+        res.setHeader('Cache-Control', 'no-store');
+        res.status(404).type('text/plain').send('Not Found');
+    });
     app.get('*', (req, res) => {
         res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
     });
