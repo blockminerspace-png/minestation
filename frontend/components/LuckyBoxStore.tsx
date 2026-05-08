@@ -25,10 +25,11 @@ function displayLootBoxName(raw: string | undefined): string {
 /** Caixas-gatilho `roleta_code` não se abrem aqui — o giro é só na aba Roleta. */
 function countOpenableInventoryBoxes(unopened: Record<string, number> | undefined, boxes: LootBox[]): number {
     if (!unopened) return 0;
+    const list = Array.isArray(boxes) ? boxes : [];
     let sum = 0;
     for (const [id, q] of Object.entries(unopened)) {
         if (typeof q !== 'number' || q <= 0) continue;
-        const def = boxes.find((b) => b.id === id);
+        const def = list.find((b) => b.id === id);
         if (def?.trigger === 'roleta_code') continue;
         sum += q;
     }
@@ -69,7 +70,10 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
 
     type LuckyTab = 'inventario' | 'loja';
 
-    const shopBoxes = useMemo(() => lootBoxes.filter(b => b.isActive !== false), [lootBoxes]);
+    const shopBoxes = useMemo(
+        () => (Array.isArray(lootBoxes) ? lootBoxes : []).filter((b) => b.isActive !== false),
+        [lootBoxes]
+    );
 
     const openableInventoryTotal = useMemo(
         () => countOpenableInventoryBoxes(gameState.unopenedBoxes, lootBoxes),

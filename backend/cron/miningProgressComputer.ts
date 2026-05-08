@@ -2,6 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
+import { miningCreditCapNowMs } from './miningWallClockGrid.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -115,6 +116,9 @@ function resolveUserId(uid: unknown): number | null {
 /**
  * Calcula produção desde `last_updated_at`, credita `coin_balances`, actualiza racks / workshop / baterias.
  * Protecções: `FOR UPDATE` + re-leitura de `last_updated_at`, limite de janela offline, relógio alinhado ao servidor.
+ *
+ * Grelha de “blocos” de 10 min (meia-noite UTC + n·10 min): por defeito o tecto de crédito é o último limite
+ * completo ≤ agora — nada conta dentro da janela 10 min até ela fechar. Desligar: MINING_WALL_CLOCK_TEN_MIN_GRID=0.
  */
 export async function computeProgressForUser(
   pool: Pool,
@@ -138,6 +142,8 @@ export async function computeProgressForUser(
     console.warn(`${LOG_PREFIX} user=%s now futuro clamped skewMs=%s`, userId, serverNow - wallClock);
     serverNow = wallClock;
   }
+
+  const creditCap = miningCreditCapNowMs(serverNow);
 
   activeProgressCalculations++;
   const client = await pool.connect();
@@ -163,11 +169,15 @@ export async function computeProgressForUser(
       return { ok: true };
     }
 
-    let dtMs = Math.max(0, serverNow - last);
-    let lastWrite = serverNow;
+    if (creditCap < last) {
+      return { ok: true };
+    }
+
+    let dtMs = Math.max(0, creditCap - last);
+    let lastWrite = creditCap;
     if (dtMs > MAX_EARNING_WINDOW_MS) {
       console.log(
-        `${LOG_PREFIX} user=%s janela offline limitada dtMs=%s → maxMs=%s (próximo sync continua)`,
+        `${LOG_PREFIX} user=%s janela offline limitada dtMs=%s → maxMs=%s (próximo sync continua; evita pagar meses de uma vez ao reiniciar ou voltar depois de muito tempo)`,
         userId,
         dtMs,
         MAX_EARNING_WINDOW_MS

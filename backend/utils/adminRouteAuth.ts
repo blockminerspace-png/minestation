@@ -140,6 +140,7 @@ export function resolveAdminRouteRequirement(method: string, rawPath: string): A
 
   if (p === '/api/admin/ranking') return { kind: 'tab', tab: 'users' };
   if (p.startsWith('/api/admin/economy-stats')) return { kind: 'tab', tab: 'reports' };
+  if (p.startsWith('/api/admin/mining-runtime-summary')) return { kind: 'tab', tab: 'reports' };
   if (p.startsWith('/api/admin/etherscan/')) return { kind: 'tab', tab: 'reports' };
   if (p.startsWith('/api/admin/withdrawals')) return { kind: 'super' };
   if (p === '/api/admin/economy-settings' && method.toUpperCase() === 'POST') return { kind: 'super' };

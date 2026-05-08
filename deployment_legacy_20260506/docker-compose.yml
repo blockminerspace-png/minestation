@@ -1,0 +1,149 @@
+# Produção / VPS — stack completa (7 serviços):
+#   app-postgres  → PostgreSQL (dados do jogo / Prisma)
+#   app-mongo     → MongoDB (logs genesis)
+#   app-redis     → Redis (BullMQ, cache, Socket.IO adapter — obrigatório)
+#   app           → API + site
+#   app-bull-worker → worker de filas
+#   app-nginx     → reverse proxy
+#   app-certbot   → renovação TLS
+#
+# Se na VM só vires nginx + app + postgres, estás num compose ANTIGO (3 serviços).
+# Este ficheiro substitui esse layout: na VM faz `git pull`, confirma que este
+# `deployment/docker-compose.yml` tem serviços `redis` e `mongo`, depois:
+#   cd deployment && docker compose down && docker compose up -d --build
+# (atenção: `down` sem `-v` mantém volumes; Redis/Mongo ganham volumes novos na 1ª subida.)
+#
+# Não subir em simultâneo com o compose da raiz no mesmo host (nomes `app*` colidem).
+# Arranque recomendado: `bash stack-up.sh` nesta pasta.
+
+name: minestation
+
+services:
+  db:
+    container_name: app-postgres
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-minestation}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-minestation}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  redis:
+    container_name: app-redis
+    image: redis:7-alpine
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  mongo:
+    container_name: app-mongo
+    image: mongo:7
+    restart: always
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 60s
+
+  app:
+    container_name: app
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: always
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@${POSTGRES_HOST:-deployment-db-1}:5432/${POSTGRES_DB:-minestation}
+      REDIS_URL: redis://${REDIS_HOST:-deployment-redis-1}:6379
+      MONGODB_URI: mongodb://${MONGO_HOST:-deployment-mongo-1}:27017/genesis_logs
+      PORT: 3000
+    env_file:
+      - .env
+    volumes:
+      # Pasta na raiz do repositório (relativo a deployment/): sobrevive a docker compose build.
+      - ../backups:/app/backups
+      # NÃO montar ../backend/img na raiz: uma pasta vazia no host apagaria miner/moedas/... da imagem.
+      # Assets versionados (miner, moedas, carregadores, baterias, favicon) vêm do COPY no Docker.
+      # Só uploads dinâmicos (anúncios, suporte, upload-image genérico) persistem no volume:
+      - ../backend/img/uploads:/app/backend/img/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    networks:
+      - default
+      - legacy_stack
+
+  bull-worker:
+    container_name: app-bull-worker
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: always
+    command: ["node", "dist/workers/bullGenesisWorker.js"]
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://${REDIS_HOST:-deployment-redis-1}:6379
+      MONGODB_URI: mongodb://${MONGO_HOST:-deployment-mongo-1}:27017/genesis_logs
+      GENESIS_BULL_QUEUE: ${GENESIS_BULL_QUEUE:-genesis-maintenance}
+    env_file:
+      - .env
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - default
+      - legacy_stack
+
+  nginx:
+    container_name: app-nginx
+    image: nginx:stable-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - app
+
+  certbot:
+    container_name: app-certbot
+    image: certbot/certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+
+volumes:
+  pgdata:
+  redisdata:
+  mongodata:
+
+networks:
+  legacy_stack:
+    external: true
+    name: deployment_default

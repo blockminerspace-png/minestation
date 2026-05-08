@@ -69,7 +69,7 @@ export function filterUserActivityLogs(
   activityLogFilterId: string,
   activityLogSearch: string
 ): GameUserActivityEntry[] {
-  let out = rows;
+  let out = Array.isArray(rows) ? rows : [];
   const q = activityLogSearch.trim().toLowerCase();
   if (q) {
     out = out.filter((r) => {

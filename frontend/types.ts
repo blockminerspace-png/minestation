@@ -355,6 +355,8 @@ export interface MiningCoin {
   blockReward: number;
   blockTime: number;
   priceUSD: number;
+  displayPriceUsd?: number;
+  livePriceUsd?: number | null;
   algorithm: string;
   difficulty: number;
   multiplier: number;
@@ -560,4 +562,3 @@ export interface ReferralModel {
   receiver_loot_box_id: string | null;
   is_active: number; // 0 or 1
 }
-

@@ -28,6 +28,7 @@ describe('registrationValidation', () => {
   it('validateSignupUsername', () => {
     expect(validateSignupUsername('ab').ok).toBe(false);
     expect(validateSignupUsername('user_ab-1').ok).toBe(true);
+    expect(validateSignupUsername('michael jonathan').ok).toBe(true);
     expect(validateSignupUsername('a'.repeat(USERNAME_MAX + 1)).ok).toBe(false);
     expect(validateSignupUsername('<script>').ok).toBe(false);
   });

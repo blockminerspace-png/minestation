@@ -26,6 +26,38 @@ import { startMiningYieldCron, computeProgressForUser, sanitizeApiMessage } from
 import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
 import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisStack/init.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
+import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
+
+/** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
+const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
+
+function roundMiningEconomyField8Decimals(n: number): number {
+  if (!Number.isFinite(n)) return n;
+  return Math.round(n * 1e8) / 1e8;
+}
+
+/**
+ * Mesma ideia do cron de yield: reward/sec ÷ hashrate efectiva (máx entre rede real e floor da moeda).
+ * Usado para decidir se gravamos linha em `mining_yield_history` — mudar só `price_usd` não altera isto.
+ */
+function spotYieldPerHashForCoin(
+  coinId: string,
+  blockReward: number,
+  blockTimeSec: number,
+  networkHashrate: number
+): number {
+  const bt = Number(blockTimeSec) > 0 ? Number(blockTimeSec) : MINING_BLOCK_TIME_SECONDS_FIXED;
+  const br = Number(blockReward);
+  const nh = Number(networkHashrate) > 0 ? Number(networkHashrate) : 1;
+  const realNet = Number(miningRuntimeStats.globalNetworkHashrates.get(String(coinId)) || 0);
+  const rewardPerSec = bt > 0 ? br / bt : 0;
+  const effectiveHashrate = Math.max(realNet, nh);
+  if (!(effectiveHashrate > 0) || !Number.isFinite(rewardPerSec)) return 0;
+  const y = rewardPerSec / effectiveHashrate;
+  return Number.isFinite(y) ? y : 0;
+}
+
+const SPOT_YIELD_EPS = 1e-22;
 import { UI_DISPLAY_LABEL_KEY_SET } from './dist/config/uiDisplayLabelKeys.js';
 import {
   allowsAdminRouteAccess,
@@ -1911,12 +1943,26 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
     }));
 
     res.json(result);
-
   } catch (e) {
     console.error('Economy Stats Error:', e);
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   } finally {
     client.release();
+  }
+});
+
+/** Runtime de mineração (hashrates ao vivo) — não confundir com GET /api/admin/economy-stats (lista de moedas). */
+app.get('/api/admin/mining-runtime-summary', isAdmin, async (req, res) => {
+  try {
+    const realNetworkHashrates = Object.fromEntries(miningRuntimeStats.globalNetworkHashrates);
+    const activeMinersByCoin = Object.fromEntries(miningRuntimeStats.globalActiveMinersByCoin);
+    res.json({
+      realActiveMiners: miningRuntimeStats.globalActiveMiners,
+      realNetworkHashrates,
+      activeMinersByCoin
+    });
+  } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
 
@@ -1973,12 +2019,45 @@ app.post('/api/admin/economy-settings', isAdmin, async (req, res) => {
   }
 
   try {
-    const updated = await prisma.mining_coins.updateMany({
-      where: { id: String(coinId) },
-      data: { network_hashrate: Number(networkHashrate), block_reward: Number(blockReward) }
+    const coinIdStr = String(coinId);
+    const prev = await prisma.mining_coins.findUnique({ where: { id: coinIdStr } });
+    if (!prev) return res.status(404).json({ error: 'Coin not found' });
+
+    const nhNew = roundMiningEconomyField8Decimals(
+      Math.max(1_000_000, Number(networkHashrate)) || 1_000_000
+    );
+    const brNew = roundMiningEconomyField8Decimals(Math.max(0, Number(blockReward)));
+
+    const oldY = spotYieldPerHashForCoin(
+      coinIdStr,
+      prev.block_reward,
+      prev.block_time,
+      prev.network_hashrate
+    );
+    const newY = spotYieldPerHashForCoin(coinIdStr, brNew, prev.block_time, nhNew);
+    const yieldChanged =
+      !Number.isFinite(oldY) ||
+      !Number.isFinite(newY) ||
+      Math.abs(oldY - newY) > SPOT_YIELD_EPS;
+
+    await prisma.mining_coins.update({
+      where: { id: coinIdStr },
+      data: { network_hashrate: nhNew, block_reward: brNew }
     });
-    if (updated.count === 0) return res.status(404).json({ error: 'Coin not found' });
-    const coin = await prisma.mining_coins.findUnique({ where: { id: String(coinId) } });
+
+    if (yieldChanged) {
+      await prisma.mining_yield_history.create({
+        data: {
+          coin_id: coinIdStr,
+          yield_per_hash: newY,
+          block_reward: brNew,
+          network_hashrate: nhNew,
+          effective_at: BigInt(Date.now())
+        }
+      });
+    }
+
+    const coin = await prisma.mining_coins.findUnique({ where: { id: coinIdStr } });
     res.json({ ok: true, coin });
   } catch (e) {
     console.error('Update Economy Error:', e);
@@ -5654,7 +5733,8 @@ app.get('/api/mining-coins', async (req, res) => {
     const resDb = await client.query('SELECT * FROM mining_coins ORDER BY name ASC');
     client.release();
 
-    const coins = resDb.rows.map(r => {
+    const rows = resDb.rows;
+    const coins = rows.map((r) => {
       // Calculate Network Hashrate dynamically or use DB value
       // We prefer the dynamic global variable if available and non-zero
       let usedRate = parseFloat(r.network_hashrate) || 100;
@@ -5684,7 +5764,37 @@ app.get('/api/mining-coins', async (req, res) => {
         showInExchange: !!r.show_in_exchange
       };
     });
-    res.json(coins);
+
+    let liveById: Record<string, number | null> = {};
+    let liveErr: string | null = null;
+    try {
+      liveById = await fetchLiveUsdByMiningCoinRowIds(rows);
+    } catch (e) {
+      liveErr = e instanceof Error ? e.message : String(e);
+      console.warn('[GET /api/mining-coins] live USD prices:', liveErr);
+    }
+
+    const enriched = coins.map((c, i) => {
+      const row = rows[i];
+      const id = String(row.id ?? '').trim();
+      const live = id ? liveById[id] ?? null : null;
+      const dbP = Number(row.price_usd ?? 0);
+      return {
+        ...c,
+        livePriceUsd: live,
+        displayPriceUsd: typeof live === 'number' && Number.isFinite(live) ? live : dbP
+      };
+    });
+
+    if (String(req.query.legacy ?? '') === '1') {
+      res.json(enriched);
+    } else {
+      res.json({
+        coins: enriched,
+        economy: MINING_ECONOMY_PUBLIC_META,
+        livePricesError: liveErr
+      });
+    }
   } catch (e) { if (client) client.release(); sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
@@ -5706,19 +5816,34 @@ app.post('/api/mining-coins', isAdmin, async (req, res) => {
       const color = c.color || '#ffffff';
       const algo = c.algorithm || 'Unknown';
 
-      const netHash = parseFloat(c.networkHashrate) || 0;
-      const blockRew = parseFloat(c.blockReward) || 0;
-      const blockTime = parseFloat(c.blockTime) || 60;
-      const price = parseFloat(c.priceUSD) || 0;
-      const diff = parseFloat(c.difficulty) || 1;
-      const mult = parseFloat(c.multiplier) || 1;
-      const minProp = parseFloat(c.minProportion) || 0;
-      const usdcRate = parseFloat(c.usdcRate) || price; // Default to price equals rate
-      const targetDaily = parseFloat(c.targetDailyUSD) || 0; // New Field
+      const netRaw = parseFloat(c.networkHashrate);
+      const netHash = Math.max(
+        1_000_000,
+        roundMiningEconomyField8Decimals(Math.max(0, Number.isFinite(netRaw) ? netRaw : 0))
+      );
+      const blockRew = roundMiningEconomyField8Decimals(Math.max(0, parseFloat(c.blockReward) || 0));
+      const blockTime = MINING_BLOCK_TIME_SECONDS_FIXED;
+      const price = roundMiningEconomyField8Decimals(Math.max(0, parseFloat(c.priceUSD) || 0));
+      const diff = roundMiningEconomyField8Decimals(Math.max(1, parseFloat(c.difficulty) || 1));
+      const mult = roundMiningEconomyField8Decimals(Math.max(1, parseFloat(c.multiplier) || 1));
+      const minProp = roundMiningEconomyField8Decimals(Math.max(0, parseFloat(c.minProportion) || 0));
+      const usdcRate = roundMiningEconomyField8Decimals(Math.max(0, parseFloat(c.usdcRate) || price));
+      const targetDaily = roundMiningEconomyField8Decimals(Math.max(0, parseFloat(c.targetDailyUSD) || 0));
 
       // Check isActive. Frontend sends boolean or 1/0.
       let isActive = 1;
       if (c.isActive === false || c.isActive === 0) isActive = 0;
+
+      let prevEmission: { block_reward: unknown; block_time: unknown; network_hashrate: unknown } | null = null;
+      try {
+        const pr = await client.query(
+          'SELECT block_reward, block_time, network_hashrate FROM mining_coins WHERE id = $1',
+          [id]
+        );
+        prevEmission = pr.rows[0] || null;
+      } catch {
+        prevEmission = null;
+      }
 
       // 2. UPSERT Logic
       await client.query(`
@@ -5750,6 +5875,27 @@ app.post('/api/mining-coins', isAdmin, async (req, res) => {
         mult, minProp, usdcRate, isActive ? 1 : 0, targetDaily,
         c.showInExchange ? 1 : 0
       ]);
+
+      const oldY = prevEmission
+        ? spotYieldPerHashForCoin(
+            id,
+            Number(prevEmission.block_reward),
+            Number(prevEmission.block_time),
+            Number(prevEmission.network_hashrate)
+          )
+        : null;
+      const newY = spotYieldPerHashForCoin(id, blockRew, blockTime, netHash);
+      if (
+        oldY === null ||
+        !Number.isFinite(oldY) ||
+        !Number.isFinite(newY) ||
+        Math.abs(oldY - newY) > SPOT_YIELD_EPS
+      ) {
+        await client.query(
+          'INSERT INTO mining_yield_history (coin_id, yield_per_hash, block_reward, network_hashrate, effective_at) VALUES ($1, $2, $3, $4, $5)',
+          [id, newY, blockRew, netHash, Date.now()]
+        );
+      }
 
       // 3. Deactivation Logic: Turn OFF Rigs
       if (isActive === 0) {
@@ -6297,25 +6443,26 @@ app.put('/api/user', async (req, res) => {
         : false;
       if (actorIsAdmin) {
         const tgtRes = await db.query(
-          'SELECT COALESCE(is_admin,0) AS is_admin, LOWER(TRIM(COALESCE(email, \'\'))) AS cur_email FROM users WHERE id = $1',
+          'SELECT COALESCE(is_admin,0) AS is_admin, COALESCE(is_super_admin,0) AS is_super_admin, LOWER(TRIM(COALESCE(email, \'\'))) AS cur_email FROM users WHERE id = $1',
           [uid]
         );
         const targetIsAdmin = !!tgtRes.rows[0]?.is_admin;
+        const targetIsSuperAdmin = tgtRes.rows[0]
+          ? resolveIsSuperAdminFromUserRow(tgtRes.rows[0])
+          : false;
         const curEmail = String(tgtRes.rows[0]?.cur_email || '');
         const nextEmail = String(normalizedEmail || '').trim().toLowerCase();
         const emailChanging = nextEmail !== curEmail;
         const editingOther = Number(req.userId) !== Number(uid);
-        if (targetIsAdmin && editingOther && !actorIsSuper) {
-          if (hasPassword) {
-            return res.status(403).json({
-              error: 'Apenas super administradores podem alterar a senha de outras contas administrador.'
-            });
-          }
-          if (emailChanging) {
-            return res.status(403).json({
-              error: 'Apenas super administradores podem alterar o email de outras contas administrador.'
-            });
-          }
+        if (targetIsAdmin && editingOther && !actorIsSuper && emailChanging) {
+          return res.status(403).json({
+            error: 'Apenas super administradores podem alterar o email de outras contas administrador.'
+          });
+        }
+        if (hasPassword && editingOther && targetIsSuperAdmin && !actorIsSuper) {
+          return res.status(403).json({
+            error: 'Apenas super administradores podem alterar a senha de contas super administrador.'
+          });
         }
       }
     }
@@ -7906,21 +8053,6 @@ app.get('/api/stats/top-withdrawals', async (req, res) => {
   } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
-app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
-  try {
-    const realNetworkHashrates = Object.fromEntries(miningRuntimeStats.globalNetworkHashrates);
-    const activeMinersByCoin = Object.fromEntries(miningRuntimeStats.globalActiveMinersByCoin);
-
-    res.json({
-      realActiveMiners: miningRuntimeStats.globalActiveMiners,
-      realNetworkHashrates,
-      activeMinersByCoin
-    });
-  } catch (e) {
-    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-  }
-});
-
 app.get('/api/admin/security/stats', isAdmin, async (req, res) => {
   const client = await db.connect();
   try {
@@ -8372,9 +8504,10 @@ app.get('/api/mining/coins', async (req, res) => {
   try {
     const query = 'SELECT * FROM mining_coins ORDER BY name ASC';
     const r = await db.query(query);
+    const rows = r.rows;
 
     // Map DB fields to Frontend fields (snake_case to camelCase)
-    const coins = r.rows.map(c => ({
+    const coins = rows.map((c) => ({
       id: c.id,
       name: c.name,
       symbol: c.symbol,
@@ -8394,7 +8527,37 @@ app.get('/api/mining/coins', async (req, res) => {
       targetDailyUSD: Number(c.target_daily_usd) || 0,
       realNetworkHashrate: miningRuntimeStats.globalNetworkHashrates.get(String(c.id)) || 0
     }));
-    res.json(coins);
+
+    let liveById: Record<string, number | null> = {};
+    let liveErr: string | null = null;
+    try {
+      liveById = await fetchLiveUsdByMiningCoinRowIds(rows);
+    } catch (e) {
+      liveErr = e instanceof Error ? e.message : String(e);
+      console.warn('[GET /api/mining/coins] live USD prices:', liveErr);
+    }
+
+    const enriched = coins.map((c, i) => {
+      const row = rows[i];
+      const id = String(row.id ?? '').trim();
+      const live = id ? liveById[id] ?? null : null;
+      const dbP = Number(row.price_usd ?? 0);
+      return {
+        ...c,
+        livePriceUsd: live,
+        displayPriceUsd: typeof live === 'number' && Number.isFinite(live) ? live : dbP
+      };
+    });
+
+    if (String(req.query.legacy ?? '') === '1') {
+      res.json(enriched);
+    } else {
+      res.json({
+        coins: enriched,
+        economy: MINING_ECONOMY_PUBLIC_META,
+        livePricesError: liveErr
+      });
+    }
   } catch (e) {
     console.error(e);
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
@@ -8425,77 +8588,110 @@ app.post('/api/mining/coins', isAdmin, async (req, res) => {
   try {
     const id = c.id || crypto.randomUUID();
     const networkHashrate = Math.max(0, parseMiningNumeric(c.networkHashrate, 1_000_000)) || 1_000_000;
-    const blockReward = Math.max(0, parseMiningNumeric(c.blockReward, 0));
-    const blockTime = (() => {
-      const t = parseMiningNumeric(c.blockTime, 60);
-      return t > 0 ? t : 60;
-    })();
-    const priceUSD = (() => {
-      const p = parseMiningNumeric(c.priceUSD, NaN);
-      return Number.isFinite(p) && p >= 0 ? p : 1;
-    })();
-    const difficulty = Math.max(1, parseMiningNumeric(c.difficulty, 1));
-    const multiplier = Math.max(1, parseMiningNumeric(c.multiplier, 1));
-    const minProportion = Math.max(0, parseMiningNumeric(c.minProportion, 0));
-    const targetDailyUSD = Math.max(0, parseMiningNumeric(c.targetDailyUSD, 0));
+    const blockReward = roundMiningEconomyField8Decimals(Math.max(0, parseMiningNumeric(c.blockReward, 0)));
+    const blockTime = MINING_BLOCK_TIME_SECONDS_FIXED;
+    const priceUSD = roundMiningEconomyField8Decimals(
+      (() => {
+        const p = parseMiningNumeric(c.priceUSD, NaN);
+        return Number.isFinite(p) && p >= 0 ? p : 1;
+      })()
+    );
+    const usdcRateRaw = parseMiningNumeric(c.usdcRate, NaN);
+    const usdcRate = roundMiningEconomyField8Decimals(
+      Number.isFinite(usdcRateRaw) && usdcRateRaw >= 0 ? usdcRateRaw : priceUSD
+    );
+    const difficulty = roundMiningEconomyField8Decimals(Math.max(1, parseMiningNumeric(c.difficulty, 1)));
+    const multiplier = roundMiningEconomyField8Decimals(Math.max(1, parseMiningNumeric(c.multiplier, 1)));
+    const minProportion = roundMiningEconomyField8Decimals(Math.max(0, parseMiningNumeric(c.minProportion, 0)));
+    const targetDailyUSD = roundMiningEconomyField8Decimals(Math.max(0, parseMiningNumeric(c.targetDailyUSD, 0)));
+    const isActive = c.isActive === false || c.isActive === 0 ? 0 : 1;
+    const showInEx = c.showInExchange ? 1 : 0;
 
-    let prevEmission = null;
+    let prevEmission: { block_reward: number; block_time: number; network_hashrate: number } | null = null;
     try {
-      const prevRes = await db.query(
-        'SELECT block_reward, block_time, network_hashrate FROM mining_coins WHERE id = $1',
-        [id]
-      );
-      prevEmission = prevRes.rows[0] || null;
+      const prevRow = await prisma.mining_coins.findUnique({
+        where: { id },
+        select: { block_reward: true, block_time: true, network_hashrate: true }
+      });
+      prevEmission = prevRow || null;
     } catch {
       prevEmission = null;
     }
 
-    await db.query(`
-      INSERT INTO mining_coins(
-    id, name, symbol, network_hashrate, block_reward, block_time,
-    price_usd, algorithm, difficulty, multiplier, color,
-    description, min_proportion, is_active, usdc_rate, show_in_exchange, target_daily_usd
-  ) VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
-      ON CONFLICT(id) DO UPDATE SET
-name = EXCLUDED.name, symbol = EXCLUDED.symbol, network_hashrate = EXCLUDED.network_hashrate,
-  block_reward = EXCLUDED.block_reward, block_time = EXCLUDED.block_time, price_usd = EXCLUDED.price_usd,
-  algorithm = EXCLUDED.algorithm, difficulty = EXCLUDED.difficulty, multiplier = EXCLUDED.multiplier,
-  color = EXCLUDED.color, description = EXCLUDED.description, min_proportion = EXCLUDED.min_proportion,
-  is_active = EXCLUDED.is_active, usdc_rate = EXCLUDED.usdc_rate, show_in_exchange = EXCLUDED.show_in_exchange,
-  target_daily_usd = EXCLUDED.target_daily_usd
-    `, [
-      id, c.name, c.symbol, networkHashrate, blockReward, blockTime,
-      priceUSD, c.algorithm || '', difficulty, multiplier, c.color || '#ffffff',
-      c.description || '', minProportion, (c.isActive === false || c.isActive === 0) ? 0 : 1, priceUSD,
-      c.showInExchange ? 1 : 0, targetDailyUSD
-    ]);
-
-    // --- YIELD HISTORY RECORDING ---
-    // Só gravar nova linha quando a emissão técnica (reward / tempo / rede) muda. Mudar só preço/USDC
-    // não altera yield_per_hash; inserir linha extra fazia o integrador usar a taxa errada no intervalo.
-    const EPS = 1e-14;
+    const oldY = prevEmission
+      ? spotYieldPerHashForCoin(
+          id,
+          Number(prevEmission.block_reward),
+          Number(prevEmission.block_time),
+          Number(prevEmission.network_hashrate)
+        )
+      : null;
+    const newY = spotYieldPerHashForCoin(id, blockReward, blockTime, networkHashrate);
     const emissionChanged =
-      !prevEmission ||
-      Math.abs(Number(prevEmission.block_reward) - blockReward) > EPS ||
-      Math.abs(Number(prevEmission.block_time) - blockTime) > EPS ||
-      Math.abs(Number(prevEmission.network_hashrate) - networkHashrate) > EPS;
+      oldY === null ||
+      !Number.isFinite(oldY) ||
+      !Number.isFinite(newY) ||
+      Math.abs(oldY - newY) > SPOT_YIELD_EPS;
+
+    await prisma.mining_coins.upsert({
+      where: { id },
+      create: {
+        id,
+        name: String(c.name),
+        symbol: String(c.symbol || ''),
+        description: String(c.description || ''),
+        network_hashrate: networkHashrate,
+        block_reward: blockReward,
+        block_time: blockTime,
+        price_usd: priceUSD,
+        algorithm: String(c.algorithm || ''),
+        difficulty,
+        multiplier,
+        color: String(c.color || '#ffffff'),
+        min_proportion: minProportion,
+        is_active: isActive,
+        usdc_rate: usdcRate,
+        show_in_exchange: showInEx,
+        target_daily_usd: targetDailyUSD
+      },
+      update: {
+        name: String(c.name),
+        symbol: String(c.symbol || ''),
+        description: String(c.description || ''),
+        network_hashrate: networkHashrate,
+        block_reward: blockReward,
+        block_time: blockTime,
+        price_usd: priceUSD,
+        algorithm: String(c.algorithm || ''),
+        difficulty,
+        multiplier,
+        color: String(c.color || '#ffffff'),
+        min_proportion: minProportion,
+        is_active: isActive,
+        usdc_rate: usdcRate,
+        show_in_exchange: showInEx,
+        target_daily_usd: targetDailyUSD
+      }
+    });
 
     if (emissionChanged) {
-      const realNetHash = Number(miningRuntimeStats.globalNetworkHashrates.get(String(id)) || 0);
-      const floorHash = networkHashrate > 0 ? networkHashrate : 1;
-      const effectiveHashrate = Math.max(realNetHash, floorHash);
-      const rewardPerSec = blockTime > 0 ? blockReward / blockTime : 0;
-      let yieldPerHash = 0;
-      if (effectiveHashrate > 0 && Number.isFinite(rewardPerSec)) {
-        yieldPerHash = rewardPerSec / effectiveHashrate;
-      }
-
-      await db.query(
-        'INSERT INTO mining_yield_history (coin_id, yield_per_hash, block_reward, network_hashrate, effective_at) VALUES ($1, $2, $3, $4, $5)',
-        [id, yieldPerHash, blockReward, networkHashrate, Date.now()]
-      );
+      await prisma.mining_yield_history.create({
+        data: {
+          coin_id: id,
+          yield_per_hash: newY,
+          block_reward: blockReward,
+          network_hashrate: networkHashrate,
+          effective_at: BigInt(Date.now())
+        }
+      });
     }
-    // -------------------------------
+
+    if (isActive === 0) {
+      await prisma.placed_racks.updateMany({
+        where: { selected_coin_id: id },
+        data: { is_on: 0 }
+      });
+    }
 
     res.json({ ok: true, id });
   } catch (e) {

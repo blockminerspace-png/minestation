@@ -110,11 +110,12 @@ export function assertPublicSignupEmailAllowed(normalizedEmail: string): PolicyR
   };
 }
 
-const USERNAME_RE = new RegExp(`^[a-zA-Z0-9_-]{${USERNAME_MIN},${USERNAME_MAX}}$`);
+/** Hífen no fim da classe para não formar intervalo com o espaço. */
+const USERNAME_RE = new RegExp(`^[a-zA-Z0-9_ -]{${USERNAME_MIN},${USERNAME_MAX}}$`);
 
 export type UsernameValidation = { ok: true; username: string } | { ok: false; error: string };
 
-/** Nome de utilizador: letras, números, _ e - ; sem HTML/ XSS por rejeição de caracteres especiais. */
+/** Nome de utilizador: letras, números, espaço, _ e - ; sem HTML/ XSS por rejeição de caracteres especiais. */
 export function validateSignupUsername(raw: unknown): UsernameValidation {
   if (raw == null || typeof raw !== 'string') {
     return { ok: false, error: 'Nome de utilizador é obrigatório.' };
@@ -132,7 +133,7 @@ export function validateSignupUsername(raw: unknown): UsernameValidation {
   if (!USERNAME_RE.test(trimmed)) {
     return {
       ok: false,
-      error: 'Use apenas letras (A–Z), números, underscore (_) e hífen (-), sem espaços.'
+      error: 'Use apenas letras (A–Z), números, espaços, underscore (_) e hífen (-).'
     };
   }
   return { ok: true, username: trimmed };

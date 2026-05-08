@@ -237,6 +237,31 @@ function applyNftAutoSanitizedClientSync(
 
 type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support' | 'partners';
 type GlobalView = 'home' | 'docs' | 'auth' | 'game' | 'admin';
+
+const VALID_GAME_VIEWS: readonly View[] = [
+  'servers',
+  'inventory',
+  'hardware_store',
+  'black_market',
+  'wallet',
+  'profile',
+  'upgrade',
+  'lucky_store',
+  'roleta',
+  'oficina',
+  'arcade',
+  'calculator',
+  'ranking',
+  'transparency',
+  'support',
+  'partners',
+] as const;
+
+function parseSavedGameView(raw: string | null | undefined): View {
+  if (!raw || typeof raw !== 'string') return 'servers';
+  const t = raw.trim();
+  return (VALID_GAME_VIEWS as readonly string[]).includes(t) ? (t as View) : 'servers';
+}
 type Theme = 'light' | 'dark';
 
 export default function App() {
@@ -286,9 +311,10 @@ export default function App() {
   } | null>(null);
   const [currentView, setCurrentView] = useState<View>(() => {
     try {
-      const saved = sessionStorage.getItem('lastView');
-      return (saved as View) || 'servers';
-    } catch { return 'servers'; }
+      return parseSavedGameView(sessionStorage.getItem('lastView'));
+    } catch {
+      return 'servers';
+    }
   });
   const [depositPrefill, setDepositPrefill] = useState<number | undefined>(undefined);
   const [saveLoaded, setSaveLoaded] = useState<boolean>(false);
@@ -467,6 +493,24 @@ export default function App() {
     }
     return pages;
   };
+
+  /** Evita ecrã em branco se `lastView` ou permissões mudarem (ex.: roleta sem `lucky_store`). */
+  useEffect(() => {
+    if (!saveLoaded || !user || user.isAdmin) return;
+    const pages = getAllowedPages();
+    const gated: Array<{ view: View; requiredPage: string }> = [
+      { view: 'roleta', requiredPage: 'lucky_store' },
+      { view: 'transparency', requiredPage: 'transparency' },
+      { view: 'support', requiredPage: 'support' },
+      { view: 'partners', requiredPage: 'partners' },
+    ];
+    for (const { view, requiredPage } of gated) {
+      if (currentView === view && !pages.includes(requiredPage)) {
+        setCurrentView('servers');
+        break;
+      }
+    }
+  }, [saveLoaded, user, currentView, accessLevels, economySettings.blackMarketEnabled]);
 
   const gameNav = useCallback((k: GameNavLabelKey) => {
     const t = gameNavLabels[k];
@@ -2406,7 +2450,9 @@ export default function App() {
                       }).sort((a, b) => {
                         // Sort by Power DESC, then by Name ASC
                         if (b.power !== a.power) return b.power - a.power;
-                        return a.name.localeCompare(b.name);
+                        return String(a?.name ?? '').localeCompare(String(b?.name ?? ''), undefined, {
+                          sensitivity: 'base',
+                        });
                       });
 
                       if (coinsExpanded) {

@@ -50,6 +50,25 @@ const EXPORT_PAGE_SIZE = 1000;
 const MAX_EXPORT_API_PAGES = 80;
 const EXPORT_PAGE_DELAY_MS = 120;
 
+/** Até 8 casas decimais na UI (evita notação científica longa na lista de moedas). */
+function formatAdminDecimalMax8(value: unknown): string {
+    const n = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''));
+    if (!Number.isFinite(n)) return '0';
+    const fixed = n.toFixed(8);
+    return fixed.replace(/\.?0+$/, '') || '0';
+}
+
+function resolveMiningCoinDisplayPrice(coin: Partial<MiningCoin> | null | undefined): number {
+    if (!coin) return 0;
+    const candidates = [coin.displayPriceUsd, coin.livePriceUsd, coin.priceUSD];
+    for (const candidate of candidates) {
+        if (typeof candidate === 'number' && Number.isFinite(candidate) && candidate >= 0) {
+            return candidate;
+        }
+    }
+    return 0;
+}
+
 export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentUser = null }) => {
     const [transactions, setTransactions] = useState<Transaction[]>([]);
     const [loading, setLoading] = useState(false);
@@ -96,8 +115,8 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
     const loadCalcData = async () => {
         try {
             const [mc, up] = await Promise.all([getMiningCoins(), getUpgrades()]);
-            setMiningCoins(mc);
-            setUpgrades(up);
+            setMiningCoins(Array.isArray(mc) ? mc : []);
+            setUpgrades(Array.isArray(up) ? up : []);
         } catch (e) {
             console.error("Failed to load calc data", e);
         }
@@ -136,6 +155,14 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
             }
         });
     }, []);
+
+    useEffect(() => {
+        if (subtab !== 'calculator') return;
+        const timer = window.setInterval(() => {
+            void loadCalcData();
+        }, 60_000);
+        return () => window.clearInterval(timer);
+    }, [subtab]);
 
     const handleSaveCoin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -530,13 +557,14 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
                                                 />
                                             </div>
                                             <div className="space-y-1">
-                                                <label className="text-[10px] uppercase font-bold text-slate-500">Tempo Bloco (Seg)</label>
-                                                <input
-                                                    type="number"
-                                                    value={editingCoin?.blockTime || 60}
-                                                    onChange={e => setEditingCoin(prev => ({ ...prev, blockTime: parseInt(e.target.value) }))}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded px-3 py-2 text-sm text-white focus:border-amber-500 outline-none font-mono"
-                                                />
+                                                <label className="text-[10px] uppercase font-bold text-slate-500">Tempo de bloco</label>
+                                                <div className="w-full rounded border border-slate-700 bg-slate-800/70 px-3 py-2 text-sm font-mono text-slate-300">
+                                                    600 s (10 min) — fixo na economia
+                                                </div>
+                                                <p className="text-[10px] text-slate-500 leading-snug mt-1">
+                                                    Com 10 min por bloco: <span className="text-amber-500/90 font-mono">144</span> blocos/dia e{' '}
+                                                    <span className="text-amber-500/90 font-mono">4464</span> blocos/mês (31 dias). Mudar só preço USD não altera yield por hash nem deve duplicar entradas no histórico.
+                                                </p>
                                             </div>
                                         </div>
 
@@ -675,10 +703,10 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
                                                         </div>
                                                     </td>
                                                     <td className="px-4 py-4 font-mono text-white">
-                                                        ${coin.priceUSD.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
+                                                        ${formatAdminDecimalMax8(resolveMiningCoinDisplayPrice(coin))}
                                                     </td>
                                                     <td className="px-4 py-4 font-mono text-slate-400">
-                                                        {coin.blockReward} {coin.symbol}
+                                                        {formatAdminDecimalMax8(coin.blockReward)} {coin.symbol}
                                                     </td>
                                                     <td className="px-4 py-4 text-center">
                                                         {coin.isActive ? (

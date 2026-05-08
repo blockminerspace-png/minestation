@@ -6,6 +6,9 @@ import { setGlobalNetworkStats, type GlobalNetworkStatsState } from './miningGlo
 import { getStackIo } from '../lib/stack/stackIoSingleton.js';
 import { enqueueGenesisJob } from '../lib/stack/genesisBullQueue.js';
 import { logGameEvent, logAnalyticsEvent } from '../lib/mongoLogs.js';
+import { maybeSyncLiveUsdToMiningCoinsPostgres } from '../lib/miningLivePrices.js';
+import type { MiningUsdDbSyncResult } from '../lib/miningLivePrices.js';
+import { miningTenMinuteGridEnabled, lastCompletedTenMinuteUtcGrid } from './miningWallClockGrid.js';
 
 const LOG_PREFIX = '[MiningYieldCron]';
 
@@ -13,6 +16,28 @@ const LOG_PREFIX = '[MiningYieldCron]';
 const HISTORY_RETENTION_MS = 72 * 3600 * 1000;
 
 let isUpdateRunning = false;
+/** Último `effective_at` de grelha 10 min UTC já gravado no histórico global (evita duplicar entre ticks do cron). */
+let lastYieldHistoryBoundaryMs = 0;
+/** Evita re-hidratar em cada tick; só falha silenciosamente até conseguir. */
+let yieldHistoryBoundaryHydrated = false;
+
+async function hydrateYieldHistoryBoundaryFromDb(c: PoolClient): Promise<void> {
+  if (!miningTenMinuteGridEnabled() || yieldHistoryBoundaryHydrated) return;
+  try {
+    const r = await c.query(
+      `SELECT (MAX(effective_at))::float8 AS m FROM mining_yield_history WHERE effective_at IS NOT NULL`
+    );
+    const raw = r.rows[0]?.m;
+    const mx = typeof raw === 'number' && Number.isFinite(raw) ? raw : Number(raw);
+    if (Number.isFinite(mx) && mx > 0) {
+      lastYieldHistoryBoundaryMs = lastCompletedTenMinuteUtcGrid(mx);
+    }
+    yieldHistoryBoundaryHydrated = true;
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`${LOG_PREFIX} hydrate yield boundary (re-tenta no próximo tick):`, sanitizeForLog(msg, 180));
+  }
+}
 
 function safeRollback(client: PoolClient): void {
   client
@@ -63,6 +88,8 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
 
   const client = await pool.connect();
   try {
+    await hydrateYieldHistoryBoundaryFromDb(client);
+
     const activeRes = await client.query(`
       SELECT pr.selected_coin_id, pr.id, pr.user_id, pr.battery_id, pr.current_charge, u.username
       FROM placed_racks pr
@@ -214,30 +241,40 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
       console.warn(`${LOG_PREFIX} app_cache network_stats:`, sanitizeForLog(msg, 200));
     }
 
+    const wallAt = Date.now();
     const coinsRes = await client.query(
       'SELECT id, block_reward, block_time, network_hashrate FROM mining_coins WHERE is_active = 1'
     );
-    const tickNow = Date.now();
+    const boundaryAligned = miningTenMinuteGridEnabled()
+      ? lastCompletedTenMinuteUtcGrid(wallAt)
+      : wallAt;
+
+    let doYieldHistoryInsert = true;
+    if (miningTenMinuteGridEnabled()) {
+      doYieldHistoryInsert = boundaryAligned > lastYieldHistoryBoundaryMs;
+    }
 
     await client.query('BEGIN');
 
-    for (const coin of coinsRes.rows) {
+    if (doYieldHistoryInsert) {
+      const tickNow = boundaryAligned;
+      for (const coin of coinsRes.rows) {
       const coinId = String(coin.id);
       const realNetHash = realNetworkHashratesMap.get(coinId) || 0;
 
+      const blockReward = parseFiniteNumberLenient(coin.block_reward, `coin.${coinId}.block_reward`);
+      const blockTime = parseFiniteNumberLenient(coin.block_time, `coin.${coinId}.block_time`);
+      const networkHashrate = parseFiniteNumberLenient(coin.network_hashrate, `coin.${coinId}.network_hashrate`);
+      const floorHash = networkHashrate > 0 ? networkHashrate : 1;
+
       let yieldPerHash = 0;
       if (realNetHash > 0) {
-        const blockReward = parseFiniteNumberLenient(coin.block_reward, `coin.${coinId}.block_reward`);
-        const blockTime = parseFiniteNumberLenient(coin.block_time, `coin.${coinId}.block_time`);
-        const networkHashrate = parseFiniteNumberLenient(coin.network_hashrate, `coin.${coinId}.network_hashrate`);
-
         if (!(blockTime > 0)) {
           console.warn(`${LOG_PREFIX} block_time inválido coin=%s`, sanitizeForLog(coinId));
           yieldPerHash = 0;
         } else {
           const rewardPerSec = blockReward / blockTime;
-          const floor = networkHashrate > 0 ? networkHashrate : 1;
-          const effectiveHashrate = Math.max(realNetHash, floor);
+          const effectiveHashrate = Math.max(realNetHash, floorHash);
           yieldPerHash = rewardPerSec / effectiveHashrate;
         }
       }
@@ -248,16 +285,21 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
       }
 
       await client.query(
-        `INSERT INTO mining_yield_history (coin_id, yield_per_hash, effective_at)
-         VALUES ($1, $2, $3)`,
-        [coin.id, yieldPerHash, tickNow]
+        `INSERT INTO mining_yield_history (coin_id, yield_per_hash, block_reward, network_hashrate, effective_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [coin.id, yieldPerHash, blockReward, floorHash, tickNow]
       );
+      }
     }
 
     const retention = Date.now() - HISTORY_RETENTION_MS;
     await client.query('DELETE FROM mining_yield_history WHERE effective_at < $1', [retention]);
 
     await client.query('COMMIT');
+
+    if (doYieldHistoryInsert && miningTenMinuteGridEnabled()) {
+      lastYieldHistoryBoundaryMs = boundaryAligned;
+    }
 
     const duration = Date.now() - tickStart;
     if (duration > 1500) {
@@ -270,12 +312,24 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
       durationMs: duration,
       rackCount: racks.length,
       activeUsers: totalActiveUsers,
-      at: tickNow,
+      at: wallAt,
+      yieldHistoryBoundary: miningTenMinuteGridEnabled() ? boundaryAligned : null
     };
     getStackIo()?.emit('mining:tick', payload);
     void enqueueGenesisJob('miningYieldTick', payload);
     logGameEvent('mining_yield_tick', payload);
     logAnalyticsEvent('mining_yield_tick', { durationMs: duration, rackCount: racks.length });
+
+    void maybeSyncLiveUsdToMiningCoinsPostgres(pool)
+      .then((r: MiningUsdDbSyncResult) => {
+        if (r && 'ok' in r && r.ok && r.updated > 0) {
+          console.log(`${LOG_PREFIX} price_usd/usdc_rate na BD: moedas actualizadas=${r.updated}`);
+        }
+      })
+      .catch((e: unknown) => {
+        const m = e instanceof Error ? e.message : String(e);
+        console.warn(`${LOG_PREFIX} sync USD→BD:`, sanitizeForLog(m, 200));
+      });
   } catch (e) {
     safeRollback(client);
     const msg = e instanceof Error ? e.message : String(e);

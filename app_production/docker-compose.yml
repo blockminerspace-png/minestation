@@ -1,26 +1,8 @@
-# Produção / VPS — stack completa (7 serviços):
-#   app-postgres  → PostgreSQL (dados do jogo / Prisma)
-#   app-mongo     → MongoDB (logs genesis)
-#   app-redis     → Redis (BullMQ, cache, Socket.IO adapter — obrigatório)
-#   app           → API + site
-#   app-bull-worker → worker de filas
-#   app-nginx     → reverse proxy
-#   app-certbot   → renovação TLS
-#
-# Se na VM só vires nginx + app + postgres, estás num compose ANTIGO (3 serviços).
-# Este ficheiro substitui esse layout: na VM faz `git pull`, confirma que este
-# `deployment/docker-compose.yml` tem serviços `redis` e `mongo`, depois:
-#   cd deployment && docker compose down && docker compose up -d --build
-# (atenção: `down` sem `-v` mantém volumes; Redis/Mongo ganham volumes novos na 1ª subida.)
-#
-# Não subir em simultâneo com o compose da raiz no mesmo host (nomes `app*` colidem).
-# Arranque recomendado: `bash stack-up.sh` nesta pasta.
-
-name: minestation
+name: app_production
 
 services:
-  db:
-    container_name: app-postgres
+  postgres:
+    container_name: postgres_app
     image: postgres:16-alpine
     restart: always
     environment:
@@ -37,7 +19,7 @@ services:
       start_period: 30s
 
   redis:
-    container_name: app-redis
+    container_name: redis_app
     image: redis:7-alpine
     restart: always
     command: redis-server --appendonly yes
@@ -50,8 +32,8 @@ services:
       retries: 5
       start_period: 15s
 
-  mongo:
-    container_name: app-mongo
+  mongodb:
+    container_name: mongodb_app
     image: mongo:7
     restart: always
     volumes:
@@ -71,29 +53,25 @@ services:
     restart: always
     environment:
       NODE_ENV: production
-      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-minestation}
-      REDIS_URL: redis://redis:6379
-      MONGODB_URI: mongodb://mongo:27017/genesis_logs
+      DATABASE_URL: postgres://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD}@postgres_app:5432/${POSTGRES_DB:-minestation}
+      REDIS_URL: redis://redis_app:6379
+      MONGODB_URI: mongodb://mongodb_app:27017/genesis_logs
       PORT: 3000
     env_file:
       - .env
     volumes:
-      # Pasta na raiz do repositório (relativo a deployment/): sobrevive a docker compose build.
       - ../backups:/app/backups
-      # NÃO montar ../backend/img na raiz: uma pasta vazia no host apagaria miner/moedas/... da imagem.
-      # Assets versionados (miner, moedas, carregadores, baterias, favicon) vêm do COPY no Docker.
-      # Só uploads dinâmicos (anúncios, suporte, upload-image genérico) persistem no volume:
       - ../backend/img/uploads:/app/backend/img/uploads
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
-      mongo:
+      mongodb:
         condition: service_healthy
 
-  bull-worker:
-    container_name: app-bull-worker
+  app_worker:
+    container_name: app_worker
     build:
       context: ..
       dockerfile: Dockerfile
@@ -101,8 +79,8 @@ services:
     command: ["node", "dist/workers/bullGenesisWorker.js"]
     environment:
       NODE_ENV: production
-      REDIS_URL: redis://redis:6379
-      MONGODB_URI: mongodb://mongo:27017/genesis_logs
+      REDIS_URL: redis://redis_app:6379
+      MONGODB_URI: mongodb://mongodb_app:27017/genesis_logs
       GENESIS_BULL_QUEUE: ${GENESIS_BULL_QUEUE:-genesis-maintenance}
     env_file:
       - .env
@@ -110,8 +88,8 @@ services:
       redis:
         condition: service_healthy
 
-  nginx:
-    container_name: app-nginx
+  app_nginx:
+    container_name: app_nginx
     image: nginx:stable-alpine
     restart: always
     ports:
@@ -124,8 +102,8 @@ services:
     depends_on:
       - app
 
-  certbot:
-    container_name: app-certbot
+  app_certbot:
+    container_name: app_certbot
     image: certbot/certbot
     volumes:
       - ./certbot/conf:/etc/letsencrypt
@@ -134,5 +112,11 @@ services:
 
 volumes:
   pgdata:
+    external: true
+    name: deployment_pgdata
   redisdata:
+    external: true
+    name: deployment_redisdata
   mongodata:
+    external: true
+    name: deployment_mongodata

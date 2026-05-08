@@ -246,6 +246,7 @@ model unopened_boxes {
   @@map("unopened_boxes")
 }
 
+/// Integridade: `id` e `item_id` não podem ser vazios (CHECK na BD — migration `20260506120000_stored_batteries_nonempty_ids`).
 model stored_batteries {
   id             String @id
   user_id        Int

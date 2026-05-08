@@ -12,6 +12,7 @@
   },
   "include": [
     "cron/**/*.ts",
+    "lib/miningLivePrices.d.ts",
     "lib/safeText.ts",
     "lib/stack/**/*.ts",
     "lib/genesisStack/init.ts",

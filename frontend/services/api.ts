@@ -23,6 +23,11 @@ function setSessionHint(enabled: boolean): void {
   }
 }
 
+/** JSON de endpoints que devem ser listas — evita `x.filter is not a function` se a API devolver `{}` ou outro tipo. */
+function parseJsonArray<T>(raw: unknown): T[] {
+  return Array.isArray(raw) ? (raw as T[]) : [];
+}
+
 async function tryRefreshSessionOnce(): Promise<boolean> {
   if (!getSessionHint()) return false;
   if (refreshInFlight) return refreshInFlight;
@@ -329,7 +334,11 @@ export async function getUpgrades(): Promise<Upgrade[]> {
   try {
     const res = await apiFetch(`${base}/upgrades`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
+    try {
+      return parseJsonArray<Upgrade>(await res.json());
+    } catch {
+      return [];
+    }
   } catch {
     return [];
   }
@@ -357,7 +366,11 @@ export async function getAccessLevels(): Promise<AccessLevel[]> {
   try {
     const res = await apiFetch(`${base}/access-levels`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
+    try {
+      return parseJsonArray<AccessLevel>(await res.json());
+    } catch {
+      return [];
+    }
   } catch {
     return [];
   }
@@ -565,7 +578,11 @@ export async function getLootBoxes(): Promise<LootBox[]> {
   try {
     const res = await apiFetch(`${base}/loot-boxes`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
+    try {
+      return parseJsonArray<LootBox>(await res.json());
+    } catch {
+      return [];
+    }
   } catch {
     return [];
   }
@@ -631,8 +648,14 @@ export async function getRigRooms(): Promise<RigRoom[]> {
   try {
     const res = await apiFetch(`${base}/rig-rooms`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
-  } catch { return []; }
+    try {
+      return parseJsonArray<RigRoom>(await res.json());
+    } catch {
+      return [];
+    }
+  } catch {
+    return [];
+  }
 }
 
 export async function setRigRooms(rooms: RigRoom[]): Promise<{ ok: boolean }> {
@@ -647,8 +670,14 @@ export async function getMyRigRooms(email: string): Promise<RigRoom[]> {
   try {
     const res = await apiFetch(`${base}/my-rig-rooms/${encodeURIComponent(email)}`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
-  } catch { return []; }
+    try {
+      return parseJsonArray<RigRoom>(await res.json());
+    } catch {
+      return [];
+    }
+  } catch {
+    return [];
+  }
 }
 
 export async function purchaseRoomSlot(
@@ -673,7 +702,11 @@ export async function getSystemNews(): Promise<SystemNews[]> {
   try {
     const res = await apiFetch(`${base}/news`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
+    try {
+      return parseJsonArray<SystemNews>(await res.json());
+    } catch {
+      return [];
+    }
   } catch {
     return [];
   }
@@ -1043,7 +1076,11 @@ export async function getTopWithdrawalsByCoin(): Promise<Array<{ coinId: string;
   try {
     const res = await apiFetch(`${base}/stats/top-withdrawals-by-coin`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
+    try {
+      return parseJsonArray(await res.json());
+    } catch {
+      return [];
+    }
   } catch {
     return [];
   }
@@ -1053,16 +1090,28 @@ export async function getAdminUpgrades(): Promise<AdminUpgrade[]> {
   try {
     const res = await apiFetch(`${base}/admin-upgrades`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
-  } catch { return []; }
+    try {
+      return parseJsonArray<AdminUpgrade>(await res.json());
+    } catch {
+      return [];
+    }
+  } catch {
+    return [];
+  }
 }
 
 export async function getAdminUpgradePurchases(email: string): Promise<string[]> {
   try {
     const res = await apiFetch(`${base}/admin-upgrade-purchases/${encodeURIComponent(email)}`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
-  } catch { return []; }
+    try {
+      return parseJsonArray<string>(await res.json());
+    } catch {
+      return [];
+    }
+  } catch {
+    return [];
+  }
 }
 
 export async function createAdminUpgrade(upgrade: AdminUpgrade): Promise<{ ok: boolean; id?: string }> {
@@ -1240,7 +1289,16 @@ export async function getMiningCoins(): Promise<any[]> {
   try {
     const res = await apiFetch(`${base}/mining-coins`);
     if (!res.ok) return [];
-    try { return await res.json(); } catch { return []; }
+    try {
+      const raw = await res.json();
+      if (Array.isArray(raw)) return parseJsonArray(raw);
+      if (raw && typeof raw === 'object' && Array.isArray((raw as { coins?: unknown[] }).coins)) {
+        return parseJsonArray((raw as { coins: unknown[] }).coins);
+      }
+      return [];
+    } catch {
+      return [];
+    }
   } catch {
     return [];
   }
@@ -1265,24 +1323,33 @@ function parseLocaleNumber(input: unknown, fallback: number): number {
 }
 
 /** Normaliza payload antes de POST /api/mining/coins (evita blockReward=1 por NaN e preço errado). */
+/** Tempo de bloco fixo na economia do simulador (10 minutos). */
+export const MINING_BLOCK_TIME_SECONDS = 600;
+
+function roundMiningFieldTo8Decimals(n: number): number {
+  if (!Number.isFinite(n)) return n;
+  return Math.round(n * 1e8) / 1e8;
+}
+
 export function normalizeMiningCoinPayload(coin: Record<string, any>): Record<string, any> {
   const networkHashrate = parseLocaleNumber(coin.networkHashrate, 1_000_000);
-  const blockReward = parseLocaleNumber(coin.blockReward, 0);
-  const blockTimeRaw = parseLocaleNumber(coin.blockTime, 60);
+  const blockReward = roundMiningFieldTo8Decimals(Math.max(0, parseLocaleNumber(coin.blockReward, 0)));
+  const blockTime = MINING_BLOCK_TIME_SECONDS;
   const priceUSDRaw = parseLocaleNumber(coin.priceUSD, NaN);
-  const priceUSD = Number.isFinite(priceUSDRaw) ? priceUSDRaw : 1;
+  const priceUSD = roundMiningFieldTo8Decimals(Number.isFinite(priceUSDRaw) && priceUSDRaw >= 0 ? priceUSDRaw : 1);
   const usdcRaw = parseLocaleNumber(coin.usdcRate, NaN);
-  const usdcRate =
-    Number.isFinite(usdcRaw) && usdcRaw >= 0 ? usdcRaw : (priceUSD >= 0 ? priceUSD : 1);
-  const multiplier = parseLocaleNumber(coin.multiplier, 1);
-  const minProportion = parseLocaleNumber(coin.minProportion, 0);
-  const targetDailyUSD = parseLocaleNumber(coin.targetDailyUSD, 0);
-  const difficulty = parseLocaleNumber(coin.difficulty, 1);
+  const usdcRate = roundMiningFieldTo8Decimals(
+    Number.isFinite(usdcRaw) && usdcRaw >= 0 ? usdcRaw : priceUSD >= 0 ? priceUSD : 1
+  );
+  const multiplier = roundMiningFieldTo8Decimals(Math.max(1, parseLocaleNumber(coin.multiplier, 1)));
+  const minProportion = roundMiningFieldTo8Decimals(Math.max(0, parseLocaleNumber(coin.minProportion, 0)));
+  const targetDailyUSD = roundMiningFieldTo8Decimals(Math.max(0, parseLocaleNumber(coin.targetDailyUSD, 0)));
+  const difficulty = roundMiningFieldTo8Decimals(Math.max(1, parseLocaleNumber(coin.difficulty, 1)));
   return {
     ...coin,
     networkHashrate: networkHashrate > 0 ? networkHashrate : 1_000_000,
-    blockReward: Math.max(0, blockReward),
-    blockTime: blockTimeRaw > 0 ? blockTimeRaw : 60,
+    blockReward,
+    blockTime,
     priceUSD: priceUSD >= 0 ? priceUSD : 1,
     multiplier: multiplier > 0 ? multiplier : 1,
     minProportion: Math.max(0, minProportion),
@@ -2059,9 +2126,44 @@ export async function getEconomyStats(): Promise<any[]> {
   try {
     const res = await apiFetch(`${base}/admin/economy-stats`);
     if (!res.ok) throw new Error('Failed to fetch');
-    return await res.json();
+    const raw = await res.json();
+    if (!Array.isArray(raw)) throw new Error('economy-stats: resposta não é lista');
+    return raw;
   } catch {
     throw new Error('Network Error');
+  }
+}
+
+/** GET /api/admin/mining-runtime-summary — hashrates / miners ao vivo (workers). */
+export type MiningRuntimeSummary = {
+  realActiveMiners: number;
+  realNetworkHashrates: Record<string, number>;
+  activeMinersByCoin: Record<string, number>;
+};
+
+function coerceNumberRecord(o: unknown): Record<string, number> {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+    const n = typeof v === 'number' ? v : Number(v);
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  return out;
+}
+
+export async function getMiningRuntimeSummary(): Promise<MiningRuntimeSummary | null> {
+  try {
+    const res = await apiFetch(`${base}/admin/mining-runtime-summary`);
+    if (!res.ok) return null;
+    const j = (await res.json()) as Partial<MiningRuntimeSummary>;
+    const n = Number(j.realActiveMiners);
+    return {
+      realActiveMiners: Number.isFinite(n) ? n : 0,
+      realNetworkHashrates: coerceNumberRecord(j.realNetworkHashrates),
+      activeMinersByCoin: coerceNumberRecord(j.activeMinersByCoin)
+    };
+  } catch {
+    return null;
   }
 }
 

@@ -14,7 +14,11 @@ interface PlayerCalculatorProps {
 }
 
 export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, upgrades, miningCoins, onBack, userEmail, isAdmin }) => {
-    const activeCoins = useMemo(() => miningCoins.filter(c => c.isActive), [miningCoins]);
+    const miningCoinsList = Array.isArray(miningCoins) ? miningCoins : [];
+    const upgradesList = Array.isArray(upgrades) ? upgrades : [];
+    const placedRacksList = Array.isArray(gameState.placedRacks) ? gameState.placedRacks : [];
+
+    const activeCoins = useMemo(() => miningCoinsList.filter((c) => c.isActive), [miningCoinsList]);
     const [selectedCoinId, setSelectedCoinId] = useState<string | null>(null);
     const [scope, setScope] = useState<'total' | string>('total'); // 'total' or roomId
     const [myRooms, setMyRooms] = useState<RigRoom[]>([]);
@@ -43,7 +47,7 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
     // Room Names Mapping
     const roomData = useMemo(() => {
         const rooms = new Set<string>();
-        gameState.placedRacks.forEach(r => {
+        placedRacksList.forEach((r) => {
             if (r.roomId) rooms.add(r.roomId);
         });
 
@@ -72,7 +76,7 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
         });
 
         return { list: sortedRooms, names };
-    }, [gameState.placedRacks, myRooms]);
+    }, [placedRacksList, myRooms]);
 
     const coinStats = useMemo(() => {
         const stats: Record<string, { power: number, activeRacks: number }> = {};
@@ -83,14 +87,14 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
         });
 
         // Calculate User Power per Coin
-        gameState.placedRacks.forEach(rack => {
+        placedRacksList.forEach((rack) => {
             // Scope Filter
             if (scope !== 'total' && rack.roomId !== scope) return;
 
             if (!rack.selectedCoinId || !stats[rack.selectedCoinId]) return;
 
             // Check operational status
-            const battery = upgrades.find(u => u.id === rack.batteryId);
+            const battery = upgradesList.find((u) => u.id === rack.batteryId);
             const isInfinite = battery && battery.powerCapacity === -1;
             const isOperational = rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
 
@@ -99,14 +103,14 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
             let rackBase = 0;
             rack.slots.forEach(sid => {
                 if (sid) {
-                    const machine = upgrades.find(u => u.id === sid);
+                    const machine = upgradesList.find((u) => u.id === sid);
                     if (machine) rackBase += machine.baseProduction;
                 }
             });
 
             let mult = 1;
             rack.multiplierSlots?.forEach(sid => {
-                const modifier = upgrades.find(u => u.id === sid);
+                const modifier = upgradesList.find((u) => u.id === sid);
                 if (modifier && modifier.multiplier) mult += modifier.multiplier;
             });
 
@@ -116,7 +120,7 @@ export const PlayerCalculator: React.FC<PlayerCalculatorProps> = ({ gameState, u
         });
 
         return stats;
-    }, [gameState.placedRacks, upgrades, activeCoins, scope]);
+    }, [placedRacksList, upgradesList, activeCoins, scope]);
 
     const calculateEarnings = (coin: MiningCoin, userHash: number) => {
         // Safety check to avoid NaN

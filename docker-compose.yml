@@ -2,7 +2,7 @@
 # `docker compose up --build`
 #
 # Contentores: `app` (site), `app-bull-worker`, `app-postgres`, `app-redis`, `app-mongo`.
-# Não correr em simultâneo com deployment/docker-compose.yml no mesmo host (nomes `app*` colidem).
+# Não correr em simultâneo com `app_production/docker-compose.yml` no mesmo host (nomes `app*` colidem).
 # Se já tinhas volumes com outro nome de project, migrar dados — mudar `name:` recria volumes vazios.
 #
 # VM / produção: se `docker ps` mostrar só 3, os outros podem estar parados ou a reiniciar.

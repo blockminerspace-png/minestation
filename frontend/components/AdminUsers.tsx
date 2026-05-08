@@ -6,6 +6,8 @@ import { User, AccessLevel, GameState, Upgrade, ReferralModel, SeasonPass } from
 import { Users, Search, Edit, X, PlusCircle, Save, Package, Server, Trash2, Trophy, Gift, Cog, LogIn, ArrowUp, ArrowDown, CheckSquare, Square, Loader2, Shield, History } from 'lucide-react';
 import { getGameState, toggleUserBlocked, updateUser, saveGameState, getMiningCoins, deleteUser, getSession, impersonateUser, bulkDeleteUsers, bulkGiftUsers, updateAdminPermissions, getUsers, getAdminUserActivity } from '../services/api';
 import { formatUserActivityMeta, ACTIVITY_LOG_FILTER_GROUPS, filterUserActivityLogs } from '../utils/adminUserActivityLog';
+import { validateAuthUsernameFormat } from '../utils/usernameValidation';
+import { AUTH_USERNAME_MAX } from '../constants/authLimits';
 import type { GameUserActivityEntry } from '../types';
 
 function selectedUserDbId(u: User | null): number | undefined {
@@ -61,6 +63,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
     const [selectedUserSave, setSelectedUserSave] = useState<GameState | null>(null);
     const [editProfileForm, setEditProfileForm] = useState({ username: '', email: '', password: '', wallet: '', accessLevelId: '', accessLevelIds: [] as string[] });
+    const [editProfileUsernameError, setEditProfileUsernameError] = useState<string | null>(null);
 
     // Save Editor State
     const [saveTab, setSaveTab] = useState<'stock' | 'racks' | 'balances' | 'workshop' | 'boxes' | 'logs'>('stock');
@@ -226,6 +229,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         setUserActivityMongoNote(null);
         setActivityLogFilterId('all');
         setActivityLogSearch('');
+        setEditProfileUsernameError(null);
         setEditProfileForm({
             username: u.username,
             email: u.email,
@@ -317,7 +321,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     /** Conceder/editar/remover admin — só super (API: POST /api/admin/update-permissions é rota `super`). */
     const canManageAdminAccounts = !!user?.isSuperAdmin;
 
-    /** Email/senha de outro admin: só super (alinhado com PUT /api/user). */
+    /** Email de outro admin e senha de conta super: só super (alinhado com PUT /api/user). */
     const actorIsSuperForCreds = !!user?.isSuperAdmin;
 
     const isAllowed = (perm: string) => {
@@ -346,23 +350,36 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
             return;
         }
 
-        const editingOtherAdmin =
-            !!selectedUser.isAdmin &&
+        const editingOther =
             String((selectedUser.email || '').trim().toLowerCase()) !== String((user?.email || '').trim().toLowerCase());
+        const editingOtherAdmin = !!selectedUser.isAdmin && editingOther;
+        const editingOtherSuperAdmin = !!selectedUser.isSuperAdmin && editingOther;
         if (editingOtherAdmin && !actorIsSuperForCreds) {
             const origEmail = (selectedUser.email || '').trim().toLowerCase();
             if (newEmail.toLowerCase() !== origEmail) {
                 alert('Apenas super administradores podem alterar o email de outras contas administrador.');
                 return;
             }
-            if (editProfileForm.password && editProfileForm.password.trim().length > 0) {
-                alert('Apenas super administradores podem alterar a senha de outras contas administrador.');
-                return;
-            }
+        }
+        if (
+            editingOtherSuperAdmin &&
+            !actorIsSuperForCreds &&
+            editProfileForm.password &&
+            editProfileForm.password.trim().length > 0
+        ) {
+            alert('Apenas super administradores podem alterar a senha de contas super administrador.');
+            return;
         }
 
+        const userNameCheck = validateAuthUsernameFormat(editProfileForm.username);
+        if (userNameCheck.ok === false) {
+            setEditProfileUsernameError(userNameCheck.error);
+            return;
+        }
+        setEditProfileUsernameError(null);
+
         const payload: User = {
-            username: editProfileForm.username.trim(),
+            username: userNameCheck.username,
             email: newEmail.toLowerCase(),
             polygonWallet: editProfileForm.wallet.trim() || undefined,
             accessLevelId: editProfileForm.accessLevelId,
@@ -819,10 +836,14 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
 
 
     if (selectedUser) {
-        const lockAdminEmailPassword =
-            !!selectedUser.isAdmin &&
-            !actorIsSuperForCreds &&
+        const editingSelectedOther =
             String((selectedUser.email || '').trim().toLowerCase()) !== String((user?.email || '').trim().toLowerCase());
+        /** Email de outro admin: inalterável sem ser super (alinhado ao PUT /api/user). */
+        const lockAdminEmail =
+            !!selectedUser.isAdmin && editingSelectedOther && !actorIsSuperForCreds;
+        /** Senha de outra conta super: só super (admin normal pode alterar senha de outros admins). */
+        const lockSuperAdminPassword =
+            !!selectedUser.isSuperAdmin && editingSelectedOther && !actorIsSuperForCreds;
 
         const canDeleteSelectedUser =
             !selectedUser.isAdmin ||
@@ -856,9 +877,21 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                             </span>
                         )}
                     </div>
-                    {lockAdminEmailPassword && (
+                    {(lockAdminEmail || lockSuperAdminPassword) && (
                         <p className="text-xs text-amber-500/90 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-2 mb-3">
-                            Esta conta é administrador: apenas um <strong>super administrador</strong> pode alterar o email ou a senha aqui. Podes editar níveis, username e carteira.
+                            {lockAdminEmail && (
+                                <>
+                                    Conta <strong>administrador</strong>: só um <strong>super administrador</strong> pode alterar o <strong>email</strong> de outro admin.
+                                </>
+                            )}
+                            {lockAdminEmail && lockSuperAdminPassword ? ' ' : null}
+                            {lockSuperAdminPassword && (
+                                <>
+                                    Conta <strong>super administrador</strong>: só super pode alterar a <strong>senha</strong> aqui.
+                                </>
+                            )}
+                            {' '}
+                            <span className="text-slate-400">Níveis, username e carteira continuam editáveis; senhas de admins que não são super podem ser alteradas por qualquer administrador.</span>
                         </p>
                     )}
                     <div className="space-y-3">
@@ -903,17 +936,31 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                             </div>
                             <div>
                                 <label className="text-xs uppercase text-slate-500 font-bold">Username</label>
-                                <input type="text" value={editProfileForm.username} onChange={e => setEditProfileForm({ ...editProfileForm, username: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" />
+                                <input
+                                    type="text"
+                                    maxLength={AUTH_USERNAME_MAX}
+                                    value={editProfileForm.username}
+                                    onChange={(e) => {
+                                        setEditProfileUsernameError(null);
+                                        setEditProfileForm({ ...editProfileForm, username: e.target.value });
+                                    }}
+                                    className={`w-full bg-slate-900 border rounded p-2 text-white text-sm ${editProfileUsernameError ? 'border-red-500/80' : 'border-slate-700'}`}
+                                />
+                                {editProfileUsernameError && (
+                                    <p className="text-xs text-red-400 mt-1.5" role="alert">
+                                        {editProfileUsernameError}
+                                    </p>
+                                )}
                             </div>
                         </div>
                         <div>
                             <label className="text-xs uppercase text-slate-500 font-bold">Email</label>
                             <input
                                 type="text"
-                                readOnly={lockAdminEmailPassword}
+                                readOnly={lockAdminEmail}
                                 value={editProfileForm.email}
                                 onChange={e => setEditProfileForm({ ...editProfileForm, email: e.target.value })}
-                                className={`w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm ${lockAdminEmailPassword ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                className={`w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm ${lockAdminEmail ? 'opacity-60 cursor-not-allowed' : ''}`}
                             />
                         </div>
                         <div className="grid grid-cols-2 gap-3">
@@ -922,11 +969,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                 <input
                                     type="password"
                                     autoComplete="new-password"
-                                    readOnly={lockAdminEmailPassword}
+                                    readOnly={lockSuperAdminPassword}
                                     value={editProfileForm.password}
                                     onChange={(e) => setEditProfileForm({ ...editProfileForm, password: e.target.value })}
-                                    placeholder={lockAdminEmailPassword ? '—' : 'Nova senha (opcional)'}
-                                    className={`w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono ${lockAdminEmailPassword ? 'opacity-60 cursor-not-allowed' : ''}`}
+                                    placeholder={lockSuperAdminPassword ? '—' : 'Nova senha (opcional)'}
+                                    className={`w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono ${lockSuperAdminPassword ? 'opacity-60 cursor-not-allowed' : ''}`}
                                 />
                             </div>
                             <div>

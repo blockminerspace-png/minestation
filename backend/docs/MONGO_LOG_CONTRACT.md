@@ -92,5 +92,5 @@ Bases já existentes: executar uma vez `backend/scripts/drop_game_activity_logs.
 ## Operação e deploy
 
 - Escrita **fire-and-forget**; falhas de insert só aparecem em `console.warn`.
-- Em produção com Docker, definir `MONGODB_URI` no serviço `app` (ver `deployment/docker-compose.yml`).
+- Em produção com Docker, definir `MONGODB_URI` no serviço `app` (ver `app_production/docker-compose.yml`).
 - Índices recomendados (criar na MongoDB ou script de ops): `action_logs` → `{ at: -1 }`, `{ action: 1, at: -1 }`; idem para `event_history` / `analytics_events` com `kind` / `name`.
