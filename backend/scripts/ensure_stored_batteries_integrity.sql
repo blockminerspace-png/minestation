@@ -1,5 +1,6 @@
--- Idempotente: alinha stored_batteries.item_id ao catálogo de bateria;
--- limpa placed_racks.battery_id órfão ou UUID duplicado entre racks (mesmo user).
+-- Idempotente, **todas as contas**: alinha stored_batteries.item_id ao catálogo de bateria;
+-- limpa placed_racks (órfão UUID, UUID duplicado, battery_id que não é bateria válida);
+-- normaliza carga -1 em baterias infinitas nas rigs (UI “CARGA 00”).
 -- Executar: docker exec -i app-postgres psql -U postgres -d minestation -v ON_ERROR_STOP=1 -f - < backend/scripts/ensure_stored_batteries_integrity.sql
 
 BEGIN;
