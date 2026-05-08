@@ -691,14 +691,14 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                     const totalWatts = calculateRackConsumptionWatts(rack, upgrades);
                     const finalProd = calculatePlacedRacksProductionHashrate([rack], upgrades, storedBatteries);
 
-                    const batteryCatalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+                    const batteryCatalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
                     const battery = batteryCatalogId ? upgrades.find((u) => u.id === batteryCatalogId) : null;
                     const isInfinite = battery && battery.powerCapacity === -1;
                     const chargePercent = battery && battery.powerCapacity && !isInfinite
                         ? (rack.currentCharge / battery.powerCapacity) * 100
                         : (isInfinite ? 100 : 0);
 
-                    const isOperational = rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
+                    const isOperational = rack.isOn && rack.wiringId && Boolean(battery) && (isInfinite || rack.currentCharge > 0);
                     const batteryRuntimeShort = getRackBatteryRuntimeShortLabel(rack, upgrades, storedBatteries);
                     const batteryRuntimeHint = getRackBatteryRuntimeHint(rack, upgrades, storedBatteries);
 
@@ -787,7 +787,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                             if (!rack.selectedCoinId) missing.push("Moeda");
                                                             else if (selectedCoin && !selectedCoin.isActive) missing.push("Moeda Suspensa");
 
-                                                            if (!rack.batteryId) missing.push("Bateria");
+                                                            if (!battery) missing.push("Bateria");
                                                             if (!rack.wiringId) missing.push("Circuito");
                                                             if (!rack.slots.some(s => s !== null)) missing.push("GPU");
                                                             const isReady = missing.length === 0;
@@ -1165,7 +1165,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                 {(() => {
                                     const rack = placedRacks.find(r => r.id === configRackId)!;
                                     const wiring = rack.wiringId ? upgrades.find(u => u.id === rack.wiringId) : null;
-                                    const battCat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+                                    const battCat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
                                     const battery = battCat ? upgrades.find((u) => u.id === battCat) : null;
                                     const machineDefs = rack.slots.map(sid => sid ? upgrades.find(u => u.id === sid) || null : null).filter(Boolean) as Upgrade[];
                                     const baseProd = machineDefs.reduce((acc, u) => acc + (u.baseProduction || 0), 0);

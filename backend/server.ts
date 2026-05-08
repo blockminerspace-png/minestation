@@ -27,7 +27,6 @@ import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
 import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisStack/init.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
-import { resolvePlacedRackBatteryCatalogId } from './dist/lib/placedRackBatteryCatalog.js';
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
 import { ensureStoredBatteriesIntegrity } from './dist/lib/ensureStoredBatteriesIntegrity.js';
 
@@ -7002,6 +7001,32 @@ app.get('/api/game-state/:email', async (req, res) => {
       }
     }
 
+    if (placedRacks.length > 0) {
+      const storedBatIds = new Set(storedBatteries.map((b) => b.id));
+      const catBatRows = await prisma.upgrades.findMany({
+        where: { type: 'battery' },
+        select: { id: true }
+      });
+      const catalogBatIds = new Set(catBatRows.map((x) => x.id));
+      const orphanRackIds: string[] = [];
+      for (const pr of placedRacks) {
+        const bid = pr.batteryId != null ? String(pr.batteryId).trim() : '';
+        if (!bid) continue;
+        if (storedBatIds.has(bid) || catalogBatIds.has(bid)) continue;
+        orphanRackIds.push(pr.id);
+        pr.batteryId = null;
+        pr.currentCharge = 0;
+        pr.isOn = false;
+      }
+      if (orphanRackIds.length > 0) {
+        await prisma.placed_racks.updateMany({
+          where: { user_id: uid, id: { in: orphanRackIds } },
+          data: { battery_id: null, current_charge: 0, is_on: 0 }
+        });
+        console.warn(`[GameState] Limpou battery_id órfão em ${orphanRackIds.length} rig(s) uid=${uid}`);
+      }
+    }
+
     const workshopSlots = [null, null, null, null, null, null];
     workshopRows.forEach((w) => {
       if (w.slot_index >= 0 && w.slot_index < 6) {
@@ -7128,6 +7153,29 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
       console.warn('[validatePlacedRacksForSave] stored_batteries:', e instanceof Error ? e.message : String(e));
     }
   }
+  const catalogBatteryRows = await prisma.upgrades.findMany({
+    where: { type: 'battery' },
+    select: { id: true }
+  });
+  const catalogBatteryIds = new Set(catalogBatteryRows.map((x) => x.id));
+  const storedBatteryInstanceIds = new Set(storedBattCatalogByInstanceId.keys());
+  let coercedOrphanBatteryRacks = 0;
+  for (const r of racks) {
+    if (!r || typeof r !== 'object') continue;
+    const rawBid = (r as Record<string, unknown>).batteryId;
+    if (rawBid == null || String(rawBid).trim() === '') continue;
+    const bid = String(rawBid).trim();
+    if (storedBatteryInstanceIds.has(bid) || catalogBatteryIds.has(bid)) continue;
+    (r as Record<string, unknown>).batteryId = null;
+    (r as Record<string, unknown>).currentCharge = 0;
+    (r as Record<string, unknown>).isOn = false;
+    coercedOrphanBatteryRacks += 1;
+  }
+  if (coercedOrphanBatteryRacks > 0) {
+    console.warn(
+      `[validatePlacedRacksForSave] removidas ${coercedOrphanBatteryRacks} referência(s) órfã(s) de bateria em rigs user=${userId}`
+    );
+  }
   const nftRoomIds = await resolveNftAutoArmario1OnlyRoomIds(dbq);
   const upgradeIds = new Set();
   const coinIds = new Set();
@@ -7151,8 +7199,18 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
     if (r.wiringId) upgradeIds.add(String(r.wiringId));
     if (r.batteryId != null && String(r.batteryId).trim() !== '') {
       const bidRaw = String(r.batteryId).trim();
-      const battCat = resolvePlacedRackBatteryCatalogId(bidRaw, storedBattCatalogByInstanceId);
-      if (battCat) upgradeIds.add(battCat);
+      const fromStore = storedBattCatalogByInstanceId.get(bidRaw);
+      if (fromStore) {
+        upgradeIds.add(fromStore);
+      } else if (catalogBatteryIds.has(bidRaw)) {
+        upgradeIds.add(bidRaw);
+      } else {
+        return {
+          ok: false,
+          error:
+            'Referência de bateria inválida numa rig (dados desatualizados). Recarregue a página (F5) e tente de novo.'
+        };
+      }
     }
     for (const s of r.slots || []) {
       if (!s) continue;

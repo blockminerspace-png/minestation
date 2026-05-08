@@ -5,13 +5,19 @@ import { batteryTierScore, poolEntryEnergyWh } from './roomBatteryModel';
 /** `rack.batteryId` pode ser id de instância (`stored_batteries.id`) ou id de catálogo (`upgrades.id`). */
 export function resolvePlacedRackBatteryCatalogId(
   rack: PlacedRack,
-  storedBatteries: StoredBattery[] | null | undefined
+  storedBatteries: StoredBattery[] | null | undefined,
+  upgrades?: Upgrade[] | null
 ): string | null {
   const bid = rack.batteryId != null ? String(rack.batteryId).trim() : '';
   if (!bid) return null;
   const row = (storedBatteries || []).find((b) => b.id === bid);
   const cat = row?.itemId != null ? String(row.itemId).trim() : '';
   if (cat) return cat;
+  if (upgrades && upgrades.length > 0) {
+    const direct = upgrades.find((u) => u.id === bid && u.type === 'battery');
+    if (direct) return bid;
+    return null;
+  }
   return bid;
 }
 
@@ -53,7 +59,7 @@ export function estimateRackBatteryRuntimeSeconds(
   upgrades: Upgrade[],
   storedBatteries?: StoredBattery[] | null
 ): number | null {
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
   if (!catalogId) return null;
   const battery = upgrades.find((u) => u.id === catalogId);
   if (!battery || battery.powerCapacity === -1) return null;
@@ -99,7 +105,7 @@ export function getRackBatteryRuntimeShortLabel(
   storedBatteries?: StoredBattery[] | null
 ): string {
   if (!rack.batteryId) return '—';
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
   const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
   if (!battery) return '—';
   if (battery.powerCapacity === -1) return '∞';
@@ -115,9 +121,11 @@ export function getRackBatteryRuntimeHint(
   storedBatteries?: StoredBattery[] | null
 ): string {
   if (!rack.batteryId) return 'Sem bateria instalada.';
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
   const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
-  if (!battery) return '';
+  if (!battery) {
+    return 'Referência de bateria inválida (sincronize com F5 ou re-equipe a bateria).';
+  }
   if (battery.powerCapacity === -1) return 'Bateria ilimitada.';
   const watts = calculateRackConsumptionWatts(rack, upgrades);
   if (watts <= 0) return 'Sem consumo (0 W): a carga não desce com o equipamento atual.';
@@ -134,11 +142,11 @@ export function calculatePlacedRacksProductionHashrate(
 ): number {
   let total = 0;
   racks.forEach((rack) => {
-    const cat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries);
+    const cat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
     const battery = cat ? upgrades.find((u) => u.id === cat) : null;
     const isInfinite = battery && battery.powerCapacity === -1;
     const isOperational =
-      rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
+      rack.isOn && rack.wiringId && Boolean(battery) && (isInfinite || rack.currentCharge > 0);
 
     if (isOperational) {
       const baseProd = rack.slots.reduce((acc, sid) => {

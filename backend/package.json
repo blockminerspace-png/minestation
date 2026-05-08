@@ -17,6 +17,7 @@
     "img:classify": "npm run build:ts && node scripts/run-img-organize.mjs",
     "assets:compress": "npm run build:server && node scripts/compress-site-assets.mjs",
     "img:rewrite-db": "node scripts/rewrite-img-paths-after-reorg.mjs",
+    "img:repair-rack-infra": "node scripts/repair-infra-rack-images.mjs",
     "sanitize:legacy-stock": "node scripts/sanitize_legacy_stock_items.mjs",
     "db:ensure-stored-batteries": "npm run build:ts && node scripts/ensure_stored_batteries_integrity.mjs",
     "db:ensure-stored-batteries:docker": "docker exec -i ${PG_CONTAINER:-app-postgres} psql -U postgres -d ${PG_DATABASE:-minestation} -v ON_ERROR_STOP=1 < scripts/ensure_stored_batteries_integrity.sql",

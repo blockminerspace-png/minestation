@@ -98,6 +98,9 @@ remote docker exec -i "$PG_CONTAINER" psql -U postgres -d "$PG_DATABASE" -v ON_E
 echo "[vm-maintenance] Node: rewrite-img-paths-after-reorg.mjs"
 remote bash -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/rewrite-img-paths-after-reorg.mjs'"
 
+echo "[vm-maintenance] Node: repair-infra-rack-images.mjs"
+remote bash -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/repair-infra-rack-images.mjs'"
+
 echo "[vm-maintenance] Node: normalize-db-public-asset-urls.mjs"
 remote bash -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/normalize-db-public-asset-urls.mjs'"
 
