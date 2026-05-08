@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "strict": true,
+    "outDir": "./dist",
+    "rootDir": ".",
+    "skipLibCheck": true,
+    "noEmitOnError": true,
+    "esModuleInterop": true
+  },
+  "include": [
+    "cron/**/*.ts",
+    "lib/miningLivePrices.d.ts",
+    "lib/safeText.ts",
+    "lib/batteryPolymorphicResolve.ts",
+    "lib/batteryInstanceResolve.ts",
+    "lib/stack/**/*.ts",
+    "lib/genesisStack/init.ts",
+    "lib/mongoLogs.ts",
+    "config/prisma.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}

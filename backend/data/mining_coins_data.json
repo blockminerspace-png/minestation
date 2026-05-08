@@ -1,0 +1,66 @@
+{
+  "coins": [
+    {
+      "id": "coin_1765301021089",
+      "symbol": "Pol",
+      "name": "Pol",
+      "is_active": 1
+    },
+    {
+      "id": "5087b18b-b32f-4839-8bc9-28691df3e83e",
+      "symbol": "BNB",
+      "name": "BNB",
+      "is_active": 1
+    },
+    {
+      "id": "94a1a3bc-abcc-4717-81e1-1c0a828a9526",
+      "symbol": "DOGE",
+      "name": "DOGE",
+      "is_active": 1
+    },
+    {
+      "id": "3a2c0532-41c2-419a-b492-e36df23db47a",
+      "symbol": "Sol",
+      "name": "Sol",
+      "is_active": 1
+    },
+    {
+      "id": "67d8afc3-2f0e-4701-b2e9-b96f84ef7030",
+      "symbol": "TRX",
+      "name": "TRX",
+      "is_active": 1
+    },
+    {
+      "id": "coin_1765832642086",
+      "symbol": "WBTC",
+      "name": "WBTC",
+      "is_active": 1
+    },
+    {
+      "id": "coin_1765301484117",
+      "symbol": "ETH",
+      "name": "ETH",
+      "is_active": 1
+    }
+  ],
+  "withdrawTokens": [
+    {
+      "name": "Pol",
+      "contract": "",
+      "payoutWallet": "0x33d2406707e5e4b314d15784e73bb08f0c46db42",
+      "minAmount": 0.998
+    },
+    {
+      "name": "ETH",
+      "contract": "",
+      "payoutWallet": "0x33d2406707e5e4b314d15784e73bb08f0c46db42",
+      "minAmount": 0.0003
+    },
+    {
+      "name": "WBTC",
+      "contract": "",
+      "payoutWallet": "0x33d2406707e5e4b314d15784e73bb08f0c46db42",
+      "minAmount": 0.00001
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <!-- Google tag (gtag.js) — todas as rotas da SPA carregam este HTML -->
+  <script async src="https://www.googletagmanager.com/gtag/js?id=G-JBHPLPLLDG"></script>
+  <script>
+    window.dataLayer = window.dataLayer || [];
+    function gtag() { dataLayer.push(arguments); }
+    gtag('js', new Date());
+    gtag('config', 'G-JBHPLPLLDG');
+  </script>
+  <title>Genesis Miner — simulador Web3 de mineração | Genesis DAO</title>
+  <meta
+    name="description"
+    content="Genesis Miner: simulador de mineração digital com racks, energia e economia Web3. Entre, monte o seu data center e evolua no ecossistema Genesis DAO."
+  />
+  <meta name="theme-color" content="#0f0c08" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f8fafc" media="(prefers-color-scheme: light)" />
+  <meta property="og:title" content="Genesis Miner — Genesis DAO" />
+  <meta property="og:description" content="Simulador Web3 de mineração digital: racks, energia, mercado e progressão rumo à Polygon." />
+  <meta property="og:type" content="website" />
+  <!-- Favicon: URL canónica em constants/assetPaths.ts (FAVICON_PNG_URL) -->
+  <link rel="icon" type="image/png" href="/img/favicon/genesis-miner-logo.png" />
+  <link rel="preload" href="/img/favicon/genesis-miner-logo.png" as="image" type="image/png" />
+  <style>
+    /* Tipografia local (sem fonts.googleapis.com — menos latência e menos terceiros na cadeia crítica) */
+    body {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    }
+
+    /* Animation for the clicking effect */
+    @keyframes floatUp {
+      0% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      100% {
+        opacity: 0;
+        transform: translateY(-20px);
+      }
+    }
+
+    .float-text {
+      position: absolute;
+      pointer-events: none;
+      animation: floatUp 1s ease-out forwards;
+    }
+  </style>
+  <link rel="stylesheet" href="/src/index.css">
+
+</head>
+
+<body
+  class="bg-slate-50 dark:bg-[#0f0c08] text-slate-900 dark:text-slate-100 overflow-x-hidden overflow-y-hidden transition-colors duration-300">
+  <div id="applixir_wan"></div>
+  <div id="root"></div>
+  <script type="module" src="/src/index.tsx"></script>
+</body>
+
+</html>

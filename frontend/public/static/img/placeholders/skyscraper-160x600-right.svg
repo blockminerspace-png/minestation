@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="600" viewBox="0 0 160 600" role="img" aria-label="Placeholder skyscraper 160×600 direita">
+  <defs>
+    <linearGradient id="sr" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#1a1520"/>
+      <stop offset="100%" style="stop-color:#2d2640"/>
+    </linearGradient>
+  </defs>
+  <rect width="160" height="600" fill="url(#sr)"/>
+  <rect x="4" y="4" width="152" height="592" fill="none" stroke="#78716c" stroke-width="1" stroke-dasharray="8 6" opacity="0.45"/>
+  <text x="80" y="48" text-anchor="middle" fill="#a8a29e" font-family="ui-monospace,monospace" font-size="10" font-weight="bold">160×600</text>
+  <text x="80" y="560" text-anchor="middle" fill="#78716c" font-family="ui-monospace,monospace" font-size="8">RIGHT</text>
+</svg>

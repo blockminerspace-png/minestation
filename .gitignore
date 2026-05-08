@@ -1,0 +1,85 @@
+# Dependencies
+node_modules/
+backend/node_modules/
+frontend/node_modules/
+admin/node_modules/
+
+# Build output
+frontend/dist/
+
+# Coverage (Vitest)
+backend/coverage/
+frontend/coverage/
+
+# Backend — artefactos gerados (não versionar)
+backend/dist/
+# Entrada HTTP compilada a partir de server.ts (tsc -p tsconfig.server.json)
+backend/server.js
+backend/assets/
+# Cópia obsoleta de ficheiros do frontend; fonte única: pasta `frontend/` na raiz
+backend/frontend/
+
+# Environment files
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+admin/.env
+frontend/.env
+frontend/.env.*
+app_production/.env
+app_production/.env.*
+!app_production/.env.example
+
+# Secrets and certificates
+*.pem
+*.key
+*.crt
+certbot/
+app_production/certbot/
+
+# Database backups (sensitive data)
+backups/
+*.sql
+*.rar
+*.zip
+
+# Docker volumes
+pgdata/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+.obsidian/
+**/.obsidian/
+
+# Logs
+*.log
+npm-debug.log*
+*.canvas
+
+# Temp scripts
+tmp_*.js
+backend/tmp_*.js
+
+# Obsidian and Documentation
+Obsidian_Docs/
+scratch/
+DOCUMENTACAO.md
+README.md
+export-suporte/
+
+# Runtime / caches
+**/node_modules/
+**/coverage/
+**/dist/
+backend/storage/uploads/
+backend/img/uploads/
+uploads/
+frontend/build_output.txt
+frontend/tsc_errors.txt

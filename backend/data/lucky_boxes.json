@@ -1,0 +1,18 @@
+[
+  {
+    "id": "5f476682-62ab-4766-9108-47d26e48cc52",
+    "name": "Caixa da sorte",
+    "description": "",
+    "price": 5,
+    "trigger": "shop",
+    "icon": "🎁"
+  },
+  {
+    "id": "a23098b0-1978-4d25-aea2-751d211fe27c",
+    "name": "Caixa da Sorte",
+    "description": "Caixa de Presentes Surpresa de Fim de Ano",
+    "price": 0,
+    "trigger": "promo_code",
+    "icon": "🎁"
+  }
+]

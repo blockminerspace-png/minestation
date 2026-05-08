@@ -1,0 +1,109 @@
+# Um único compose na raiz: Postgres + Redis + Mongo + API + worker BullMQ (mesmo Dockerfile).
+# `docker compose up --build`
+#
+# Contentores: `app` (site), `app-bull-worker`, `app-postgres`, `app-redis`, `app-mongo`.
+# Não correr em simultâneo com `app_production/docker-compose.yml` no mesmo host (nomes `app*` colidem).
+# Se já tinhas volumes com outro nome de project, migrar dados — mudar `name:` recria volumes vazios.
+#
+# VM / produção: se `docker ps` mostrar só 3, os outros podem estar parados ou a reiniciar.
+#   docker compose ps -a
+#   docker compose logs app --tail 80
+#   docker compose logs bull-worker --tail 80
+# Arranque explícito dos 5: `bash scripts/docker-stack-up.sh` (na raiz do repo).
+
+name: minestation-dev
+
+services:
+  db:
+    container_name: app-postgres
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: minestation
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d minestation"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    container_name: app-redis
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+
+  mongo:
+    container_name: app-mongo
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+      start_period: 60s
+
+  app:
+    container_name: app
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: "3000"
+      NODE_ENV: production
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/minestation
+      REDIS_URL: redis://redis:6379
+      MONGODB_URI: mongodb://mongo:27017/genesis_logs
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - ./backups:/app/backups
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+
+  bull-worker:
+    container_name: app-bull-worker
+    restart: unless-stopped
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["node", "dist/workers/bullGenesisWorker.js"]
+    environment:
+      NODE_ENV: production
+      REDIS_URL: redis://redis:6379
+      GENESIS_BULL_QUEUE: ${GENESIS_BULL_QUEUE:-genesis-maintenance}
+    env_file:
+      - path: .env
+        required: false
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:
+  mongodata:
