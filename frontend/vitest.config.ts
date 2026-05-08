@@ -2,10 +2,17 @@ import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
+const ci = process.env.CI === 'true';
+
 export default defineConfig({
   plugins: [react()],
   test: {
     environment: 'jsdom',
+    ...(ci && {
+      poolOptions: {
+        threads: { maxThreads: 2, minThreads: 1 },
+      },
+    }),
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     coverage: {
       provider: 'v8',

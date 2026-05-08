@@ -1,8 +1,15 @@
 import { defineConfig } from 'vitest/config';
 
+const ci = process.env.CI === 'true';
+
 export default defineConfig({
   test: {
     environment: 'node',
+    ...(ci && {
+      poolOptions: {
+        threads: { maxThreads: 2, minThreads: 1 },
+      },
+    }),
     include: ['test/**/*.test.ts'],
     coverage: {
       provider: 'v8',
