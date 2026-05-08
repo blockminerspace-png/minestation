@@ -23,6 +23,7 @@ import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
 import { resolvePlacedRackBatteryCatalogId } from './dist/lib/placedRackBatteryCatalog.js';
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
+import { ensureStoredBatteriesIntegrity } from './dist/lib/ensureStoredBatteriesIntegrity.js';
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
 function roundMiningEconomyField8Decimals(n) {
@@ -8810,6 +8811,7 @@ const startServer = async () => {
             await ensureUsdcDefault();
             await ensureUserLevels(); // Restore levels (Moved from top-level)
             await ensureStockItemIdsSane();
+            await ensureStoredBatteriesIntegrity(db);
             async function ensureShowInExchangeColumn() {
                 try {
                     const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name='mining_coins' AND column_name='show_in_exchange'");

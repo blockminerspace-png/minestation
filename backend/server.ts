@@ -29,6 +29,7 @@ import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
 import { resolvePlacedRackBatteryCatalogId } from './dist/lib/placedRackBatteryCatalog.js';
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
+import { ensureStoredBatteriesIntegrity } from './dist/lib/ensureStoredBatteriesIntegrity.js';
 
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
@@ -9335,6 +9336,7 @@ const startServer = async () => {
       await ensureUsdcDefault();
       await ensureUserLevels(); // Restore levels (Moved from top-level)
       await ensureStockItemIdsSane();
+      await ensureStoredBatteriesIntegrity(db);
 
       async function ensureShowInExchangeColumn() {
         try {

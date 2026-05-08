@@ -17,6 +17,9 @@ backend/assets/
 # Cópia obsoleta de ficheiros do frontend; fonte única: pasta `frontend/` na raiz
 backend/frontend/
 
+# Deploy VM (credenciais — nunca commitar)
+scripts/deploy.vm.env
+
 # Environment files
 .env
 backend/.env
