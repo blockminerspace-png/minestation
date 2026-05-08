@@ -21,6 +21,7 @@
     "db:ensure-stored-batteries": "npm run build:ts && node scripts/ensure_stored_batteries_integrity.mjs",
     "db:ensure-stored-batteries:docker": "docker exec -i ${PG_CONTAINER:-app-postgres} psql -U postgres -d ${PG_DATABASE:-minestation} -v ON_ERROR_STOP=1 < scripts/ensure_stored_batteries_integrity.sql",
     "db:normalize-public-assets": "npm run build:ts && node scripts/normalize-db-public-asset-urls.mjs",
+    "db:audit-batteries-email": "npm run build:ts && node scripts/audit-batteries-by-email.mjs",
     "db:pull": "prisma db pull",
     "schema:validate": "prisma validate",
     "migrate:deploy": "prisma migrate deploy",

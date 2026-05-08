@@ -84,10 +84,60 @@ dup AS (
    WHERE pr.id = r.id
      AND r.rn > 1
    RETURNING pr.id
+),
+bad_catalog AS (
+  UPDATE placed_racks pr
+     SET battery_id = NULL,
+         current_charge = 0,
+         is_on = 0
+   WHERE pr.battery_id IS NOT NULL
+     AND btrim(pr.battery_id::text) <> ''
+     AND NOT (pr.battery_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+     AND NOT EXISTS (
+           SELECT 1 FROM upgrades u
+            WHERE u.id = btrim(pr.battery_id::text)
+              AND (
+                   lower(COALESCE(u.type, '')) = 'battery'
+                OR lower(COALESCE(u.category, '')) = 'battery'
+                  )
+         )
+   RETURNING pr.id
+),
+inf_inst AS (
+  UPDATE placed_racks pr
+     SET current_charge = -1
+    FROM stored_batteries sb
+    JOIN upgrades u ON u.id = btrim(sb.item_id::text)
+   WHERE pr.user_id = sb.user_id
+     AND pr.battery_id IS NOT NULL
+     AND btrim(pr.battery_id::text) <> ''
+     AND btrim(pr.battery_id::text) = btrim(sb.id::text)
+     AND COALESCE(u.power_capacity, 0) = -1
+     AND pr.current_charge IS DISTINCT FROM -1
+   RETURNING pr.id
+),
+inf_cat AS (
+  UPDATE placed_racks pr
+     SET current_charge = -1
+    FROM upgrades u
+   WHERE pr.battery_id IS NOT NULL
+     AND btrim(pr.battery_id::text) <> ''
+     AND btrim(pr.battery_id::text) = u.id
+     AND NOT (pr.battery_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
+     AND COALESCE(u.power_capacity, 0) = -1
+     AND (
+           lower(COALESCE(u.type, '')) = 'battery'
+        OR lower(COALESCE(u.category, '')) = 'battery'
+          )
+     AND pr.current_charge IS DISTINCT FROM -1
+   RETURNING pr.id
 )
 SELECT
   (SELECT COUNT(*)::int FROM fix_sb) AS item_id_corrigido,
   (SELECT COUNT(*)::int FROM orphan) AS racks_uuid_orfao,
-  (SELECT COUNT(*)::int FROM dup) AS racks_uuid_duplicado;
+  (SELECT COUNT(*)::int FROM dup) AS racks_uuid_duplicado,
+  (SELECT COUNT(*)::int FROM bad_catalog) AS racks_batt_id_invalido,
+  (SELECT COUNT(*)::int FROM inf_inst) AS racks_inf_carga_inst,
+  (SELECT COUNT(*)::int FROM inf_cat) AS racks_inf_carga_cat;
 
 COMMIT;

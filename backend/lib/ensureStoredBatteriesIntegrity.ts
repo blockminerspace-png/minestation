@@ -14,6 +14,9 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
   let fixedItem = 0;
   let clearedOrphan = 0;
   let clearedDupRack = 0;
+  let clearedBadCatalogBatt = 0;
+  let fixedInfiniteChargeInst = 0;
+  let fixedInfiniteChargeCat = 0;
   try {
     await client.query('BEGIN');
 
@@ -115,10 +118,72 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
     `);
     clearedDupRack = dupRacks.rowCount ?? 0;
 
+    /** `battery_id` texto que não é UUID de instância nem id de catálogo de bateria válido. */
+    const badCat = await client.query(`
+        UPDATE placed_racks pr
+           SET battery_id = NULL,
+               current_charge = 0,
+               is_on = 0
+         WHERE pr.battery_id IS NOT NULL
+           AND btrim(pr.battery_id::text) <> ''
+           AND NOT (pr.battery_id::text ~* '${PG_INSTANCE_UUID}')
+           AND NOT EXISTS (
+                 SELECT 1 FROM upgrades u
+                  WHERE u.id = btrim(pr.battery_id::text)
+                    AND (
+                         lower(COALESCE(u.type, '')) = 'battery'
+                      OR lower(COALESCE(u.category, '')) = 'battery'
+                        )
+               )
+         RETURNING pr.id
+    `);
+    clearedBadCatalogBatt = badCat.rowCount ?? 0;
+
+    /** Bateria infinita (power_capacity = -1) na rig: carga canónica -1 (evita “CARGA 00” na UI). */
+    const infInst = await client.query(`
+        UPDATE placed_racks pr
+           SET current_charge = -1
+          FROM stored_batteries sb
+          JOIN upgrades u ON u.id = btrim(sb.item_id::text)
+         WHERE pr.user_id = sb.user_id
+           AND pr.battery_id IS NOT NULL
+           AND btrim(pr.battery_id::text) <> ''
+           AND btrim(pr.battery_id::text) = btrim(sb.id::text)
+           AND COALESCE(u.power_capacity, 0) = -1
+           AND pr.current_charge IS DISTINCT FROM -1
+         RETURNING pr.id
+    `);
+    fixedInfiniteChargeInst = infInst.rowCount ?? 0;
+
+    const infCat = await client.query(`
+        UPDATE placed_racks pr
+           SET current_charge = -1
+          FROM upgrades u
+         WHERE pr.battery_id IS NOT NULL
+           AND btrim(pr.battery_id::text) <> ''
+           AND btrim(pr.battery_id::text) = u.id
+           AND NOT (pr.battery_id::text ~* '${PG_INSTANCE_UUID}')
+           AND COALESCE(u.power_capacity, 0) = -1
+           AND (
+                 lower(COALESCE(u.type, '')) = 'battery'
+             OR lower(COALESCE(u.category, '')) = 'battery'
+               )
+           AND pr.current_charge IS DISTINCT FROM -1
+         RETURNING pr.id
+    `);
+    fixedInfiniteChargeCat = infCat.rowCount ?? 0;
+
     await client.query('COMMIT');
-    if (fixedItem + clearedOrphan + clearedDupRack > 0) {
+    const touched =
+      fixedItem +
+      clearedOrphan +
+      clearedDupRack +
+      clearedBadCatalogBatt +
+      fixedInfiniteChargeInst +
+      fixedInfiniteChargeCat;
+    if (touched > 0) {
       console.log(
-        `[Migration] stored_batteries/racks: item_id corrigido=${fixedItem}, racks UUID órfão=${clearedOrphan}, racks UUID duplicado=${clearedDupRack}`
+        `[Migration] stored_batteries/racks: item_id=${fixedItem}, rack_uuid_orfao=${clearedOrphan}, rack_uuid_dup=${clearedDupRack}, rack_batt_id_invalido=${clearedBadCatalogBatt}, rack_inf_carga_inst=${fixedInfiniteChargeInst}, rack_inf_carga_cat=${fixedInfiniteChargeCat}`
       );
     }
   } catch (e) {
