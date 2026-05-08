@@ -26,6 +26,12 @@ updates:
     commit-message:
       prefix: "deps"
       include: "scope"
+    ignore:
+      # Prisma 7 exige migração de tipos/API; manter 6.x até trabalho dedicado.
+      - dependency-name: "prisma"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "@prisma/client"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
