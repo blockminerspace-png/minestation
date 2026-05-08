@@ -1,5 +1,6 @@
 -- Idempotente, **todas as contas**: alinha stored_batteries.item_id ao catálogo de bateria;
--- limpa placed_racks (órfão UUID, UUID duplicado, battery_id que não é bateria válida);
+-- recupera placed_racks com UUID de instância sem linha em stored_batteries (recria armazém, preserva carga);
+-- limpa placed_racks (UUID duplicado entre rigs, battery_id que não é bateria válida);
 -- normaliza carga -1 em baterias infinitas nas rigs (UI “CARGA 00”).
 -- Executar: docker exec -i app-postgres psql -U postgres -d minestation -v ON_ERROR_STOP=1 -f - < backend/scripts/ensure_stored_batteries_integrity.sql
 
@@ -51,19 +52,35 @@ fix_sb AS (
    WHERE sb.id = br.id
    RETURNING sb.id
 ),
-orphan AS (
-  UPDATE placed_racks pr
-     SET battery_id = NULL,
-         current_charge = 0,
-         is_on = 0
-   WHERE pr.battery_id IS NOT NULL
+recover_orphan AS (
+  INSERT INTO stored_batteries (id, user_id, item_id, current_charge)
+  SELECT pr.battery_id,
+         pr.user_id,
+         COALESCE(dom.item_id, fb.fid),
+         GREATEST(0::double precision, COALESCE(pr.current_charge, 0)::double precision)
+    FROM placed_racks pr
+    CROSS JOIN fb
+    LEFT JOIN LATERAL (
+      SELECT btrim(sb2.item_id::text) AS item_id
+        FROM stored_batteries sb2
+        JOIN upgrades u2 ON u2.id = btrim(COALESCE(sb2.item_id, ''))
+       WHERE sb2.user_id = pr.user_id
+         AND (lower(COALESCE(u2.type, '')) = 'battery' OR lower(COALESCE(u2.category, '')) = 'battery')
+         AND u2.id NOT LIKE 'temp_legacy\_%' ESCAPE '\'
+       GROUP BY btrim(sb2.item_id::text)
+       ORDER BY COUNT(*) DESC, length(btrim(sb2.item_id::text)) ASC
+       LIMIT 1
+    ) dom ON true
+   WHERE (SELECT fid FROM fb) IS NOT NULL
+     AND pr.battery_id IS NOT NULL
      AND btrim(pr.battery_id::text) <> ''
      AND pr.battery_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
      AND NOT EXISTS (
            SELECT 1 FROM stored_batteries sb
             WHERE sb.id = pr.battery_id AND sb.user_id = pr.user_id
          )
-   RETURNING pr.id
+  ON CONFLICT (id) DO NOTHING
+  RETURNING id
 ),
 dup AS (
   UPDATE placed_racks pr
@@ -135,7 +152,7 @@ inf_cat AS (
 )
 SELECT
   (SELECT COUNT(*)::int FROM fix_sb) AS item_id_corrigido,
-  (SELECT COUNT(*)::int FROM orphan) AS racks_uuid_orfao,
+  (SELECT COUNT(*)::int FROM recover_orphan) AS racks_uuid_recuperadas,
   (SELECT COUNT(*)::int FROM dup) AS racks_uuid_duplicado,
   (SELECT COUNT(*)::int FROM bad_catalog) AS racks_batt_id_invalido,
   (SELECT COUNT(*)::int FROM inf_inst) AS racks_inf_carga_inst,

@@ -28,6 +28,7 @@ import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisSta
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
+import { recoverOrphanRackBatteryStorageRows } from './dist/lib/orphanRackBatteryRecovery.js';
 import { ensureStoredBatteriesIntegrity } from './dist/lib/ensureStoredBatteriesIntegrity.js';
 
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
@@ -7002,28 +7003,28 @@ app.get('/api/game-state/:email', async (req, res) => {
     }
 
     if (placedRacks.length > 0) {
-      const storedBatIds = new Set(storedBatteries.map((b) => b.id));
-      const catBatRows = await prisma.upgrades.findMany({
-        where: { type: 'battery' },
-        select: { id: true }
-      });
-      const catalogBatIds = new Set(catBatRows.map((x) => x.id));
-      const orphanRackIds: string[] = [];
-      for (const pr of placedRacks) {
-        const bid = pr.batteryId != null ? String(pr.batteryId).trim() : '';
-        if (!bid) continue;
-        if (storedBatIds.has(bid) || catalogBatIds.has(bid)) continue;
-        orphanRackIds.push(pr.id);
-        pr.batteryId = null;
-        pr.currentCharge = 0;
-        pr.isOn = false;
-      }
-      if (orphanRackIds.length > 0) {
-        await prisma.placed_racks.updateMany({
-          where: { user_id: uid, id: { in: orphanRackIds } },
-          data: { battery_id: null, current_charge: 0, is_on: 0 }
-        });
-        console.warn(`[GameState] Limpou battery_id órfão em ${orphanRackIds.length} rig(s) uid=${uid}`);
+      try {
+        const recovered = await recoverOrphanRackBatteryStorageRows(db, uid, placedRacks);
+        if (recovered.length > 0) {
+          const seen = new Set(storedBatteries.map((b) => b.id));
+          for (const row of recovered) {
+            if (seen.has(row.id)) continue;
+            seen.add(row.id);
+            storedBatteries.push({
+              id: row.id,
+              itemId: row.item_id,
+              currentCharge: row.current_charge
+            });
+          }
+          console.warn(
+            `[GameState] Recuperada(s) ${recovered.length} instância(s) de bateria em armazém (UUID sem linha; carga preservada) uid=${uid}`
+          );
+        }
+      } catch (eRec) {
+        console.error(
+          `[GameState] Falha ao recuperar baterias órfãs uid=${uid}:`,
+          eRec instanceof Error ? eRec.message : String(eRec)
+        );
       }
     }
 
@@ -7158,22 +7159,24 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
     select: { id: true }
   });
   const catalogBatteryIds = new Set(catalogBatteryRows.map((x) => x.id));
-  const storedBatteryInstanceIds = new Set(storedBattCatalogByInstanceId.keys());
-  let coercedOrphanBatteryRacks = 0;
-  for (const r of racks) {
-    if (!r || typeof r !== 'object') continue;
-    const rawBid = (r as Record<string, unknown>).batteryId;
-    if (rawBid == null || String(rawBid).trim() === '') continue;
-    const bid = String(rawBid).trim();
-    if (storedBatteryInstanceIds.has(bid) || catalogBatteryIds.has(bid)) continue;
-    (r as Record<string, unknown>).batteryId = null;
-    (r as Record<string, unknown>).currentCharge = 0;
-    (r as Record<string, unknown>).isOn = false;
-    coercedOrphanBatteryRacks += 1;
-  }
-  if (coercedOrphanBatteryRacks > 0) {
+  try {
+    const recovered = await recoverOrphanRackBatteryStorageRows(dbq, uidNum, racks);
+    if (recovered.length > 0) {
+      console.warn(
+        `[validatePlacedRacksForSave] recuperada(s) ${recovered.length} bateria(s) órfã(s) em stored_batteries user=${userId}`
+      );
+      const sb2 = await dbq.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uidNum]);
+      storedBattCatalogByInstanceId.clear();
+      for (const row of sb2.rows || []) {
+        const iid = String(row.id ?? '').trim();
+        const itemId = String(row.item_id ?? '').trim();
+        if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
+      }
+    }
+  } catch (eRec) {
     console.warn(
-      `[validatePlacedRacksForSave] removidas ${coercedOrphanBatteryRacks} referência(s) órfã(s) de bateria em rigs user=${userId}`
+      '[validatePlacedRacksForSave] recoverOrphanRackBatteryStorageRows:',
+      eRec instanceof Error ? eRec.message : String(eRec)
     );
   }
   const nftRoomIds = await resolveNftAutoArmario1OnlyRoomIds(dbq);
