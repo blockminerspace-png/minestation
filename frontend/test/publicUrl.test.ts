@@ -19,6 +19,11 @@ describe('normalizePublicAssetUrl', () => {
     expect(normalizePublicAssetUrl('/moedas/coin.png')).toBe('/img/moedas/coin.png');
   });
 
+  it('strips ./ and backend/ prefixes', () => {
+    expect(normalizePublicAssetUrl('./miner/gpu.png')).toBe('/img/miner/gpu.png');
+    expect(normalizePublicAssetUrl('backend/img/miner/gpu.png')).toBe('/img/miner/gpu.png');
+  });
+
   it('returns non-image ids unchanged', () => {
     expect(normalizePublicAssetUrl('temp_legacy_1')).toBe('temp_legacy_1');
     expect(normalizePublicAssetUrl('📦')).toBe('📦');

@@ -6,6 +6,7 @@ import pool from '../config/db.js';
 import { prisma } from '../config/prisma.js';
 import { miningRuntimeStats } from '../cron/miningRuntimeStats.js';
 import { getSettingsRecord, getSettingValue } from './settingsPrisma.js';
+import { normalizePublicAssetUrl } from './publicAssetUrl.js';
 
 /** Alinhado com `GAME_NAV_LABEL_KEYS` no frontend (`constants/gameNavLabels.ts`). */
 const GAME_NAV_SHORT_KEYS = [
@@ -26,20 +27,6 @@ const GAME_NAV_SHORT_KEYS = [
 ] as const;
 
 const NAV_PREFIX = 'nav.';
-
-function normalizePublicAssetUrl(u: unknown): string | undefined {
-  if (u == null || typeof u !== 'string') return u as undefined;
-  const s = u.trim();
-  if (!s) return undefined;
-  if (/^data:/i.test(s)) return s;
-  if (/^https?:\/\//i.test(s)) return s;
-  if (s.startsWith('//')) return s;
-  if (s.startsWith('/')) return s;
-  if (/[.](png|jpe?g|gif|webp|ico|svg)(\?|$)/i.test(s) || /^img\//i.test(s)) {
-    return `/${s.replace(/^\/+/, '')}`;
-  }
-  return s;
-}
 
 function settingsFlagEnabled(v: unknown): boolean {
   const s = String(v == null ? '' : v).trim().toLowerCase();
@@ -95,7 +82,7 @@ export async function loadUpgradesForBootstrap(userId: number | undefined): Prom
     nftTokenId: r.nft_token_id ?? undefined,
     maxGlobalStock: r.max_global_stock ?? undefined,
     totalSold: Number((r as { total_sold?: unknown }).total_sold) || 0,
-    image: normalizePublicAssetUrl(r.image) ?? undefined,
+    image: normalizePublicAssetUrl(r.image != null ? String(r.image) : undefined) ?? undefined,
     layout: r.layout
       ? (() => {
           try {

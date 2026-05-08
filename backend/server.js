@@ -22,6 +22,7 @@ import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisSta
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
 import { resolvePlacedRackBatteryCatalogId } from './dist/lib/placedRackBatteryCatalog.js';
+import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
 function roundMiningEconomyField8Decimals(n) {
@@ -2163,26 +2164,6 @@ app.post('/api/admin-upgrades/purchase', async (req, res) => {
         sendInternalErrorShapeOrPrisma(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
     }
 });
-/** Caminhos de imagem relativos sem `/` inicial quebram no SPA; normaliza na API. */
-function normalizePublicAssetUrl(u) {
-    if (u == null || typeof u !== 'string')
-        return u;
-    const s = u.trim();
-    if (!s)
-        return undefined;
-    if (/^data:/i.test(s))
-        return s;
-    if (/^https?:\/\//i.test(s))
-        return s;
-    if (s.startsWith('//'))
-        return s;
-    if (s.startsWith('/'))
-        return s;
-    if (/[.](png|jpe?g|gif|webp|ico|svg)(\?|$)/i.test(s) || /^img\//i.test(s)) {
-        return `/${s.replace(/^\/+/, '')}`;
-    }
-    return s;
-}
 // --- UPGRADES ---
 app.get('/api/upgrades', async (req, res) => {
     try {
@@ -2232,7 +2213,7 @@ app.get('/api/upgrades', async (req, res) => {
             nftTokenId: r.nft_token_id ?? undefined,
             maxGlobalStock: r.max_global_stock ?? undefined,
             totalSold: Number(r.total_sold) || 0,
-            image: normalizePublicAssetUrl(r.image) ?? undefined,
+            image: normalizePublicAssetUrl(r.image != null ? String(r.image) : undefined) ?? undefined,
             layout: r.layout ? (() => { try {
                 return JSON.parse(r.layout);
             }

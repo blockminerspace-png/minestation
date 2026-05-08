@@ -1,11 +1,10 @@
+/**
+ * Alinhado com `frontend/utils/publicUrl.ts`: garante URLs de imagem servidas em `/img/...`
+ * (evita `/miner/...` que o SPA não serve e cai em HTML).
+ */
 const IMG_SUBFOLDER = /^(miner|moedas|carregadores|baterias|favicon|uploads)\//i;
 const IMG_EXT = /\.(png|jpe?g|gif|webp|ico|svg)(\?.*)?$/i;
 
-/**
- * Garante URL utilizável no browser (CSS url() / <img src>).
- * Caminhos sem barra inicial resolvem contra o path atual e quebram em rotas SPA (ex.: /servers).
- * Valores da BD tipo `miner/foo.png` ou `/miner/foo.png` devem ir para `/img/miner/foo.png`.
- */
 export function normalizePublicAssetUrl(src: string | null | undefined): string | undefined {
   if (src == null) return undefined;
   let s = String(src).trim();
