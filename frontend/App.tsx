@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, lazy, Suspense } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, Suspense } from 'react';
 import {
   getGameState as apiGetGameState,
   updateUser as apiUpdateUser,
@@ -46,6 +46,13 @@ import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, Acc
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import { appendUsdcShortfallLine } from './utils/playerMoneyMessages';
 import { trackSpaPageView } from './lib/analytics';
+import {
+  gamePathFromView,
+  gameViewFromEnglishPathname,
+  isEnglishGameSpaPath,
+  PUBLIC_MAINTENANCE_SPA_PATH,
+  type GamePathView
+} from './lib/gamePathRoutes';
 import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
 import { MarketNews } from './components/MarketNews';
@@ -53,28 +60,29 @@ import { RemoteBannerImage } from './components/RemoteBannerImage';
 import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
-import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale, Sparkles, Battery, LifeBuoy, Clapperboard } from 'lucide-react';
+import { lazyWithReload } from './lib/lazyWithReload';
+import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale, Sparkles, Battery, LifeBuoy, Clapperboard, Construction } from 'lucide-react';
 
-const DocsPage = lazy(() => import('./components/DocsPage').then((m) => ({ default: m.DocsPage })));
-const AuthPage = lazy(() => import('./components/AuthPage').then((m) => ({ default: m.AuthPage })));
-const AdminPanel = lazy(() => import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })));
-const ProfilePage = lazy(() => import('./components/ProfilePage').then((m) => ({ default: m.ProfilePage })));
-const TransparencyPage = lazy(() => import('./components/TransparencyPage').then((m) => ({ default: m.TransparencyPage })));
-const ServerRoom = lazy(() => import('./components/ServerRoom').then((m) => ({ default: m.ServerRoom })));
-const PlayerCalculator = lazy(() => import('./components/PlayerCalculator').then((m) => ({ default: m.PlayerCalculator })));
-const WorkshopRoom = lazy(() => import('./components/WorkshopRoom').then((m) => ({ default: m.WorkshopRoom })));
-const InventoryView = lazy(() => import('./components/InventoryView').then((m) => ({ default: m.InventoryView })));
-const UpgradeShop = lazy(() => import('./components/UpgradeShop').then((m) => ({ default: m.UpgradeShop })));
-const LuckyBoxStore = lazy(() => import('./components/LuckyBoxStore').then((m) => ({ default: m.LuckyBoxStore })));
-const RoletaPage = lazy(() => import('./components/RoletaPage').then((m) => ({ default: m.RoletaPage })));
-const SupportPage = lazy(() => import('./components/SupportPage').then((m) => ({ default: m.SupportPage })));
-const PartnersPage = lazy(() => import('./components/PartnersPage').then((m) => ({ default: m.PartnersPage })));
-const BlackMarket = lazy(() => import('./components/BlackMarket').then((m) => ({ default: m.BlackMarket })));
-const Exchange = lazy(() => import('./components/Exchange').then((m) => ({ default: m.Exchange })));
-const WalletActions = lazy(() => import('./components/WalletActions').then((m) => ({ default: m.WalletActions })));
-const UpgradeAccount = lazy(() => import('./components/UpgradeAccount').then((m) => ({ default: m.UpgradeAccount })));
-const AdminRanking = lazy(() => import('./components/AdminRanking').then((m) => ({ default: m.AdminRanking })));
-const RewardLoadingScreen = lazy(() =>
+const DocsPage = lazyWithReload(() => import('./components/DocsPage').then((m) => ({ default: m.DocsPage })));
+const AuthPage = lazyWithReload(() => import('./components/AuthPage').then((m) => ({ default: m.AuthPage })));
+const AdminPanel = lazyWithReload(() => import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel })));
+const ProfilePage = lazyWithReload(() => import('./components/ProfilePage').then((m) => ({ default: m.ProfilePage })));
+const TransparencyPage = lazyWithReload(() => import('./components/TransparencyPage').then((m) => ({ default: m.TransparencyPage })));
+const ServerRoom = lazyWithReload(() => import('./components/ServerRoom').then((m) => ({ default: m.ServerRoom })));
+const PlayerCalculator = lazyWithReload(() => import('./components/PlayerCalculator').then((m) => ({ default: m.PlayerCalculator })));
+const WorkshopRoom = lazyWithReload(() => import('./components/WorkshopRoom').then((m) => ({ default: m.WorkshopRoom })));
+const InventoryView = lazyWithReload(() => import('./components/InventoryView').then((m) => ({ default: m.InventoryView })));
+const UpgradeShop = lazyWithReload(() => import('./components/UpgradeShop').then((m) => ({ default: m.UpgradeShop })));
+const LuckyBoxStore = lazyWithReload(() => import('./components/LuckyBoxStore').then((m) => ({ default: m.LuckyBoxStore })));
+const RoletaPage = lazyWithReload(() => import('./components/RoletaPage').then((m) => ({ default: m.RoletaPage })));
+const SupportPage = lazyWithReload(() => import('./components/SupportPage').then((m) => ({ default: m.SupportPage })));
+const PartnersPage = lazyWithReload(() => import('./components/PartnersPage').then((m) => ({ default: m.PartnersPage })));
+const BlackMarket = lazyWithReload(() => import('./components/BlackMarket').then((m) => ({ default: m.BlackMarket })));
+const Exchange = lazyWithReload(() => import('./components/Exchange').then((m) => ({ default: m.Exchange })));
+const WalletActions = lazyWithReload(() => import('./components/WalletActions').then((m) => ({ default: m.WalletActions })));
+const UpgradeAccount = lazyWithReload(() => import('./components/UpgradeAccount').then((m) => ({ default: m.UpgradeAccount })));
+const AdminRanking = lazyWithReload(() => import('./components/AdminRanking').then((m) => ({ default: m.AdminRanking })));
+const RewardLoadingScreen = lazyWithReload(() =>
   import('./components/RewardLoadingScreen').then((m) => ({ default: m.RewardLoadingScreen }))
 );
 
@@ -264,6 +272,14 @@ function parseSavedGameView(raw: string | null | undefined): View {
 }
 type Theme = 'light' | 'dark';
 
+/** Alinha o save ao domínio da rota canónica (`/servers`, `/inventory`, `/workshop`). */
+function gameSaveDomainFromView(v: View): 'full' | 'inventory' | 'servers' | 'workshop' {
+  if (v === 'servers') return 'servers';
+  if (v === 'inventory') return 'inventory';
+  if (v === 'oficina') return 'workshop';
+  return 'full';
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   /** Admin operador (não super): sem calculadora mining no jogo; Relatórios/Web3 já restringidos no painel. */
@@ -311,6 +327,10 @@ export default function App() {
   } | null>(null);
   const [currentView, setCurrentView] = useState<View>(() => {
     try {
+      if (typeof window !== 'undefined') {
+        const fromPath = gameViewFromEnglishPathname(window.location.pathname);
+        if (fromPath) return fromPath as View;
+      }
       return parseSavedGameView(sessionStorage.getItem('lastView'));
     } catch {
       return 'servers';
@@ -322,14 +342,33 @@ export default function App() {
   const [gameStateLoadError, setGameStateLoadError] = useState<string | null>(null);
   const [gameStateReloadNonce, setGameStateReloadNonce] = useState(0);
 
+  const gameSaveLoadIsAdmin = !!user?.isAdmin;
+  /**
+   * Chave para efeitos de load/save: email preferido; senão `id` da sessão.
+   * Contas com email vazio na BD deixavam `gameSaveLoadKey` vazio → o efeito saía cedo e nunca
+   * chamava GET `/api/game-state/me` → spinner infinito ("Carregando estado…") em `/servers`, etc.
+   */
+  const gameSaveLoadKey = useMemo(() => {
+    const em = user?.email?.trim();
+    if (em) return em;
+    const id = user?.id != null ? String(user.id).trim() : '';
+    if (id) return id;
+    return '';
+  }, [user?.email, user?.id]);
+  /** Rótulo para IDs estáveis na oficina (`ws_*`) quando não há email. */
+  const gameStateProcessLabel = useMemo(
+    () => user?.email?.trim() || user?.username?.trim() || String(user?.id || 'player'),
+    [user?.email, user?.username, user?.id]
+  );
+
   useEffect(() => {
     sessionStorage.setItem('lastView', currentView);
   }, [currentView]);
 
-  /** GA4: enviar `page_view` em cada mudança de vista (SPA sem router de URL). */
+  /** GA4: `page_path` alinhado às rotas em inglês do jogo. */
   useEffect(() => {
     if (globalView === 'game') {
-      trackSpaPageView(`/game/${currentView}`, `Genesis Miner — ${currentView}`);
+      trackSpaPageView(gamePathFromView(currentView as GamePathView), `Genesis Miner — ${currentView}`);
     } else {
       const titles: Record<GlobalView, string> = {
         home: 'Genesis Miner — Início',
@@ -372,6 +411,14 @@ export default function App() {
   const [pendingRewardSummary, setPendingRewardSummary] = useState<{ id: string, name: string, count: number }[]>([]);
   const [marketRefreshTrigger, setMarketRefreshTrigger] = useState(0);
   const [saveTrigger, setSaveTrigger] = useState(0);
+  const currentViewRef = useRef<View>(currentView);
+  const gamePathHydratedRef = useRef(false);
+  const pendingSaveDomainRef = useRef<'full' | 'inventory' | 'servers' | 'workshop'>('full');
+
+  useEffect(() => {
+    currentViewRef.current = currentView;
+  }, [currentView]);
+
   const [verticalAds, setVerticalAds] = useState<SystemNews[]>([]);
   const [bulkBatteryNotice, setBulkBatteryNotice] = useState<{ title: string; message: string } | null>(null);
   const [hardwareShopNotice, setHardwareShopNotice] = useState<UiNotice | null>(null);
@@ -379,23 +426,13 @@ export default function App() {
   /** Passa código à Roleta após resgate em Caixas (consumido pelo `RoletaPage`). */
   const [roletaBootstrap, setRoletaBootstrap] = useState<{ v: number; code: string } | null>(null);
 
-  const openRoletaWithCode = useCallback((code: string) => {
-    const t = String(code || '').trim();
-    if (!t) return;
-    setRoletaBootstrap((prev) => ({ v: (prev?.v ?? 0) + 1, code: t }));
-    setCurrentView('roleta');
-  }, []);
-
-  const clearRoletaBootstrap = useCallback(() => {
-    setRoletaBootstrap(null);
-  }, []);
-
-  const requestSave = useCallback(() => {
-    setSaveTrigger(prev => prev + 1);
+  const requestSave = useCallback((domainOverride?: 'full' | 'inventory' | 'servers' | 'workshop') => {
+    pendingSaveDomainRef.current = domainOverride ?? gameSaveDomainFromView(currentViewRef.current);
+    setSaveTrigger((prev) => prev + 1);
   }, []);
 
   const handleReloadGameState = useCallback(async (newBoxes?: Record<string, number>) => {
-    if (!user?.email) return;
+    if (!user) return;
 
     if (newBoxes) {
       setGameState(p => ({ ...p, unopenedBoxes: newBoxes }));
@@ -404,7 +441,9 @@ export default function App() {
     const [gs, freshUpgrades] = await Promise.all([apiGetGameState('me'), getUpgrades()]);
     const { data } = gs;
     if (data) {
-      const parsed = processLoadedState(data, user.email);
+      const label =
+        user.email?.trim() || user.username?.trim() || String(user.id || 'player');
+      const parsed = processLoadedState(data, label);
       setGameState(parsed);
     }
     if (Array.isArray(freshUpgrades)) {
@@ -415,15 +454,19 @@ export default function App() {
   /** Save completo + retentativas em falhas transitórias (502/522/rede). Usado pelo debounce e pelo auto-save. */
   const runPlayerSaveWithRetries = useCallback(
     async (showAlertOnHardFail: boolean) => {
-      const email = user?.email;
-      if (!email || user.isAdmin) return;
+      const saveKey = user?.email?.trim() || (user?.id != null ? String(user.id) : '');
+      if (!saveKey || user.isAdmin) return;
 
       const transientSaveError = (msg: string) =>
         /502|503|504|522|network|fetch|failed|timeout|econnreset|socket/i.test(String(msg || ''));
 
+      const domain = pendingSaveDomainRef.current;
       for (let attempt = 0; attempt < 3; attempt++) {
-        const res = await apiSaveGameState(email, gameStateRef.current);
+        const res = await apiSaveGameState(saveKey, gameStateRef.current, {
+          domain: domain === 'full' ? undefined : domain
+        });
         if (res && res.forceReload) {
+          pendingSaveDomainRef.current = 'full';
           await handleReloadGameState();
           return;
         }
@@ -437,10 +480,12 @@ export default function App() {
           if (showAlertOnHardFail) {
             alert('Não foi possível guardar: ' + errMsg + '\nA recarregar o estado do servidor.');
           }
+          pendingSaveDomainRef.current = 'full';
           await handleReloadGameState();
           return;
         }
         applyNftAutoSanitizedClientSync(res, gameStateRef, setGameState);
+        pendingSaveDomainRef.current = 'full';
         return;
       }
     },
@@ -449,7 +494,9 @@ export default function App() {
 
   // Structural Save Effect (for user actions)
   useEffect(() => {
-    if (saveTrigger === 0 || !user?.email || user.isAdmin || !saveLoaded) return;
+    const canAutosave =
+      Boolean(user?.email?.trim()) || (user?.id != null && String(user.id).trim() !== '');
+    if (saveTrigger === 0 || !canAutosave || user.isAdmin || !saveLoaded) return;
     const timeout = setTimeout(() => {
       void runPlayerSaveWithRetries(true);
     }, 500); // 500ms debounce
@@ -459,8 +506,9 @@ export default function App() {
   // Save on Before Unload
   useEffect(() => {
     const handleBeforeUnload = () => {
-      if (user?.email && !user.isAdmin && saveLoaded) {
-        apiSaveGameState(user.email, gameStateRef.current, { keepalive: true });
+      const saveKey = user?.email?.trim() || (user?.id != null ? String(user.id) : '');
+      if (saveKey && !user.isAdmin && saveLoaded) {
+        apiSaveGameState(saveKey, gameStateRef.current, { keepalive: true });
       }
     };
     window.addEventListener('beforeunload', handleBeforeUnload);
@@ -511,6 +559,100 @@ export default function App() {
       }
     }
   }, [saveLoaded, user, currentView, accessLevels, economySettings.blackMarketEnabled]);
+
+  /** Cada ecrã do jogo = URL própria no histórico (`pushState`): partilhável e botão «atrás». */
+  const goToGameView = useCallback(
+    (view: View) => {
+      if (typeof window === 'undefined') return;
+      if (globalView !== 'game' || !user) return;
+      const next = gamePathFromView(view as GamePathView);
+      if (window.location.pathname !== next) {
+        window.history.pushState(window.history.state ?? null, '', next);
+      }
+      setCurrentView(view);
+    },
+    [globalView, user]
+  );
+
+  const openRoletaWithCode = useCallback(
+    (code: string) => {
+      const t = String(code || '').trim();
+      if (!t) return;
+      setRoletaBootstrap((prev) => ({ v: (prev?.v ?? 0) + 1, code: t }));
+      goToGameView('roleta');
+    },
+    [goToGameView]
+  );
+
+  const clearRoletaBootstrap = useCallback(() => {
+    setRoletaBootstrap(null);
+  }, []);
+
+  /** Alinha URL ao `currentView` quando o estado muda sem `goToGameView` (ex.: redirect, load). */
+  useEffect(() => {
+    if (globalView !== 'game' || !user) return;
+    const next = gamePathFromView(currentView as GamePathView);
+    if (typeof window !== 'undefined' && window.location.pathname !== next) {
+      window.history.replaceState(null, '', next);
+    }
+  }, [currentView, globalView, user]);
+
+  useEffect(() => {
+    if (globalView === 'game') return;
+    gamePathHydratedRef.current = false;
+    if (typeof window !== 'undefined' && isEnglishGameSpaPath(window.location.pathname)) {
+      window.history.replaceState(null, '', '/');
+    }
+  }, [globalView]);
+
+  useEffect(() => {
+    if (!user) return;
+    const syncFromPath = () => {
+      if (globalView !== 'game' || !saveLoaded) return;
+      const fromUrl = gameViewFromEnglishPathname(window.location.pathname);
+      const allowed = getAllowedPages();
+      const calcOk = !isOperatorAdminOnly;
+      const ok = (v: View) => (v === 'calculator' ? calcOk : allowed.includes(v));
+      if (fromUrl && ok(fromUrl)) {
+        setCurrentView((prev) => (fromUrl !== prev ? fromUrl : prev));
+        return;
+      }
+      if (fromUrl && !ok(fromUrl)) {
+        setCurrentView('servers');
+        if (typeof window !== 'undefined' && window.location.pathname !== gamePathFromView('servers')) {
+          window.history.replaceState(null, '', gamePathFromView('servers'));
+        }
+      }
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('popstate', syncFromPath);
+    }
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('popstate', syncFromPath);
+      }
+    };
+  }, [user, globalView, saveLoaded, accessLevels, economySettings, isOperatorAdminOnly]);
+
+  useEffect(() => {
+    if (!saveLoaded || !user || globalView !== 'game') return;
+    if (gamePathHydratedRef.current) return;
+    gamePathHydratedRef.current = true;
+    const fromUrl = gameViewFromEnglishPathname(window.location.pathname);
+    const allowed = getAllowedPages();
+    const calcOk = !isOperatorAdminOnly;
+    const ok = (v: View) => (v === 'calculator' ? calcOk : allowed.includes(v));
+    if (fromUrl && ok(fromUrl)) {
+      setCurrentView((prev) => (fromUrl !== prev ? fromUrl : prev));
+      return;
+    }
+    if (fromUrl && !ok(fromUrl)) {
+      setCurrentView('servers');
+      if (typeof window !== 'undefined' && window.location.pathname !== gamePathFromView('servers')) {
+        window.history.replaceState(null, '', gamePathFromView('servers'));
+      }
+    }
+  }, [saveLoaded, user, globalView, accessLevels, economySettings, isOperatorAdminOnly]);
 
   const gameNav = useCallback((k: GameNavLabelKey) => {
     const t = gameNavLabels[k];
@@ -726,7 +868,7 @@ export default function App() {
     };
   }, [user, globalView, saveLoaded]);
 
-  // Load Save when User changes (inclui admin: ranking / troféu na header; auto-save continua a ignorar admin)
+  // Load Save when User changes (inclui admin: ranking / troféu na header)
   useEffect(() => {
     if (!user) {
       setGameState(INITIAL_STATE);
@@ -734,6 +876,7 @@ export default function App() {
       setGameStateLoadError(null);
       return;
     }
+    if (!gameSaveLoadKey && !user.isAdmin) return;
 
     let cancelled = false;
     setGameStateLoadError(null);
@@ -743,13 +886,16 @@ export default function App() {
         if (cancelled) return;
         if (data) {
           setOfflineStats((data as any).offlineMined || {});
-          const parsed = processLoadedState(data, user.email);
+          const parsed = processLoadedState(data, gameStateProcessLabel);
           setGameState(parsed);
           setSaveLoaded(true);
           setGameStateLoadError(null);
         } else if (status === 404) {
           setGameState(INITIAL_STATE);
-          await apiSaveGameState(user.email, INITIAL_STATE);
+          const saveKey404 = gameSaveLoadKey || user?.email?.trim() || (user?.id != null ? String(user.id) : '');
+          if (saveKey404) {
+            await apiSaveGameState(saveKey404, INITIAL_STATE, { adminOverride: false });
+          }
           if (!cancelled) {
             setSaveLoaded(true);
             setGameStateLoadError(null);
@@ -774,7 +920,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [user, gameStateReloadNonce]);
+  }, [gameSaveLoadKey, gameSaveLoadIsAdmin, gameStateReloadNonce, gameStateProcessLabel]);
 
   // INTRO PRESENTATION (CMD STYLE)
   // Trigger on every fresh login (session start)
@@ -939,15 +1085,6 @@ export default function App() {
     return () => clearInterval(interval);
   }, [user, gameUpgrades, saveLoaded]);
 
-  // Auto-Save (mesmas retentativas que o save por ação — evita reload em picos 522/502)
-  useEffect(() => {
-    if (!user || user.isAdmin || !saveLoaded) return;
-    const saveInterval = setInterval(() => {
-      if (saveLoaded) void runPlayerSaveWithRetries(false);
-    }, 30000); // Optimized: 30s instead of 5s to reduce network and CPU load
-    return () => clearInterval(saveInterval);
-  }, [user, saveLoaded, runPlayerSaveWithRetries]);
-
   // Atualizações globais (loja / economia / web3) — só com sessão; pausa em separador oculto para menos rede/CPU
   useEffect(() => {
     if (!user) return;
@@ -1099,10 +1236,13 @@ export default function App() {
     }
   }, [user, gameState.usdc, gameUpgrades, handleReloadGameState]);
 
-  const handleSuggestDeposit = useCallback((amount: number) => {
-    setDepositPrefill(amount);
-    setCurrentView('wallet');
-  }, []);
+  const handleSuggestDeposit = useCallback(
+    (amount: number) => {
+      setDepositPrefill(amount);
+      goToGameView('wallet');
+    },
+    [goToGameView]
+  );
 
   const handlePassPurchased = useCallback((seasonId: string, passId: string, newUsdc: number) => {
     setGameState(prev => ({ ...prev, usdc: newUsdc }));
@@ -1119,10 +1259,12 @@ export default function App() {
       return;
     }
     setMarketRefreshTrigger(p => p + 1);
-    if (!user?.email) return;
-    const { data } = await apiGetGameState(user.email);
+    if (!user) return;
+    const { data } = await apiGetGameState('me');
     if (data) {
-      const parsed = processLoadedState(data, user.email);
+      const label =
+        user.email?.trim() || user.username?.trim() || String(user.id || 'player');
+      const parsed = processLoadedState(data, label);
       setGameState(parsed);
     }
   }, [user]);
@@ -2171,7 +2313,13 @@ export default function App() {
     setAdSelection({ wsIdx });
   }, [monetizationSettings, launchApplixir, launchEzoic]);
 
-  const handleReset = () => { if (user && window.confirm("ATENÇÃO: Isso apagará seu save permanentemente.")) { const st = INITIAL_STATE; setGameState(st); requestSave(); } }
+  const handleReset = () => {
+    if (user && window.confirm('ATENÇÃO: Isso apagará seu save permanentemente.')) {
+      const st = INITIAL_STATE;
+      setGameState(st);
+      requestSave('full');
+    }
+  };
 
   const handleWithdrawCoin = useCallback(async (coinId: string, amt: number) => {
     const s = web3SettingsState;
@@ -2220,7 +2368,7 @@ export default function App() {
         return { ...prev, coinBalances: next };
       });
       alert(res.message || "Solicitação de saque enviada com sucesso!");
-      requestSave();
+      requestSave('full');
     } else {
       alert(res.error || "Erro ao solicitar saque.");
     }
@@ -2494,7 +2642,7 @@ export default function App() {
             {user && (
               <div className="flex md:hidden items-center gap-3">
                 {globalView === 'game' && (
-                  <button onClick={() => setCurrentView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={16} /></button>
+                  <button onClick={() => goToGameView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={16} /></button>
                 )}
                 <div className="text-right">
                   <div className="text-[10px] text-slate-500 uppercase">{user.isAdmin ? 'ADMINISTRATOR' : 'Operador'}</div>
@@ -2519,7 +2667,7 @@ export default function App() {
               ) : (
                 <div className="flex items-center gap-4">
                   {globalView === 'game' && (
-                    <button onClick={() => setCurrentView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={18} /></button>
+                    <button onClick={() => goToGameView('profile')} className={`p-2 rounded-lg transition-colors ${currentView === 'profile' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800'}`} title="Meu Perfil"><UserIcon size={18} /></button>
                   )}
                   <div className="text-right">
                     <div className="text-xs text-slate-500 uppercase">{user.isAdmin ? 'ADMINISTRATOR' : 'Operador'}</div>
@@ -2620,37 +2768,37 @@ export default function App() {
               </div>
               {gameMenuOpen && (
                 <div className="max-w-7xl mx-auto md:hidden px-4 pb-3 grid grid-cols-1 gap-2">
-                  {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> {gameNav('servers')}</button>)}
-                  {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'inventory' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Package size={16} /> {gameNav('inventory')}</button>)}
-                  {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> {gameNav('oficina')}</button>)}
-                  {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><ShoppingCart size={16} /> {gameNav('hardware_store')}</button>)}
-                  {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Skull size={16} /> {gameNav('black_market')}</button>)}
-                  {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gamepad2 size={16} /> {gameNav('arcade')}</button>)}
-                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gift size={16} /> {gameNav('lucky_store')}</button>)}
-                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('roleta'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'roleta' ? 'border-rose-500 text-rose-600 dark:text-rose-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Sparkles size={16} /> {gameNav('roleta')}</button>)}
-                  {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wallet size={16} /> {gameNav('wallet')}</button>)}
-                  {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'ranking' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Trophy size={16} /> {gameNav('ranking')}</button>)}
-                  {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Crown size={16} /> {gameNav('upgrade')}</button>)}
-                  {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Scale size={16} /> {gameNav('transparency')}</button>)}
-                  {getAllowedPages().includes('support') && (<button onClick={() => { setCurrentView('support'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><LifeBuoy size={16} /> {gameNav('support')}</button>)}
-                  {getAllowedPages().includes('partners') && (<button onClick={() => { setCurrentView('partners'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Clapperboard size={16} /> {gameNav('partners')}</button>)}
+                  {getAllowedPages().includes('servers') && (<button onClick={() => { goToGameView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> {gameNav('servers')}</button>)}
+                  {getAllowedPages().includes('inventory') && (<button onClick={() => { goToGameView('inventory'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'inventory' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Package size={16} /> {gameNav('inventory')}</button>)}
+                  {getAllowedPages().includes('oficina') && (<button onClick={() => { goToGameView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> {gameNav('oficina')}</button>)}
+                  {getAllowedPages().includes('hardware_store') && (<button onClick={() => { goToGameView('hardware_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><ShoppingCart size={16} /> {gameNav('hardware_store')}</button>)}
+                  {getAllowedPages().includes('black_market') && (<button onClick={() => { goToGameView('black_market'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Skull size={16} /> {gameNav('black_market')}</button>)}
+                  {getAllowedPages().includes('arcade') && (<button onClick={() => { goToGameView('arcade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gamepad2 size={16} /> {gameNav('arcade')}</button>)}
+                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { goToGameView('lucky_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gift size={16} /> {gameNav('lucky_store')}</button>)}
+                  {getAllowedPages().includes('lucky_store') && (<button onClick={() => { goToGameView('roleta'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'roleta' ? 'border-rose-500 text-rose-600 dark:text-rose-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Sparkles size={16} /> {gameNav('roleta')}</button>)}
+                  {getAllowedPages().includes('wallet') && (<button onClick={() => { goToGameView('wallet'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wallet size={16} /> {gameNav('wallet')}</button>)}
+                  {getAllowedPages().includes('ranking') && (<button onClick={() => { goToGameView('ranking'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'ranking' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Trophy size={16} /> {gameNav('ranking')}</button>)}
+                  {getAllowedPages().includes('upgrade') && (<button onClick={() => { goToGameView('upgrade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Crown size={16} /> {gameNav('upgrade')}</button>)}
+                  {getAllowedPages().includes('transparency') && (<button onClick={() => { goToGameView('transparency'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Scale size={16} /> {gameNav('transparency')}</button>)}
+                  {getAllowedPages().includes('support') && (<button onClick={() => { goToGameView('support'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><LifeBuoy size={16} /> {gameNav('support')}</button>)}
+                  {getAllowedPages().includes('partners') && (<button onClick={() => { goToGameView('partners'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Clapperboard size={16} /> {gameNav('partners')}</button>)}
                 </div>
               )}
               <div className="max-w-7xl mx-auto hidden md:flex w-full max-w-full min-w-0 flex-wrap justify-center gap-x-0 gap-y-0.5 px-2 sm:px-3 py-1">
-                {getAllowedPages().includes('servers') && (<button onClick={() => { setCurrentView('servers'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={15} className="shrink-0" /> {gameNav('servers')}</button>)}
-                {getAllowedPages().includes('inventory') && (<button onClick={() => { setCurrentView('inventory'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={15} className="shrink-0" /> {gameNav('inventory')}</button>)}
-                {getAllowedPages().includes('oficina') && (<button onClick={() => { setCurrentView('oficina'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={15} className="shrink-0" /> {gameNav('oficina')}</button>)}
-                {getAllowedPages().includes('hardware_store') && (<button onClick={() => { setCurrentView('hardware_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold tracking-wide normal-case border-b-2 transition-all duration-300 shrink-0 ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><ShoppingCart size={15} className="shrink-0" /> {gameNav('hardware_store')}</button>)}
-                {getAllowedPages().includes('black_market') && (<button onClick={() => { setCurrentView('black_market'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Skull size={15} className="shrink-0" /> {gameNav('black_market')}</button>)}
-                {getAllowedPages().includes('arcade') && (<button onClick={() => { setCurrentView('arcade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gamepad2 size={15} className="shrink-0" /> {gameNav('arcade')}</button>)}
-                {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('lucky_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gift size={15} className="shrink-0" /> {gameNav('lucky_store')}</button>)}
-                {getAllowedPages().includes('lucky_store') && (<button onClick={() => { setCurrentView('roleta'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'roleta' ? 'border-rose-500 text-rose-600 dark:text-rose-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Sparkles size={15} className="shrink-0" /> {gameNav('roleta')}</button>)}
-                {getAllowedPages().includes('wallet') && (<button onClick={() => { setCurrentView('wallet'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={15} className="shrink-0" /> {gameNav('wallet')}</button>)}
-                {getAllowedPages().includes('ranking') && (<button onClick={() => { setCurrentView('ranking'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'ranking' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Trophy size={15} className="shrink-0" /> {gameNav('ranking')}</button>)}
-                {getAllowedPages().includes('upgrade') && (<button onClick={() => { setCurrentView('upgrade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Crown size={15} className="shrink-0" /> {gameNav('upgrade')}</button>)}
-                {getAllowedPages().includes('transparency') && (<button onClick={() => { setCurrentView('transparency'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Scale size={15} className="shrink-0" /> {gameNav('transparency')}</button>)}
-                {getAllowedPages().includes('support') && (<button onClick={() => { setCurrentView('support'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><LifeBuoy size={15} className="shrink-0" /> {gameNav('support')}</button>)}
-                {getAllowedPages().includes('partners') && (<button onClick={() => { setCurrentView('partners'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Clapperboard size={15} className="shrink-0" /> {gameNav('partners')}</button>)}
+                {getAllowedPages().includes('servers') && (<button type="button" onClick={() => { goToGameView('servers'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={15} className="shrink-0" /> {gameNav('servers')}</button>)}
+                {getAllowedPages().includes('inventory') && (<button type="button" onClick={() => { goToGameView('inventory'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={15} className="shrink-0" /> {gameNav('inventory')}</button>)}
+                {getAllowedPages().includes('oficina') && (<button type="button" onClick={() => { goToGameView('oficina'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={15} className="shrink-0" /> {gameNav('oficina')}</button>)}
+                {getAllowedPages().includes('hardware_store') && (<button type="button" onClick={() => { goToGameView('hardware_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold tracking-wide normal-case border-b-2 transition-all duration-300 shrink-0 ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><ShoppingCart size={15} className="shrink-0" /> {gameNav('hardware_store')}</button>)}
+                {getAllowedPages().includes('black_market') && (<button type="button" onClick={() => { goToGameView('black_market'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Skull size={15} className="shrink-0" /> {gameNav('black_market')}</button>)}
+                {getAllowedPages().includes('arcade') && (<button type="button" onClick={() => { goToGameView('arcade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gamepad2 size={15} className="shrink-0" /> {gameNav('arcade')}</button>)}
+                {getAllowedPages().includes('lucky_store') && (<button type="button" onClick={() => { goToGameView('lucky_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gift size={15} className="shrink-0" /> {gameNav('lucky_store')}</button>)}
+                {getAllowedPages().includes('lucky_store') && (<button type="button" onClick={() => { goToGameView('roleta'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'roleta' ? 'border-rose-500 text-rose-600 dark:text-rose-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Sparkles size={15} className="shrink-0" /> {gameNav('roleta')}</button>)}
+                {getAllowedPages().includes('wallet') && (<button type="button" onClick={() => { goToGameView('wallet'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={15} className="shrink-0" /> {gameNav('wallet')}</button>)}
+                {getAllowedPages().includes('ranking') && (<button type="button" onClick={() => { goToGameView('ranking'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'ranking' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Trophy size={15} className="shrink-0" /> {gameNav('ranking')}</button>)}
+                {getAllowedPages().includes('upgrade') && (<button type="button" onClick={() => { goToGameView('upgrade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Crown size={15} className="shrink-0" /> {gameNav('upgrade')}</button>)}
+                {getAllowedPages().includes('transparency') && (<button type="button" onClick={() => { goToGameView('transparency'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Scale size={15} className="shrink-0" /> {gameNav('transparency')}</button>)}
+                {getAllowedPages().includes('support') && (<button type="button" onClick={() => { goToGameView('support'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><LifeBuoy size={15} className="shrink-0" /> {gameNav('support')}</button>)}
+                {getAllowedPages().includes('partners') && (<button type="button" onClick={() => { goToGameView('partners'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Clapperboard size={15} className="shrink-0" /> {gameNav('partners')}</button>)}
               </div>
             </nav>
 
@@ -2712,7 +2860,7 @@ export default function App() {
                     <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
                       <div className="flex-1 flex flex-col">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <ServerRoom {...gameState} onPlaceRack={handlePlaceRack} onRemoveRack={handleRemoveRack} onEquipMiner={handleEquipMiner} onUnequipMiner={handleUnequipMiner} onEquipAux={handleEquipAux} onUnequipAux={handleUnequipAux} onTogglePower={handleTogglePower} onRecharge={handleRecharge} upgrades={gameUpgrades} miningCoins={miningCoins} onSetRackCoin={handleSetRackCoin} onSetRoomRacksCoin={handleSetRoomRacksCoin} onSetRoomRacksBattery={handleSetRoomRacksBattery} userEmail={user?.email} onRoomPurchase={() => handleReloadGameState()} onOpenCalculator={isOperatorAdminOnly ? undefined : () => setCurrentView('calculator')} />
+                          <ServerRoom {...gameState} onPlaceRack={handlePlaceRack} onRemoveRack={handleRemoveRack} onEquipMiner={handleEquipMiner} onUnequipMiner={handleUnequipMiner} onEquipAux={handleEquipAux} onUnequipAux={handleUnequipAux} onTogglePower={handleTogglePower} onRecharge={handleRecharge} upgrades={gameUpgrades} miningCoins={miningCoins} onSetRackCoin={handleSetRackCoin} onSetRoomRacksCoin={handleSetRoomRacksCoin} onSetRoomRacksBattery={handleSetRoomRacksBattery} userEmail={user?.email} onRoomPurchase={() => handleReloadGameState()} onOpenCalculator={isOperatorAdminOnly ? undefined : () => goToGameView('calculator')} />
                         </Suspense>
                       </div>
                       <Footer />
@@ -2722,7 +2870,7 @@ export default function App() {
                   {saveLoaded && currentView === 'calculator' && !isOperatorAdminOnly && (
                     <div className="flex-1 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300">
                       <Suspense fallback={<LazyRouteFallback />}>
-                        <PlayerCalculator gameState={gameState} upgrades={gameUpgrades} miningCoins={miningCoins} onBack={() => setCurrentView('servers')} userEmail={user?.email} isAdmin={user?.isAdmin} />
+                        <PlayerCalculator gameState={gameState} upgrades={gameUpgrades} miningCoins={miningCoins} onBack={() => goToGameView('servers')} userEmail={user?.email} isAdmin={user?.isAdmin} />
                       </Suspense>
                     </div>
                   )}
@@ -2867,7 +3015,7 @@ export default function App() {
                     <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
                       <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <SupportPage userEmail={user?.email} onClose={() => setCurrentView('servers')} />
+                          <SupportPage userEmail={user?.email} onClose={() => goToGameView('servers')} />
                         </Suspense>
                       </div>
                       <Footer />

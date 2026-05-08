@@ -1515,10 +1515,12 @@ export async function postServerRoomRoomCoins(
 /** fetch + keepalive: corpos grandes falham no browser (~64 KiB). */
 const SAVE_GAME_KEEPALIVE_MAX_BYTES = 61440;
 
+export type GameSaveDomainHeader = 'inventory' | 'servers' | 'workshop';
+
 export async function saveGameState(
   email: string,
   state: Partial<GameState>,
-  options: { adminOverride?: boolean; keepalive?: boolean } = {}
+  options: { adminOverride?: boolean; keepalive?: boolean; domain?: GameSaveDomainHeader } = {}
 ): Promise<{
   ok: boolean;
   forceReload?: boolean;
@@ -1530,17 +1532,34 @@ export async function saveGameState(
   storedBatteries?: StoredBattery[];
 }> {
   // email is now redundant but kept in signature for compatibility
-  const payload = {
-    changes: { ...state, lastLoadTime: globalLastLoadTime },
-    adminOverride: options.adminOverride,
-    targetEmail: email
-  };
+  const domain = options.domain;
+  let url = `${base}/save-game`;
+  let payload: Record<string, unknown>;
+  if (domain === 'inventory') {
+    url = `${base}/game/save-inventory`;
+    payload = { lastLoadTime: globalLastLoadTime };
+    if (state.stock != null) payload.stock = state.stock;
+    if (state.storedBatteries != null) payload.storedBatteries = state.storedBatteries;
+  } else if (domain === 'servers') {
+    url = `${base}/game/save-servers`;
+    payload = { lastLoadTime: globalLastLoadTime, placedRacks: state.placedRacks };
+  } else if (domain === 'workshop') {
+    url = `${base}/game/save-workshop`;
+    payload = { lastLoadTime: globalLastLoadTime, workshopSlots: state.workshopSlots };
+  } else {
+    payload = {
+      changes: { ...state, lastLoadTime: globalLastLoadTime },
+      adminOverride: options.adminOverride,
+      targetEmail: email
+    };
+  }
   try {
     const body = JSON.stringify(payload);
     const useKeepalive = !!options.keepalive && body.length < SAVE_GAME_KEEPALIVE_MAX_BYTES;
-    const res = await apiFetch(`${base}/save-game`, {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    const res = await apiFetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body,
       ...(useKeepalive ? { keepalive: true as const } : {})
     });

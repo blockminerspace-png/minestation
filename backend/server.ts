@@ -114,6 +114,7 @@ import {
   loadUpgradesWithCompat,
   persistStockStoredBatteriesPlacedRacks
 } from './dist/lib/serverRoomPersistence.js';
+import { mergeSaveGameSlicePayload } from './dist/lib/gameSaveSliceMerge.js';
 import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
@@ -1340,7 +1341,8 @@ app.use(cors({
     // [] = origem negada com resposta preflight válida (evita callback(Error) → next(err) sem cabeçalhos CORS).
     return callback(null, []);
   },
-  credentials: true
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Edit', 'X-Game-Save-Domain']
 }));
 
 const parseRateLimit = (raw, fallback, min, max) => {
@@ -7178,7 +7180,7 @@ async function validatePlacedRacksForSave(dbq, racks) {
   return { ok: true };
 }
 
-app.post('/api/save-game', async (req, res) => {
+async function handleSaveGamePost(req, res) {
   const { changes, adminOverride, targetEmail } = req.body;
   if (!req.userId || !changes) return res.status(400).json({ error: 'Missing fields' });
   try {
@@ -7220,6 +7222,33 @@ app.post('/api/save-game', async (req, res) => {
 
         // LOCK ORDER FIX: Always lock the primary user record first to avoid deadlocks
         await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
+
+        const saveDomainRaw = String(req.headers['x-game-save-domain'] || '')
+          .trim()
+          .toLowerCase();
+        const saveDomain: '' | 'inventory' | 'servers' | 'workshop' =
+          saveDomainRaw === 'inventory' || saveDomainRaw === 'servers' || saveDomainRaw === 'workshop'
+            ? (saveDomainRaw as 'inventory' | 'servers' | 'workshop')
+            : '';
+        if (saveDomain) {
+          if (effectiveAdminOverride) {
+            throw new HttpControlledError(400, {
+              error: 'Gravação por domínio (X-Game-Save-Domain) não combina com adminOverride.'
+            });
+          }
+          if (saveDomain === 'inventory' && changes.stock == null && changes.storedBatteries == null) {
+            throw new HttpControlledError(400, {
+              error: 'Domínio inventory: envie stock e/ou storedBatteries no corpo.'
+            });
+          }
+          if (saveDomain === 'servers' && changes.placedRacks == null) {
+            throw new HttpControlledError(400, { error: 'Domínio servers: envie placedRacks.' });
+          }
+          if (saveDomain === 'workshop' && changes.workshopSlots == null) {
+            throw new HttpControlledError(400, { error: 'Domínio workshop: envie workshopSlots.' });
+          }
+          await mergeSaveGameSlicePayload(client, Number(uid), saveDomain, changes as Record<string, unknown>);
+        }
 
         // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
         // listagem P2P) cannot be overwritten by a save whose optimistic check ran before
@@ -7823,6 +7852,63 @@ app.post('/api/save-game', async (req, res) => {
     console.error('[SaveGame] CRITICAL ERROR:', e);
     sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
   }
+}
+
+app.post('/api/save-game', handleSaveGamePost);
+
+/** Gravação só de estoque + baterias no armazém (mesma transação que /api/save-game + merge na BD). */
+app.post('/api/game/save-inventory', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+  const b = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+  const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? (b.changes as Record<string, unknown>) : null;
+  const stock = nested != null ? nested.stock : b.stock;
+  const storedBatteries = nested != null ? nested.storedBatteries : b.storedBatteries;
+  const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
+  if (stock === undefined && storedBatteries === undefined) {
+    return res.status(400).json({ error: 'Envie stock e/ou storedBatteries (corpo plano ou changes).' });
+  }
+  (req.headers as Record<string, string | undefined>)['x-game-save-domain'] = 'inventory';
+  req.body = {
+    changes: { lastLoadTime, stock, storedBatteries },
+    adminOverride: false
+  };
+  return handleSaveGamePost(req, res);
+});
+
+/** Gravação só de rigs/salas (placed_racks + slots). */
+app.post('/api/game/save-servers', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+  const b = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+  const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? (b.changes as Record<string, unknown>) : null;
+  const placedRacks = nested != null ? nested.placedRacks : b.placedRacks;
+  const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
+  if (placedRacks == null) {
+    return res.status(400).json({ error: 'Envie placedRacks (corpo plano ou changes).' });
+  }
+  (req.headers as Record<string, string | undefined>)['x-game-save-domain'] = 'servers';
+  req.body = {
+    changes: { lastLoadTime, placedRacks },
+    adminOverride: false
+  };
+  return handleSaveGamePost(req, res);
+});
+
+/** Gravação só da oficina (workshop_slots). */
+app.post('/api/game/save-workshop', async (req, res) => {
+  if (!req.userId) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+  const b = req.body && typeof req.body === 'object' ? (req.body as Record<string, unknown>) : {};
+  const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? (b.changes as Record<string, unknown>) : null;
+  const workshopSlots = nested != null ? nested.workshopSlots : b.workshopSlots;
+  const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
+  if (workshopSlots == null) {
+    return res.status(400).json({ error: 'Envie workshopSlots (corpo plano ou changes).' });
+  }
+  (req.headers as Record<string, string | undefined>)['x-game-save-domain'] = 'workshop';
+  req.body = {
+    changes: { lastLoadTime, workshopSlots },
+    adminOverride: false
+  };
+  return handleSaveGamePost(req, res);
 });
 
 // --- BACKUP SETTINGS API ---
