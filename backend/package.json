@@ -8,7 +8,7 @@
     "dev": "prisma generate && npm run build:server && node server.js",
     "build:cron": "tsc -p tsconfig.cron.json",
     "build:ts": "tsc -p tsconfig.json",
-    "build:server": "npm run build:ts && tsc -p tsconfig.server.json",
+    "build:server": "npm run build:ts && npm run build:cron && tsc -p tsconfig.server.json",
     "build:app": "prisma generate && rm -rf dist/cron 2>/dev/null && npm run build:cron && npm run build:server && mkdir -p dist/lib && cp lib/miningLivePrices.js dist/lib/miningLivePrices.js",
     "prestart": "npm run build:app",
     "start": "node server.js",
