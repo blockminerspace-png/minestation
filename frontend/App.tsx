@@ -57,7 +57,6 @@ import {
 } from './lib/gamePathRoutes';
 import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
-import { MarketNews } from './components/MarketNews';
 import { RemoteBannerImage } from './components/RemoteBannerImage';
 import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
 import { HomePage } from './components/HomePage';
@@ -2623,7 +2622,6 @@ export default function App() {
               </aside>
 
               <div className="flex-1 min-w-0 overflow-hidden relative max-w-7xl w-full flex flex-col min-h-0">
-                <div className="shrink-0 z-20"><MarketNews /></div>
                 <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar relative min-h-0 flex flex-col font-mono">
                   {!saveLoaded && gameStateLoadError && (
                     <div className="flex min-h-[40vh] w-full flex-col items-center justify-center gap-4 bg-slate-900/80 text-slate-200 font-mono rounded-xl border border-red-900/30 px-6 py-8 text-center">
