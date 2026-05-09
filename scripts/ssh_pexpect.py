@@ -5,6 +5,7 @@ Variáveis de ambiente: SSH_HOST, SSH_USER, SSH_PORT, SSH_PASSWORD
 Argumentos: pass-through para `ssh` após user@host (ex.: bash -lc '...').
 """
 import os
+import shlex
 import sys
 
 import pexpect
@@ -28,8 +29,10 @@ opts = [
     "-o",
     "StrictHostKeyChecking=accept-new",
 ]
+# Um único argumento remoto (aspas corretas); vários argv sem isto viram `bash -lc set -euo...` partido no servidor.
 remote_argv = sys.argv[1:]
-cmd = ["ssh"] + opts + [f"{USER}@{HOST}"] + remote_argv
+remote_cmd = shlex.join(remote_argv) if remote_argv else "true"
+cmd = ["ssh"] + opts + [f"{USER}@{HOST}", remote_cmd]
 
 child = pexpect.spawn(cmd[0], cmd[1:], encoding="utf-8", timeout=120)
 child.logfile_read = sys.stderr

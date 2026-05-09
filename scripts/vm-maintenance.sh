@@ -96,8 +96,9 @@ if [[ ! -f "$ROOT/backend/scripts/ensure_stored_batteries_integrity.sql" ]]; the
   echo "Falta $ROOT/backend/scripts/ensure_stored_batteries_integrity.sql" >&2
   exit 1
 fi
-remote docker exec -i "$PG_CONTAINER" psql -U postgres -d "$PG_DATABASE" -v ON_ERROR_STOP=1 \
-  <"$ROOT/backend/scripts/ensure_stored_batteries_integrity.sql"
+# Sem stdin local para o SSH (pexpect/pty não encaminha `< ficheiro`); envia SQL por base64.
+SQL_INTEGRITY_B64="$(base64 -w0 <"$ROOT/backend/scripts/ensure_stored_batteries_integrity.sql")"
+remote bash --noprofile --norc -lc "echo $(printf '%q' "$SQL_INTEGRITY_B64") | base64 -d | docker exec -i $(printf '%q' "$PG_CONTAINER") psql -U postgres -d $(printf '%q' "$PG_DATABASE") -v ON_ERROR_STOP=1"
 
 echo "[vm-maintenance] Node: rewrite-img-paths-after-reorg.mjs"
 remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/rewrite-img-paths-after-reorg.mjs'"
