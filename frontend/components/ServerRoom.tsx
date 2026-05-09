@@ -423,20 +423,19 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
             return;
         }
         if (type === 'battery') {
-            const fb = upgrades.find((u) => u.type === 'battery');
-            if (fb) {
-                setDetailContext({
-                    rackId,
-                    slotIndex: slotIndex ?? null,
-                    type: 'battery',
-                    item: {
-                        ...fb,
-                        id: String(currentItemId),
-                        name: `${fb.name} (referência em reparo)`,
-                        description:
-                            'A ligação ao catálogo desta bateria está incompleta; podes remover para o armazém. O servidor repara o tipo ao gravar ou na rotina de integridade.'
-                    } as Upgrade
-                });
+            const rack = placedRacks.find((r) => r.id === rackId);
+            const catFromRack =
+                rack != null
+                    ? resolvePlacedRackBatteryCatalogId(
+                          rack,
+                          storedBatteries,
+                          upgrades,
+                          batteryCatalogHints
+                      )
+                    : null;
+            const fromCat = catFromRack ? upgrades.find((u) => u.id === catFromRack && u.type === 'battery') : undefined;
+            if (fromCat) {
+                setDetailContext({ rackId, slotIndex: slotIndex ?? null, type: 'battery', item: fromCat });
                 return;
             }
             setDetailContext({
