@@ -45,6 +45,7 @@ VM_DEPLOY="${VM_DEPLOY:-1}"
 
 SSH_BASE=( -p "$SSH_PORT" -o ConnectTimeout=25 -o ServerAliveInterval=15 -o StrictHostKeyChecking=accept-new )
 
+# bash --noprofile --norc: em alguns servidores o .bashrc do root redefine `cd` / cwd e quebra `cd ... && docker compose`.
 remote() {
   if [[ -n "${SSH_PASSWORD:-}" ]] && command -v sshpass >/dev/null 2>&1; then
     SSHPASS="$SSH_PASSWORD" sshpass -e ssh "${SSH_BASE[@]}" \
@@ -58,7 +59,7 @@ remote() {
 
 if [[ -z "${REMOTE_REPO_DIR}" ]]; then
   REMOTE_REPO_DIR="$(
-    remote bash -lc 'for d in /root/minestation/app_production /root/app_production /root/minestation; do
+    remote bash --noprofile --norc -lc 'for d in /root/minestation/app_production /root/app_production /root/minestation; do
       [[ -f "$d/docker-compose.yml" ]] && echo "$d" && exit 0; done; exit 1' || true
   )"
 fi
@@ -68,7 +69,7 @@ fi
 
 if [[ -z "${PG_CONTAINER}" ]]; then
   PG_CONTAINER="$(
-    remote bash -lc "docker ps --format '{{.Names}}' | grep -iE '^postgres_app\$|^app-postgres\$' | head -1" || true
+    remote bash --noprofile --norc -lc "docker ps --format '{{.Names}}' | grep -iE '^postgres_app\$|^app-postgres\$' | head -1" || true
   )"
 fi
 if [[ -z "${PG_CONTAINER}" ]]; then
@@ -82,7 +83,7 @@ fi
 
 if [[ "$VM_DEPLOY" == "1" ]]; then
   echo "[vm-maintenance] deploy: git pull + docker compose up -d --build"
-  remote bash -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); git pull --ff-only || git pull; docker compose up -d --build"
+  remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); git pull --ff-only || git pull; docker compose up -d --build"
 else
   echo "[vm-maintenance] deploy omitido (VM_DEPLOY=0)"
 fi
@@ -96,12 +97,12 @@ remote docker exec -i "$PG_CONTAINER" psql -U postgres -d "$PG_DATABASE" -v ON_E
   <"$ROOT/backend/scripts/ensure_stored_batteries_integrity.sql"
 
 echo "[vm-maintenance] Node: rewrite-img-paths-after-reorg.mjs"
-remote bash -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/rewrite-img-paths-after-reorg.mjs'"
+remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/rewrite-img-paths-after-reorg.mjs'"
 
 echo "[vm-maintenance] Node: repair-infra-rack-images.mjs"
-remote bash -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/repair-infra-rack-images.mjs'"
+remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/repair-infra-rack-images.mjs'"
 
 echo "[vm-maintenance] Node: normalize-db-public-asset-urls.mjs"
-remote bash -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/normalize-db-public-asset-urls.mjs'"
+remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/normalize-db-public-asset-urls.mjs'"
 
 echo "[vm-maintenance] concluído."
