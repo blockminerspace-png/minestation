@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { resolvePlacedRackBatteryCatalogId } from '../lib/placedRackBatteryCatalog.js';
+import { resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeForLog } from '../lib/safeText.js';
 import { miningRuntimeStats } from './miningRuntimeStats.js';

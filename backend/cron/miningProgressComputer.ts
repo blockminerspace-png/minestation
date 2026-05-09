@@ -3,7 +3,7 @@ import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
 import { miningCreditCapNowMs } from './miningWallClockGrid.js';
-import { resolvePlacedRackBatteryCatalogId } from '../lib/placedRackBatteryCatalog.js';
+import { resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 import {
   readWorkshopBatterySlotField,
   workshopBatteryStorageKeyAtLayoutIndex

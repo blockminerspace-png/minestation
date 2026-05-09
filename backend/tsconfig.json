@@ -19,6 +19,7 @@
     "validation/**/*.ts",
     "src/auth/**/*.ts",
     "lib/**/*.ts",
+    "modules/**/*.ts",
     "utils/**/*.ts",
     "workers/**/*.ts",
     "cron/**/*.ts",

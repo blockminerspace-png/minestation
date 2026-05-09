@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Correção one-off / operação: stored_batteries.item_id + racks órfãos / UUID duplicado em racks.
- * Requer `dist/lib/ensureStoredBatteriesIntegrity.js` — use `npm run db:ensure-stored-batteries`.
+ * Requer `dist/modules/batteries/batteries.integrity.js` — use `npm run db:ensure-stored-batteries`.
  */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +11,7 @@ import pg from 'pg';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.join(__dirname, '../../.env') });
 dotenv.config({ path: path.join(__dirname, '../.env') });
-import { ensureStoredBatteriesIntegrity } from '../dist/lib/ensureStoredBatteriesIntegrity.js';
+import { ensureStoredBatteriesIntegrity } from '../dist/modules/batteries/batteries.integrity.js';
 
 const { Pool } = pg;
 

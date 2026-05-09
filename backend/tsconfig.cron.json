@@ -12,6 +12,7 @@
   },
   "include": [
     "cron/**/*.ts",
+    "modules/batteries/batteries.catalog.ts",
     "lib/miningLivePrices.d.ts",
     "lib/safeText.ts",
     "lib/stack/**/*.ts",

@@ -1,5 +1,5 @@
 import { prisma } from '../config/db.js';
-import { resolvePlacedRackBatteryCatalogId } from './placedRackBatteryCatalog.js';
+import { resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 type CoinLite = { id: string; name: string; symbol: string };
 

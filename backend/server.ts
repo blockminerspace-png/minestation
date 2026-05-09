@@ -28,8 +28,8 @@ import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisSta
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
 import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './lib/miningLivePrices.js';
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
-import { recoverOrphanRackBatteryStorageRows } from './dist/lib/orphanRackBatteryRecovery.js';
-import { ensureStoredBatteriesIntegrity } from './dist/lib/ensureStoredBatteriesIntegrity.js';
+import { recoverOrphanRackBatteryStorageRows } from './dist/modules/batteries/batteries.recovery.js';
+import { ensureStoredBatteriesIntegrity } from './dist/modules/batteries/batteries.integrity.js';
 
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
@@ -113,7 +113,12 @@ import {
   newAdminUsdcGiftReferralIdempotencyKey
 } from './dist/models/referralCommissionModel.js';
 import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemController.js';
-import { runBulkRoomBattery, isValidRoomId } from './dist/lib/roomBatteryBulk.js';
+import {
+  isValidRoomId,
+  normalizePlacedRackRoomId
+} from './dist/modules/batteries/batteries.validation.js';
+import { returnRackBatteryToChangesOnNftSanitize } from './dist/modules/batteries/batteries.service.js';
+import { registerBatteriesServerRoomRoutes } from './dist/modules/batteries/batteries.controller.js';
 import {
   loadUserStock,
   loadUserStoredBatteries,
@@ -129,7 +134,7 @@ import {
   loadStoredBatteryRowsForIds,
   type PrevPlacedRackBattRow,
   type StoredBatteryRowSnap
-} from './dist/lib/batteryPersistHelpers.js';
+} from './dist/modules/batteries/batteries.repository.js';
 import { mergeSaveGameSlicePayload } from './dist/lib/gameSaveSliceMerge.js';
 import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
@@ -3995,13 +4000,6 @@ app.post('/api/access-levels', isAdmin, async (req, res) => {
   } finally { client.release(); }
 });
 
-// Alinha com a sala inicial do admin (`room_initial`). Saves antigos usavam NULL / '' / 'main'.
-const normalizePlacedRackRoomId = (raw) => {
-  const s = raw != null ? String(raw).trim() : '';
-  if (!s || s === 'main') return 'room_initial';
-  return s;
-};
-
 /** Sala canónica em rig_rooms — só chassis Rack H1 NFT Collection (`armario_1`). */
 const NFT_AUTO_ROOM_ID = 'room_1775484506874';
 const NFT_AUTO_ALLOWED_CHASSIS_ID = 'armario_1';
@@ -4037,76 +4035,6 @@ async function resolveNftAutoArmario1OnlyRoomIds(q) {
   }
   ids.add(NFT_AUTO_ROOM_ID);
   return ids;
-}
-
-async function ensureStoredBatteriesArrayFromDb(client, uid, changes) {
-  if (Array.isArray(changes.storedBatteries)) return;
-  const ext = await client.query(
-    'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1',
-    [uid]
-  );
-  changes.storedBatteries = ext.rows.map((r) => ({
-    id: r.id,
-    itemId: r.item_id,
-    currentCharge: Number(r.current_charge) || 0,
-    powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
-    displayName: r.display_name != null ? String(r.display_name) : null,
-    imageUrl: r.image_url != null ? String(r.image_url) : null,
-    workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
-    workshopComponentSlotId: r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
-  }));
-}
-
-async function returnRackBatteryToChangesOnNftSanitize(client, uid, rack, stock, changes) {
-  const bid = rack.batteryId;
-  if (bid == null || String(bid).trim() === '') return;
-  const s = String(bid).trim();
-  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
-  if (isUuid) {
-    const br = await client.query(
-      'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE id = $1 AND user_id = $2',
-      [s, uid]
-    );
-    if (br.rows[0]) {
-      await ensureStoredBatteriesArrayFromDb(client, uid, changes);
-      if (!changes.storedBatteries.some((x) => x.id === br.rows[0].id)) {
-        const row0 = br.rows[0];
-        changes.storedBatteries.push({
-          id: row0.id,
-          itemId: row0.item_id,
-          currentCharge: Number(row0.current_charge) || 0,
-          powerCapacityWh: row0.power_capacity_wh != null ? Number(row0.power_capacity_wh) : null,
-          displayName: row0.display_name != null ? String(row0.display_name) : null,
-          imageUrl: row0.image_url != null ? String(row0.image_url) : null,
-          workshopSlotIndex: row0.workshop_slot_index != null ? Number(row0.workshop_slot_index) : null,
-          workshopComponentSlotId:
-            row0.workshop_component_slot_id != null ? String(row0.workshop_component_slot_id) : null
-        });
-      }
-      return;
-    }
-  }
-  const u = await client.query('SELECT type, power_capacity FROM upgrades WHERE id = $1', [s]);
-  const row = u.rows[0];
-  if (row && row.type === 'battery') {
-    const capRaw = row.power_capacity;
-    const cap = capRaw === null || capRaw === undefined ? null : Number(capRaw);
-    const charge = Number(rack.currentCharge) || 0;
-    const isInf = cap === -1;
-    const isFull = isInf || (typeof cap === 'number' && cap > 0 && charge >= cap * 0.999);
-    if (isFull) {
-      stock[s] = Math.floor((Number(stock[s]) || 0) + 1);
-    } else {
-      await ensureStoredBatteriesArrayFromDb(client, uid, changes);
-      changes.storedBatteries.push({
-        id: crypto.randomUUID(),
-        itemId: s,
-        currentCharge: charge
-      });
-    }
-    return;
-  }
-  stock[s] = Math.floor((Number(stock[s]) || 0) + 1);
 }
 
 /**
@@ -4171,111 +4099,6 @@ async function sanitizePlacedRacksNftAutoRoom(client, uid, changes, saveActivity
 }
 
 // --- SERVER ROOM (Servidores: lógica autoritária no servidor) ---
-app.post('/api/server-room/bulk-batteries', async (req, res) => {
-  if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-  const uid = req.userId;
-  const body = req.body || {};
-  const roomNorm = normalizePlacedRackRoomId(body.roomId);
-  if (!isValidRoomId(roomNorm)) return res.status(400).json({ error: 'Sala inválida.' });
-  const batteryUpgradeId = body.batteryUpgradeId != null ? String(body.batteryUpgradeId) : '';
-  const runOpts = { smartFill: body.smartFill, rigSort: body.rigSort };
-
-  const client = await db.connect();
-  const saveActivityLogs = [];
-  try {
-    await client.query('BEGIN');
-    await client.query("SET statement_timeout = '20s'");
-    await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
-
-    const [stock, storedBatteries, placedRacks, upgrades] = await Promise.all([
-      loadUserStock(client, uid),
-      loadUserStoredBatteries(client, uid),
-      loadUserPlacedRacksWithSlots(client, uid),
-      loadUpgradesWithCompat(client)
-    ]);
-
-    const prev = { stock, storedBatteries, placedRacks };
-    const prevForBulk = {
-      stock: { ...prev.stock },
-      storedBatteries: [...prev.storedBatteries],
-      placedRacks: prev.placedRacks.map((r) => ({
-        ...r,
-        slots: [...(r.slots || [])],
-        multiplierSlots: [...(r.multiplierSlots || [])]
-      }))
-    };
-    await sanitizePlacedRacksNftAutoRoom(client, uid, prevForBulk, saveActivityLogs);
-    const out = runBulkRoomBattery(prevForBulk, roomNorm, batteryUpgradeId, upgrades, runOpts);
-    if (!out.ok) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: out.message });
-    }
-
-    const rackVal = await validatePlacedRacksForSave(client, out.next.placedRacks, uid);
-    if (!rackVal.ok) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: rackVal.error });
-    }
-
-    await persistStockStoredBatteriesPlacedRacks(
-      client,
-      uid,
-      {
-        stock: out.next.stock,
-        storedBatteries: out.next.storedBatteries,
-        placedRacks: out.next.placedRacks
-      },
-      saveActivityLogs
-    );
-
-    const finalServerUpdatedAt = Date.now();
-    await client.query(
-      `UPDATE game_states SET last_updated_at = $1, server_updated_at = $2 WHERE user_id = $3`,
-      [finalServerUpdatedAt, finalServerUpdatedAt, uid]
-    );
-    await client.query('COMMIT');
-
-    for (const ev of saveActivityLogs) {
-      await appendGameActivityLog(db, uid, ev.action, ev.meta);
-    }
-    const smart = !!out.smartFill;
-    let activityAction = 'room_battery_remove_all';
-    if (smart) activityAction = 'room_battery_smart';
-    else if (batteryUpgradeId) activityAction = 'room_battery_bulk_equip';
-    const rigSort = runOpts?.rigSort === 'hashrate_desc' ? 'hashrate_desc' : 'slot_asc';
-    await appendGameActivityLog(db, uid, activityAction, {
-      roomId: roomNorm,
-      batteryUpgradeId: smart ? '' : batteryUpgradeId,
-      smartFill: smart,
-      rigSort,
-      appliedRigs: out.appliedRigs,
-      compatibleRigs: out.compatibleRigs,
-      ok: true,
-      source: 'server_room_api'
-    });
-
-    res.json({
-      ok: true,
-      serverUpdatedAt: finalServerUpdatedAt,
-      stock: out.next.stock,
-      storedBatteries: out.next.storedBatteries,
-      placedRacks: out.next.placedRacks,
-      appliedRigs: out.appliedRigs,
-      compatibleRigs: out.compatibleRigs,
-      smartFill: smart
-    });
-  } catch (e) {
-    await client.query('ROLLBACK');
-    if (e instanceof StoredBatterySaveGuardError) {
-      return res.status(409).json({ error: e.message, forceReload: true });
-    }
-    console.error('[server-room/bulk-batteries]', e);
-    sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro interno.');
-  } finally {
-    client.release();
-  }
-});
-
 app.post('/api/server-room/room-coins', async (req, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
   const uid = req.userId;
@@ -9679,6 +9502,13 @@ const startServer = async () => {
   } catch (e) {
     console.error('[DB] Failed to initialize PostgreSQL:', e);
   }
+
+  registerBatteriesServerRoomRoutes(app, {
+    db,
+    appendGameActivityLog,
+    validatePlacedRacksForSave,
+    sanitizePlacedRacksNftAutoRoom
+  });
 
   // Pedidos `/img/*` não servidos pelo static acima não devem cair no SPA (HTML 200 quebra <img> / fundos CSS).
   app.use((req, res, next) => {

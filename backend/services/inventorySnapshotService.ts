@@ -2,7 +2,7 @@ import { prisma } from '../config/prisma.js';
 import {
   isStoredBatteryFullyCharged,
   type UpgradeBatteryCapacityRow
-} from '../lib/batteryChargeClassification.js';
+} from '../modules/batteries/batteries.charge.js';
 
 export type InventoryStoredBatteryDto = {
   id: string;

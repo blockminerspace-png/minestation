@@ -1,5 +1,5 @@
 /**
- * Regras alinhadas a `roomBatteryBulk` / racks: bateria "cheia" no armazém =
+ * Regras alinhadas a bulk de sala / racks: bateria "cheia" no armazém =
  * capacidade infinita (`power_capacity === -1`) OU carga ≥ 99,9% da capacidade nominal.
  */
 

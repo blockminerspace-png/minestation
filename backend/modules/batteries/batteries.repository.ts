@@ -156,3 +156,46 @@ export function buildRackBatteryPersistSnapshot(
     imageUrl: img
   };
 }
+
+export async function loadUserStoredBatteries(
+  client: PoolClient,
+  uid: number | string
+): Promise<
+  Array<{
+    id: string;
+    itemId: string;
+    currentCharge: number;
+    powerCapacityWh?: number | null;
+    displayName?: string | null;
+    imageUrl?: string | null;
+    workshopSlotIndex?: number | null;
+    workshopComponentSlotId?: string | null;
+  }>
+> {
+  const batRes = await client.query(
+    'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1',
+    [uid]
+  );
+  return batRes.rows.map(
+    (r: {
+      id: string;
+      item_id: string;
+      current_charge: number;
+      power_capacity_wh: number | null;
+      display_name: string | null;
+      image_url: string | null;
+      workshop_slot_index: number | null;
+      workshop_component_slot_id: string | null;
+    }) => ({
+      id: r.id,
+      itemId: r.item_id,
+      currentCharge: r.current_charge,
+      powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
+      displayName: r.display_name != null ? String(r.display_name) : null,
+      imageUrl: r.image_url != null ? String(r.image_url) : null,
+      workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
+      workshopComponentSlotId:
+        r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
+    })
+  );
+}

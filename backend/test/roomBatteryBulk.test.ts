@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyBulkRoomBatteryChange, type BulkBatteryPrev, type GameUpgrade } from '../lib/roomBatteryBulk.js';
+import { applyBulkRoomBatteryChange, type BulkBatteryPrev, type GameUpgrade } from '../modules/batteries/batteries.bulk.js';
 
 const upgrades: GameUpgrade[] = [
   {

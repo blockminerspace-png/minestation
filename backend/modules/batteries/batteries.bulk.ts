@@ -3,15 +3,17 @@
  * Keep in sync when changing game rules.
  */
 import crypto from 'node:crypto';
-import { STORED_BATTERY_CATALOG_PENDING_ID } from './saveGameEconomyValidate.js';
+import { STORED_BATTERY_CATALOG_PENDING_ID } from './batteries.constants.js';
+import { isRackBatteryInstanceUuid } from './batteries.repository.js';
+import {
+  isValidBatteryRigSort,
+  isValidBatterySelectionId,
+  isValidRoomId,
+  normalizePlacedRackRoomId,
+  parseBooleanSmartFill
+} from './batteries.validation.js';
 
 const newStoredId = () => crypto.randomUUID();
-
-const RACK_BATTERY_INSTANCE_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-function isRackBatteryInstanceUuid(id: string): boolean {
-  return RACK_BATTERY_INSTANCE_UUID_RE.test(String(id || '').trim());
-}
 
 export type GameUpgrade = {
   id: string;
@@ -47,12 +49,6 @@ export type BulkRoomBatteryRunOpts = {
   smartFill?: unknown;
   rigSort?: unknown;
 };
-
-export function normalizePlacedRackRoomId(raw: unknown): string {
-  const s = raw != null ? String(raw).trim() : '';
-  if (!s || s === 'main') return 'room_initial';
-  return s;
-}
 
 export function totalBatteryInstances(
   batteryItemId: string,
@@ -445,27 +441,6 @@ export function applyBulkRoomBatteryChange(
   };
 }
 
-const BATTERY_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
-
-export function isValidRoomId(raw: unknown): boolean {
-  const s = raw != null ? String(raw).trim() : '';
-  return s.length > 0 && s.length <= 120 && !/[\x00-\x1f<>]/.test(s);
-}
-
-export function isValidBatterySelectionId(raw: unknown): boolean {
-  if (raw == null || raw === '') return true;
-  const s = String(raw).trim();
-  return BATTERY_ID_RE.test(s);
-}
-
-export function isValidBatteryRigSort(raw: unknown): boolean {
-  return raw === 'slot_asc' || raw === 'hashrate_desc';
-}
-
-export function parseBooleanSmartFill(raw: unknown): boolean {
-  return raw === true || raw === 1 || raw === '1' || raw === 'true';
-}
-
 export function runBulkRoomBattery(
   prev: BulkBatteryPrev,
   roomNorm: string,
@@ -502,3 +477,11 @@ export function runBulkRoomBattery(
   }
   return applyBulkRoomBatteryChange(prev, roomNorm, batteryUpgradeId, gameUpgrades, { rigSort });
 }
+
+export {
+  isValidBatteryRigSort,
+  isValidBatterySelectionId,
+  isValidRoomId,
+  normalizePlacedRackRoomId,
+  parseBooleanSmartFill
+} from './batteries.validation.js';

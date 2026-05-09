@@ -1,13 +1,10 @@
 import type { Pool, PoolClient } from 'pg';
+import { STORED_BATTERY_CATALOG_PENDING_ID } from '../modules/batteries/batteries.constants.js';
 
 /** Alinhado a `RACK_ID_RE` no servidor — IDs de item / instância. */
 export const SAVE_GAME_ITEM_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
 
-/**
- * Marcador no payload sanitizado quando `itemId` vem vazio ou inválido.
- * `validateStoredBatteriesForSave` substitui por valor da BD ou pela primeira bateria ativa do catálogo.
- */
-export const STORED_BATTERY_CATALOG_PENDING_ID = 'legacy_battery_missing_catalog';
+export { STORED_BATTERY_CATALOG_PENDING_ID };
 
 const MAX_STOCK_KEYS = 3500;
 const MAX_STOCK_QTY = 50_000_000;

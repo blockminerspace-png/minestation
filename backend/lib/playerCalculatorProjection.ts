@@ -1,4 +1,4 @@
-import { normalizePlacedRackRoomId } from './roomBatteryBulk.js';
+import { normalizePlacedRackRoomId } from '../modules/batteries/batteries.validation.js';
 
 /** Subconjunto de `upgrades` necessário para a calculadora de mineração. */
 export type CalculatorUpgradeLite = {

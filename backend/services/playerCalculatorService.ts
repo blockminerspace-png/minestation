@@ -1,6 +1,6 @@
 import { prisma } from '../config/prisma.js';
 import { miningRuntimeStats } from '../cron/miningRuntimeStats.js';
-import { normalizePlacedRackRoomId } from '../lib/roomBatteryBulk.js';
+import { normalizePlacedRackRoomId } from '../modules/batteries/batteries.validation.js';
 import {
   CALCULATOR_PROJECTION_PERIODS,
   type CalculatorRackForProjection,

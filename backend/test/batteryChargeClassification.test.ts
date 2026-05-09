@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isStoredBatteryFullyCharged, type UpgradeBatteryCapacityRow } from '../lib/batteryChargeClassification.js';
+import { isStoredBatteryFullyCharged, type UpgradeBatteryCapacityRow } from '../modules/batteries/batteries.charge.js';
 
 describe('isStoredBatteryFullyCharged', () => {
   it('considera infinito (-1) sempre cheio', () => {

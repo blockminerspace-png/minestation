@@ -6,14 +6,7 @@
  * de catálogo ativo).
  */
 import type { PoolClient } from 'pg';
-
-/** UUID v4 (instância de bateria montada via bulk / armazém). */
-const RACK_BATTERY_INSTANCE_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-export function isRackBatteryInstanceUuid(batteryId: string): boolean {
-  return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId || '').trim());
-}
+import { isRackBatteryInstanceUuid } from './batteries.repository.js';
 
 type PgLike = Pick<PoolClient, 'query'>;
 
