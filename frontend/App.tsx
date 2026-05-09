@@ -52,6 +52,7 @@ import {
   readWorkshopBatterySlotField,
   workshopBatteryStorageKeyAtLayoutIndex
 } from './lib/workshopBatterySlotStorageKey';
+import { snapWorkshopBatteryWhToFullIfThreshold } from './lib/batteryChargeUi';
 import { trackSpaPageView } from './lib/analytics';
 import {
   gamePathFromView,
@@ -1218,7 +1219,7 @@ export default function App() {
 
               if (transfer > 0) {
                 internalBuffer -= transfer;
-                nextSlotCharges[sk] = currentB + transfer;
+                nextSlotCharges[sk] = snapWorkshopBatteryWhToFullIfThreshold(currentB + transfer, maxB);
                 const leg = String(batSlot.id || '').trim();
                 if (leg && leg !== sk && Object.prototype.hasOwnProperty.call(nextSlotCharges, leg)) {
                   delete nextSlotCharges[leg];

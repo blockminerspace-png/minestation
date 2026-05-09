@@ -5,14 +5,14 @@ import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { resolveBatteryLayoutIndexForBatteryBar } from '../lib/workshopBatteryBarMap';
 import { readWorkshopBatterySlotField } from '../lib/workshopBatterySlotStorageKey';
 import { ChargingHistory } from './ChargingHistory';
+import { batteryChargePercentDisplay, BATTERY_FULL_CHARGE_RATIO } from '../lib/batteryChargeUi';
 
 /** `currentCharge` no armazém está em Wh — nunca usar como % directamente. */
 function storedBatteryChargePercent(bat: StoredBattery, upg: Upgrade | null | undefined): number {
     const wh = Number(bat.currentCharge) || 0;
     const cap = upg?.powerCapacity;
-    if (cap === -1) return 100;
-    if (cap == null || !(cap > 0)) return Math.min(100, wh);
-    return Math.min(100, (wh / cap) * 100);
+    if (cap == null || cap === undefined) return Math.min(100, wh);
+    return batteryChargePercentDisplay(wh, cap);
 }
 
 interface WorkshopRoomProps {
@@ -241,7 +241,8 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                                 orphanCatalogUpgrade(String(bI.itemId || bI.id), 'battery');
                                                                     }
                                                                     if (!bD && bSId) bD = orphanCatalogUpgrade(String(bSId), 'battery');
-                                                                    return bChargeVal < (bD?.powerCapacity || 100);
+                                                                    const bCap = bD?.powerCapacity || 100;
+                                                                    return bCap === -1 ? false : bChargeVal < bCap * BATTERY_FULL_CHARGE_RATIO;
                                                                 }) ?? false);
                                                             } else {
                                                                 const mappedBatLayoutIndex = resolveBatteryLayoutIndexForBatteryBar(
@@ -282,8 +283,12 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     if (!bDef && savedItemId)
                                                                         bDef = orphanCatalogUpgrade(String(savedItemId), 'battery');
                                                                     const bCapacity = bDef?.powerCapacity || 100;
-                                                                    percent = (bChargeWh / bCapacity) * 100;
-                                                                    isActivelyCharging = wsGroup.currentCharge > 0.1 && percent < 99.9;
+                                                                    percent = batteryChargePercentDisplay(bChargeWh, bCapacity);
+                                                                    isActivelyCharging =
+                                                                        wsGroup.currentCharge > 0.1 &&
+                                                                        (bCapacity === -1
+                                                                            ? false
+                                                                            : bChargeWh < bCapacity * BATTERY_FULL_CHARGE_RATIO);
                                                                 }
                                                             }
 
@@ -386,7 +391,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                         if (bCapacity === -1) {
                                                                             chargePercent = 100;
                                                                         } else if (bCapacity > 0) {
-                                                                            chargePercent = Math.min(100, (bChargeWh / bCapacity) * 100);
+                                                                            chargePercent = batteryChargePercentDisplay(bChargeWh, bCapacity);
                                                                         } else {
                                                                             chargePercent = 0;
                                                                         }
@@ -529,7 +534,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                         )
                                                                     ) || 0;
                                                                 if (typeof cap === 'number' && cap > 0) {
-                                                                    cellPercents.push(`${Math.min(100, (wh / cap) * 100).toFixed(0)}%`);
+                                                                    cellPercents.push(`${batteryChargePercentDisplay(wh, cap).toFixed(0)}%`);
                                                                 } else if (cap === -1) {
                                                                     cellPercents.push('∞');
                                                                 } else {
@@ -892,7 +897,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                             if (cap === -1) {
                                                 detailPct = 100;
                                             } else if (cap > 0) {
-                                                detailPct = Math.min(100, (wh / cap) * 100);
+                                                detailPct = batteryChargePercentDisplay(wh, cap);
                                             } else {
                                                 detailPct = 0;
                                             }
