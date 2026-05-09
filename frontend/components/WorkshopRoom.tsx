@@ -5,7 +5,10 @@ import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { resolveBatteryLayoutIndexForBatteryBar } from '../lib/workshopBatteryBarMap';
 import { readWorkshopBatterySlotField } from '../lib/workshopBatterySlotStorageKey';
 import { ChargingHistory } from './ChargingHistory';
-import { batteryChargePercentDisplay, BATTERY_FULL_CHARGE_RATIO } from '../lib/batteryChargeUi';
+import {
+    batteryChargePercentDisplay,
+    BATTERY_WORKSHOP_DISPLAY_FULL_RATIO
+} from '../lib/batteryChargeUi';
 
 /** `currentCharge` no armazém está em Wh — nunca usar como % directamente. */
 function storedBatteryChargePercent(bat: StoredBattery, upg: Upgrade | null | undefined): number {
@@ -242,7 +245,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     }
                                                                     if (!bD && bSId) bD = orphanCatalogUpgrade(String(bSId), 'battery');
                                                                     const bCap = bD?.powerCapacity || 100;
-                                                                    return bCap === -1 ? false : bChargeVal < bCap * BATTERY_FULL_CHARGE_RATIO;
+                                                                    return bCap === -1 ? false : bChargeVal < bCap * BATTERY_WORKSHOP_DISPLAY_FULL_RATIO;
                                                                 }) ?? false);
                                                             } else {
                                                                 const mappedBatLayoutIndex = resolveBatteryLayoutIndexForBatteryBar(
@@ -288,7 +291,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                         wsGroup.currentCharge > 0.1 &&
                                                                         (bCapacity === -1
                                                                             ? false
-                                                                            : bChargeWh < bCapacity * BATTERY_FULL_CHARGE_RATIO);
+                                                                            : bChargeWh < bCapacity * BATTERY_WORKSHOP_DISPLAY_FULL_RATIO);
                                                                 }
                                                             }
 
@@ -575,7 +578,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                             def = upgrades.find((u) => u.id === inst.itemId) ?? undefined;
                                                                     }
                                                                     const cap = def?.powerCapacity ?? 100;
-                                                                    return cap !== -1 && wh < cap * 0.999;
+                                                                    return cap !== -1 && wh < cap * BATTERY_WORKSHOP_DISPLAY_FULL_RATIO;
                                                                 });
 
                                                             return (
@@ -916,7 +919,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                             <>
                                                 <div className="flex justify-between text-xs font-bold text-slate-500 uppercase tracking-tighter">
                                                     <span>Status da Carga</span>
-                                                    <span className="text-orange-500 font-mono">{detailPct.toFixed(1)}%</span>
+                                                    <span className="text-orange-500 font-mono">
+                                                        {detailPct >= 100 ? '100%' : `${detailPct.toFixed(1)}%`}
+                                                    </span>
                                                 </div>
                                                 <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-950 rounded-full overflow-hidden border border-slate-300 dark:border-slate-800">
                                                     <div
