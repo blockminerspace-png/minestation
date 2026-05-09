@@ -1048,7 +1048,10 @@ export default function App() {
         // --- 1.2 RACK DEPLETION (Real-time Battery Drain) ---
         // Battery drain remains continuous (real-time physics)
         const nextRacks = prev.placedRacks.map(r => {
-          const batt = gameUpgrades.find(u => u.id === r.batteryId);
+          const catBid = resolveEquippedBatteryCatalogId(r.batteryId, prev.storedBatteries, gameUpgrades);
+          const batt = catBid
+            ? gameUpgrades.find((u) => u.id === catBid)
+            : gameUpgrades.find((u) => u.id === r.batteryId);
           const isInf = batt && batt.powerCapacity === -1;
           if (r.isOn && r.wiringId && r.batteryId && r.currentCharge > 0 && !isInf) {
             let watts = 0;
@@ -1768,9 +1771,22 @@ export default function App() {
       // ------------------------------------------------
 
       if (type === 'battery') {
-        if (sbid) { const s = nb.find(b => b.id === sbid); if (!s) return p; initCharge = s.currentCharge; nb = nb.filter(b => b.id !== sbid); }
-        else { if ((ns[iid] || 0) < 1) return p; ns[iid]--; initCharge = gameUpgrades.find(u => u.id === iid)?.powerCapacity || 0; }
-        r.batteryId = iid; r.currentCharge = initCharge; r.isOn = true;
+        // Armazém: `sbid` é o UUID em `stored_batteries`; a rig tem de referenciar essa instância (não o id de catálogo `iid`),
+        // senão o guard de save vê a instância removida do armazém sem aparecer em `batteryId` e falha / “tira” a bateria.
+        if (sbid) {
+          const s = nb.find((b) => b.id === sbid);
+          if (!s) return p;
+          initCharge = s.currentCharge;
+          nb = nb.filter((b) => b.id !== sbid);
+          r.batteryId = sbid;
+        } else {
+          if ((ns[iid] || 0) < 1) return p;
+          ns[iid]--;
+          initCharge = gameUpgrades.find((u) => u.id === iid)?.powerCapacity || 0;
+          r.batteryId = iid;
+        }
+        r.currentCharge = initCharge;
+        r.isOn = true;
       } else if (type === 'wiring') { if ((ns[iid] || 0) < 1) return p; ns[iid]--; r.wiringId = iid; }
       else if (type === 'multiplier' && idx !== undefined) { if ((ns[iid] || 0) < 1) return p; ns[iid]--; r.multiplierSlots = [...r.multiplierSlots]; r.multiplierSlots[idx] = iid; }
       ur[ri] = r; return { ...p, stock: ns, storedBatteries: nb, placedRacks: ur };
