@@ -115,6 +115,23 @@ function chargeWhOnMapKeys(slotCharges: Record<string, number>, primary: string,
   return 0;
 }
 
+/**
+ * Verifica se o legacyId é usado por MAIS de um slot de bateria no layout.
+ * Se for, não podemos deletar a chave — pertence também a outra bateria.
+ */
+function legacyKeyIsSharedByOtherBatterySlot(
+  layout: WorkshopBatteryLayoutSlot[],
+  resolvedLayoutIndex: number,
+  legacyId: string
+): boolean {
+  for (let i = 0; i < layout.length; i++) {
+    if (i === resolvedLayoutIndex) continue;
+    if (String(layout[i]?.type || '').toLowerCase() !== 'battery') continue;
+    if (String(layout[i]?.id || '').trim() === legacyId) return true;
+  }
+  return false;
+}
+
 function workshopJsonPick<T extends Record<string, unknown>>(
   obj: T,
   primaryKey: string,
@@ -819,7 +836,15 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             });
           }
 
-          if (legacySlotKey && legacySlotKey !== persistSlotKey) {
+          // Só limpar a chave legada se nenhum OUTRO slot de bateria no layout partilhar o mesmo id.
+          // Se dois slots têm o mesmo id (ex: "battery_slot"), apagar a chave legada de um
+          // destroiria os dados de carga do outro — esse é o bug que causava cancelamento mútuo.
+          if (
+            legacySlotKey &&
+            legacySlotKey !== persistSlotKey &&
+            resolvedBatteryLayoutIndex != null &&
+            !legacyKeyIsSharedByOtherBatterySlot(layout, resolvedBatteryLayoutIndex, legacySlotKey)
+          ) {
             if (Object.prototype.hasOwnProperty.call(internal, legacySlotKey)) delete internal[legacySlotKey];
             if (Object.prototype.hasOwnProperty.call(slotCharges, legacySlotKey)) delete slotCharges[legacySlotKey];
             if (Object.prototype.hasOwnProperty.call(slotItemIds, legacySlotKey)) delete slotItemIds[legacySlotKey];
@@ -1008,7 +1033,12 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
         delete internal[persistSlotKeyU];
         delete slotCharges[persistSlotKeyU];
         delete slotItemIds[persistSlotKeyU];
-        if (legacySlotKeyU !== persistSlotKeyU) {
+        // Mesma proteção: só apagar legacyKey se não for partilhada por outro slot de bateria.
+        if (
+          legacySlotKeyU !== persistSlotKeyU &&
+          resolvedBatteryLayoutIndexU != null &&
+          !legacyKeyIsSharedByOtherBatterySlot(layoutU!, resolvedBatteryLayoutIndexU, legacySlotKeyU)
+        ) {
           delete internal[legacySlotKeyU];
           delete slotCharges[legacySlotKeyU];
           delete slotItemIds[legacySlotKeyU];
