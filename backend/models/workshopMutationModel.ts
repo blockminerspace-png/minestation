@@ -4,6 +4,10 @@ import { prisma } from '../config/prisma.js';
 import { SAVE_GAME_ITEM_ID_RE } from '../lib/saveGameEconomyValidate.js';
 import { sanitizeForLog } from '../lib/safeText.js';
 import { findLayoutSlot, parseWorkshopStructureLayout } from '../lib/workshopLayoutParse.js';
+import {
+  resolveWorkshopBatteryLayoutIndex,
+  workshopBatteryStorageKeyAtLayoutIndex
+} from '../lib/workshopBatterySlotStorageKey.js';
 
 const WORKSHOP_BENCH_COUNT = 6;
 const INSTANCE_UUID_RE =
@@ -30,6 +34,8 @@ export type WorkshopMutateBody = {
   itemId?: string;
   /** Slot interno do layout (ex.: id do slot bateria no JSON do carregador) */
   componentSlotId?: string;
+  /** Índice no array `layout.slots` — obrigatório quando há ids de bateria duplicados no layout */
+  componentSlotLayoutIndex?: number;
   /** Equipar bateria já instanciada no armazém */
   storedBatteryId?: string;
   /** Optimistic lock opcional — se enviado e divergir do servidor → 409 + forceReload */
@@ -97,6 +103,20 @@ function getWorkshopSlotChargeWh(slotCharges: Record<string, number>, componentS
   if (!hit) return 0;
   const n = Number(hit[1]);
   return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function workshopJsonPick<T extends Record<string, unknown>>(
+  obj: T,
+  primaryKey: string,
+  legacyKey: string
+): unknown {
+  if (primaryKey && Object.prototype.hasOwnProperty.call(obj, primaryKey) && obj[primaryKey] != null) {
+    return obj[primaryKey];
+  }
+  if (legacyKey && legacyKey !== primaryKey && Object.prototype.hasOwnProperty.call(obj, legacyKey) && obj[legacyKey] != null) {
+    return obj[legacyKey];
+  }
+  return null;
 }
 
 /**
@@ -605,30 +625,74 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
           select: { layout: true }
         });
         const layout = parseWorkshopStructureLayout(layoutRows?.layout ?? null, structureId);
+        if (!layout || layout.length === 0) {
+          throw new WorkshopMutationError('Layout do carregador inválido.', 400);
+        }
         const layoutSlot = findLayoutSlot(layout, componentSlotId);
         if (!layoutSlot?.id) {
           throw new WorkshopMutationError('Este slot não existe no layout deste carregador.', 400);
         }
         const slotType = String(layoutSlot.type || '').toLowerCase();
 
+        let storageKeyForBattery: string | null = null;
+        let legacyBatterySlotId = '';
+        if (slotType === 'battery') {
+          const resolved = resolveWorkshopBatteryLayoutIndex(
+            layout,
+            componentSlotId,
+            body.componentSlotLayoutIndex
+          );
+          if (!resolved.ok) {
+            if (resolved.reason === 'ambiguous') {
+              throw new WorkshopMutationError(
+                'Este carregador tem slots de bateria ambíguos. Recarrega (F5) e tenta de novo.',
+                409,
+                true
+              );
+            }
+            throw new WorkshopMutationError('Este slot de bateria não existe no layout deste carregador.', 400);
+          }
+          const sk = workshopBatteryStorageKeyAtLayoutIndex(layout, resolved.layoutIndex);
+          if (!sk) {
+            throw new WorkshopMutationError('Este slot de bateria não existe no layout deste carregador.', 400);
+          }
+          storageKeyForBattery = sk;
+          legacyBatterySlotId = String(layout[resolved.layoutIndex]?.id || '').trim() || componentSlotId;
+        }
+
+        const persistSlotKey = storageKeyForBattery ?? componentSlotId;
+        const legacySlotKey = slotType === 'battery' ? legacyBatterySlotId || componentSlotId : componentSlotId;
+
         let internal = parseJsonObject(wsRow.internal_state);
         let slotCharges = parseSlotCharges(wsRow.slot_charges);
         let slotItemIds = parseSlotItemIds(wsRow.slot_item_ids);
 
-        const oldInstanceId = internal[componentSlotId] != null ? String(internal[componentSlotId]).trim() : '';
-        const oldItemId = slotItemIds[componentSlotId];
+        const oldInstanceRaw = workshopJsonPick(internal, persistSlotKey, legacySlotKey);
+        const oldInstanceId = oldInstanceRaw != null ? String(oldInstanceRaw).trim() : '';
+        let oldItemId: string | undefined;
+        if (Object.prototype.hasOwnProperty.call(slotItemIds, persistSlotKey)) {
+          oldItemId = slotItemIds[persistSlotKey];
+        } else if (
+          legacySlotKey !== persistSlotKey &&
+          Object.prototype.hasOwnProperty.call(slotItemIds, legacySlotKey)
+        ) {
+          oldItemId = slotItemIds[legacySlotKey];
+        }
 
         if (oldInstanceId && oldItemId) {
           const oldUpg = await loadUpgrade(tx, oldItemId);
           const oldIsBattery = isBatteryUpgrade(oldUpg) || INSTANCE_UUID_RE.test(oldInstanceId);
           if (oldIsBattery && oldUpg) {
-            const oldCharge = getWorkshopSlotChargeWh(slotCharges, componentSlotId);
+            let oldCharge = getWorkshopSlotChargeWh(slotCharges, persistSlotKey);
+            if (!oldCharge && legacySlotKey !== persistSlotKey) {
+              oldCharge = getWorkshopSlotChargeWh(slotCharges, legacySlotKey);
+            }
             await recoverBatteryFromSlot(
               tx,
               userId,
               email,
               slotIndex,
-              componentSlotId,
+              legacySlotKey || persistSlotKey,
               oldInstanceId,
               oldItemId,
               oldCharge,
@@ -668,7 +732,11 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             const wsi = sb.workshop_slot_index;
             const wsc = sb.workshop_component_slot_id != null ? String(sb.workshop_component_slot_id) : '';
             if (wsi != null && wsc !== '') {
-              const sameSlot = wsi === slotIndex && wsc === String(componentSlotId);
+              const sameSlot =
+                wsi === slotIndex &&
+                (wsc === String(persistSlotKey) ||
+                  wsc === String(legacySlotKey) ||
+                  wsc === String(componentSlotId));
               if (!sameSlot) {
                 throw new WorkshopMutationError('Esta bateria já está montada num carregador. Retira-a primeiro.', 409);
               }
@@ -703,7 +771,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
               where: { id: sbid },
               data: {
                 workshop_slot_index: slotIndex,
-                workshop_component_slot_id: componentSlotId,
+                workshop_component_slot_id: persistSlotKey,
                 current_charge: initCharge
               }
             });
@@ -722,19 +790,25 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
                 display_name: partDef.name != null ? String(partDef.name).slice(0, 500) : null,
                 image_url: imgNew,
                 workshop_slot_index: slotIndex,
-                workshop_component_slot_id: componentSlotId
+                workshop_component_slot_id: persistSlotKey
               }
             });
           }
 
-          internal = { ...internal, [componentSlotId]: finalInstanceId };
-          slotCharges = { ...slotCharges, [componentSlotId]: initCharge };
-          slotItemIds = { ...slotItemIds, [componentSlotId]: actualItemId };
+          if (legacySlotKey && legacySlotKey !== persistSlotKey) {
+            if (Object.prototype.hasOwnProperty.call(internal, legacySlotKey)) delete internal[legacySlotKey];
+            if (Object.prototype.hasOwnProperty.call(slotCharges, legacySlotKey)) delete slotCharges[legacySlotKey];
+            if (Object.prototype.hasOwnProperty.call(slotItemIds, legacySlotKey)) delete slotItemIds[legacySlotKey];
+          }
+
+          internal = { ...internal, [persistSlotKey]: finalInstanceId };
+          slotCharges = { ...slotCharges, [persistSlotKey]: initCharge };
+          slotItemIds = { ...slotItemIds, [persistSlotKey]: actualItemId };
 
           await logCharging(tx, email, {
             action: 'inserted',
             workshop_slot_index: slotIndex,
-            component_slot_id: componentSlotId,
+            component_slot_id: legacySlotKey || persistSlotKey,
             battery_instance_id: finalInstanceId,
             battery_item_id: actualItemId,
             charge_amount: initCharge,
@@ -776,25 +850,75 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
         if (!wsRow?.item_id) {
           throw new WorkshopMutationError('Bancada vazia.', 409);
         }
+        const structureIdU = String(wsRow.item_id);
+        const layoutRowsU = await tx.upgrades.findUnique({
+          where: { id: structureIdU },
+          select: { layout: true }
+        });
+        const layoutU = parseWorkshopStructureLayout(layoutRowsU?.layout ?? null, structureIdU);
+        const layoutSlotU = layoutU?.length ? findLayoutSlot(layoutU, componentSlotId) : null;
+        const slotTypeU = String(layoutSlotU?.type || '').toLowerCase();
+
+        let storageKeyForBatteryU: string | null = null;
+        let legacyBatterySlotIdU = '';
+        if (slotTypeU === 'battery' && layoutU?.length) {
+          const resolvedU = resolveWorkshopBatteryLayoutIndex(
+            layoutU,
+            componentSlotId,
+            body.componentSlotLayoutIndex
+          );
+          if (!resolvedU.ok) {
+            if (resolvedU.reason === 'ambiguous') {
+              throw new WorkshopMutationError(
+                'Este carregador tem slots de bateria ambíguos. Recarrega (F5) e tenta de novo.',
+                409,
+                true
+              );
+            }
+            throw new WorkshopMutationError('Este slot de bateria não existe no layout deste carregador.', 400);
+          }
+          const sku = workshopBatteryStorageKeyAtLayoutIndex(layoutU, resolvedU.layoutIndex);
+          if (!sku) {
+            throw new WorkshopMutationError('Este slot de bateria não existe no layout deste carregador.', 400);
+          }
+          storageKeyForBatteryU = sku;
+          legacyBatterySlotIdU = String(layoutU[resolvedU.layoutIndex]?.id || '').trim() || componentSlotId;
+        }
+
+        const persistSlotKeyU = storageKeyForBatteryU ?? componentSlotId;
+        const legacySlotKeyU = slotTypeU === 'battery' ? legacyBatterySlotIdU || componentSlotId : componentSlotId;
+
         const internal = parseJsonObject(wsRow.internal_state);
         const slotCharges = parseSlotCharges(wsRow.slot_charges);
         const slotItemIds = parseSlotItemIds(wsRow.slot_item_ids);
-        const val = internal[componentSlotId] != null ? String(internal[componentSlotId]).trim() : '';
+        const valRaw = workshopJsonPick(internal, persistSlotKeyU, legacySlotKeyU);
+        const val = valRaw != null ? String(valRaw).trim() : '';
         if (!val) {
           throw new WorkshopMutationError('Este slot já está vazio.', 409);
         }
-        const originalItemId = slotItemIds[componentSlotId];
+        let originalItemId: string | undefined;
+        if (Object.prototype.hasOwnProperty.call(slotItemIds, persistSlotKeyU)) {
+          originalItemId = slotItemIds[persistSlotKeyU];
+        } else if (
+          legacySlotKeyU !== persistSlotKeyU &&
+          Object.prototype.hasOwnProperty.call(slotItemIds, legacySlotKeyU)
+        ) {
+          originalItemId = slotItemIds[legacySlotKeyU];
+        }
         if (!originalItemId) {
           throw new WorkshopMutationError('Estado da oficina incompleto (slotItemIds). Recarrega (F5).', 409, true);
         }
         const upg = await loadUpgrade(tx, originalItemId);
         const isBattery = isBatteryUpgrade(upg) || INSTANCE_UUID_RE.test(val);
         if (isBattery && upg) {
-          const charge = getWorkshopSlotChargeWh(slotCharges, componentSlotId);
+          let charge = getWorkshopSlotChargeWh(slotCharges, persistSlotKeyU);
+          if (!charge && legacySlotKeyU !== persistSlotKeyU) {
+            charge = getWorkshopSlotChargeWh(slotCharges, legacySlotKeyU);
+          }
           await logCharging(tx, email, {
             action: 'removed_to_stock',
             workshop_slot_index: slotIndex,
-            component_slot_id: componentSlotId,
+            component_slot_id: legacySlotKeyU || persistSlotKeyU,
             battery_instance_id: val,
             battery_item_id: originalItemId,
             charge_amount: charge,
@@ -851,9 +975,14 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
           await recoverNonBatteryFromSlot(tx, userId, originalItemId);
         }
 
-        delete internal[componentSlotId];
-        delete slotCharges[componentSlotId];
-        delete slotItemIds[componentSlotId];
+        delete internal[persistSlotKeyU];
+        delete slotCharges[persistSlotKeyU];
+        delete slotItemIds[persistSlotKeyU];
+        if (legacySlotKeyU !== persistSlotKeyU) {
+          delete internal[legacySlotKeyU];
+          delete slotCharges[legacySlotKeyU];
+          delete slotItemIds[legacySlotKeyU];
+        }
 
         await tx.workshop_slots.update({
           where: { user_id_slot_index: { user_id: userId, slot_index: slotIndex } },

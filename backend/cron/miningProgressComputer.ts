@@ -4,6 +4,7 @@ import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
 import { miningCreditCapNowMs } from './miningWallClockGrid.js';
 import { resolvePlacedRackBatteryCatalogId } from '../lib/placedRackBatteryCatalog.js';
+import { workshopBatteryStorageKeyAtLayoutIndex } from '../lib/workshopBatterySlotStorageKey.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -364,11 +365,11 @@ export async function computeProgressForUser(
       const layoutSlots = parseChargerLayout(def.layout, String(ws.item_id));
       if (!layoutSlots) continue;
 
-      const batterySlots = layoutSlots.filter((s) => s.type === 'battery');
+      const batteryCount = layoutSlots.filter((s) => s.type === 'battery').length;
       const chargerBarSlot = layoutSlots.find((s) => s.type === 'charger_bar');
       const wiringSlot = layoutSlots.find((s) => s.type === 'wiring');
 
-      if (batterySlots.length === 0 || !chargerBarSlot) continue;
+      if (batteryCount === 0 || !chargerBarSlot) continue;
 
       const internalSlots =
         safeParseJsonRecord(ws.internal_state, 200_000, 'workshop.internal_state') ??
@@ -396,6 +397,17 @@ export async function computeProgressForUser(
         return entry ? entry[1] : null;
       };
 
+      const pickWorkshopBatteryMap = (
+        obj: Record<string, unknown>,
+        storageKey: string,
+        legacyLayoutId: string | undefined
+      ): unknown => {
+        const sk = getSlotVal(obj, storageKey);
+        if (sk != null) return sk;
+        if (legacyLayoutId && legacyLayoutId !== storageKey) return getSlotVal(obj, legacyLayoutId);
+        return null;
+      };
+
       if (wiringSlot?.id && !getSlotVal(internalSlots, wiringSlot.id)) continue;
 
       let internalWh = parseFiniteNumberLenient(ws.current_charge, 'workshop.internal_wh');
@@ -404,11 +416,17 @@ export async function computeProgressForUser(
       const speedWhPerSec = parseFiniteNumberLenient(def.base_production, 'workshop.speed') || 0.5;
       let anyUpdate = false;
 
-      for (const bSlot of batterySlots) {
-        const batteryInstanceId = getSlotVal(internalSlots, bSlot.id);
+      for (let layoutIdx = 0; layoutIdx < layoutSlots.length; layoutIdx++) {
+        const bSlot = layoutSlots[layoutIdx];
+        if (!bSlot || bSlot.type !== 'battery') continue;
+        const storageKey = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, layoutIdx);
+        if (!storageKey) continue;
+        const legacyId = typeof bSlot.id === 'string' ? bSlot.id.trim() : '';
+
+        const batteryInstanceId = pickWorkshopBatteryMap(internalSlots, storageKey, legacyId || undefined);
         if (!batteryInstanceId) continue;
 
-        let batteryDef = upgradesMap.get(String(getSlotVal(slotItemIds, bSlot.id)));
+        let batteryDef = upgradesMap.get(String(pickWorkshopBatteryMap(slotItemIds, storageKey, legacyId || undefined)));
         if (!batteryDef) {
           const batRes = await client.query('SELECT item_id FROM stored_batteries WHERE id = $1', [batteryInstanceId]);
           const row = batRes.rows[0] as { item_id?: unknown } | undefined;
@@ -417,7 +435,10 @@ export async function computeProgressForUser(
         if (!batteryDef) continue;
 
         const maxBatteryWh = parseFiniteNumberLenient(batteryDef.power_capacity, 'bat.max_wh') || 0;
-        let batteryWh = parseFiniteNumberLenient(getSlotVal(slotCharges, bSlot.id), 'bat.wh');
+        let batteryWh = parseFiniteNumberLenient(
+          pickWorkshopBatteryMap(slotCharges, storageKey, legacyId || undefined),
+          'bat.wh'
+        );
 
         if (batteryWh < maxBatteryWh && internalWh > 0) {
           const actualTransferWh = Math.min(speedWhPerSec * dtSec, internalWh, maxBatteryWh - batteryWh);
@@ -425,7 +446,10 @@ export async function computeProgressForUser(
           if (actualTransferWh > 0) {
             batteryWh += actualTransferWh;
             internalWh -= actualTransferWh;
-            if (bSlot.id) slotCharges[bSlot.id] = batteryWh;
+            slotCharges[storageKey] = batteryWh;
+            if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
+              delete slotCharges[legacyId];
+            }
             batteryUpdates.push({ id: String(batteryInstanceId), charge: batteryWh });
             anyUpdate = true;
           }

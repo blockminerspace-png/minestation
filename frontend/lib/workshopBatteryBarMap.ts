@@ -53,3 +53,59 @@ export function resolveBatteryLayoutSlotIdForBatteryBar(
   const idx = Math.max(0, Math.min(batteryBarOrdinal, batteries.length - 1));
   return batteries[idx]?.id ?? null;
 }
+
+/** Índices no array `layoutSlots` onde `type === 'battery'`, pela ordem do JSON. */
+function batteryLayoutIndices(layoutSlots: SlotLayout[]): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < layoutSlots.length; i++) {
+    if (layoutSlots[i]?.type === 'battery' && layoutSlots[i]?.id) out.push(i);
+  }
+  return out;
+}
+
+/**
+ * Índice no layout (array completo) da bateria associada a esta `battery_bar`.
+ * Preferir isto a `resolveBatteryLayoutSlotIdForBatteryBar` quando `slot.id` de bateria se repete.
+ */
+export function resolveBatteryLayoutIndexForBatteryBar(
+  layoutSlots: SlotLayout[],
+  batteryBarSlot: Pick<SlotLayout, 'id'>,
+  batteryBarOrdinal: number
+): number | null {
+  const batteries = batteryLayoutIndices(layoutSlots);
+  if (batteries.length === 0) return null;
+
+  const rawId = String(batteryBarSlot.id ?? '').trim();
+
+  const tryId = (candidate: string): number | null => {
+    for (const li of batteries) {
+      if (String(layoutSlots[li]?.id || '').trim() === candidate) return li;
+    }
+    return null;
+  };
+
+  if (rawId.startsWith('battery_bar')) {
+    const rest = rawId.slice('battery_bar'.length).replace(/^[_-]/, '');
+    if (rest) {
+      const hit = tryId(`battery_${rest}`);
+      if (hit != null) return hit;
+      const hit2 = tryId(rest);
+      if (hit2 != null) return hit2;
+    }
+  }
+
+  const tail = rawId.match(/(\d+)\s*$/);
+  if (tail) {
+    const n = parseInt(tail[1], 10);
+    if (Number.isFinite(n) && n >= 0) {
+      if (n < batteries.length) return batteries[n];
+      for (const li of batteries) {
+        const m = String(layoutSlots[li]?.id || '').match(/(\d+)\s*$/);
+        if (m && parseInt(m[1], 10) === n) return li;
+      }
+    }
+  }
+
+  const idx = Math.max(0, Math.min(batteryBarOrdinal, batteries.length - 1));
+  return batteries[idx] ?? null;
+}

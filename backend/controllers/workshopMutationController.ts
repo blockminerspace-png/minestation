@@ -37,6 +37,13 @@ function parseMutateBody(raw: unknown): WorkshopMutateBody | null {
   const exp = o.expectedServerUpdatedAt;
   const expectedServerUpdatedAt =
     exp === undefined || exp === null ? undefined : Number(exp);
+  const liRaw = o.componentSlotLayoutIndex;
+  const componentSlotLayoutIndex =
+    liRaw === undefined || liRaw === null
+      ? undefined
+      : typeof liRaw === 'number'
+        ? liRaw
+        : parseInt(String(liRaw), 10);
 
   return {
     action,
@@ -44,6 +51,7 @@ function parseMutateBody(raw: unknown): WorkshopMutateBody | null {
     itemId,
     componentSlotId,
     storedBatteryId,
+    componentSlotLayoutIndex: Number.isFinite(componentSlotLayoutIndex) ? componentSlotLayoutIndex : undefined,
     expectedServerUpdatedAt: Number.isFinite(expectedServerUpdatedAt) ? expectedServerUpdatedAt : undefined
   };
 }

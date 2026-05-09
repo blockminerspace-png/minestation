@@ -1684,6 +1684,8 @@ export async function postWorkshopMutate(payload: {
   slotIndex: number;
   itemId?: string;
   componentSlotId?: string;
+  /** Índice em `layout.slots` do carregador — necessário quando há ids de bateria duplicados */
+  componentSlotLayoutIndex?: number;
   storedBatteryId?: string;
   expectedServerUpdatedAt?: number;
 }): Promise<

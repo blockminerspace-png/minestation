@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveBatteryLayoutSlotIdForBatteryBar } from '../lib/workshopBatteryBarMap';
+import { resolveBatteryLayoutSlotIdForBatteryBar, resolveBatteryLayoutIndexForBatteryBar } from '../lib/workshopBatteryBarMap';
 import type { SlotLayout } from '../types';
 
 describe('resolveBatteryLayoutSlotIdForBatteryBar', () => {
@@ -32,5 +32,17 @@ describe('resolveBatteryLayoutSlotIdForBatteryBar', () => {
       { id: 'battery_bar', type: 'battery_bar', x: 0, y: 0, w: 1, h: 1 }
     ];
     expect(resolveBatteryLayoutSlotIdForBatteryBar(layout, { id: 'battery_bar' }, 0)).toBe('battery');
+  });
+
+  it('resolveBatteryLayoutIndexForBatteryBar com duas baterias id "cell" → índices 0 e 2', () => {
+    const layout: SlotLayout[] = [
+      { id: 'cell', type: 'battery', x: 0, y: 0, w: 1, h: 1 },
+      { id: 'mid', type: 'multiplier', x: 0, y: 0, w: 1, h: 1 },
+      { id: 'cell', type: 'battery', x: 0, y: 0, w: 1, h: 1 },
+      { id: 'battery_bar', type: 'battery_bar', x: 0, y: 0, w: 1, h: 1 },
+      { id: 'battery_bar', type: 'battery_bar', x: 0, y: 0, w: 1, h: 1 }
+    ];
+    expect(resolveBatteryLayoutIndexForBatteryBar(layout, { id: 'battery_bar' }, 0)).toBe(0);
+    expect(resolveBatteryLayoutIndexForBatteryBar(layout, { id: 'battery_bar' }, 1)).toBe(2);
   });
 });

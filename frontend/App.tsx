@@ -48,6 +48,7 @@ import {
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import { appendUsdcShortfallLine } from './utils/playerMoneyMessages';
+import { workshopBatteryStorageKeyAtLayoutIndex } from './lib/workshopBatterySlotStorageKey';
 import { trackSpaPageView } from './lib/analytics';
 import {
   gamePathFromView,
@@ -1145,16 +1146,24 @@ export default function App() {
           const layout = def.layout;
           if (!layout) return ws;
 
-          const batterySlots = layout.slots.filter(s => s.type === 'battery');
+          const layoutSlots = layout.slots;
+          const batteryCount = layoutSlots.filter(s => s.type === 'battery').length;
           const wiringSlot = layout.slots.find(s => s.type === 'wiring');
 
-          if (batterySlots.length === 0) return ws;
+          if (batteryCount === 0) return ws;
 
           const gsv = (obj: any, sid: string) => {
             if (!obj || !sid) return null;
             if (obj[sid] !== undefined) return obj[sid];
             const entry = Object.entries(obj).find(([k]) => k.toLowerCase().trim() === sid.toLowerCase().trim());
             return entry ? entry[1] : null;
+          };
+
+          const pickWs = (obj: any, sk: string, leg: string) => {
+            if (!obj) return null;
+            if (obj[sk] !== undefined && obj[sk] !== null) return obj[sk];
+            if (leg && leg !== sk && obj[leg] !== undefined && obj[leg] !== null) return obj[leg];
+            return null;
           };
 
           if (wiringSlot && !gsv(ws.internalSlots, wiringSlot.id)) return ws;
@@ -1180,11 +1189,16 @@ export default function App() {
           const nextSlotCharges = { ...ws.slotCharges };
           let hasChanges = false;
 
-          for (const batSlot of batterySlots) {
-            const batteryIid = gsv(ws.internalSlots, batSlot.id);
+          for (let li = 0; li < layoutSlots.length; li++) {
+            const batSlot = layoutSlots[li];
+            if (batSlot.type !== 'battery') continue;
+            const leg = String(batSlot.id || '');
+            const sk = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, li) || leg;
+            const batteryIid = pickWs(ws.internalSlots, sk, leg);
             if (!batteryIid) continue;
 
-            let bDef = gameUpgrades.find(u => u.id === gsv(ws.slotItemIds, batSlot.id));
+            const catIdRaw = pickWs(ws.slotItemIds, sk, leg);
+            let bDef = catIdRaw ? gameUpgrades.find(u => u.id === catIdRaw) : undefined;
             if (!bDef) {
               const bInst = prev.storedBatteries.find(b => b.id === batteryIid);
               if (bInst) bDef = gameUpgrades.find(u => u.id === bInst.itemId);
@@ -1192,7 +1206,9 @@ export default function App() {
             if (!bDef) continue;
 
             const maxB = bDef.powerCapacity || 100;
-            const currentB = nextSlotCharges[batSlot.id] !== undefined ? nextSlotCharges[batSlot.id] : 0;
+            const currentBRaw = pickWs(nextSlotCharges, sk, leg);
+            const currentB =
+              currentBRaw !== undefined && currentBRaw !== null ? Number(currentBRaw) : 0;
 
             if (currentB < maxB && internalBuffer > 0) {
               // Transfer per tick (speed * 0.1 per second of sim). Scaled by VISUAL_TICK_MS.
@@ -1200,7 +1216,10 @@ export default function App() {
 
               if (transfer > 0) {
                 internalBuffer -= transfer;
-                nextSlotCharges[batSlot.id] = currentB + transfer;
+                nextSlotCharges[sk] = currentB + transfer;
+                if (leg && leg !== sk && Object.prototype.hasOwnProperty.call(nextSlotCharges, leg)) {
+                  delete nextSlotCharges[leg];
+                }
                 hasChanges = true;
               }
             }
@@ -2082,7 +2101,7 @@ export default function App() {
   );
 
   const handleEquipWorkshopComponent = useCallback(
-    async (wsIdx: number, slotId: string, iid: string, sbid?: string) => {
+    async (wsIdx: number, slotId: string, layoutSlotIndex: number, iid: string, sbid?: string) => {
       if (workshopMutationBusyRef.current) return;
       workshopMutationBusyRef.current = true;
       try {
@@ -2090,6 +2109,7 @@ export default function App() {
           action: 'equip_component',
           slotIndex: wsIdx,
           componentSlotId: slotId,
+          componentSlotLayoutIndex: layoutSlotIndex,
           itemId: iid,
           storedBatteryId: sbid,
           expectedServerUpdatedAt: getGlobalLastLoadTime()
@@ -2108,7 +2128,7 @@ export default function App() {
   );
 
   const handleUnequipWorkshopComponent = useCallback(
-    async (wsIdx: number, slotId: string) => {
+    async (wsIdx: number, slotId: string, layoutSlotIndex: number) => {
       if (workshopMutationBusyRef.current) return;
       workshopMutationBusyRef.current = true;
       try {
@@ -2116,6 +2136,7 @@ export default function App() {
           action: 'unequip_component',
           slotIndex: wsIdx,
           componentSlotId: slotId,
+          componentSlotLayoutIndex: layoutSlotIndex,
           expectedServerUpdatedAt: getGlobalLastLoadTime()
         });
         if (r.ok === false) {
