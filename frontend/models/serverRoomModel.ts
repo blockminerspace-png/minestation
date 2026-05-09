@@ -1,4 +1,4 @@
-import type { PlacedRack, StoredBattery, Upgrade } from '../types';
+import type { PlacedRack, StoredBattery, Upgrade, WorkshopStructure } from '../types';
 import { NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from '../types';
 import { batteryTierScore, poolEntryEnergyWh } from './roomBatteryModel';
 
@@ -8,6 +8,67 @@ const RACK_BATTERY_INSTANCE_UUID_RE =
 
 export function isRackBatteryInstanceUuid(batteryId: string | null | undefined): boolean {
   return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId ?? '').trim());
+}
+
+function workshopPayloadGet(obj: Record<string, unknown> | null | undefined, sid: string): unknown {
+  if (!obj || !sid) return null;
+  if (obj[sid] !== undefined) return obj[sid];
+  const entry = Object.entries(obj).find(([k]) => k.toLowerCase().trim() === sid.toLowerCase().trim());
+  return entry ? entry[1] : null;
+}
+
+function normalizedStoredChargeWh(sb: StoredBattery): number {
+  const q = sb.currentCharge;
+  if (typeof q === 'number' && Number.isFinite(q)) return q;
+  const n = Number(q);
+  return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * Baterias montadas nos carregadores da oficina: a carga vive em `slotCharges`, não em `stored_batteries`
+ * (a linha do armazém é apagada ao equipar no carregador).
+ */
+export function listWorkshopMountedBatteryInstances(
+  workshopSlots: (WorkshopStructure | null)[] | null | undefined,
+  upgrades: Upgrade[]
+): StoredBattery[] {
+  const out: StoredBattery[] = [];
+  const seen = new Set<string>();
+  const arr = workshopSlots && workshopSlots.length ? workshopSlots : [];
+  for (const ws of arr) {
+    if (!ws || !ws.itemId) continue;
+    const chargerDef = upgrades.find((u) => u.id === ws.itemId);
+    if (!chargerDef || chargerDef.type !== 'charger') continue;
+    const layout = chargerDef.layout;
+    if (!layout?.slots?.length) continue;
+    const internal = (ws.internalSlots || {}) as Record<string, unknown>;
+    const slotCharges = (ws.slotCharges || {}) as Record<string, unknown>;
+    const slotItemIds = (ws.slotItemIds || {}) as Record<string, unknown>;
+    for (const s of layout.slots) {
+      if (s.type !== 'battery' || !s.id) continue;
+      const rawId = workshopPayloadGet(internal, s.id);
+      if (rawId == null) continue;
+      const instanceId = String(rawId).trim();
+      if (!instanceId || !RACK_BATTERY_INSTANCE_UUID_RE.test(instanceId)) continue;
+      if (seen.has(instanceId)) continue;
+      const itemId = String(workshopPayloadGet(slotItemIds, s.id) ?? '').trim();
+      if (!itemId) continue;
+      const batDef = upgrades.find((u) => u.id === itemId);
+      const chRaw = workshopPayloadGet(slotCharges, s.id);
+      const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
+      const currentCharge = Number.isFinite(ch) ? ch : 0;
+      seen.add(instanceId);
+      const capSnap = batDef?.powerCapacity;
+      out.push({
+        id: instanceId,
+        itemId,
+        currentCharge,
+        powerCapacityWh: capSnap != null && Number.isFinite(capSnap) ? capSnap : null,
+        fromWorkshopSlot: true
+      });
+    }
+  }
+  return out;
 }
 
 /** `rack.batteryId` deve ser UUID de instância; catálogo só em legado até migração.
@@ -290,25 +351,40 @@ export function listStoredBatteriesForSelection(
   selection: ServerRoomSelectionContext,
   placedRacks: PlacedRack[],
   storedBatteries: StoredBattery[],
-  upgrades: Upgrade[]
+  upgrades: Upgrade[],
+  workshopSlots?: (WorkshopStructure | null)[] | null
 ): StoredBattery[] {
   if (selection.type !== 'battery' || !selection.rackId) return [];
   const currentRack = placedRacks.find((r) => r.id === selection.rackId);
   const mountedIds = new Set(
     (placedRacks || []).map((r) => (r.batteryId != null ? String(r.batteryId).trim() : '')).filter(Boolean)
   );
-  const filtered = storedBatteries.filter((sb) => {
+
+  const fromWorkshop = listWorkshopMountedBatteryInstances(workshopSlots, upgrades).filter((sb) => {
     if (mountedIds.has(String(sb.id).trim())) return false;
     const def = upgrades.find((u) => u.id === sb.itemId);
     if (currentRack && def?.compatibleRacks?.length)
       return def.compatibleRacks.includes(currentRack.itemId);
     return true;
   });
-  return [...filtered].sort((a, b) => {
+  const workshopIds = new Set(fromWorkshop.map((b) => String(b.id).trim()));
+
+  const filtered = storedBatteries.filter((sb) => {
+    const sid = String(sb.id).trim();
+    if (workshopIds.has(sid)) return false;
+    if (mountedIds.has(sid)) return false;
+    const def = upgrades.find((u) => u.id === sb.itemId);
+    if (currentRack && def?.compatibleRacks?.length)
+      return def.compatibleRacks.includes(currentRack.itemId);
+    return true;
+  });
+
+  const merged = [...fromWorkshop, ...filtered];
+  return merged.sort((a, b) => {
     const da = upgrades.find((u) => u.id === a.itemId);
     const db = upgrades.find((u) => u.id === b.itemId);
-    const ea = poolEntryEnergyWh(typeof a.currentCharge === 'number' ? a.currentCharge : 0, da);
-    const eb = poolEntryEnergyWh(typeof b.currentCharge === 'number' ? b.currentCharge : 0, db);
+    const ea = poolEntryEnergyWh(normalizedStoredChargeWh(a), da);
+    const eb = poolEntryEnergyWh(normalizedStoredChargeWh(b), db);
     if (eb !== ea) return eb - ea;
     const ta = batteryTierScore(da);
     const tb = batteryTierScore(db);

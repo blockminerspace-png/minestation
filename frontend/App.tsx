@@ -204,6 +204,27 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
 
   // --- MIGRATION LOGIC START ---
   if (!state.storedBatteries) state.storedBatteries = [];
+  state.storedBatteries = (state.storedBatteries as unknown[]).map((raw: unknown) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const b = raw as Record<string, unknown>;
+    const id = typeof b.id === 'string' ? b.id.trim() : '';
+    const itemId =
+      typeof b.itemId === 'string' ? b.itemId.trim() : typeof b.item_id === 'string' ? String(b.item_id).trim() : '';
+    if (!id || !itemId) return null;
+    const chRaw = b.currentCharge ?? b.current_charge;
+    const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
+    const currentCharge = Number.isFinite(ch) ? ch : 0;
+    const pwhRaw = b.powerCapacityWh ?? b.power_capacity_wh;
+    const pwh = pwhRaw == null ? null : Number(pwhRaw);
+    return {
+      id,
+      itemId,
+      currentCharge,
+      powerCapacityWh: pwh != null && Number.isFinite(pwh) ? pwh : null,
+      displayName: typeof b.displayName === 'string' ? b.displayName : typeof b.display_name === 'string' ? String(b.display_name) : null,
+      imageUrl: typeof b.imageUrl === 'string' ? b.imageUrl : typeof b.image_url === 'string' ? String(b.image_url) : null
+    };
+  }).filter(Boolean) as typeof state.storedBatteries;
   if (!state.playerListings) state.playerListings = [];
   if (!state.unopenedBoxes) state.unopenedBoxes = {};
   if (state.claimedReferrals === undefined) state.claimedReferrals = 0;

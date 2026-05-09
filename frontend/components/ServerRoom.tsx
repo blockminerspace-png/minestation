@@ -1,5 +1,15 @@
 import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
-import { PlacedRack, StoredBattery, Upgrade, RigRoom, MiningCoin, normalizePlacedRackRoomId, isNftAutoArmario1OnlyRoom, NFT_AUTO_ALLOWED_CHASSIS_ID } from '../types';
+import {
+    PlacedRack,
+    StoredBattery,
+    Upgrade,
+    RigRoom,
+    MiningCoin,
+    WorkshopStructure,
+    normalizePlacedRackRoomId,
+    isNftAutoArmario1OnlyRoom,
+    NFT_AUTO_ALLOWED_CHASSIS_ID
+} from '../types';
 import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import { bulkBatteryWillApplyCount, totalBatteryInstances } from '../models/roomBatteryModel';
@@ -131,6 +141,8 @@ interface ServerRoomProps {
     onOpenCalculator?: () => void;
     /** UUID de instância na rig → id de catálogo (bateria do armazém removida do array local). */
     rackBatteryCatalogHints?: Readonly<Record<string, string>>;
+    /** Oficina: carga das baterias nos carregadores está em `slotCharges`, não em `stored_batteries`. */
+    workshopSlots?: (WorkshopStructure | null)[] | null;
 }
 
 const AnimatedMiner = ({ src, isOperational, className, style, item }: { src: string, isOperational: boolean, className: string, style: any, item: Upgrade | undefined }) => {
@@ -238,7 +250,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     usdc = 0,
     onRoomPurchase,
     onOpenCalculator,
-    rackBatteryCatalogHints
+    rackBatteryCatalogHints,
+    workshopSlots
 }) => {
     const batteryCatalogHints = rackBatteryCatalogHints ?? NO_BATTERY_CATALOG_HINTS;
     const [selectionContext, setSelectionContext] = useState<ServerRoomSelectionContext | null>(null);
@@ -479,7 +492,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
     const getAvailableStoredBatteries = () => {
         if (!selectionContext) return [];
-        return listStoredBatteriesForSelection(selectionContext, placedRacks, storedBatteries, upgrades);
+        return listStoredBatteriesForSelection(selectionContext, placedRacks, storedBatteries, upgrades, workshopSlots);
     };
 
     const openRoomBulkCoinModal = (room: RigRoom) => {
@@ -1416,14 +1429,29 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                     {selectionContext.type === 'battery' && getAvailableStoredBatteries().length > 0 && (
                                         <div className="mb-4">
                                             <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                                <Save size={10} /> Usadas / Carregadas (Compatíveis)
+                                                <Save size={10} /> Usadas / Carregadas (compatíveis) — mais carga primeiro
                                             </div>
                                             {getAvailableStoredBatteries().map(stored => {
                                                 const def = upgrades.find(u => u.id === stored.itemId);
                                                 if (!def) return null;
                                                 const defImg = normalizePublicAssetUrl(def.image);
                                                 const isInfiniteStored = def.powerCapacity === -1;
-                                                const chargePct = isInfiniteStored ? 100 : (stored.currentCharge / (def.powerCapacity || 1)) * 100;
+                                                const capWh =
+                                                    stored.powerCapacityWh != null &&
+                                                    Number.isFinite(stored.powerCapacityWh) &&
+                                                    stored.powerCapacityWh > 0
+                                                        ? stored.powerCapacityWh
+                                                        : def.powerCapacity === -1
+                                                          ? -1
+                                                          : def.powerCapacity || 1;
+                                                const wh = Number(stored.currentCharge);
+                                                const chargeWh = Number.isFinite(wh) ? wh : 0;
+                                                const chargePct =
+                                                    isInfiniteStored || capWh === -1
+                                                        ? 100
+                                                        : capWh > 0
+                                                          ? Math.min(100, Math.max(0, (chargeWh / capWh) * 100))
+                                                          : 0;
 
                                                 return (
                                                     <button
@@ -1439,9 +1467,18 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                             )}
                                                         </div>
                                                         <div className="flex-1 min-w-0">
-                                                            <div className="font-bold text-slate-700 dark:text-slate-300 text-sm flex justify-between">
-                                                                <span>{def.name}</span>
-                                                                <span className="text-yellow-600 dark:text-yellow-500 font-mono text-xs">{isInfiniteStored ? '∞' : chargePct.toFixed(0)}%</span>
+                                                            <div className="font-bold text-slate-700 dark:text-slate-300 text-sm flex justify-between items-center gap-2">
+                                                                <span className="min-w-0 truncate">{def.name}</span>
+                                                                <span className="flex shrink-0 items-center gap-1.5">
+                                                                    {stored.fromWorkshopSlot ? (
+                                                                        <span className="text-[9px] font-bold uppercase tracking-tight text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 rounded px-1 py-0">
+                                                                            Oficina
+                                                                        </span>
+                                                                    ) : null}
+                                                                    <span className="text-yellow-600 dark:text-yellow-500 font-mono text-xs">
+                                                                        {isInfiniteStored ? '∞' : `${chargePct.toFixed(0)}%`}
+                                                                    </span>
+                                                                </span>
                                                             </div>
                                                             <div className="w-full h-1 bg-slate-200 dark:bg-slate-900 rounded-full mt-1 overflow-hidden">
                                                                 <div

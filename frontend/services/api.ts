@@ -946,10 +946,27 @@ function parseStoredBatteryRows(raw: unknown): StoredBattery[] {
     if (!x || typeof x !== 'object') continue;
     const o = x as Record<string, unknown>;
     const id = typeof o.id === 'string' ? o.id.trim() : '';
-    const itemId = typeof o.itemId === 'string' ? o.itemId.trim() : '';
-    const ch = Number(o.currentCharge);
+    const itemId =
+      typeof o.itemId === 'string'
+        ? o.itemId.trim()
+        : typeof o.item_id === 'string'
+          ? o.item_id.trim()
+          : '';
+    const chRaw = o.currentCharge ?? o.current_charge;
+    const ch = typeof chRaw === 'number' ? chRaw : Number(chRaw);
     if (!id || !itemId || !Number.isFinite(ch)) continue;
-    out.push({ id, itemId, currentCharge: ch });
+    const pwhRaw = o.powerCapacityWh ?? o.power_capacity_wh;
+    const pwh = pwhRaw == null ? null : Number(pwhRaw);
+    const dn = o.displayName ?? o.display_name;
+    const iu = o.imageUrl ?? o.image_url;
+    out.push({
+      id,
+      itemId,
+      currentCharge: ch,
+      powerCapacityWh: pwh != null && Number.isFinite(pwh) ? pwh : null,
+      displayName: typeof dn === 'string' && dn.trim() ? dn.trim() : null,
+      imageUrl: typeof iu === 'string' && iu.trim() ? iu.trim() : null
+    });
   }
   return out;
 }

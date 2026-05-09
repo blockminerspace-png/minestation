@@ -148,6 +148,8 @@ export interface StoredBattery {
   powerCapacityWh?: number | null;
   displayName?: string | null;
   imageUrl?: string | null;
+  /** UI: listada a partir da oficina (`slotCharges`), não da linha `stored_batteries`. */
+  fromWorkshopSlot?: boolean;
 }
 
 export interface MarketListing {
