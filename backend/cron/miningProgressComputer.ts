@@ -4,7 +4,10 @@ import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
 import { miningCreditCapNowMs } from './miningWallClockGrid.js';
 import { resolvePlacedRackBatteryCatalogId } from '../lib/placedRackBatteryCatalog.js';
-import { workshopBatteryStorageKeyAtLayoutIndex } from '../lib/workshopBatterySlotStorageKey.js';
+import {
+  readWorkshopBatterySlotField,
+  workshopBatteryStorageKeyAtLayoutIndex
+} from '../lib/workshopBatterySlotStorageKey.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -397,17 +400,6 @@ export async function computeProgressForUser(
         return entry ? entry[1] : null;
       };
 
-      const pickWorkshopBatteryMap = (
-        obj: Record<string, unknown>,
-        storageKey: string,
-        legacyLayoutId: string | undefined
-      ): unknown => {
-        const sk = getSlotVal(obj, storageKey);
-        if (sk != null) return sk;
-        if (legacyLayoutId && legacyLayoutId !== storageKey) return getSlotVal(obj, legacyLayoutId);
-        return null;
-      };
-
       if (wiringSlot?.id && !getSlotVal(internalSlots, wiringSlot.id)) continue;
 
       let internalWh = parseFiniteNumberLenient(ws.current_charge, 'workshop.internal_wh');
@@ -423,10 +415,12 @@ export async function computeProgressForUser(
         if (!storageKey) continue;
         const legacyId = typeof bSlot.id === 'string' ? bSlot.id.trim() : '';
 
-        const batteryInstanceId = pickWorkshopBatteryMap(internalSlots, storageKey, legacyId || undefined);
+        const batteryInstanceId = readWorkshopBatterySlotField(internalSlots, layoutSlots, layoutIdx);
         if (!batteryInstanceId) continue;
 
-        let batteryDef = upgradesMap.get(String(pickWorkshopBatteryMap(slotItemIds, storageKey, legacyId || undefined)));
+        let batteryDef = upgradesMap.get(
+          String(readWorkshopBatterySlotField(slotItemIds, layoutSlots, layoutIdx) ?? '')
+        );
         if (!batteryDef) {
           const batRes = await client.query('SELECT item_id FROM stored_batteries WHERE id = $1', [batteryInstanceId]);
           const row = batRes.rows[0] as { item_id?: unknown } | undefined;
@@ -436,7 +430,7 @@ export async function computeProgressForUser(
 
         const maxBatteryWh = parseFiniteNumberLenient(batteryDef.power_capacity, 'bat.max_wh') || 0;
         let batteryWh = parseFiniteNumberLenient(
-          pickWorkshopBatteryMap(slotCharges, storageKey, legacyId || undefined),
+          readWorkshopBatterySlotField(slotCharges, layoutSlots, layoutIdx),
           'bat.wh'
         );
 

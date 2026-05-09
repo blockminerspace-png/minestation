@@ -1,6 +1,5 @@
 /**
  * Espelho de `backend/lib/workshopBatterySlotStorageKey.ts` — manter lógica alinhada.
- * Chaves canónicas para carga / instância por célula de bateria no layout do carregador.
  */
 
 export type WorkshopBatteryLayoutSlot = { type?: string; id?: string };
@@ -30,12 +29,34 @@ export function workshopBatteryStorageKeyAtLayoutIndex(
 ): string | null {
   if (layoutIndex < 0 || layoutIndex >= layoutSlots.length) return null;
   if (!isBatterySlot(layoutSlots[layoutIndex])) return null;
+  return `__ms_bat_${layoutIndex}`;
+}
+
+export function readWorkshopBatterySlotField(
+  map: Record<string, unknown> | null | undefined,
+  layoutSlots: WorkshopBatteryLayoutSlot[],
+  layoutIndex: number
+): unknown {
+  if (!map) return undefined;
+  const canonKey = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, layoutIndex);
+  if (!canonKey) return undefined;
+  if (Object.prototype.hasOwnProperty.call(map, canonKey) && map[canonKey] != null) return map[canonKey];
+  const leg = String(layoutSlots[layoutIndex]?.id || '').trim();
+  if (!leg || leg === canonKey) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(map, leg) || map[leg] == null) return undefined;
   const dups = duplicateBatteryIds(layoutSlots);
-  const rawId = String(layoutSlots[layoutIndex]?.id || '').trim();
-  if (!rawId || dups.has(rawId)) {
-    return `__ms_bat_${layoutIndex}`;
+  if (dups.has(leg)) {
+    let first = -1;
+    for (let i = 0; i < layoutSlots.length; i++) {
+      if (!isBatterySlot(layoutSlots[i])) continue;
+      if (String(layoutSlots[i]?.id || '').trim() === leg) {
+        first = i;
+        break;
+      }
+    }
+    if (layoutIndex !== first) return undefined;
   }
-  return rawId;
+  return map[leg];
 }
 
 export function workshopBatteryLayoutIndices(layoutSlots: WorkshopBatteryLayoutSlot[]): number[] {

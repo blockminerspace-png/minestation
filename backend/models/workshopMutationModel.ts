@@ -5,8 +5,10 @@ import { SAVE_GAME_ITEM_ID_RE } from '../lib/saveGameEconomyValidate.js';
 import { sanitizeForLog } from '../lib/safeText.js';
 import { findLayoutSlot, parseWorkshopStructureLayout } from '../lib/workshopLayoutParse.js';
 import {
+  readWorkshopBatterySlotField,
   resolveWorkshopBatteryLayoutIndex,
-  workshopBatteryStorageKeyAtLayoutIndex
+  workshopBatteryStorageKeyAtLayoutIndex,
+  type WorkshopBatteryLayoutSlot
 } from '../lib/workshopBatterySlotStorageKey.js';
 
 const WORKSHOP_BENCH_COUNT = 6;
@@ -92,17 +94,25 @@ function parseSlotItemIds(raw: string | null | undefined): Record<string, string
   return out;
 }
 
-/** Carga Wh num mapa `slot_charges` com chave exacta ou só diferença de capitalização. */
-function getWorkshopSlotChargeWh(slotCharges: Record<string, number>, componentSlotId: string): number {
-  if (Object.prototype.hasOwnProperty.call(slotCharges, componentSlotId)) {
-    const n = Number(slotCharges[componentSlotId]);
-    return Number.isFinite(n) && n >= 0 ? n : 0;
-  }
-  const want = componentSlotId.toLowerCase().trim();
-  const hit = Object.entries(slotCharges).find(([k]) => k.toLowerCase().trim() === want);
-  if (!hit) return 0;
-  const n = Number(hit[1]);
+function chargeWhAtBatteryLayoutIndex(
+  slotCharges: Record<string, number>,
+  layout: WorkshopBatteryLayoutSlot[],
+  layoutIndex: number
+): number {
+  const v = readWorkshopBatterySlotField(slotCharges as unknown as Record<string, unknown>, layout, layoutIndex);
+  const n = typeof v === 'number' ? v : parseFloat(String(v));
   return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function chargeWhOnMapKeys(slotCharges: Record<string, number>, primary: string, secondary?: string): number {
+  for (const k of [primary, secondary]) {
+    if (!k) continue;
+    if (Object.prototype.hasOwnProperty.call(slotCharges, k)) {
+      const n = Number(slotCharges[k]);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+  }
+  return 0;
 }
 
 function workshopJsonPick<T extends Record<string, unknown>>(
@@ -132,19 +142,27 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
     where: { user_id_slot_index: { user_id: userId, slot_index: slotIndex } }
   });
   if (!row?.item_id) return;
+  const layoutRows = await tx.upgrades.findUnique({
+    where: { id: String(row.item_id) },
+    select: { layout: true }
+  });
+  const layout = parseWorkshopStructureLayout(layoutRows?.layout ?? null, String(row.item_id));
+  if (!layout?.length) return;
   const internal = parseJsonObject(row.internal_state);
   const slotCharges = parseSlotCharges(row.slot_charges);
-  for (const [compIdRaw, rawVal] of Object.entries(internal)) {
-    if (rawVal == null) continue;
-    const bid = String(rawVal).trim();
+  for (let li = 0; li < layout.length; li++) {
+    if (String(layout[li]?.type || '').toLowerCase() !== 'battery') continue;
+    const rawInst = readWorkshopBatterySlotField(internal, layout, li);
+    const bid = rawInst != null ? String(rawInst).trim() : '';
     if (!bid || !INSTANCE_UUID_RE.test(bid)) continue;
-    const compId = String(compIdRaw).slice(0, 200);
-    const wh = getWorkshopSlotChargeWh(slotCharges, compIdRaw);
+    const canonKey = workshopBatteryStorageKeyAtLayoutIndex(layout, li);
+    if (!canonKey) continue;
+    const wh = chargeWhAtBatteryLayoutIndex(slotCharges, layout, li);
     await tx.stored_batteries.updateMany({
       where: { user_id: userId, id: bid },
       data: {
         workshop_slot_index: slotIndex,
-        workshop_component_slot_id: compId,
+        workshop_component_slot_id: canonKey,
         current_charge: wh
       }
     });
@@ -636,6 +654,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
 
         let storageKeyForBattery: string | null = null;
         let legacyBatterySlotId = '';
+        let resolvedBatteryLayoutIndex: number | null = null;
         if (slotType === 'battery') {
           const resolved = resolveWorkshopBatteryLayoutIndex(
             layout,
@@ -657,6 +676,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             throw new WorkshopMutationError('Este slot de bateria não existe no layout deste carregador.', 400);
           }
           storageKeyForBattery = sk;
+          resolvedBatteryLayoutIndex = resolved.layoutIndex;
           legacyBatterySlotId = String(layout[resolved.layoutIndex]?.id || '').trim() || componentSlotId;
         }
 
@@ -683,10 +703,14 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
           const oldUpg = await loadUpgrade(tx, oldItemId);
           const oldIsBattery = isBatteryUpgrade(oldUpg) || INSTANCE_UUID_RE.test(oldInstanceId);
           if (oldIsBattery && oldUpg) {
-            let oldCharge = getWorkshopSlotChargeWh(slotCharges, persistSlotKey);
-            if (!oldCharge && legacySlotKey !== persistSlotKey) {
-              oldCharge = getWorkshopSlotChargeWh(slotCharges, legacySlotKey);
-            }
+            const oldCharge =
+              slotType === 'battery' && resolvedBatteryLayoutIndex != null
+                ? chargeWhAtBatteryLayoutIndex(slotCharges, layout, resolvedBatteryLayoutIndex)
+                : chargeWhOnMapKeys(
+                    slotCharges,
+                    persistSlotKey,
+                    legacySlotKey !== persistSlotKey ? legacySlotKey : undefined
+                  );
             await recoverBatteryFromSlot(
               tx,
               userId,
@@ -861,6 +885,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
 
         let storageKeyForBatteryU: string | null = null;
         let legacyBatterySlotIdU = '';
+        let resolvedBatteryLayoutIndexU: number | null = null;
         if (slotTypeU === 'battery' && layoutU?.length) {
           const resolvedU = resolveWorkshopBatteryLayoutIndex(
             layoutU,
@@ -882,6 +907,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             throw new WorkshopMutationError('Este slot de bateria não existe no layout deste carregador.', 400);
           }
           storageKeyForBatteryU = sku;
+          resolvedBatteryLayoutIndexU = resolvedU.layoutIndex;
           legacyBatterySlotIdU = String(layoutU[resolvedU.layoutIndex]?.id || '').trim() || componentSlotId;
         }
 
@@ -911,10 +937,14 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
         const upg = await loadUpgrade(tx, originalItemId);
         const isBattery = isBatteryUpgrade(upg) || INSTANCE_UUID_RE.test(val);
         if (isBattery && upg) {
-          let charge = getWorkshopSlotChargeWh(slotCharges, persistSlotKeyU);
-          if (!charge && legacySlotKeyU !== persistSlotKeyU) {
-            charge = getWorkshopSlotChargeWh(slotCharges, legacySlotKeyU);
-          }
+          const charge =
+            slotTypeU === 'battery' && layoutU && resolvedBatteryLayoutIndexU != null
+              ? chargeWhAtBatteryLayoutIndex(slotCharges, layoutU, resolvedBatteryLayoutIndexU)
+              : chargeWhOnMapKeys(
+                  slotCharges,
+                  persistSlotKeyU,
+                  legacySlotKeyU !== persistSlotKeyU ? legacySlotKeyU : undefined
+                );
           await logCharging(tx, email, {
             action: 'removed_to_stock',
             workshop_slot_index: slotIndex,

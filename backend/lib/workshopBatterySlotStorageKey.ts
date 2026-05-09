@@ -1,8 +1,9 @@
 /**
- * Chaves canónicas para `internal_state` / `slot_charges` / `slot_item_ids` por célula de bateria.
- * Se o layout do carregador repete o mesmo `id` em vários slots `type: battery`, um objeto JSON
- * não pode guardar dois valores sob a mesma chave — todas as leituras/escritas têm de usar uma
- * chave estável única (índice no array do layout).
+ * Estado de bateria no carregador: uma entrada por posição no array `layout.slots`.
+ * Chave canónica = `__ms_bat_${layoutIndex}` — nunca usar só o `id` do JSON como chave global,
+ * porque vários slots podem repetir o mesmo `id` e um objeto JSON não pode ter duas chaves iguais.
+ * Leitura: canónica primeiro, depois só a chave literal `layout[layoutIndex].id` nessa célula
+ * (compat. saves antigos). Sem varrer o objeto nem casar case-insensitive (isso misturava células).
  */
 
 export type WorkshopBatteryLayoutSlot = { type?: string; id?: string };
@@ -11,7 +12,7 @@ function isBatterySlot(s: WorkshopBatteryLayoutSlot | undefined): boolean {
   return String(s?.type || '').toLowerCase() === 'battery';
 }
 
-/** Conta quantos slots `battery` partilham exactamente o mesmo `id` (trim, case-sensitive). */
+/** Slots `battery` que partilham o mesmo `id` no layout (uma chave JSON não chega para todos). */
 function duplicateBatteryIds(layoutSlots: WorkshopBatteryLayoutSlot[]): Set<string> {
   const counts = new Map<string, number>();
   for (let i = 0; i < layoutSlots.length; i++) {
@@ -27,22 +28,45 @@ function duplicateBatteryIds(layoutSlots: WorkshopBatteryLayoutSlot[]): Set<stri
   return dups;
 }
 
-/**
- * Chave usada em `workshop_slots.internal_state` / `slot_charges` / `slot_item_ids` para a
- * bateria na posição `layoutIndex` (índice no array `layout.slots` do carregador).
- */
+/** Chave em `internal_state` / `slot_charges` / `slot_item_ids` para a bateria nessa posição do layout. */
 export function workshopBatteryStorageKeyAtLayoutIndex(
   layoutSlots: WorkshopBatteryLayoutSlot[],
   layoutIndex: number
 ): string | null {
   if (layoutIndex < 0 || layoutIndex >= layoutSlots.length) return null;
   if (!isBatterySlot(layoutSlots[layoutIndex])) return null;
+  return `__ms_bat_${layoutIndex}`;
+}
+
+/**
+ * Lê um campo (instância, carga, catálogo) para a célula de bateria em `layoutIndex`.
+ * Ordem: chave canónica → chave literal `layout[layoutIndex].id` se for diferente da canónica.
+ */
+export function readWorkshopBatterySlotField(
+  map: Record<string, unknown> | null | undefined,
+  layoutSlots: WorkshopBatteryLayoutSlot[],
+  layoutIndex: number
+): unknown {
+  if (!map) return undefined;
+  const canonKey = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, layoutIndex);
+  if (!canonKey) return undefined;
+  if (Object.prototype.hasOwnProperty.call(map, canonKey) && map[canonKey] != null) return map[canonKey];
+  const leg = String(layoutSlots[layoutIndex]?.id || '').trim();
+  if (!leg || leg === canonKey) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(map, leg) || map[leg] == null) return undefined;
   const dups = duplicateBatteryIds(layoutSlots);
-  const rawId = String(layoutSlots[layoutIndex]?.id || '').trim();
-  if (!rawId || dups.has(rawId)) {
-    return `__ms_bat_${layoutIndex}`;
+  if (dups.has(leg)) {
+    let first = -1;
+    for (let i = 0; i < layoutSlots.length; i++) {
+      if (!isBatterySlot(layoutSlots[i])) continue;
+      if (String(layoutSlots[i]?.id || '').trim() === leg) {
+        first = i;
+        break;
+      }
+    }
+    if (layoutIndex !== first) return undefined;
   }
-  return rawId;
+  return map[leg];
 }
 
 /** Índices no layout onde `type === 'battery'`, na ordem do JSON. */

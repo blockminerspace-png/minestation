@@ -3,19 +3,8 @@ import { Wrench, Plus, X, Box, Power, Cog, Terminal, Zap, RefreshCw, PlayCircle,
 import { Upgrade, SlotLayout, WorkshopStructure, StoredBattery } from '../types';
 import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { resolveBatteryLayoutIndexForBatteryBar } from '../lib/workshopBatteryBarMap';
-import { workshopBatteryStorageKeyAtLayoutIndex } from '../lib/workshopBatterySlotStorageKey';
+import { readWorkshopBatterySlotField } from '../lib/workshopBatterySlotStorageKey';
 import { ChargingHistory } from './ChargingHistory';
-
-function workshopSlotMapPick(
-    obj: Record<string, unknown> | null | undefined,
-    storageKey: string,
-    legacyId: string
-): unknown {
-    if (!obj) return null;
-    if (obj[storageKey] !== undefined && obj[storageKey] !== null) return obj[storageKey];
-    if (legacyId && legacyId !== storageKey && obj[legacyId] !== undefined && obj[legacyId] !== null) return obj[legacyId];
-    return null;
-}
 
 /** `currentCharge` no armazém está em Wh — nunca usar como % directamente. */
 function storedBatteryChargePercent(bat: StoredBattery, upg: Upgrade | null | undefined): number {
@@ -175,17 +164,23 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                         const layoutSlots = item.layout!.slots;
                                                         const batteryBarOrdinal = layoutSlots.slice(0, i).filter((s) => s.type === 'battery_bar').length;
                                                         const legacyId = String(slot.id || '');
-                                                        const batteryStorageKey =
-                                                            slot.type === 'battery'
-                                                                ? workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, i) || legacyId
-                                                                : legacyId;
                                                         const equippedId =
                                                             slot.type === 'battery'
-                                                                ? workshopSlotMapPick(wsGroup.internalSlots as Record<string, unknown>, batteryStorageKey, legacyId)
+                                                                ? readWorkshopBatterySlotField(
+                                                                      wsGroup.internalSlots as Record<string, unknown>,
+                                                                      layoutSlots,
+                                                                      i
+                                                                  )
                                                                 : getSlotVal(wsGroup.internalSlots, slot.id);
                                                         const chargeWh =
                                                             slot.type === 'battery'
-                                                                ? Number(workshopSlotMapPick(wsGroup.slotCharges as Record<string, unknown>, batteryStorageKey, legacyId)) || 0
+                                                                ? Number(
+                                                                      readWorkshopBatterySlotField(
+                                                                          wsGroup.slotCharges as Record<string, unknown>,
+                                                                          layoutSlots,
+                                                                          i
+                                                                      )
+                                                                  ) || 0
                                                                 : Number(getSlotVal(wsGroup.slotCharges, slot.id)) || 0;
 
                                                         if (slot.type === 'charger_bar' || slot.type === 'battery_bar') {
@@ -216,12 +211,25 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 // Charger bar pulses if ANY battery is being charged
                                                                 isActivelyCharging = wsGroup.currentCharge > 0.1 && (item.layout?.slots.some((s, li) => {
                                                                     if (s.type !== 'battery') return false;
-                                                                    const leg = String(s.id || '');
-                                                                    const sk = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, li) || leg;
-                                                                    const bIid = workshopSlotMapPick(wsGroup.internalSlots as Record<string, unknown>, sk, leg);
+                                                                    const bIid = readWorkshopBatterySlotField(
+                                                                        wsGroup.internalSlots as Record<string, unknown>,
+                                                                        layoutSlots,
+                                                                        li
+                                                                    );
                                                                     if (!bIid) return false;
-                                                                    const bChargeVal = Number(workshopSlotMapPick(wsGroup.slotCharges as Record<string, unknown>, sk, leg)) || 0;
-                                                                    const bSId = workshopSlotMapPick(wsGroup.slotItemIds as Record<string, unknown>, sk, leg);
+                                                                    const bChargeVal =
+                                                                        Number(
+                                                                            readWorkshopBatterySlotField(
+                                                                                wsGroup.slotCharges as Record<string, unknown>,
+                                                                                layoutSlots,
+                                                                                li
+                                                                            )
+                                                                        ) || 0;
+                                                                    const bSId = readWorkshopBatterySlotField(
+                                                                        wsGroup.slotItemIds as Record<string, unknown>,
+                                                                        layoutSlots,
+                                                                        li
+                                                                    );
                                                                     let bD =
                                                                         (bSId ? upgrades.find((u) => u.id === bSId) : undefined) ??
                                                                         undefined;
@@ -243,11 +251,24 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 );
 
                                                                 if (mappedBatLayoutIndex != null) {
-                                                                    const bLeg = String(layoutSlots[mappedBatLayoutIndex]?.id || '');
-                                                                    const bSk = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, mappedBatLayoutIndex) || bLeg;
-                                                                    const bChargeWh = Number(workshopSlotMapPick(wsGroup.slotCharges as Record<string, unknown>, bSk, bLeg)) || 0;
-                                                                    const bInstanceId = workshopSlotMapPick(wsGroup.internalSlots as Record<string, unknown>, bSk, bLeg);
-                                                                    const savedItemId = workshopSlotMapPick(wsGroup.slotItemIds as Record<string, unknown>, bSk, bLeg);
+                                                                    const bChargeWh =
+                                                                        Number(
+                                                                            readWorkshopBatterySlotField(
+                                                                                wsGroup.slotCharges as Record<string, unknown>,
+                                                                                layoutSlots,
+                                                                                mappedBatLayoutIndex
+                                                                            )
+                                                                        ) || 0;
+                                                                    const bInstanceId = readWorkshopBatterySlotField(
+                                                                        wsGroup.internalSlots as Record<string, unknown>,
+                                                                        layoutSlots,
+                                                                        mappedBatLayoutIndex
+                                                                    );
+                                                                    const savedItemId = readWorkshopBatterySlotField(
+                                                                        wsGroup.slotItemIds as Record<string, unknown>,
+                                                                        layoutSlots,
+                                                                        mappedBatLayoutIndex
+                                                                    );
                                                                     let bDef = savedItemId
                                                                         ? upgrades.find((u) => u.id === savedItemId) ?? undefined
                                                                         : undefined;
@@ -312,10 +333,10 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             if (equippedId) {
                                                                 const savedItemId =
                                                                     slot.type === 'battery'
-                                                                        ? workshopSlotMapPick(
+                                                                        ? readWorkshopBatterySlotField(
                                                                               wsGroup.slotItemIds as Record<string, unknown>,
-                                                                              String(batteryStorageKey),
-                                                                              legacyId
+                                                                              layoutSlots,
+                                                                              i
                                                                           )
                                                                         : getSlotVal(wsGroup.slotItemIds, slot.id);
                                                                 const slotKind: Upgrade['type'] =
@@ -355,10 +376,10 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     if (slot.type === 'battery') {
                                                                         const bChargeWh =
                                                                             Number(
-                                                                                workshopSlotMapPick(
+                                                                                readWorkshopBatterySlotField(
                                                                                     wsGroup.slotCharges as Record<string, unknown>,
-                                                                                    String(batteryStorageKey),
-                                                                                    legacyId
+                                                                                    layoutSlots,
+                                                                                    i
                                                                                 )
                                                                             ) || 0;
                                                                         const bCapacity = contentItem.powerCapacity ?? 100;
@@ -470,14 +491,20 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             for (let li = 0; li < monSlots.length; li++) {
                                                                 const bs = monSlots[li];
                                                                 if (bs.type !== 'battery') continue;
-                                                                const leg = String(bs.id || '');
-                                                                const sk = workshopBatteryStorageKeyAtLayoutIndex(monSlots, li) || leg;
-                                                                const iid = workshopSlotMapPick(wsGroup.internalSlots as Record<string, unknown>, sk, leg);
+                                                                const iid = readWorkshopBatterySlotField(
+                                                                    wsGroup.internalSlots as Record<string, unknown>,
+                                                                    monSlots,
+                                                                    li
+                                                                );
                                                                 if (!iid) {
                                                                     cellPercents.push('—');
                                                                     continue;
                                                                 }
-                                                                const savedItemId = workshopSlotMapPick(wsGroup.slotItemIds as Record<string, unknown>, sk, leg);
+                                                                const savedItemId = readWorkshopBatterySlotField(
+                                                                    wsGroup.slotItemIds as Record<string, unknown>,
+                                                                    monSlots,
+                                                                    li
+                                                                );
                                                                 let def = savedItemId
                                                                     ? upgrades.find((u) => u.id === savedItemId) ?? undefined
                                                                     : undefined;
@@ -493,7 +520,14 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 if (!def && String(iid).trim())
                                                                     def = orphanCatalogUpgrade(String(iid), 'battery');
                                                                 const cap = def?.powerCapacity;
-                                                                const wh = Number(workshopSlotMapPick(wsGroup.slotCharges as Record<string, unknown>, sk, leg)) || 0;
+                                                                const wh =
+                                                                    Number(
+                                                                        readWorkshopBatterySlotField(
+                                                                            wsGroup.slotCharges as Record<string, unknown>,
+                                                                            monSlots,
+                                                                            li
+                                                                        )
+                                                                    ) || 0;
                                                                 if (typeof cap === 'number' && cap > 0) {
                                                                     cellPercents.push(`${Math.min(100, (wh / cap) * 100).toFixed(0)}%`);
                                                                 } else if (cap === -1) {
@@ -508,12 +542,25 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 wsGroup.currentCharge > 0.1 &&
                                                                 monSlots.some((bs, li) => {
                                                                     if (bs.type !== 'battery') return false;
-                                                                    const leg = String(bs.id || '');
-                                                                    const sk = workshopBatteryStorageKeyAtLayoutIndex(monSlots, li) || leg;
-                                                                    const iid = workshopSlotMapPick(wsGroup.internalSlots as Record<string, unknown>, sk, leg);
+                                                                    const iid = readWorkshopBatterySlotField(
+                                                                        wsGroup.internalSlots as Record<string, unknown>,
+                                                                        monSlots,
+                                                                        li
+                                                                    );
                                                                     if (!iid) return false;
-                                                                    const wh = Number(workshopSlotMapPick(wsGroup.slotCharges as Record<string, unknown>, sk, leg)) || 0;
-                                                                    const savedItemId = workshopSlotMapPick(wsGroup.slotItemIds as Record<string, unknown>, sk, leg);
+                                                                    const wh =
+                                                                        Number(
+                                                                            readWorkshopBatterySlotField(
+                                                                                wsGroup.slotCharges as Record<string, unknown>,
+                                                                                monSlots,
+                                                                                li
+                                                                            )
+                                                                        ) || 0;
+                                                                    const savedItemId = readWorkshopBatterySlotField(
+                                                                        wsGroup.slotItemIds as Record<string, unknown>,
+                                                                        monSlots,
+                                                                        li
+                                                                    );
                                                                     let def = savedItemId
                                                                         ? upgrades.find((u) => u.id === savedItemId)
                                                                         : undefined;
@@ -834,12 +881,13 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                     ? upgrades.find((u) => u.id === wsLive.itemId) ?? null
                                                     : null;
                                             const dLay = chDef?.layout?.slots || [];
-                                            const dLeg = String(detailContext.slotId || '');
-                                            const dSk =
-                                                workshopBatteryStorageKeyAtLayoutIndex(dLay, detailContext.layoutSlotIndex) || dLeg;
                                             const wh =
                                                 Number(
-                                                    workshopSlotMapPick(wsLive.slotCharges as Record<string, unknown>, dSk, dLeg)
+                                                    readWorkshopBatterySlotField(
+                                                        wsLive.slotCharges as Record<string, unknown>,
+                                                        dLay,
+                                                        detailContext.layoutSlotIndex
+                                                    )
                                                 ) || 0;
                                             if (cap === -1) {
                                                 detailPct = 100;

@@ -48,7 +48,10 @@ import {
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import { appendUsdcShortfallLine } from './utils/playerMoneyMessages';
-import { workshopBatteryStorageKeyAtLayoutIndex } from './lib/workshopBatterySlotStorageKey';
+import {
+  readWorkshopBatterySlotField,
+  workshopBatteryStorageKeyAtLayoutIndex
+} from './lib/workshopBatterySlotStorageKey';
 import { trackSpaPageView } from './lib/analytics';
 import {
   gamePathFromView,
@@ -1159,13 +1162,6 @@ export default function App() {
             return entry ? entry[1] : null;
           };
 
-          const pickWs = (obj: any, sk: string, leg: string) => {
-            if (!obj) return null;
-            if (obj[sk] !== undefined && obj[sk] !== null) return obj[sk];
-            if (leg && leg !== sk && obj[leg] !== undefined && obj[leg] !== null) return obj[leg];
-            return null;
-          };
-
           if (wiringSlot && !gsv(ws.internalSlots, wiringSlot.id)) return ws;
 
           // Calculate Base Speed (Total output)
@@ -1192,13 +1188,15 @@ export default function App() {
           for (let li = 0; li < layoutSlots.length; li++) {
             const batSlot = layoutSlots[li];
             if (batSlot.type !== 'battery') continue;
-            const leg = String(batSlot.id || '');
-            const sk = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, li) || leg;
-            const batteryIid = pickWs(ws.internalSlots, sk, leg);
+            const sk = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, li);
+            if (!sk) continue;
+            const internalMap = ws.internalSlots as Record<string, unknown>;
+            const itemIdsMap = ws.slotItemIds as Record<string, unknown>;
+            const batteryIid = readWorkshopBatterySlotField(internalMap, layoutSlots, li);
             if (!batteryIid) continue;
 
-            const catIdRaw = pickWs(ws.slotItemIds, sk, leg);
-            let bDef = catIdRaw ? gameUpgrades.find(u => u.id === catIdRaw) : undefined;
+            const catIdRaw = readWorkshopBatterySlotField(itemIdsMap, layoutSlots, li);
+            let bDef = catIdRaw ? gameUpgrades.find(u => u.id === String(catIdRaw)) : undefined;
             if (!bDef) {
               const bInst = prev.storedBatteries.find(b => b.id === batteryIid);
               if (bInst) bDef = gameUpgrades.find(u => u.id === bInst.itemId);
@@ -1206,7 +1204,11 @@ export default function App() {
             if (!bDef) continue;
 
             const maxB = bDef.powerCapacity || 100;
-            const currentBRaw = pickWs(nextSlotCharges, sk, leg);
+            const currentBRaw = readWorkshopBatterySlotField(
+              nextSlotCharges as Record<string, unknown>,
+              layoutSlots,
+              li
+            );
             const currentB =
               currentBRaw !== undefined && currentBRaw !== null ? Number(currentBRaw) : 0;
 
@@ -1217,6 +1219,7 @@ export default function App() {
               if (transfer > 0) {
                 internalBuffer -= transfer;
                 nextSlotCharges[sk] = currentB + transfer;
+                const leg = String(batSlot.id || '').trim();
                 if (leg && leg !== sk && Object.prototype.hasOwnProperty.call(nextSlotCharges, leg)) {
                   delete nextSlotCharges[leg];
                 }

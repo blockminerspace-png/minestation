@@ -1,5 +1,5 @@
 import type { PlacedRack, StoredBattery, Upgrade, WorkshopStructure } from '../types';
-import { workshopBatteryStorageKeyAtLayoutIndex } from '../lib/workshopBatterySlotStorageKey';
+import { readWorkshopBatterySlotField } from '../lib/workshopBatterySlotStorageKey';
 import { NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from '../types';
 import { batteryTierScore, poolEntryEnergyWh } from './roomBatteryModel';
 
@@ -9,13 +9,6 @@ const RACK_BATTERY_INSTANCE_UUID_RE =
 
 export function isRackBatteryInstanceUuid(batteryId: string | null | undefined): boolean {
   return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId ?? '').trim());
-}
-
-function workshopPayloadGet(obj: Record<string, unknown> | null | undefined, sid: string): unknown {
-  if (!obj || !sid) return null;
-  if (obj[sid] !== undefined) return obj[sid];
-  const entry = Object.entries(obj).find(([k]) => k.toLowerCase().trim() === sid.toLowerCase().trim());
-  return entry ? entry[1] : null;
 }
 
 function normalizedStoredChargeWh(sb: StoredBattery): number {
@@ -48,18 +41,17 @@ export function listWorkshopMountedBatteryInstances(
     const slotsArr = layout.slots;
     for (let li = 0; li < slotsArr.length; li++) {
       const s = slotsArr[li];
-      if (s.type !== 'battery' || !s.id) continue;
-      const leg = String(s.id || '').trim();
-      const sk = workshopBatteryStorageKeyAtLayoutIndex(slotsArr, li) || leg;
-      const rawId = workshopPayloadGet(internal, sk) ?? workshopPayloadGet(internal, leg);
+      if (s.type !== 'battery') continue;
+      const rawId = readWorkshopBatterySlotField(internal, slotsArr, li);
       if (rawId == null) continue;
       const instanceId = String(rawId).trim();
       if (!instanceId || !RACK_BATTERY_INSTANCE_UUID_RE.test(instanceId)) continue;
       if (seen.has(instanceId)) continue;
-      const itemId = String(workshopPayloadGet(slotItemIds, sk) ?? workshopPayloadGet(slotItemIds, leg) ?? '').trim();
+      const itemIdRaw = readWorkshopBatterySlotField(slotItemIds, slotsArr, li);
+      const itemId = String(itemIdRaw ?? '').trim();
       if (!itemId) continue;
       const batDef = upgrades.find((u) => u.id === itemId);
-      const chRaw = workshopPayloadGet(slotCharges, sk) ?? workshopPayloadGet(slotCharges, leg);
+      const chRaw = readWorkshopBatterySlotField(slotCharges, slotsArr, li);
       const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
       const currentCharge = Number.isFinite(ch) ? ch : 0;
       seen.add(instanceId);
