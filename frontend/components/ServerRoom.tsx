@@ -38,7 +38,7 @@ import {
     parseRigSlotPurchaseQuantity,
     previewRigSlotBulkPurchase
 } from '../validation/serverRoomValidation';
-import { getMyRigRooms, purchaseRoomSlot } from '../services/api';
+import { getMyRigRooms, getServersState, purchaseRoomSlot } from '../services/api';
 import type { BulkRoomBatteryRunOptions } from '../controllers/roomBatteryController';
 import { MiningCoinSelect } from './MiningCoinSelect';
 import {
@@ -285,8 +285,11 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         (async () => {
             setRoomsLoading(true);
             try {
-                const rooms = await getMyRigRooms(emailParam);
-                if (!cancelled) setMyRooms(rooms);
+                const pack = await getServersState();
+                if (!cancelled) {
+                    if (pack != null && Array.isArray(pack.rigRooms)) setMyRooms(pack.rigRooms);
+                    else setMyRooms(await getMyRigRooms(emailParam));
+                }
             } finally {
                 if (!cancelled) setRoomsLoading(false);
             }
@@ -383,8 +386,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         closeSlotPurchaseModal();
         if (typeof resp.newUsdc === 'number' && onRoomPurchase) onRoomPurchase(resp.newUsdc);
         if (userEmail) {
-            const rooms = await getMyRigRooms(sanitizeEmailForRoomsFetch(userEmail));
-            setMyRooms(rooms);
+            const pack = await getServersState();
+            if (pack != null && Array.isArray(pack.rigRooms)) setMyRooms(pack.rigRooms);
+            else setMyRooms(await getMyRigRooms(sanitizeEmailForRoomsFetch(userEmail)));
         }
         setPurchaseBusyId(null);
     };

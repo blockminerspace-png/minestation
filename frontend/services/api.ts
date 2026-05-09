@@ -1,4 +1,4 @@
-import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog, PlacedRack, StoredBattery, P2PMarketTradeHistory, P2PMarketTradeHistoryEntry } from '../types';
+import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog, PlacedRack, StoredBattery, P2PMarketTradeHistory, P2PMarketTradeHistoryEntry, WorkshopStructure } from '../types';
 import { GAME_NAV_LABEL_KEYS } from '../constants/gameNavLabels';
 
 const base = '/api';
@@ -691,6 +691,46 @@ export async function getMyRigRooms(email: string): Promise<RigRoom[]> {
     }
   } catch {
     return [];
+  }
+}
+
+/** Estado consolidado da área Servidores (fonte de verdade no backend). */
+export type ServersStatePayload = {
+  version: 1;
+  usdc: number;
+  serverUpdatedAt: number;
+  stock: Record<string, number>;
+  storedBatteries: StoredBattery[];
+  placedRacks: PlacedRack[];
+  workshopSlots: (WorkshopStructure | null)[];
+  rigRooms: RigRoom[];
+  miningCoins: MiningCoin[];
+  upgrades: Upgrade[];
+};
+
+export async function getServersState(): Promise<ServersStatePayload | null> {
+  try {
+    const res = await apiFetch(`${base}/servers/state`);
+    if (!res.ok) return null;
+    const j = (await res.json()) as Partial<ServersStatePayload>;
+    if (j.version !== 1 || !Array.isArray(j.rigRooms)) return null;
+    return {
+      version: 1,
+      usdc: typeof j.usdc === 'number' && Number.isFinite(j.usdc) ? j.usdc : 0,
+      serverUpdatedAt:
+        typeof j.serverUpdatedAt === 'number' && Number.isFinite(j.serverUpdatedAt) ? j.serverUpdatedAt : 0,
+      stock: j.stock && typeof j.stock === 'object' && !Array.isArray(j.stock) ? (j.stock as Record<string, number>) : {},
+      storedBatteries: Array.isArray(j.storedBatteries) ? (j.storedBatteries as StoredBattery[]) : [],
+      placedRacks: Array.isArray(j.placedRacks) ? (j.placedRacks as PlacedRack[]) : [],
+      workshopSlots: Array.isArray(j.workshopSlots)
+        ? (j.workshopSlots as (WorkshopStructure | null)[])
+        : [null, null, null, null, null, null],
+      rigRooms: j.rigRooms as RigRoom[],
+      miningCoins: Array.isArray(j.miningCoins) ? (j.miningCoins as MiningCoin[]) : [],
+      upgrades: Array.isArray(j.upgrades) ? (j.upgrades as Upgrade[]) : []
+    };
+  } catch {
+    return null;
   }
 }
 

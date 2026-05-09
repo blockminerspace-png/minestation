@@ -70,6 +70,7 @@ import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemControl
 import { isValidRoomId, normalizePlacedRackRoomId } from './dist/modules/batteries/batteries.validation.js';
 import { returnRackBatteryToChangesOnNftSanitize } from './dist/modules/batteries/batteries.service.js';
 import { registerBatteriesServerRoomRoutes } from './dist/modules/batteries/batteries.controller.js';
+import { registerServersModuleRoutes } from './dist/modules/servers/servers.controller.js';
 import { loadUserPlacedRacksWithSlots, persistStockStoredBatteriesPlacedRacks } from './dist/lib/serverRoomPersistence.js';
 import { buildRackBatteryPersistSnapshot, collectMountedBatteryInstanceIdsFromPlacedRacks, fetchBatteryUpgradeRowsByIds, isRackBatteryInstanceUuid, loadStoredBatteryRowsForIds } from './dist/modules/batteries/batteries.repository.js';
 import { mergeSaveGameSlicePayload } from './dist/lib/gameSaveSliceMerge.js';
@@ -8939,6 +8940,7 @@ const startServer = async () => {
         validatePlacedRacksForSave,
         sanitizePlacedRacksNftAutoRoom
     });
+    registerServersModuleRoutes(app, { prisma, pool: db });
     // Pedidos `/img/*` não servidos pelo static acima não devem cair no SPA (HTML 200 quebra <img> / fundos CSS).
     app.use((req, res, next) => {
         if (req.method !== 'GET' && req.method !== 'HEAD')
