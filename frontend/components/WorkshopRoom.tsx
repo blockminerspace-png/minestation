@@ -122,9 +122,11 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                         ? upgrades.find((u) => u.id === wsGroup.itemId) ?? orphanCatalogUpgrade(String(wsGroup.itemId), 'charger')
                         : null;
                     const canUnequip = !item || item.type !== 'charger' || (wsGroup?.currentCharge ?? 0) <= 0.000001;
+                    /** Chave estável por bancada — evita reaproveitar DOM entre carregadores ao mudar o estado. */
+                    const benchReactKey = wsGroup?.id ? String(wsGroup.id) : `workshop-empty-${idx}`;
 
                     return (
-                        <div key={idx} className={`relative aspect-square transition-all ${!item ? 'border-2 border-dashed border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 hover:border-amber-500/50 rounded-xl' : 'rounded-none'}`}>
+                        <div key={benchReactKey} className={`relative aspect-square transition-all ${!item ? 'border-2 border-dashed border-slate-300 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/30 hover:border-amber-500/50 rounded-xl' : 'rounded-none'}`}>
                             {item ? (
                                 <div className="w-full h-full flex flex-col items-center justify-center relative group">
                                     <button
@@ -141,6 +143,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                             {item.layout && (
                                                 <div className="absolute inset-0 z-10">
                                                     {item.layout.slots.map((slot, i) => {
+                                                        const slotKey = `${benchReactKey}-${slot.id || i}`;
                                                         const equippedId = getSlotVal(wsGroup.internalSlots, slot.id);
                                                         const chargeWh = getSlotVal(wsGroup.slotCharges, slot.id) ?? 0;
 
@@ -152,7 +155,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             if (isWiringMissing && isCharger) {
                                                                 return (
                                                                     <div
-                                                                        key={i}
+                                                                        key={slotKey}
                                                                         className="absolute z-30 flex flex-col items-center justify-center bg-red-600/90 text-white rounded px-1 animate-pulse shadow-lg border border-red-400 overflow-hidden"
                                                                         style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                         title="Instale a fiação para liberar a carga"
@@ -228,14 +231,18 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 }
                                                             }
 
+                                                            // Pulse leve só no próprio segmento (Wh): antes usava currentCharge do carregador
+                                                            // para todas as battery_bar → todas as barras verdes pulsavam em sincronia.
+                                                            const gentlePulse = !isActivelyCharging && percent > 0.5 && percent < 99.5;
+
                                                             return (
                                                                 <div
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     className="absolute z-20 bg-black/40 backdrop-blur-[2px] border border-white/10 rounded-full overflow-hidden p-0.5"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
                                                                     <div
-                                                                        className={`h-full rounded-full transition-all duration-300 ${isCharger ? 'bg-orange-500 shadow-[0_0_8px_#f97316]' : 'bg-green-500 shadow-[0_0_8px_#22c55e]'} ${isActivelyCharging ? 'animate-super-pulse' : (wsGroup.currentCharge > 0 ? 'animate-pulse opacity-80' : '')}`}
+                                                                        className={`h-full rounded-full transition-all duration-300 ${isCharger ? 'bg-orange-500 shadow-[0_0_8px_#f97316]' : 'bg-green-500 shadow-[0_0_8px_#22c55e]'} ${isActivelyCharging ? 'animate-super-pulse' : gentlePulse ? 'animate-pulse opacity-80' : ''}`}
                                                                         style={{ width: `${Math.min(100, percent)}%`, color: isCharger ? '#f97316' : '#22c55e' }}
                                                                     />
                                                                 </div>
@@ -244,7 +251,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                         if (slot.type === 'power') {
                                                             return (
                                                                 <button
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     className="absolute overflow-hidden rounded-full flex items-center justify-center border-2 bg-green-500 border-green-400 text-white z-20 hover:scale-110 active:scale-95 transition-transform"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
@@ -255,7 +262,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                         if (slot.type === 'config') {
                                                             return (
                                                                 <button
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     className="absolute overflow-hidden rounded-full flex items-center justify-center border-2 border-slate-700 bg-slate-900 text-slate-300 z-20 hover:scale-110 active:scale-95 transition-transform"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
@@ -322,7 +329,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
 
                                                             return (
                                                                 <button
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     onClick={handleClick}
                                                                     className={`absolute border border-dashed border-amber-500/30 bg-amber-500/5 rounded-sm z-30 flex items-center justify-center hover:bg-amber-500/20 transition-colors overflow-hidden ${equippedId ? 'border-none bg-transparent' : ''} ${isWiringCharging ? 'shadow-[0_0_15px_rgba(245,158,11,0.4)] brightness-125 animate-super-pulse' : ''}`}
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%`, color: '#06b6d4' }}
@@ -348,7 +355,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             const instantUsed = isUsedToday(`instant_recharge_slot_${idx}`);
                                                             return (
                                                                 <button
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     disabled={instantUsed}
                                                                     onClick={() => onInstantRecharge(idx)}
                                                                     className={`absolute overflow-hidden rounded-full flex items-center justify-center border z-30 transition-transform shadow-[0_0_10px_rgba(245,158,11,0.3)] ${instantUsed
@@ -366,7 +373,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             const used = isUsedToday(`reward_ad_slot_${idx}`);
                                                             return (
                                                                 <button
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     disabled={used}
                                                                     onClick={() => onRewardedAd(idx)}
                                                                     className={`absolute overflow-hidden rounded-md flex items-center justify-center border z-30 transition-all shadow-[0_0_15px_rgba(34,197,94,0.4)] group ${used
@@ -384,7 +391,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             const used = isUsedToday(`daily_boost_slot_${idx}`);
                                                             return (
                                                                 <button
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     disabled={used}
                                                                     onClick={() => onDailyBoost(idx)}
                                                                     className={`absolute overflow-hidden rounded-md flex items-center justify-center border z-30 transition-all shadow-[0_0_15px_rgba(245,158,11,0.4)] group ${used
@@ -433,7 +440,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
 
                                                             return (
                                                                 <div
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     className="absolute z-20 bg-black/90 backdrop-blur-md rounded-none p-1 font-mono leading-tight flex flex-col justify-between shadow-2xl pointer-events-none"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
@@ -469,8 +476,8 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     </div>
                                                                     <div className="mt-0.5 pt-0.5 border-t border-white/5 flex justify-between items-center">
                                                                         <div className="flex gap-0.5">
-                                                                            {Array.from({ length: 4 }).map((_, idx) => (
-                                                                                <div key={idx} className="w-1 h-0.5 rounded-full bg-amber-500/60 animate-pulse" style={{ animationDelay: `${idx * 0.2}s` }}></div>
+                                                                            {Array.from({ length: 4 }).map((_, ledIdx) => (
+                                                                                <div key={`${slotKey}-dot-${ledIdx}`} className="w-1 h-0.5 rounded-full bg-amber-500/60 animate-pulse" style={{ animationDelay: `${ledIdx * 0.2}s` }}></div>
                                                                             ))}
                                                                         </div>
                                                                         <span className="text-[7px] font-bold tracking-tighter text-amber-600">STATION_READY</span>
@@ -481,7 +488,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                         if (slot.type === 'production_display') {
                                                             return (
                                                                 <div
-                                                                    key={i}
+                                                                    key={slotKey}
                                                                     className="absolute z-20 bg-black/60 backdrop-blur-sm border border-amber-500/30 rounded flex items-center justify-center p-0.5"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
