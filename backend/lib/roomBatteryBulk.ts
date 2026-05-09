@@ -3,8 +3,15 @@
  * Keep in sync when changing game rules.
  */
 import crypto from 'node:crypto';
+import { STORED_BATTERY_CATALOG_PENDING_ID } from './saveGameEconomyValidate.js';
 
 const newStoredId = () => crypto.randomUUID();
+
+const RACK_BATTERY_INSTANCE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isRackBatteryInstanceUuid(id: string): boolean {
+  return RACK_BATTERY_INSTANCE_UUID_RE.test(String(id || '').trim());
+}
 
 export type GameUpgrade = {
   id: string;
@@ -144,6 +151,15 @@ function unloadRackBatteryToInventory(
     return;
   }
 
+  if (isRackBatteryInstanceUuid(id)) {
+    nb.push({
+      id,
+      itemId: STORED_BATTERY_CATALOG_PENDING_ID,
+      currentCharge: typeof rack.currentCharge === 'number' ? rack.currentCharge : 0
+    });
+    return;
+  }
+
   const upgCat = upgrades.find((u) => u.id === id && u.type === 'battery');
   if (!upgCat) return;
   const capacity = upgCat.powerCapacity ?? 100;
@@ -205,7 +221,7 @@ function takeOneBatteryUnit(
     ns[batteryItemId]--;
     const capRaw = batDef.powerCapacity;
     const initCharge = capRaw === -1 ? -1 : capRaw ?? 0;
-    return { charge: initCharge };
+    return { charge: initCharge, instanceId: newStoredId() };
   }
   return null;
 }
@@ -320,9 +336,13 @@ export function applyBulkRoomBatterySmartFill(
       ns[picked.itemId]--;
     }
 
+    const rackBattId =
+      picked.storageId != null && String(picked.storageId).trim() !== ''
+        ? String(picked.storageId).trim()
+        : newStoredId();
     out[ri] = {
       ...rack,
-      batteryId: picked.storageId != null && String(picked.storageId).trim() !== '' ? String(picked.storageId).trim() : picked.itemId,
+      batteryId: rackBattId,
       currentCharge: picked.charge,
       isOn: true
     };
@@ -405,7 +425,10 @@ export function applyBulkRoomBatteryChange(
     if (!taken) {
       return { ok: false, message: 'Falha ao retirar unidade do estoque/armazém. Tente novamente.' };
     }
-    const rackBattId = taken.instanceId != null && String(taken.instanceId).trim() !== '' ? String(taken.instanceId).trim() : batteryUpgradeId;
+    const rackBattId =
+      taken.instanceId != null && String(taken.instanceId).trim() !== ''
+        ? String(taken.instanceId).trim()
+        : newStoredId();
     out[i] = {
       ...rack,
       batteryId: rackBattId,

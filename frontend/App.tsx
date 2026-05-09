@@ -315,6 +315,8 @@ export default function App() {
   // Game State
   const [gameState, setGameState] = useState<GameState>(INITIAL_STATE);
   const gameStateRef = useRef(gameState);
+  /** UUID na rig (bateria tirada do stock) → id de catálogo até existir linha em `stored_batteries` após save/reload. */
+  const rackBatteryFromStockCatalogRef = useRef<Map<string, string>>(new Map());
 
 
 
@@ -512,6 +514,7 @@ export default function App() {
       const label =
         user.email?.trim() || user.username?.trim() || String(user.id || 'player');
       const parsed = processLoadedState(data, label);
+      rackBatteryFromStockCatalogRef.current.clear();
       setGameState(parsed);
     }
     if (Array.isArray(freshUpgrades)) {
@@ -951,6 +954,7 @@ export default function App() {
   // Load Save when User changes (inclui admin: ranking / troféu na header)
   useEffect(() => {
     if (!user) {
+      rackBatteryFromStockCatalogRef.current.clear();
       setGameState(INITIAL_STATE);
       setSaveLoaded(false);
       setGameStateLoadError(null);
@@ -967,6 +971,7 @@ export default function App() {
         if (data) {
           setOfflineStats((data as any).offlineMined || {});
           const parsed = processLoadedState(data, gameStateProcessLabel);
+          rackBatteryFromStockCatalogRef.current.clear();
           setGameState(parsed);
           setSaveLoaded(true);
           setGameStateLoadError(null);
@@ -1220,6 +1225,7 @@ export default function App() {
 
   const handleLogout = async () => {
     await apiLogout();
+    rackBatteryFromStockCatalogRef.current.clear();
     setUser(null);
     setGlobalView('home');
     setGameState(INITIAL_STATE);
@@ -1357,6 +1363,7 @@ export default function App() {
       const label =
         user.email?.trim() || user.username?.trim() || String(user.id || 'player');
       const parsed = processLoadedState(data, label);
+      rackBatteryFromStockCatalogRef.current.clear();
       setGameState(parsed);
     }
   }, [user]);
@@ -1699,6 +1706,7 @@ export default function App() {
       (Array.isArray(r.multiplierSlots) ? r.multiplierSlots : []).forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
       if (r.wiringId) ns[r.wiringId] = (ns[r.wiringId] || 0) + 1;
       if (r.batteryId) {
+        rackBatteryFromStockCatalogRef.current.delete(String(r.batteryId));
         const catId = resolveEquippedBatteryCatalogId(r.batteryId, nb, gameUpgrades);
         if (catId) {
           const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
@@ -1752,6 +1760,7 @@ export default function App() {
       }
 
       if (oldItemId) {
+        rackBatteryFromStockCatalogRef.current.delete(String(oldItemId));
         if (type === 'battery') {
           const catOld = resolveEquippedBatteryCatalogId(oldItemId, nb, gameUpgrades);
           if (catOld) {
@@ -1783,7 +1792,11 @@ export default function App() {
           if ((ns[iid] || 0) < 1) return p;
           ns[iid]--;
           initCharge = gameUpgrades.find((u) => u.id === iid)?.powerCapacity || 0;
-          r.batteryId = iid;
+          r.batteryId =
+            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+              ? crypto.randomUUID()
+              : `sb_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+          rackBatteryFromStockCatalogRef.current.set(r.batteryId, iid);
         }
         r.currentCharge = initCharge;
         r.isOn = true;
@@ -1801,8 +1814,11 @@ export default function App() {
       if (type === 'battery') id = r.batteryId; else if (type === 'wiring') id = r.wiringId; else if (type === 'multiplier' && idx !== undefined) id = r.multiplierSlots[idx];
       if (!id) return p; let ns = { ...p.stock }; let nb = [...p.storedBatteries];
       if (type === 'battery') {
-        const catId = resolveEquippedBatteryCatalogId(id, p.storedBatteries, gameUpgrades);
+        const catId =
+          rackBatteryFromStockCatalogRef.current.get(id) ??
+          resolveEquippedBatteryCatalogId(id, p.storedBatteries, gameUpgrades);
         if (!catId) return p;
+        rackBatteryFromStockCatalogRef.current.delete(id);
         const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
         const capacity = upg?.powerCapacity || 100;
         const isFull = r.currentCharge >= (capacity * 0.999);

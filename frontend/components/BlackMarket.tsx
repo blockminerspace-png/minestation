@@ -13,6 +13,7 @@ const P2P_TYPE_OPTIONS: { value: '' | Upgrade['type']; label: string }[] = [
   { value: 'charger', label: 'Carregadores' }
 ];
 import { getMarketListings, reserveMarketListing, cancelMarketReservation, buyMarketListing, claimMarketFunds, getCustodyListings, claimCustodyItem, getMarketTradeHistory } from '../services/api';
+import { resolvePlacedRackBatteryCatalogId } from '../models/serverRoomModel';
 
 /** Preço USDC digitado (ex.: "0,1" em PT). `parseFloat("0,1")` dá 0 — evitar isso. */
 function parseUsdcInput(raw: string): number {
@@ -100,7 +101,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
     } else {
       gameState.placedRacks.forEach(r => {
         r.slots.forEach(s => { if (s === upgradeId) count++; });
-        if (r.batteryId === upgradeId) count++;
+        if (resolvePlacedRackBatteryCatalogId(r, gameState.storedBatteries, upgrades) === upgradeId) count++;
         if (r.wiringId === upgradeId) count++;
         r.multiplierSlots?.forEach(s => { if (s === upgradeId) count++; });
       });

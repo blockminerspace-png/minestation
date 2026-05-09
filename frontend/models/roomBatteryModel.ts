@@ -1,5 +1,15 @@
 import { normalizePlacedRackRoomId, type GameState, type PlacedRack, type StoredBattery, type Upgrade } from '../types';
 
+/** Alinhado a `serverRoomModel` / backend — evita import circular. */
+const RACK_BATTERY_INSTANCE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+function isRackBatteryInstanceUuidLocal(batteryId: string | null | undefined): boolean {
+  return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId ?? '').trim());
+}
+
+/** Alinhado a `STORED_BATTERY_CATALOG_PENDING_ID` no backend — `validateStoredBatteriesForSave` normaliza. */
+const LEGACY_BATTERY_MISSING_CATALOG = 'legacy_battery_missing_catalog';
+
 const newStoredId = (): string =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -91,9 +101,38 @@ function unloadRackBatteryToInventory(
   upgrades: Upgrade[]
 ): void {
   if (!rack.batteryId) return;
-  const id = rack.batteryId;
-  const upg = upgrades.find((u) => u.id === id);
-  const capacity = upg?.powerCapacity ?? 100;
+  const id = String(rack.batteryId).trim();
+  if (!id) return;
+
+  const instIdx = nb.findIndex((b) => b && String(b.id).trim() === id);
+  if (instIdx >= 0) {
+    const row = nb[instIdx]!;
+    const upg = upgrades.find((u) => u.id === row.itemId && u.type === 'battery');
+    const capacity = upg?.powerCapacity ?? 100;
+    const isInf = capacity === -1;
+    const isFull = isInf || rack.currentCharge >= capacity * 0.999;
+    nb.splice(instIdx, 1);
+    if (isFull) {
+      const cat = String(row.itemId || '').trim();
+      if (cat) ns[cat] = (ns[cat] || 0) + 1;
+    } else {
+      nb.push({ id: row.id, itemId: row.itemId, currentCharge: rack.currentCharge });
+    }
+    return;
+  }
+
+  if (isRackBatteryInstanceUuidLocal(id)) {
+    nb.push({
+      id,
+      itemId: LEGACY_BATTERY_MISSING_CATALOG,
+      currentCharge: typeof rack.currentCharge === 'number' ? rack.currentCharge : 0
+    });
+    return;
+  }
+
+  const upgCat = upgrades.find((u) => u.id === id && u.type === 'battery');
+  if (!upgCat) return;
+  const capacity = upgCat.powerCapacity ?? 100;
   const isInf = capacity === -1;
   const isFull = isInf || rack.currentCharge >= capacity * 0.999;
   if (isFull) ns[id] = (ns[id] || 0) + 1;
@@ -140,7 +179,7 @@ function takeOneBatteryUnit(
   batDef: Upgrade,
   ns: Record<string, number>,
   nb: StoredBattery[]
-): { charge: number } | null {
+): { charge: number; instanceId: string } | null {
   const matching = nb
     .map((b, idx) => ({ b, idx }))
     .filter(({ b }) => b.itemId === batteryItemId);
@@ -154,14 +193,17 @@ function takeOneBatteryUnit(
     if (idx < 0) return null;
     const [taken] = nb.splice(idx, 1);
     const cap = batDef.powerCapacity ?? 0;
-    if (cap === -1) return { charge: -1 };
-    return { charge: typeof taken.currentCharge === 'number' ? taken.currentCharge : cap };
+    if (cap === -1) return { charge: -1, instanceId: taken.id };
+    return {
+      charge: typeof taken.currentCharge === 'number' ? taken.currentCharge : cap,
+      instanceId: taken.id
+    };
   }
   if ((ns[batteryItemId] || 0) > 0) {
     ns[batteryItemId]--;
     const capRaw = batDef.powerCapacity;
     const initCharge = capRaw === -1 ? -1 : capRaw ?? 0;
-    return { charge: initCharge };
+    return { charge: initCharge, instanceId: newStoredId() };
   }
   return null;
 }
@@ -287,9 +329,13 @@ export function applyBulkRoomBatterySmartFill(
       ns[picked.itemId]--;
     }
 
+    const rackBattId =
+      picked.storageId != null && String(picked.storageId).trim() !== ''
+        ? String(picked.storageId).trim()
+        : newStoredId();
     out[ri] = {
       ...rack,
-      batteryId: picked.itemId,
+      batteryId: rackBattId,
       currentCharge: picked.charge,
       isOn: true
     };
@@ -368,12 +414,12 @@ export function applyBulkRoomBatteryChange(
     const rack = { ...out[i] };
     if (rack.batteryId) unloadRackBatteryToInventory(rack, ns, nb, upgrades);
     const taken = takeOneBatteryUnit(batteryUpgradeId, batDef, ns, nb);
-    if (!taken) {
+    if (!taken || !taken.instanceId) {
       return { ok: false, message: 'Falha ao retirar unidade do estoque/armazém. Tente novamente.' };
     }
     out[i] = {
       ...rack,
-      batteryId: batteryUpgradeId,
+      batteryId: taken.instanceId,
       currentCharge: taken.charge,
       isOn: true
     };

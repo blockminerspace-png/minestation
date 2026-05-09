@@ -7241,6 +7241,7 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
           upgradeIds.add(fallbackBatteryCatalogId);
         }
       } else if (catalogBatteryIds.has(bidRaw)) {
+        // Legado: `placed_racks.battery_id` = id de catálogo (pré UUID-only no cliente).
         upgradeIds.add(bidRaw);
       } else if (isRackBatteryInstanceUuidLocal(bidRaw) && fallbackBatteryCatalogId) {
         upgradeIds.add(fallbackBatteryCatalogId);

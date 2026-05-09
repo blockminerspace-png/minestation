@@ -3,6 +3,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { GameState, Upgrade, User } from '../types';
 import { ShoppingCart, DollarSign, Package, Zap, Battery, Plus, Minus, Trash2, CheckCircle2, X, Hexagon, Clock, List, Cpu, Server, Plug, Wrench, Activity } from 'lucide-react';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
+import { resolvePlacedRackBatteryCatalogId } from '../models/serverRoomModel';
 
 interface UpgradeShopProps {
     gameState: GameState;
@@ -62,7 +63,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({ gameState, user, onBat
                     if (s === upgradeId) count++;
                 });
                 // Also check aux slots
-                if (r.batteryId === upgradeId) count++;
+                if (resolvePlacedRackBatteryCatalogId(r, gameState.storedBatteries, upgrades) === upgradeId) count++;
                 if (r.wiringId === upgradeId) count++;
                 r.multiplierSlots?.forEach(s => { if (s === upgradeId) count++; });
             });

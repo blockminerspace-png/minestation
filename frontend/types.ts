@@ -111,7 +111,8 @@ export interface PlacedRack {
 
   // Electrical System
   wiringId: string | null; // Slot for wiring
-  batteryId: string | null; // Slot for battery
+  /** Instância (`stored_batteries.id`); não usar id de catálogo de `upgrades`. */
+  batteryId: string | null;
 
   // AI System
   multiplierSlots: (string | null)[]; // Slots for AI optimizers

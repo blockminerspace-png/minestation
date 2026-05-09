@@ -15,7 +15,7 @@ function firstBatteryCatalogId(upgrades: Upgrade[] | null | undefined): string |
   return u?.id != null ? String(u.id).trim() : null;
 }
 
-/** `rack.batteryId` pode ser id de instância (`stored_batteries.id`) ou id de catálogo (`upgrades.id`). */
+/** `rack.batteryId` deve ser UUID de instância; catálogo só em legado até migração. */
 export function resolvePlacedRackBatteryCatalogId(
   rack: PlacedRack,
   storedBatteries: StoredBattery[] | null | undefined,
@@ -283,7 +283,11 @@ export function listStoredBatteriesForSelection(
 ): StoredBattery[] {
   if (selection.type !== 'battery' || !selection.rackId) return [];
   const currentRack = placedRacks.find((r) => r.id === selection.rackId);
+  const mountedIds = new Set(
+    (placedRacks || []).map((r) => (r.batteryId != null ? String(r.batteryId).trim() : '')).filter(Boolean)
+  );
   const filtered = storedBatteries.filter((sb) => {
+    if (mountedIds.has(String(sb.id).trim())) return false;
     const def = upgrades.find((u) => u.id === sb.itemId);
     if (currentRack && def?.compatibleRacks?.length)
       return def.compatibleRacks.includes(currentRack.itemId);
