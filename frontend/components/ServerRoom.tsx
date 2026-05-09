@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useMemo } from 'react';
+import React, { useCallback, useEffect, useState, useMemo, useRef } from 'react';
 import { PlacedRack, StoredBattery, Upgrade, RigRoom, MiningCoin, normalizePlacedRackRoomId, isNftAutoArmario1OnlyRoom, NFT_AUTO_ALLOWED_CHASSIS_ID } from '../types';
 import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
@@ -246,6 +246,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     const [roomBulkBatterySmartFill, setRoomBulkBatterySmartFill] = useState(false);
     const [roomBulkBatteryRigSort, setRoomBulkBatteryRigSort] = useState<'slot_asc' | 'hashrate_desc'>('slot_asc');
     const [coinApplyBusy, setCoinApplyBusy] = useState(false);
+    const roomsCarouselRef = useRef<HTMLDivElement | null>(null);
     const [slotPurchaseModal, setSlotPurchaseModal] = useState<RigRoom | null>(null);
     const [slotPurchaseQty, setSlotPurchaseQty] = useState(1);
 
@@ -510,6 +511,13 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         }
     };
 
+    const scrollRoomsCarousel = useCallback((dir: -1 | 1) => {
+        const el = roomsCarouselRef.current;
+        if (!el) return;
+        const step = Math.max(220, Math.floor(el.clientWidth * 0.72));
+        el.scrollBy({ left: dir * step, behavior: 'smooth' });
+    }, []);
+
     const showQuickControlRow = Boolean(onSetRoomRacksCoin || onSetRoomRacksBattery || userEmail);
 
     return (
@@ -670,14 +678,41 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         </div>
                         {roomsLoading ? (
                             <div className="text-xs text-slate-500">Carregando...</div>
+                        ) : myRooms.length === 0 ? (
+                            <div className="text-xs text-slate-500">Nenhuma sala configurada.</div>
                         ) : (
-                            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2">
+                            <div className="relative">
+                                <button
+                                    type="button"
+                                    aria-label="Deslizar salas para a esquerda"
+                                    onClick={() => scrollRoomsCarousel(-1)}
+                                    className="absolute left-0 top-1/2 z-[2] hidden h-11 w-9 -translate-y-1/2 items-center justify-center rounded-r-lg border border-amber-600/30 bg-slate-950/95 text-amber-300 shadow-md backdrop-blur-sm transition hover:bg-slate-900 hover:text-amber-200 sm:flex dark:border-amber-500/40"
+                                >
+                                    <ChevronLeft className="h-5 w-5" aria-hidden />
+                                </button>
+                                <button
+                                    type="button"
+                                    aria-label="Deslizar salas para a direita"
+                                    onClick={() => scrollRoomsCarousel(1)}
+                                    className="absolute right-0 top-1/2 z-[2] hidden h-11 w-9 -translate-y-1/2 items-center justify-center rounded-l-lg border border-amber-600/30 bg-slate-950/95 text-amber-300 shadow-md backdrop-blur-sm transition hover:bg-slate-900 hover:text-amber-200 sm:flex dark:border-amber-500/40"
+                                >
+                                    <ChevronRight className="h-5 w-5" aria-hidden />
+                                </button>
+                                <div
+                                    ref={roomsCarouselRef}
+                                    role="region"
+                                    aria-label="Carrossel de salas de mineração"
+                                    className="flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-0 pb-2 pt-1 sm:px-10 [scrollbar-width:thin] [scrollbar-color:rgba(245,158,11,0.35)_transparent] dark:[scrollbar-color:rgba(251,191,36,0.4)_transparent]"
+                                >
                                 {myRooms.map((room, idx) => {
                                     const cap = room.initialCapacity + (room.unlockedSlots || 0);
                                     const nextPrice = room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
                                     const rigsInRoom = placedRacks.filter((r) => sameRigRoom(r.roomId, room.id)).length;
                                     return (
-                                        <div key={room.id} className={`p-3 rounded border ${roomIndex === idx ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'border-slate-800 bg-slate-900/40'}`}>
+                                        <div
+                                            key={room.id}
+                                            className={`w-[min(100%,280px)] min-w-[240px] max-w-[280px] shrink-0 snap-start rounded-lg border p-3 sm:min-w-[260px] ${roomIndex === idx ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'border-slate-800 bg-slate-900/40'}`}
+                                        >
                                             <div className="flex justify-between items-center">
                                                 <button onClick={() => setRoomIndex(idx)} className="font-bold text-slate-200 text-sm text-left hover:text-amber-400 transition-colors uppercase tracking-wider">{room.name}</button>
                                             </div>
@@ -728,7 +763,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                         </div>
                                     );
                                 })}
-                                {myRooms.length === 0 && <div className="text-xs text-slate-500">Nenhuma sala configurada.</div>}
+                                </div>
                             </div>
                         )}
                     </div>
