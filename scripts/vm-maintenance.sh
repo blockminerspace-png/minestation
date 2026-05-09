@@ -6,7 +6,9 @@
 #   SSH_HOST ou VM_HOST  — obrigatório (IP ou hostname da VM)
 #   SSH_USER             — default: root
 #   SSH_PORT             — default: 2222
-#   REMOTE_REPO_DIR      — se vazio, detecta na VM (prioridade: app_production)
+#   REMOTE_REPO_DIR      — pasta com docker-compose.yml (ex.: …/app_production)
+#   REMOTE_GIT_DIR       — raiz do repositório com .git (ex.: /root/minestation). Se vazio, usa o pai de
+#                          REMOTE_REPO_DIR quando o nome da pasta é app_production, senão REMOTE_REPO_DIR.
 #   PG_CONTAINER         — se vazio, detecta postgres_app ou app-postgres em docker ps
 #   PG_DATABASE          — default: minestation
 #   APP_SERVICE          — serviço compose da API Node — default: app
@@ -38,6 +40,7 @@ fi
 SSH_USER="${SSH_USER:-root}"
 SSH_PORT="${SSH_PORT:-2222}"
 REMOTE_REPO_DIR="${REMOTE_REPO_DIR:-}"
+REMOTE_GIT_DIR="${REMOTE_GIT_DIR:-}"
 PG_CONTAINER="${PG_CONTAINER:-}"
 PG_DATABASE="${PG_DATABASE:-minestation}"
 APP_SERVICE="${APP_SERVICE:-app}"
@@ -70,6 +73,14 @@ if [[ -z "${REMOTE_REPO_DIR}" ]]; then
   REMOTE_REPO_DIR="/root/minestation/app_production"
 fi
 
+if [[ -z "${REMOTE_GIT_DIR}" ]]; then
+  if [[ "$(basename "$REMOTE_REPO_DIR")" == "app_production" ]]; then
+    REMOTE_GIT_DIR="$(dirname "$REMOTE_REPO_DIR")"
+  else
+    REMOTE_GIT_DIR="$REMOTE_REPO_DIR"
+  fi
+fi
+
 if [[ -z "${PG_CONTAINER}" ]]; then
   PG_CONTAINER="$(
     remote bash --noprofile --norc -lc "docker ps --format '{{.Names}}' | grep -iE '^postgres_app\$|^app-postgres\$' | head -1" || true
@@ -79,14 +90,14 @@ if [[ -z "${PG_CONTAINER}" ]]; then
   PG_CONTAINER="postgres_app"
 fi
 
-echo "[vm-maintenance] Alvo: ${SSH_USER}@${SSH_HOST}:${SSH_PORT} | repo remoto: ${REMOTE_REPO_DIR} | PG: ${PG_CONTAINER}/${PG_DATABASE}"
+echo "[vm-maintenance] Alvo: ${SSH_USER}@${SSH_HOST}:${SSH_PORT} | git: ${REMOTE_GIT_DIR} | compose: ${REMOTE_REPO_DIR} | PG: ${PG_CONTAINER}/${PG_DATABASE}"
 if [[ -n "${SSH_PASSWORD:-}" ]] && ! command -v sshpass >/dev/null 2>&1 && [[ ! -f "$ROOT/scripts/ssh_pexpect.py" ]]; then
   echo "Aviso: SSH_PASSWORD definido mas não há sshpass nem scripts/ssh_pexpect.py." >&2
 fi
 
 if [[ "$VM_DEPLOY" == "1" ]]; then
-  echo "[vm-maintenance] deploy: git pull + docker compose up -d --build"
-  remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); git pull --ff-only || git pull; docker compose up -d --build"
+  echo "[vm-maintenance] deploy: git (REMOTE_GIT_DIR) + compose build (REMOTE_REPO_DIR)"
+  remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_GIT_DIR"); git fetch origin; BR=\$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main); git reset --hard \"origin/\$BR\"; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose up -d --build $(printf '%q' "$APP_SERVICE")"
 else
   echo "[vm-maintenance] deploy omitido (VM_DEPLOY=0)"
 fi

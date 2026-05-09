@@ -144,7 +144,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                             {item.layout && (
                                                 <div className="absolute inset-0 z-10">
                                                     {item.layout.slots.map((slot, i) => {
-                                                        const slotKey = `${benchReactKey}-${slot.id || i}`;
+                                                        // Índice no array incluído na key: vários slots podem repetir o mesmo `id`
+                                                        // (ex.: várias `battery_bar` com id "battery_bar") e o React fundia nós → barras “sincronizadas”.
+                                                        const slotKey = `${benchReactKey}-i${i}-t${slot.type}-${String(slot.id ?? 'slot')}`;
                                                         const layoutSlots = item.layout!.slots;
                                                         const batteryBarOrdinal = layoutSlots.slice(0, i).filter((s) => s.type === 'battery_bar').length;
                                                         const equippedId = getSlotVal(wsGroup.internalSlots, slot.id);
