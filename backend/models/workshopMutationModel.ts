@@ -147,8 +147,10 @@ function workshopJsonPick<T extends Record<string, unknown>>(
 }
 
 /**
- * Alinha `stored_batteries` com o JSON gravado nesta bancada: carga = `slot_charges` por slot.
- * Evita que a remoção de uma bateria deixe a outra com `current_charge` desactualizado (UI/modal a ler armazém).
+ * Alinha `stored_batteries` com o JSON gravado nesta bancada.
+ * Usa UPSERT por slot: garante que o registo existe mesmo que tenha sido
+ * apagado por engano (bateria "fantasma" no internal_state).
+ * Nunca toca em slots de outras bancadas — só itera os slots desta.
  */
 async function syncStoredBatteriesWithWorkshopSlotRow(
   tx: Prisma.TransactionClient,
@@ -159,28 +161,69 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
     where: { user_id_slot_index: { user_id: userId, slot_index: slotIndex } }
   });
   if (!row?.item_id) return;
+
+  const structureId = String(row.item_id);
   const layoutRows = await tx.upgrades.findUnique({
-    where: { id: String(row.item_id) },
+    where: { id: structureId },
     select: { layout: true }
   });
-  const layout = parseWorkshopStructureLayout(layoutRows?.layout ?? null, String(row.item_id));
+  const layout = parseWorkshopStructureLayout(layoutRows?.layout ?? null, structureId);
   if (!layout?.length) return;
+
+  const slotItemIds = parseSlotItemIds(row.slot_item_ids);
   const internal = parseJsonObject(row.internal_state);
   const slotCharges = parseSlotCharges(row.slot_charges);
+
   for (let li = 0; li < layout.length; li++) {
     if (String(layout[li]?.type || '').toLowerCase() !== 'battery') continue;
+
+    const canonKey = workshopBatteryStorageKeyAtLayoutIndex(layout, li);
+    if (!canonKey) continue;
+
     const rawInst = readWorkshopBatterySlotField(internal, layout, li);
     const bid = rawInst != null ? String(rawInst).trim() : '';
     if (!bid || !INSTANCE_UUID_RE.test(bid)) continue;
-    const canonKey = workshopBatteryStorageKeyAtLayoutIndex(layout, li);
-    if (!canonKey) continue;
+
+    // Catálogo: lê do slotItemIds (canon → legacy)
+    let catalogId: string | undefined;
+    const legacyKey = String(layout[li]?.id || '').trim();
+    if (Object.prototype.hasOwnProperty.call(slotItemIds, canonKey)) {
+      catalogId = slotItemIds[canonKey];
+    } else if (legacyKey && Object.prototype.hasOwnProperty.call(slotItemIds, legacyKey)) {
+      catalogId = slotItemIds[legacyKey];
+    }
+    if (!catalogId || !SAVE_GAME_ITEM_ID_RE.test(catalogId)) continue;
+
     const wh = chargeWhAtBatteryLayoutIndex(slotCharges, layout, li);
-    await tx.stored_batteries.updateMany({
-      where: { user_id: userId, id: bid },
-      data: {
+
+    // Busca definição da bateria para preencher metadados no upsert
+    const batDef = await tx.upgrades.findUnique({
+      where: { id: catalogId },
+      select: { power_capacity: true, name: true, image: true }
+    });
+    const imgUrl =
+      batDef?.image != null && String(batDef.image).trim() !== ''
+        ? String(batDef.image).trim().slice(0, 2048)
+        : null;
+
+    // UPSERT — garante que a linha existe mesmo que tenha sido apagada
+    await tx.stored_batteries.upsert({
+      where: { id: bid },
+      create: {
+        id: bid,
+        user_id: userId,
+        item_id: catalogId,
+        current_charge: wh,
+        power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : null,
+        display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : null,
+        image_url: imgUrl,
         workshop_slot_index: slotIndex,
-        workshop_component_slot_id: canonKey,
-        current_charge: wh
+        workshop_component_slot_id: canonKey
+      },
+      update: {
+        current_charge: wh,
+        workshop_slot_index: slotIndex,
+        workshop_component_slot_id: canonKey
       }
     });
   }
@@ -797,8 +840,10 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
               data: { qty: st.qty - 1 }
             });
             finalInstanceId = crypto.randomUUID();
-            const capNew = partDef.power_capacity != null ? Number(partDef.power_capacity) : 100;
-            initCharge = capNew === -1 ? 0 : capNew > 0 ? capNew : 100;
+            // Bateria nova do stock começa com 0 Wh — o carregador irá carregá-la.
+            // (valor antigo era capNew, o que causava que a bateria aparecia como cheia
+            //  e era imediatamente apagada de stored_batteries ao ser removida)
+            initCharge = 0;
             actualItemId = catalogItemId;
           }
 
