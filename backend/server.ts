@@ -183,7 +183,8 @@ import {
   StoredBatterySaveGuardError,
   validateWorkshopSlotsPayloadForSave,
   enrichWorkshopSlotsSlotItemIdsFromChargingHistory,
-  refreshStoredBatteriesWorkshopLinkage
+  refreshStoredBatteriesWorkshopLinkage,
+  type WorkshopSlotClientPayload
 } from './dist/lib/saveGameEconomyValidate.js';
 import {
   validateLoginEmail,
@@ -7962,6 +7963,8 @@ async function handleSaveGamePost(req, res) {
       const wsSlotCharges = [];
       const wsSlotItemIds = [];
       const wsInstalledAts = [];
+      /** Mesmo estado gravado em `workshop_slots` (merge BD + cliente) — evita zerar carga noutros carregadores ao refrescar `stored_batteries`. */
+      const linkageSlots: (WorkshopSlotClientPayload | null)[] = [null, null, null, null, null, null];
 
       for (let i = 0; i < workshopNorm.length; i++) {
         const w = workshopNorm[i];
@@ -8007,8 +8010,13 @@ async function handleSaveGamePost(req, res) {
                     ? JSON.parse(existing.slot_charges as string)
                     : existing.slot_charges;
                 for (const [sid, dbVal] of Object.entries(dbSlotCharges as Record<string, unknown>)) {
-                  if (finalSlotCharges[sid] !== undefined && Number(dbVal) > Number(finalSlotCharges[sid])) {
-                    finalSlotCharges[sid] = Number(dbVal);
+                  const dbNum = Number(dbVal);
+                  if (!Number.isFinite(dbNum)) continue;
+                  const cur = finalSlotCharges[sid];
+                  if (cur === undefined) {
+                    finalSlotCharges[sid] = dbNum;
+                  } else if (dbNum > cur) {
+                    finalSlotCharges[sid] = dbNum;
                   }
                 }
               } catch (e) {
@@ -8043,6 +8051,14 @@ async function handleSaveGamePost(req, res) {
           }
           finalSlotCharges = capSlotCharges(finalSlotCharges, slotItemIdsPayload);
 
+          linkageSlots[i] = {
+            itemId: w.itemId,
+            currentCharge: finalCharge,
+            internalSlots: internalPayload as Record<string, unknown>,
+            slotCharges: finalSlotCharges,
+            slotItemIds: slotItemIdsPayload
+          };
+
           wsUserIds.push(uid);
           wsSlotIdxs.push(i);
           wsItemIds.push(w.itemId);
@@ -8052,6 +8068,7 @@ async function handleSaveGamePost(req, res) {
           wsSlotItemIds.push(slotItemIdsPayload ? JSON.stringify(slotItemIdsPayload) : null);
           wsInstalledAts.push(validInstalledAt);
         } else {
+          linkageSlots[i] = null;
           if (existing && existing.item_id) {
             console.log(
               `[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`
@@ -8080,7 +8097,7 @@ async function handleSaveGamePost(req, res) {
             slot_charges = EXCLUDED.slot_charges, slot_item_ids = EXCLUDED.slot_item_ids, installed_at = EXCLUDED.installed_at`,
           [wsUserIds, wsSlotIdxs, wsItemIds, wsInternalStates, wsCharges, wsSlotCharges, wsSlotItemIds, wsInstalledAts]
         );
-        await refreshStoredBatteriesWorkshopLinkage(client, uid, workshopNorm);
+        await refreshStoredBatteriesWorkshopLinkage(client, uid, linkageSlots);
       }
     }
 

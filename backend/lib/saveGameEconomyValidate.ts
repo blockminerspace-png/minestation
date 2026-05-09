@@ -906,6 +906,23 @@ export async function refreshStoredBatteriesWorkshopLinkage(
       const bid = String(rawVal).trim();
       if (!bid || !WORKSHOP_LINK_INSTANCE_UUID_RE.test(bid)) continue;
       const chRaw = (charges as Record<string, unknown>)[compId];
+      const hasExplicitSlotCharge =
+        chRaw !== undefined &&
+        chRaw !== null &&
+        String(chRaw).trim() !== '' &&
+        !(typeof chRaw === 'number' && !Number.isFinite(chRaw));
+
+      if (!hasExplicitSlotCharge) {
+        await client.query(
+          `UPDATE stored_batteries
+              SET workshop_slot_index = $1,
+                  workshop_component_slot_id = $2
+            WHERE user_id = $3 AND id = $4`,
+          [i, String(compId).slice(0, 200), uid, bid]
+        );
+        continue;
+      }
+
       const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
       const currentCharge = Number.isFinite(ch) ? Math.max(0, ch) : 0;
       await client.query(
