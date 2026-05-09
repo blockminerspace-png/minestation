@@ -132,6 +132,14 @@ export async function updateUserPolygonAndAccess(userId: string | number, polygo
   }
 }
 
+/** Remove o endereço Polygon do perfil (grava `polygon_wallet = null`). */
+export async function clearUserPolygonWallet(userId: number): Promise<void> {
+  await prisma.users.update({
+    where: { id: userId },
+    data: { polygon_wallet: null }
+  });
+}
+
 export async function deleteSessionBySessionId(sessionId: string): Promise<void> {
   await prisma.sessions.deleteMany({ where: { session_id: sessionId } });
 }

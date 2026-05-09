@@ -87,7 +87,7 @@ import { mountImageStaticMiddleware, registerImageAssetRoutes, runImageRootStart
 import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, validateStoredBatteryWarehouseRemovalAllowed, StoredBatterySaveGuardError, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from './dist/lib/saveGameEconomyValidate.js';
 import { validateLoginEmail, validateLoginFieldsPresent, validateLoginPassword, validateSignupPassword, validateSignupUsername, validateOptionalPolygonWallet, validateOptionalAccessLevelId, validateOptionalReferralCodeInput, validateAccessLevelIdsArray, EMAIL_ADDRESS_MAX_LENGTH, SIGNUP_EMAIL_MAX_TOTAL } from './dist/models/registrationValidation.js';
 import { getUserIdByEmail, EmailPolicyError, IpLimitError } from './dist/models/userModel.js';
-import { findUserByEmail, insertSession, recordLoginIp, ensureUserReferralCode, updateUserPasswordHash, listUserAccessLevelIds, findUserById, findSessionRow, findActiveSessionUserId, findSessionUserIdIgnoringExpiry, deleteSessionBySessionId, updateUserPolygonAndAccess } from './dist/models/authModel.js';
+import { findUserByEmail, insertSession, recordLoginIp, ensureUserReferralCode, updateUserPasswordHash, listUserAccessLevelIds, findUserById, findSessionRow, findActiveSessionUserId, findSessionUserIdIgnoringExpiry, deleteSessionBySessionId, updateUserPolygonAndAccess, clearUserPolygonWallet } from './dist/models/authModel.js';
 import { executeUserPutCoreTransaction } from './dist/models/userPutCoreTransaction.js';
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
@@ -1298,6 +1298,22 @@ app.get('/api/me/profile-bundle', authenticateToken, async (req, res) => {
     try {
         const data = await getProfilePageBundlePayload(req.userId);
         res.json(data);
+    }
+    catch (e) {
+        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+    }
+});
+/** Desliga a carteira Polygon do perfil (persiste `polygon_wallet = null`). */
+app.delete('/api/me/polygon-wallet', authenticateToken, async (req, res) => {
+    if (!req.userId)
+        return res.status(401).json({ error: 'Não autenticado' });
+    const uid = Number(req.userId);
+    if (!Number.isFinite(uid) || uid <= 0) {
+        return res.status(400).json({ error: 'Sessão inválida.' });
+    }
+    try {
+        await clearUserPolygonWallet(uid);
+        res.json({ ok: true });
     }
     catch (e) {
         sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
@@ -6166,11 +6182,15 @@ app.put('/api/user', async (req, res) => {
                 return res.status(400).json({ error: pv.error });
             }
         }
-        const pwc = validateOptionalPolygonWallet(u.polygonWallet);
-        if (pwc && typeof pwc === 'object' && 'error' in pwc) {
-            return res.status(400).json({ error: pwc.error });
+        const polygonWalletInBody = u && typeof u === 'object' && Object.prototype.hasOwnProperty.call(u, 'polygonWallet');
+        let polygonForUpdate = undefined;
+        if (polygonWalletInBody) {
+            const pwc = validateOptionalPolygonWallet(u.polygonWallet);
+            if (pwc && typeof pwc === 'object' && 'error' in pwc) {
+                return res.status(400).json({ error: pwc.error });
+            }
+            polygonForUpdate = typeof pwc === 'string' ? pwc : null;
         }
-        const polygonForUpdate = typeof pwc === 'string' ? pwc : u.polygonWallet ?? null;
         const refVal = validateOptionalReferralCodeInput(u.referredBy);
         if (!refVal.ok) {
             return res.status(400).json({ error: refVal.error });
@@ -6192,9 +6212,11 @@ app.put('/api/user', async (req, res) => {
                 usernameForUpdate: String(usernameForUpdate ?? ''),
                 normalizedEmail,
                 passwordHash,
-                polygonForUpdate: polygonForUpdate == null || polygonForUpdate === ''
-                    ? null
-                    : String(polygonForUpdate),
+                polygonForUpdate: polygonForUpdate === undefined
+                    ? undefined
+                    : polygonForUpdate == null || polygonForUpdate === ''
+                        ? null
+                        : String(polygonForUpdate),
                 accessLevelIdForUpdate: accessLevelIdForUpdate == null || accessLevelIdForUpdate === ''
                     ? null
                     : String(accessLevelIdForUpdate),
@@ -6752,25 +6774,38 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
         return { ok: false, error: 'Número de rigs excede o permitido.' };
     const storedBattCatalogByInstanceId = new Map();
     const uidNum = Number(userId);
+    const catalogBatteryRows = await prisma.upgrades.findMany({
+        where: { type: 'battery' },
+        select: { id: true }
+    });
+    const catalogBatteryIds = new Set(catalogBatteryRows.map((x) => x.id));
+    const fallbackBatteryCatalogId = String(catalogBatteryRows.find((x) => x.id === 'small_battery')?.id ||
+        catalogBatteryRows[0]?.id ||
+        '').trim();
+    const mergeStoredBatteryRowIntoMap = (row) => {
+        const iid = String(row.id ?? '').trim();
+        if (!iid)
+            return;
+        let resolvedItemId = String(row.item_id ?? '').trim();
+        if (!resolvedItemId || !catalogBatteryIds.has(resolvedItemId)) {
+            resolvedItemId = fallbackBatteryCatalogId;
+        }
+        if (iid && resolvedItemId && catalogBatteryIds.has(resolvedItemId)) {
+            storedBattCatalogByInstanceId.set(iid, resolvedItemId);
+        }
+    };
     if (Number.isFinite(uidNum) && uidNum > 0) {
         try {
             const sb = await dbq.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uidNum]);
             for (const row of sb.rows || []) {
-                const iid = String(row.id ?? '').trim();
-                const itemId = String(row.item_id ?? '').trim();
-                if (iid && itemId)
-                    storedBattCatalogByInstanceId.set(iid, itemId);
+                mergeStoredBatteryRowIntoMap(row);
             }
         }
         catch (e) {
             console.warn('[validatePlacedRacksForSave] stored_batteries:', e instanceof Error ? e.message : String(e));
         }
     }
-    const catalogBatteryRows = await prisma.upgrades.findMany({
-        where: { type: 'battery' },
-        select: { id: true }
-    });
-    const catalogBatteryIds = new Set(catalogBatteryRows.map((x) => x.id));
+    const isRackBatteryInstanceUuidLocal = (bid) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(bid || '').trim());
     try {
         const recovered = await recoverOrphanRackBatteryStorageRows(dbq, uidNum, racks);
         if (recovered.length > 0) {
@@ -6778,10 +6813,7 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
             const sb2 = await dbq.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uidNum]);
             storedBattCatalogByInstanceId.clear();
             for (const row of sb2.rows || []) {
-                const iid = String(row.id ?? '').trim();
-                const itemId = String(row.item_id ?? '').trim();
-                if (iid && itemId)
-                    storedBattCatalogByInstanceId.set(iid, itemId);
+                mergeStoredBatteryRowIntoMap(row);
             }
         }
     }
@@ -6828,6 +6860,9 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
             else if (catalogBatteryIds.has(bidRaw)) {
                 upgradeIds.add(bidRaw);
             }
+            else if (isRackBatteryInstanceUuidLocal(bidRaw) && fallbackBatteryCatalogId) {
+                upgradeIds.add(fallbackBatteryCatalogId);
+            }
             else {
                 return {
                     ok: false,
@@ -6857,11 +6892,16 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
     }
     if (upgradeIds.size > 0) {
         const ids = [...upgradeIds];
-        const chk = await prisma.upgrades.findMany({ where: { id: { in: ids } }, select: { id: true } });
-        if (chk.length !== upgradeIds.size) {
-            const have = new Set(chk.map((x) => x.id));
-            const missing = ids.filter((id) => !have.has(id));
-            return { ok: false, error: `Item desconhecido no equipamento: ${missing.slice(0, 4).join(', ')}` };
+        try {
+            const chk = await prisma.upgrades.findMany({ where: { id: { in: ids } }, select: { id: true } });
+            if (chk.length !== ids.length) {
+                const have = new Set(chk.map((x) => x.id));
+                const missing = ids.filter((id) => !have.has(id));
+                console.warn('[validatePlacedRacksForSave] Equipamento com ids fora do catálogo (save permitido, legado):', missing.slice(0, 24).join(', '));
+            }
+        }
+        catch (e) {
+            console.warn('[validatePlacedRacksForSave] Falha Prisma ao verificar upgrades (não bloqueia save):', e instanceof Error ? e.message : String(e));
         }
     }
     if (coinIds.size > 0) {

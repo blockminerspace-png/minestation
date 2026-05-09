@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import { PlacedRack, StoredBattery, Upgrade, RigRoom, MiningCoin, normalizePlacedRackRoomId, isNftAutoArmario1OnlyRoom, NFT_AUTO_ALLOWED_CHASSIS_ID } from '../types';
+import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import { bulkBatteryWillApplyCount, totalBatteryInstances } from '../models/roomBatteryModel';
 import {
@@ -325,20 +326,63 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         }
         if (!rackId) return;
         if (currentItemId) {
-            const item = upgrades.find(u => u.id === currentItemId);
-            if (item) setDetailContext({ rackId, slotIndex, type: 'machine', item });
+            const item = upgrades.find((u) => u.id === currentItemId) ?? orphanCatalogUpgrade(currentItemId, 'machine');
+            setDetailContext({ rackId, slotIndex, type: 'machine', item });
         } else {
             setSelectionContext({ rackId, slotIndex, type: 'machine' });
         }
     };
 
     const handleAuxClick = (rackId: string, currentItemId: string | null, type: 'battery' | 'wiring' | 'multiplier', slotIndex?: number) => {
-        if (currentItemId) {
-            const item = upgrades.find(u => u.id === currentItemId);
-            if (item) setDetailContext({ rackId, slotIndex: slotIndex ?? null, type, item });
-        } else {
+        if (!currentItemId) {
             setSelectionContext({ rackId, slotIndex: slotIndex ?? null, type });
+            return;
         }
+        let item: Upgrade | undefined = upgrades.find((u) => u.id === currentItemId);
+        if (!item && type === 'battery') {
+            const sb = storedBatteries.find((b) => String(b.id) === String(currentItemId));
+            const cat = sb?.itemId != null ? String(sb.itemId).trim() : '';
+            if (cat) item = upgrades.find((u) => u.id === cat);
+        }
+        if (item) {
+            setDetailContext({ rackId, slotIndex: slotIndex ?? null, type, item });
+            return;
+        }
+        if (type === 'battery') {
+            const fb = upgrades.find((u) => u.type === 'battery');
+            if (fb) {
+                setDetailContext({
+                    rackId,
+                    slotIndex: slotIndex ?? null,
+                    type: 'battery',
+                    item: {
+                        ...fb,
+                        id: String(currentItemId),
+                        name: `${fb.name} (referência em reparo)`,
+                        description:
+                            'A ligação ao catálogo desta bateria está incompleta; podes remover para o armazém. O servidor repara o tipo ao gravar ou na rotina de integridade.'
+                    } as Upgrade
+                });
+                return;
+            }
+            setDetailContext({
+                rackId,
+                slotIndex: slotIndex ?? null,
+                type: 'battery',
+                item: orphanCatalogUpgrade(String(currentItemId), 'battery')
+            });
+            return;
+        }
+        if (type === 'wiring' || type === 'multiplier') {
+            setDetailContext({
+                rackId,
+                slotIndex: slotIndex ?? null,
+                type,
+                item: orphanCatalogUpgrade(String(currentItemId), type)
+            });
+            return;
+        }
+        setSelectionContext({ rackId, slotIndex: slotIndex ?? null, type });
     };
 
     const handleItemSelect = (itemId: string, storedBatteryId?: string) => {
@@ -685,7 +729,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                     }
 
                     // RACK EXISTE NO SLOT
-                    const rackDef = upgrades.find(u => u.id === rack.itemId);
+                    const rackDef =
+                        upgrades.find((u) => u.id === rack.itemId) ??
+                        (rack.itemId ? orphanCatalogUpgrade(String(rack.itemId), 'infrastructure') : undefined);
                     const rackSkin = normalizePublicAssetUrl(rackDef?.image);
 
                     const totalWatts = calculateRackConsumptionWatts(rack, upgrades);
@@ -767,10 +813,19 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         const item =
                                                             slot.type === 'battery'
                                                                 ? catalogForBatterySlot
-                                                                    ? upgrades.find((u) => u.id === catalogForBatterySlot)
+                                                                    ? upgrades.find((u) => u.id === catalogForBatterySlot) ??
+                                                                      orphanCatalogUpgrade(String(catalogForBatterySlot), 'battery')
                                                                     : null
                                                                 : slotContent
-                                                                  ? upgrades.find((u) => u.id === slotContent)
+                                                                  ? upgrades.find((u) => u.id === slotContent) ??
+                                                                    orphanCatalogUpgrade(
+                                                                        String(slotContent),
+                                                                        slot.type === 'machine'
+                                                                            ? 'machine'
+                                                                            : slot.type === 'multiplier'
+                                                                              ? 'multiplier'
+                                                                              : 'wiring'
+                                                                    )
                                                                   : null;
                                                         const itemImg = normalizePublicAssetUrl(item?.image);
 
@@ -853,7 +908,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                             return (
                                                                 <div
                                                                     key={i}
-                                                                    className="absolute z-30 cursor-help bg-black/40 backdrop-blur-[2px] border border-white/10 rounded-full overflow-hidden p-0.5 shadow-inner"
+                                                                    className="pointer-events-none absolute z-30 cursor-help bg-black/40 backdrop-blur-[2px] border border-white/10 rounded-full overflow-hidden p-0.5 shadow-inner"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                     title={batteryRuntimeHint}
                                                                 >
@@ -878,7 +933,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                             return (
                                                                 <div
                                                                     key={i}
-                                                                    className="absolute z-30 flex h-full min-h-0 flex-col overflow-hidden rounded-md border border-emerald-500/25 bg-black/92 p-1.5 font-mono leading-tight shadow-[0_4px_28px_rgba(0,0,0,0.5)] backdrop-blur-md"
+                                                                    className="pointer-events-none absolute z-30 flex h-full min-h-0 flex-col overflow-hidden rounded-md border border-emerald-500/25 bg-black/92 p-1.5 font-mono leading-tight shadow-[0_4px_28px_rgba(0,0,0,0.5)] backdrop-blur-md"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
                                                                     <div className="flex shrink-0 items-center justify-end border-b border-white/10 pb-1">
@@ -925,7 +980,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                             return (
                                                                 <div
                                                                     key={i}
-                                                                    className="absolute z-20 bg-black/60 backdrop-blur-md border border-amber-500/20 rounded flex items-center justify-center p-1 shadow-inner shadow-amber-500/5"
+                                                                    className="pointer-events-none absolute z-20 bg-black/60 backdrop-blur-md border border-amber-500/20 rounded flex items-center justify-center p-1 shadow-inner shadow-amber-500/5"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
                                                                 >
                                                                     <span className="text-[11px] font-mono font-black text-amber-400 tracking-tighter">
@@ -938,8 +993,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         return (
                                                             <button
                                                                 key={i}
+                                                                type="button"
                                                                 onClick={handleClick}
-                                                                className={`absolute group transition-all overflow-hidden border shadow-inner
+                                                                className={`absolute z-[35] group transition-all overflow-hidden border shadow-inner
                                                                     ${item ? (itemImg ? 'border-none shadow-xl scale-100 hover:scale-[1.02]' : 'bg-slate-800/90 border-white/10') : (
                                                                         (slot.type === 'machine' && !rack.slots.some(s => s !== null)) ||
                                                                             (slot.type === 'battery' && !rack.batteryId) ||
@@ -964,12 +1020,14 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     />
                                                                 )}
 
-                                                                {item && !itemImg && !isOperational && <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-[1px]"></div>}
+                                                                {item && !itemImg && !isOperational && (
+                                                                    <div className="pointer-events-none absolute inset-0 bg-slate-900/60 backdrop-blur-[1px]" />
+                                                                )}
 
                                                                 {item && isOperational && (
                                                                     <>
                                                                         <div className="absolute inset-0 bg-amber-400/5 animate-pulse mix-blend-overlay pointer-events-none"></div>
-                                                                        <div className={`absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_10px_#22c55e]`}></div>
+                                                                        <div className="pointer-events-none absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-green-500 shadow-[0_0_10px_#22c55e]" />
                                                                     </>
                                                                 )}
                                                                 {!item && (
@@ -988,8 +1046,17 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                             {battery && rack.batteryId && !nftAutoRoomHideEnergyTimerUi ? (
                                 <div
-                                    className="mt-1.5 flex w-full max-w-full shrink-0 items-stretch gap-2 rounded-lg border border-emerald-600/30 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)]"
-                                    title={batteryRuntimeHint}
+                                    role="button"
+                                    tabIndex={0}
+                                    onClick={() => handleAuxClick(rack.id, rack.batteryId, 'battery')}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            handleAuxClick(rack.id, rack.batteryId, 'battery');
+                                        }
+                                    }}
+                                    className="mt-1.5 flex w-full max-w-full shrink-0 cursor-pointer items-stretch gap-2 rounded-lg border border-emerald-600/30 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] outline-none hover:border-emerald-500/50 focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+                                    title={`${batteryRuntimeHint} — Clique para abrir detalhes da bateria.`}
                                 >
                                     <Battery className="self-center shrink-0 text-emerald-400 opacity-90" size={15} strokeWidth={2} />
                                     <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
@@ -1164,13 +1231,30 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             <div className="p-4 space-y-4">
                                 {(() => {
                                     const rack = placedRacks.find(r => r.id === configRackId)!;
-                                    const wiring = rack.wiringId ? upgrades.find(u => u.id === rack.wiringId) : null;
+                                    const wiring = rack.wiringId
+                                        ? upgrades.find((u) => u.id === rack.wiringId) ??
+                                          orphanCatalogUpgrade(String(rack.wiringId), 'wiring')
+                                        : null;
                                     const battCat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
-                                    const battery = battCat ? upgrades.find((u) => u.id === battCat) : null;
-                                    const machineDefs = rack.slots.map(sid => sid ? upgrades.find(u => u.id === sid) || null : null).filter(Boolean) as Upgrade[];
+                                    const battery = battCat
+                                        ? upgrades.find((u) => u.id === battCat) ??
+                                          orphanCatalogUpgrade(String(battCat), 'battery')
+                                        : null;
+                                    const machineDefs = rack.slots
+                                        .map((sid) =>
+                                            sid
+                                                ? upgrades.find((u) => u.id === sid) ?? orphanCatalogUpgrade(String(sid), 'machine')
+                                                : null
+                                        )
+                                        .filter(Boolean) as Upgrade[];
                                     const baseProd = machineDefs.reduce((acc, u) => acc + (u.baseProduction || 0), 0);
                                     let mult = 1;
-                                    rack.multiplierSlots?.forEach(sid => { const up = sid ? upgrades.find(u => u.id === sid) : null; if (up && up.multiplier) mult += up.multiplier; });
+                                    rack.multiplierSlots?.forEach((sid) => {
+                                        const up = sid
+                                            ? upgrades.find((u) => u.id === sid) ?? orphanCatalogUpgrade(String(sid), 'multiplier')
+                                            : null;
+                                        if (up && up.multiplier) mult += up.multiplier;
+                                    });
                                     const totalPower = baseProd * mult;
                                     const battCap = battery?.powerCapacity || 1;
                                     const isInfiniteConf = battCap === -1;

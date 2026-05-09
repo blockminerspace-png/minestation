@@ -6,6 +6,7 @@ import {
   validateDailyActionsForSave,
   validateStockForSave,
   validateStoredBatteryWarehouseRemovalAllowed,
+  validateWorkshopSlotsPayloadForSave
 } from '../lib/saveGameEconomyValidate.js';
 
 describe('saveGameEconomyValidate', () => {
@@ -73,16 +74,16 @@ describe('saveGameEconomyValidate', () => {
     expect(client.query).not.toHaveBeenCalled();
   });
 
-  it('validateStockForSave unknown_item após SELECT', async () => {
+  it('validateStockForSave aceita itens fora do catálogo (stock legado) e consulta upgrades', async () => {
     const client = {
       query: vi.fn().mockResolvedValue({ rows: [{ id: 'known_a' }], rowCount: 1 })
     };
     const r = await validateStockForSave(client as never, { known_a: 1, ghost_item: 2 });
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.reason).toBe('unknown_item');
-      expect(r.samples).toContain('ghost_item');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.itemIds).toContain('ghost_item');
     }
+    expect(client.query).toHaveBeenCalled();
   });
 
   it('validateStoredBatteryWarehouseRemovalAllowed aceita wipe quando cada id está numa rig', async () => {
@@ -146,5 +147,17 @@ describe('saveGameEconomyValidate', () => {
       true
     );
     expect(r).toEqual({ ok: true });
+  });
+
+  it('validateWorkshopSlotsPayloadForSave retorna erro amigável quando a query upgrades falha', async () => {
+    const client = {
+      query: vi.fn().mockRejectedValue(new Error('connection refused'))
+    };
+    const slots = [{ itemId: 'charger_slot_test', currentCharge: 0, internalSlots: {}, slotCharges: {} }];
+    const r = await validateWorkshopSlotsPayloadForSave(client as never, slots, {});
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/F5/);
+    }
   });
 });

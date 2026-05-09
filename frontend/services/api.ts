@@ -529,6 +529,20 @@ export async function getUpgradeShopBundle(): Promise<UpgradeShopBundle | null> 
   }
 }
 
+/** Remove a carteira Polygon do perfil autenticado (`polygon_wallet` → null na BD). */
+export async function clearMyPolygonWallet(): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/me/polygon-wallet`, { method: 'DELETE' });
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) {
+      return { ok: false, error: data.error || `Erro ${res.status}` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Erro de rede.' };
+  }
+}
+
 export async function getProfilePageBundle(): Promise<ProfilePageBundle | null> {
   try {
     const res = await apiFetch(`${base}/me/profile-bundle`);

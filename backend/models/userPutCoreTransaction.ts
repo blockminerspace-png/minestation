@@ -6,7 +6,8 @@ export type UserPutCoreTxInput = {
   normalizedEmail: string;
   /** `null` = não alterar coluna `password`. */
   passwordHash: string | null;
-  polygonForUpdate: string | null;
+  /** `undefined` = não alterar coluna `polygon_wallet`. */
+  polygonForUpdate?: string | null;
   accessLevelIdForUpdate: string | null;
   referredByForUpdate: string | null;
   allowAccessLevelFromBody: boolean;
@@ -46,13 +47,16 @@ export async function executeUserPutCoreTransaction(
   const now = BigInt(Date.now());
   const nowMs = Date.now();
 
-  const userUpdateBase = {
+  const userUpdateBase: Prisma.usersUpdateInput = {
     username: usernameForUpdate,
     email: normalizedEmail,
-    polygon_wallet: polygonForUpdate,
     access_level_id: accessLevelIdForUpdate,
     referred_by: referredByForUpdate
   };
+  if (polygonForUpdate !== undefined) {
+    userUpdateBase.polygon_wallet =
+      polygonForUpdate == null || polygonForUpdate === '' ? null : String(polygonForUpdate);
+  }
 
   if (passwordHash != null) {
     await tx.users.update({

@@ -21,9 +21,10 @@ export default defineConfig({
         'constants/**/*.ts',
         'models/**/*.ts',
         'controllers/**/*.ts',
+        'services/**/*.ts',
         'types.ts',
       ],
-      exclude: ['**/*.test.ts', '**/*.test.tsx', 'node_modules/**', 'services/api.ts'],
+      exclude: ['**/*.test.ts', '**/*.test.tsx', 'node_modules/**'],
     },
   },
   resolve: {

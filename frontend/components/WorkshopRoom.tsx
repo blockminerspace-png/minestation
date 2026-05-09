@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Wrench, Plus, X, Box, Power, Cog, Terminal, Zap, RefreshCw, PlayCircle, History, AlertTriangle } from 'lucide-react';
 import { Upgrade, SlotLayout, WorkshopStructure, StoredBattery } from '../types';
+import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { ChargingHistory } from './ChargingHistory';
 
 interface WorkshopRoomProps {
@@ -108,7 +109,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 {slots.map((wsGroup, idx) => {
-                    const item = wsGroup ? upgrades.find(u => u.id === wsGroup.itemId) : null;
+                    const item = wsGroup
+                        ? upgrades.find((u) => u.id === wsGroup.itemId) ?? orphanCatalogUpgrade(String(wsGroup.itemId), 'charger')
+                        : null;
                     const canUnequip = !item || item.type !== 'charger' || (wsGroup?.currentCharge ?? 0) <= 0.000001;
 
                     return (
@@ -164,11 +167,17 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     if (!bIid) return false;
                                                                     const bChargeVal = getSlotVal(wsGroup.slotCharges, s.id) ?? 0;
                                                                     const bSId = getSlotVal(wsGroup.slotItemIds, s.id);
-                                                                    let bD = upgrades.find(u => u.id === bSId);
+                                                                    let bD =
+                                                                        (bSId ? upgrades.find((u) => u.id === bSId) : undefined) ??
+                                                                        undefined;
                                                                     if (!bD) {
-                                                                        const bI = storedBatteries.find(b => b.id === bIid);
-                                                                        if (bI) bD = upgrades.find(u => u.id === bI.itemId);
+                                                                        const bI = storedBatteries.find((b) => b.id === bIid);
+                                                                        if (bI)
+                                                                            bD =
+                                                                                upgrades.find((u) => u.id === bI.itemId) ??
+                                                                                orphanCatalogUpgrade(String(bI.itemId || bI.id), 'battery');
                                                                     }
+                                                                    if (!bD && bSId) bD = orphanCatalogUpgrade(String(bSId), 'battery');
                                                                     return bChargeVal < (bD?.powerCapacity || 100);
                                                                 }) ?? false);
                                                             } else {
@@ -192,11 +201,18 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     const bChargeWh = getSlotVal(wsGroup.slotCharges, bSlot.id) ?? 0;
                                                                     const bInstanceId = getSlotVal(wsGroup.internalSlots, bSlot.id);
                                                                     const savedItemId = getSlotVal(wsGroup.slotItemIds, bSlot.id);
-                                                                    let bDef = upgrades.find(u => u.id === savedItemId);
+                                                                    let bDef = savedItemId
+                                                                        ? upgrades.find((u) => u.id === savedItemId) ?? undefined
+                                                                        : undefined;
                                                                     if (!bDef && bInstanceId) {
-                                                                        const batInst = storedBatteries.find(b => b.id === bInstanceId);
-                                                                        if (batInst) bDef = upgrades.find(u => u.id === batInst.itemId);
+                                                                        const batInst = storedBatteries.find((b) => b.id === bInstanceId);
+                                                                        if (batInst)
+                                                                            bDef =
+                                                                                upgrades.find((u) => u.id === batInst.itemId) ??
+                                                                                orphanCatalogUpgrade(String(batInst.itemId || batInst.id), 'battery');
                                                                     }
+                                                                    if (!bDef && savedItemId)
+                                                                        bDef = orphanCatalogUpgrade(String(savedItemId), 'battery');
                                                                     const bCapacity = bDef?.powerCapacity || 100;
                                                                     percent = (bChargeWh / bCapacity) * 100;
                                                                     isActivelyCharging = wsGroup.currentCharge > 0.1 && percent < 99.9;
@@ -244,18 +260,31 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
 
                                                             if (equippedId) {
                                                                 const savedItemId = getSlotVal(wsGroup.slotItemIds, slot.id);
+                                                                const slotKind: Upgrade['type'] =
+                                                                    slot.type === 'machine'
+                                                                        ? 'machine'
+                                                                        : slot.type === 'multiplier'
+                                                                          ? 'multiplier'
+                                                                          : slot.type === 'battery'
+                                                                            ? 'battery'
+                                                                            : 'wiring';
                                                                 if (savedItemId) {
-                                                                    contentItem = upgrades.find(u => u.id === savedItemId) || null;
+                                                                    contentItem =
+                                                                        upgrades.find((u) => u.id === savedItemId) ?? null;
                                                                 } else {
-                                                                    contentItem = upgrades.find(u => u.id === equippedId) || null;
+                                                                    contentItem = upgrades.find((u) => u.id === equippedId) ?? null;
                                                                 }
-
                                                                 if (!contentItem) {
-                                                                    const batInstance = storedBatteries.find(b => b.id === equippedId);
+                                                                    const batInstance = storedBatteries.find((b) => b.id === equippedId);
                                                                     if (batInstance) {
-                                                                        contentItem = upgrades.find(u => u.id === batInstance.itemId) || null;
+                                                                        contentItem =
+                                                                            upgrades.find((u) => u.id === batInstance.itemId) ?? null;
                                                                         instanceId = batInstance.id;
                                                                     }
+                                                                }
+                                                                if (!contentItem) {
+                                                                    const ref = savedItemId || equippedId;
+                                                                    contentItem = orphanCatalogUpgrade(String(ref), slotKind);
                                                                 }
                                                                 if (equippedId.length > 20) instanceId = equippedId;
                                                             }
@@ -363,11 +392,20 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                             Object.entries(wsGroup.internalSlots).forEach(([sid, iid]) => {
                                                                 if (!iid) return;
                                                                 const savedItemId = getSlotVal(wsGroup.slotItemIds, sid);
-                                                                let def = upgrades.find(u => u.id === savedItemId);
+                                                                let def = savedItemId
+                                                                    ? upgrades.find((u) => u.id === savedItemId) ?? undefined
+                                                                    : undefined;
                                                                 if (!def) {
-                                                                    const inst = storedBatteries.find(b => b.id === iid);
-                                                                    if (inst) def = upgrades.find(u => u.id === inst.itemId);
+                                                                    const inst = storedBatteries.find((b) => b.id === iid);
+                                                                    if (inst)
+                                                                        def =
+                                                                            upgrades.find((u) => u.id === inst.itemId) ??
+                                                                            orphanCatalogUpgrade(String(inst.itemId || inst.id), 'battery');
                                                                 }
+                                                                if (!def && savedItemId)
+                                                                    def = orphanCatalogUpgrade(String(savedItemId), 'battery');
+                                                                if (!def && String(iid).trim())
+                                                                    def = orphanCatalogUpgrade(String(iid), 'battery');
                                                                 if (def && def.powerCapacity) {
                                                                     totalCapacity += def.powerCapacity;
                                                                     totalCharge += (getSlotVal(wsGroup.slotCharges, sid) || 0);
@@ -534,7 +572,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                     {/* Filtrar baterias que não estão cheias */}
                                     <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 p-2 rounded">Baterias aguardando carga</div>
                                     {storedBatteries.filter(b => {
-                                        const def = upgrades.find(u => u.id === b.itemId);
+                                        const def =
+                                            upgrades.find((u) => u.id === b.itemId) ??
+                                            orphanCatalogUpgrade(String(b.itemId || b.id), 'battery');
                                         if (b.currentCharge >= (def?.powerCapacity || 100)) return false;
                                         const currentWS = slots[selectingComponent.wsIdx];
                                         if (currentWS && def?.compatibleRacks && def.compatibleRacks.length > 0) {
@@ -547,7 +587,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                         </div>
                                     ) : (
                                         storedBatteries.filter(b => {
-                                            const def = upgrades.find(u => u.id === b.itemId);
+                                            const def =
+                                                upgrades.find((u) => u.id === b.itemId) ??
+                                                orphanCatalogUpgrade(String(b.itemId || b.id), 'battery');
                                             if (b.currentCharge >= (def?.powerCapacity || 100)) return false;
                                             const currentWS = slots[selectingComponent.wsIdx];
                                             if (currentWS && def?.compatibleRacks && def.compatibleRacks.length > 0) {
@@ -555,7 +597,9 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                             }
                                             return true; // Se não houver restrição, é compatível
                                         }).map(bat => {
-                                            const upg = upgrades.find(u => u.id === bat.itemId);
+                                            const upg =
+                                                upgrades.find((u) => u.id === bat.itemId) ??
+                                                orphanCatalogUpgrade(String(bat.itemId || bat.id), 'battery');
                                             return (
                                                 <button
                                                     key={bat.id}

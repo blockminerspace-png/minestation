@@ -102,6 +102,23 @@ const TelegramIcon = ({ size = 18 }: { size?: number }) => (
 
 // --- GAME LOGIC HELPERS ---
 
+/** Catálogo para stock / `stored_batteries.item_id` quando `batteryId` na rig é UUID ou catálogo com metadados em falta. */
+function resolveEquippedBatteryCatalogId(
+  batteryId: string | null | undefined,
+  storedBatteries: StoredBattery[],
+  upgrades: Upgrade[]
+): string | null {
+  if (batteryId == null) return null;
+  const bid = String(batteryId).trim();
+  if (!bid) return null;
+  if (upgrades.some((u) => u.id === bid && u.type === 'battery')) return bid;
+  const row = storedBatteries.find((b) => String(b.id) === bid);
+  const cat = row?.itemId != null ? String(row.itemId).trim() : '';
+  if (cat && upgrades.some((u) => u.id === cat && u.type === 'battery')) return cat;
+  const fb = upgrades.find((u) => u.type === 'battery');
+  return fb?.id != null ? String(fb.id).trim() : null;
+}
+
 const calculateProduction = (placedRacks: PlacedRack[], upgradesList: Upgrade[]) => {
   let total = 0;
   placedRacks.forEach(rack => {
@@ -1144,9 +1161,18 @@ export default function App() {
 
 
 
-  const handleUpdateUser = async (updatedUser: User) => {
-    await apiUpdateUser(updatedUser);
+  const handleUpdateUser = async (
+    updatedUser: User,
+    opts?: { skipApi?: boolean }
+  ): Promise<{ ok: boolean; error?: string; code?: string; accounts?: unknown[] }> => {
+    if (!opts?.skipApi) {
+      const out = await apiUpdateUser(updatedUser);
+      if (!out.ok) {
+        return out;
+      }
+    }
     setUser(updatedUser);
+    return { ok: true };
   };
 
   const handleUpgradeAccess = (newLevelId: string) => {
@@ -1607,13 +1633,16 @@ export default function App() {
       (Array.isArray(r.multiplierSlots) ? r.multiplierSlots : []).forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
       if (r.wiringId) ns[r.wiringId] = (ns[r.wiringId] || 0) + 1;
       if (r.batteryId) {
-        const upg = gameUpgrades.find(u => u.id === r.batteryId);
-        const capacity = upg?.powerCapacity || 100;
-        const isFull = r.currentCharge >= (capacity * 0.999);
-        if (isFull) {
-          ns[r.batteryId] = (ns[r.batteryId] || 0) + 1;
-        } else {
-          nb.push({ id: crypto.randomUUID(), itemId: r.batteryId, currentCharge: r.currentCharge });
+        const catId = resolveEquippedBatteryCatalogId(r.batteryId, nb, gameUpgrades);
+        if (catId) {
+          const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
+          const capacity = upg?.powerCapacity || 100;
+          const isFull = r.currentCharge >= (capacity * 0.999);
+          if (isFull) {
+            ns[catId] = (ns[catId] || 0) + 1;
+          } else {
+            nb.push({ id: crypto.randomUUID(), itemId: catId, currentCharge: r.currentCharge });
+          }
         }
       }
       return { ...p, stock: ns, storedBatteries: nb, placedRacks: p.placedRacks.filter(x => x.id !== rackId) };
@@ -1657,14 +1686,17 @@ export default function App() {
       }
 
       if (oldItemId) {
-        const upg = gameUpgrades.find(u => u.id === oldItemId);
         if (type === 'battery') {
-          const capacity = upg?.powerCapacity || 100;
-          const isFull = oldCharge >= (capacity * 0.999);
-          if (isFull) {
-            ns[oldItemId] = (ns[oldItemId] || 0) + 1;
-          } else {
-            nb.push({ id: crypto.randomUUID(), itemId: oldItemId, currentCharge: oldCharge });
+          const catOld = resolveEquippedBatteryCatalogId(oldItemId, nb, gameUpgrades);
+          if (catOld) {
+            const upg = gameUpgrades.find((u) => u.id === catOld && u.type === 'battery');
+            const capacity = upg?.powerCapacity || 100;
+            const isFull = oldCharge >= (capacity * 0.999);
+            if (isFull) {
+              ns[catOld] = (ns[catOld] || 0) + 1;
+            } else {
+              nb.push({ id: crypto.randomUUID(), itemId: catOld, currentCharge: oldCharge });
+            }
           }
         } else {
           ns[oldItemId] = (ns[oldItemId] || 0) + 1;
@@ -1690,13 +1722,15 @@ export default function App() {
       if (type === 'battery') id = r.batteryId; else if (type === 'wiring') id = r.wiringId; else if (type === 'multiplier' && idx !== undefined) id = r.multiplierSlots[idx];
       if (!id) return p; let ns = { ...p.stock }; let nb = [...p.storedBatteries];
       if (type === 'battery') {
-        const upg = gameUpgrades.find(u => u.id === id);
+        const catId = resolveEquippedBatteryCatalogId(id, p.storedBatteries, gameUpgrades);
+        if (!catId) return p;
+        const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
         const capacity = upg?.powerCapacity || 100;
         const isFull = r.currentCharge >= (capacity * 0.999);
         if (isFull) {
-          ns[id] = (ns[id] || 0) + 1;
+          ns[catId] = (ns[catId] || 0) + 1;
         } else {
-          nb.push({ id: crypto.randomUUID(), itemId: id, currentCharge: r.currentCharge });
+          nb.push({ id: crypto.randomUUID(), itemId: catId, currentCharge: r.currentCharge });
         }
         r.batteryId = null; r.currentCharge = 0; r.isOn = false;
       }
@@ -1735,7 +1769,17 @@ export default function App() {
   }, [requestSave]);
 
   const handleRecharge = useCallback((rid: string) => {
-    setGameState(p => { const ri = p.placedRacks.findIndex(r => r.id === rid); if (ri === -1) return p; const r = p.placedRacks[ri]; if (!r.batteryId) return p; const cap = gameUpgrades.find(u => u.id === r.batteryId)?.powerCapacity || 0; const ur = [...p.placedRacks]; ur[ri] = { ...r, currentCharge: cap }; return { ...p, placedRacks: ur }; });
+    setGameState((p) => {
+      const ri = p.placedRacks.findIndex((r) => r.id === rid);
+      if (ri === -1) return p;
+      const r = p.placedRacks[ri];
+      if (!r.batteryId) return p;
+      const cat = resolveEquippedBatteryCatalogId(r.batteryId, p.storedBatteries, gameUpgrades);
+      const cap = (cat && gameUpgrades.find((u) => u.id === cat)?.powerCapacity) || 0;
+      const ur = [...p.placedRacks];
+      ur[ri] = { ...r, currentCharge: cap };
+      return { ...p, placedRacks: ur };
+    });
     requestSave();
   }, [gameUpgrades, requestSave]);
 

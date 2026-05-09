@@ -4,11 +4,16 @@ import { User, SeasonPass, SeasonPurchase, AccessLevel, LootBox, GameState } fro
 import { AUTH_PASSWORD_MAX, AUTH_REFERRAL_MAX, AUTH_USERNAME_MAX, AUTH_USERNAME_MIN } from '../constants/authLimits';
 import { PLAYER_NEWS_LINK_MAX, PLAYER_NEWS_TEXT_MAX } from '../constants/formLimits';
 import { User as UserIcon, Lock, Mail, Save, AlertCircle, CheckCircle2, Wallet, ShieldCheck, Share2, Copy, Newspaper, Unplug } from 'lucide-react';
-import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState, getProfilePageBundle } from '@/services/api';
+import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState, getProfilePageBundle, clearMyPolygonWallet } from '@/services/api';
+
+export type ProfileUpdateOptions = { skipApi?: boolean };
 
 interface ProfilePageProps {
   user: User;
-  onUpdateProfile: (updatedUser: User) => void;
+  onUpdateProfile: (
+    updatedUser: User,
+    opts?: ProfileUpdateOptions
+  ) => void | Promise<{ ok: boolean; error?: string; code?: string; accounts?: unknown[] }>;
   onUpdateGameState?: (next: GameState) => void;
 }
 
@@ -38,6 +43,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
   const [lootBoxes, setLootBoxesState] = useState<LootBox[]>([]);
   const [gameSave, setGameSave] = useState<any>(null);
 
+  useEffect(() => {
+    setPolygonWallet(user.polygonWallet || '');
+  }, [user.polygonWallet]);
+
   const handleConnectWallet = async () => {
     try {
       const eth = (window as any).ethereum;
@@ -64,7 +73,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
         }
       } catch { }
       setPolygonWallet(addr);
-      onUpdateProfile({ ...user, polygonWallet: addr });
+      const out = await onUpdateProfile({ ...user, polygonWallet: addr });
+      if (out && typeof out === 'object' && 'ok' in out && out.ok === false) {
+        setPolygonWallet(user.polygonWallet || '');
+        setMessage({ type: 'error', text: out.error || 'Não foi possível gravar a carteira no servidor.' });
+        return;
+      }
       setMessage({ type: 'success', text: 'Carteira conectada e salva no seu perfil.' });
 
     } catch {
@@ -72,7 +86,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
     }
   };
 
-  const handleRemoveConnectedWallet = () => {
+  const handleRemoveConnectedWallet = async () => {
     if (!polygonWallet) return;
     if (
       !confirm(
@@ -81,12 +95,20 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
     ) {
       return;
     }
+    const cleared = await clearMyPolygonWallet();
+    if (!cleared.ok) {
+      setMessage({
+        type: 'error',
+        text: cleared.error || 'Não foi possível remover a carteira. Tente novamente.'
+      });
+      return;
+    }
     setPolygonWallet('');
-    onUpdateProfile({ ...user, polygonWallet: undefined });
+    await onUpdateProfile({ ...user, polygonWallet: undefined }, { skipApi: true });
     setMessage({ type: 'success', text: 'Carteira removida do perfil.' });
   };
 
-  const handleUpdateBasicInfo = (e: React.FormEvent) => {
+  const handleUpdateBasicInfo = async (e: React.FormEvent) => {
     e.preventDefault();
     const u = username.trim();
     if (!u) {
@@ -100,11 +122,15 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
       });
       return;
     }
-    onUpdateProfile({ ...user, username: u });
-    setMessage({ type: 'success', text: "Informações básicas atualizadas." });
+    const out = await onUpdateProfile({ ...user, username: u });
+    if (out && typeof out === 'object' && 'ok' in out && out.ok === false) {
+      setMessage({ type: 'error', text: out.error || 'Falha ao atualizar o perfil.' });
+      return;
+    }
+    setMessage({ type: 'success', text: 'Informações básicas atualizadas.' });
   };
 
-  const handleChangePassword = (e: React.FormEvent) => {
+  const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (user.password && currentPass !== user.password) {
       setMessage({ type: 'error', text: "Senha atual incorreta." });
@@ -123,8 +149,12 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
       return;
     }
 
-    onUpdateProfile({ ...user, password: newPass });
-    setMessage({ type: 'success', text: "Senha alterada com sucesso." });
+    const out = await onUpdateProfile({ ...user, password: newPass });
+    if (out && typeof out === 'object' && 'ok' in out && out.ok === false) {
+      setMessage({ type: 'error', text: out.error || 'Falha ao alterar a palavra-passe.' });
+      return;
+    }
+    setMessage({ type: 'success', text: 'Senha alterada com sucesso.' });
     setCurrentPass('');
     setNewPass('');
     setConfirmPass('');
@@ -356,7 +386,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                         const res = await claimReferralCode(user.email, referralCodeInput.trim());
                         setReferralClaimLoading(false);
                         if (res && res.ok) {
-                          onUpdateProfile({ ...user, referredBy: referralCodeInput.trim() });
+                          await onUpdateProfile({ ...user, referredBy: referralCodeInput.trim() }, { skipApi: true });
                           alert('Código vinculado com sucesso. Recompensas de indicação ativadas.');
                         } else {
                           alert(res?.error || 'Falha ao vincular código');

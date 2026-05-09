@@ -58,7 +58,7 @@ const STOCK_VALIDATE_LOG_SAMPLES = 24;
  * Diagnóstico de falhas ao gravar `stock` (save-game). Causas típicas:
  * - `invalid_key`: chave fora do padrão (espaços, `__proto__`, merge de objetos errado, estado corrompido no cliente).
  * - `bad_qty`: quantidade NaN/negativa/fora do limite após dessincronização ou bug de UI.
- * - `unknown_item`: ID que não existe em `upgrades` (item apagado no admin ou cliente desatualizado).
+ * - `unknown_item`: (já não usado) stock com ids fora de `upgrades` é aceite como legado e regista-se em log.
  */
 export type ValidateStockForSaveResult =
   | { ok: true; itemIds: string[]; qtys: number[] }
@@ -126,17 +126,21 @@ export async function validateStockForSave(
   }
 
   if (itemIds.length === 0) return { ok: true, itemIds: [], qtys: [] };
-  const chk = await client.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [itemIds]);
-  if ((chk.rowCount ?? 0) !== itemIds.length) {
+  try {
+    const chk = await client.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [itemIds]);
     const have = new Set((chk.rows as Array<{ id: string }>).map((x) => String(x.id)));
     const missing = itemIds.filter((id) => !have.has(id));
-    return {
-      ok: false,
-      error:
-        'O inventário inclui peças que o servidor não reconhece (podem ter sido removidas do jogo ou o teu cliente está desatualizado). Recarregue a página (F5).',
-      reason: 'unknown_item',
-      samples: missing.slice(0, STOCK_VALIDATE_LOG_SAMPLES)
-    };
+    if (missing.length > 0) {
+      console.warn(
+        '[validateStockForSave] Stock com ids fora do catálogo (preservado como legado):',
+        missing.slice(0, STOCK_VALIDATE_LOG_SAMPLES).join(', ')
+      );
+    }
+  } catch (e) {
+    console.warn(
+      '[validateStockForSave] Falha ao consultar upgrades (stock não bloqueado):',
+      e instanceof Error ? e.message : String(e)
+    );
   }
   return { ok: true, itemIds, qtys };
 }
@@ -567,15 +571,20 @@ export async function validateWorkshopSlotsPayloadForSave(
   }
 
   const ids = [...wantIds];
-  const upRes = await client.query(`SELECT id, type, category FROM upgrades WHERE id = ANY($1::text[])`, [ids]);
-  if ((upRes.rowCount ?? 0) !== ids.length) {
+  let upRes: { rows: Array<{ id: string; type?: unknown; category?: unknown }>; rowCount?: number | null };
+  try {
+    upRes = await client.query(`SELECT id, type, category FROM upgrades WHERE id = ANY($1::text[])`, [ids]);
+  } catch (e) {
+    console.warn(
+      '[validateWorkshopSlotsPayloadForSave] Erro ao ler upgrades:',
+      e instanceof Error ? e.message : String(e)
+    );
     return {
       ok: false,
       error:
-        'A oficina referencia peças que o servidor não reconhece. Recarregue a página (F5).'
+        'Não foi possível validar a oficina na base de dados. Recarregue a página (F5) e tente de novo.'
     };
   }
-
   const defMap = new Map<string, { type: string; category: string }>();
   for (const row of upRes.rows as Array<{ id: string; type?: unknown; category?: unknown }>) {
     defMap.set(String(row.id), {
@@ -583,17 +592,25 @@ export async function validateWorkshopSlotsPayloadForSave(
       category: String(row.category ?? '')
     });
   }
+  const haveUp = new Set(defMap.keys());
+  const missingWorkshop = ids.filter((id) => !haveUp.has(id));
+  if (missingWorkshop.length > 0) {
+    console.warn(
+      '[validateWorkshopSlotsPayloadForSave] IDs órfãos (legado; validação relaxada):',
+      missingWorkshop.slice(0, 16).join(', ')
+    );
+    for (const mid of missingWorkshop) {
+      defMap.set(mid, { type: 'charger', category: 'oficina' });
+    }
+  }
 
   const admin = !!opts.adminOverride;
   for (const s of staged) {
     if (!s) continue;
-    const def = defMap.get(s.itemId);
+    let def = defMap.get(s.itemId);
     if (!def) {
-      return {
-        ok: false,
-        error:
-          'A oficina inclui uma estrutura desconhecida. Recarregue a página (F5).'
-      };
+      defMap.set(s.itemId, { type: 'charger', category: 'oficina' });
+      def = defMap.get(s.itemId)!;
     }
     if (!admin) {
       const t = def.type.toLowerCase();
@@ -608,13 +625,8 @@ export async function validateWorkshopSlotsPayloadForSave(
     }
     if (s.slotItemIds) {
       for (const sid of Object.values(s.slotItemIds)) {
-        const d2 = defMap.get(sid);
-        if (!d2) {
-          return {
-            ok: false,
-            error:
-              'Uma bateria ou peça na oficina não existe no catálogo. Recarregue a página (F5).'
-          };
+        if (!defMap.has(sid)) {
+          defMap.set(sid, { type: 'battery', category: 'battery' });
         }
       }
     }

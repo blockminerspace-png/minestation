@@ -2,6 +2,19 @@ import type { PlacedRack, StoredBattery, Upgrade } from '../types';
 import { NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from '../types';
 import { batteryTierScore, poolEntryEnergyWh } from './roomBatteryModel';
 
+/** UUID v4 de instância em `stored_batteries.id` / `placed_racks.battery_id` (alinhado ao servidor). */
+const RACK_BATTERY_INSTANCE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+export function isRackBatteryInstanceUuid(batteryId: string | null | undefined): boolean {
+  return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId ?? '').trim());
+}
+
+function firstBatteryCatalogId(upgrades: Upgrade[] | null | undefined): string | null {
+  const u = (upgrades || []).find((x) => x.type === 'battery');
+  return u?.id != null ? String(u.id).trim() : null;
+}
+
 /** `rack.batteryId` pode ser id de instância (`stored_batteries.id`) ou id de catálogo (`upgrades.id`). */
 export function resolvePlacedRackBatteryCatalogId(
   rack: PlacedRack,
@@ -10,14 +23,24 @@ export function resolvePlacedRackBatteryCatalogId(
 ): string | null {
   const bid = rack.batteryId != null ? String(rack.batteryId).trim() : '';
   if (!bid) return null;
-  const row = (storedBatteries || []).find((b) => b.id === bid);
-  const cat = row?.itemId != null ? String(row.itemId).trim() : '';
-  if (cat) return cat;
+  const row = (storedBatteries || []).find((b) => String(b.id).trim() === bid);
+  const catFromRow = row?.itemId != null ? String(row.itemId).trim() : '';
+
   if (upgrades && upgrades.length > 0) {
+    if (catFromRow) {
+      const fromCat = upgrades.find((u) => u.id === catFromRow && u.type === 'battery');
+      if (fromCat) return catFromRow;
+    }
     const direct = upgrades.find((u) => u.id === bid && u.type === 'battery');
     if (direct) return bid;
+    // Linha em armazém com mesmo id da rig mas item_id inválido/vazio — não bloquear UI nem cálculos com null.
+    if (row && String(row.id).trim() === bid) {
+      const fb = firstBatteryCatalogId(upgrades);
+      if (fb) return fb;
+    }
     return null;
   }
+  if (catFromRow) return catFromRow;
   return bid;
 }
 
