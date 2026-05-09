@@ -15,14 +15,6 @@ export type UserPutCoreTxInput = {
   clientIpReferral: string;
 };
 
-async function bumpUnopenedBox(tx: Prisma.TransactionClient, userId: number, boxId: string): Promise<void> {
-  await tx.unopened_boxes.upsert({
-    where: { user_id_box_id: { user_id: userId, box_id: boxId } },
-    create: { user_id: userId, box_id: boxId, qty: 1 },
-    update: { qty: { increment: 1 } }
-  });
-}
-
 /**
  * Núcleo transacional de `PUT /api/user`: atualização de utilizador, níveis de acesso e recompensas de referral.
  * Deve correr dentro de `prisma.$transaction`.
@@ -45,7 +37,6 @@ export async function executeUserPutCoreTransaction(
   } = input;
 
   const now = BigInt(Date.now());
-  const nowMs = Date.now();
 
   const userUpdateBase: Prisma.usersUpdateInput = {
     username: usernameForUpdate,
@@ -165,9 +156,6 @@ export async function executeUserPutCoreTransaction(
         data: { usdc: { increment: senderUsdc } }
       });
     }
-    if (model.sender_loot_box_id) {
-      await bumpUnopenedBox(tx, ref.id, model.sender_loot_box_id);
-    }
 
     const receiverUsdc = model.receiver_reward_usdc ?? 0;
     if (receiverUsdc > 0) {
@@ -176,55 +164,6 @@ export async function executeUserPutCoreTransaction(
         data: { usdc: { increment: receiverUsdc } }
       });
     }
-    if (model.receiver_loot_box_id) {
-      await bumpUnopenedBox(tx, uid, model.receiver_loot_box_id);
-      await tx.player_claimed_boxes.createMany({
-        data: [{ user_id: uid, box_id: model.receiver_loot_box_id, claimed_at: BigInt(nowMs) }],
-        skipDuplicates: true
-      });
-    }
-
-    await tx.game_states.update({
-      where: { user_id: ref.id },
-      data: { claimed_referrals: { increment: 1 } }
-    });
-    await tx.game_states.update({
-      where: { user_id: uid },
-      data: { referral_bonus_claimed: 1 }
-    });
-  } else {
-    const senderBoxes = await tx.loot_boxes.findMany({
-      where: { trigger: 'referral_sender' },
-      select: { id: true }
-    });
-    for (const box of senderBoxes) {
-      await bumpUnopenedBox(tx, ref.id, box.id);
-    }
-    await tx.game_states.update({
-      where: { user_id: ref.id },
-      data: { claimed_referrals: { increment: 1 } }
-    });
-
-    const gs = await tx.game_states.findUnique({
-      where: { user_id: uid },
-      select: { referral_bonus_claimed: true }
-    });
-    if (gs && !gs.referral_bonus_claimed) {
-      const receiverBoxes = await tx.loot_boxes.findMany({
-        where: { trigger: 'referral_receiver' },
-        select: { id: true }
-      });
-      for (const box of receiverBoxes) {
-        await bumpUnopenedBox(tx, uid, box.id);
-        await tx.player_claimed_boxes.createMany({
-          data: [{ user_id: uid, box_id: box.id, claimed_at: BigInt(nowMs) }],
-          skipDuplicates: true
-        });
-      }
-      await tx.game_states.update({
-        where: { user_id: uid },
-        data: { referral_bonus_claimed: 1 }
-      });
-    }
   }
+  // Comissão sobre depósitos do indicado: ver `creditDepositReferralCommissionPg` no crédito on-chain.
 }

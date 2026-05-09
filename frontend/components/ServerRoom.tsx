@@ -94,6 +94,9 @@ function sameRigRoom(a: string | null | undefined, b: string | null | undefined)
     return normalizePlacedRackRoomId(a) === normalizePlacedRackRoomId(b);
 }
 
+/** Índice 0-based da sala promovida da «Visão geral» para a fila de atalhos (4.º quadrado). */
+const PROMOTED_ROOM_LIST_INDEX = 3;
+
 interface ServerRoomProps {
     stock: Record<string, number>;
     storedBatteries: StoredBattery[];
@@ -518,6 +521,124 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         el.scrollBy({ left: dir * step, behavior: 'smooth' });
     }, []);
 
+    const renderRoomOverviewTile = (room: RigRoom, listIdx: number, variant: 'carousel' | 'embedded') => {
+        const cap = room.initialCapacity + (room.unlockedSlots || 0);
+        const nextPrice =
+            room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
+        const rigsInRoom = placedRacks.filter((r) => sameRigRoom(r.roomId, room.id)).length;
+        const inner = (
+            <>
+                <div className="flex justify-between items-center">
+                    <button
+                        type="button"
+                        onClick={() => setRoomIndex(listIdx)}
+                        className="text-left text-sm font-bold uppercase tracking-wider text-slate-200 transition-colors hover:text-amber-400"
+                    >
+                        {room.name}
+                    </button>
+                </div>
+                <div className="mt-1 font-mono text-[10px] uppercase text-slate-500">
+                    Slots: {cap} / {room.maxCapacity}
+                </div>
+                {(onSetRoomRacksCoin || onSetRoomRacksBattery) && (
+                    <div className="mt-2 flex flex-col gap-1.5">
+                        {onSetRoomRacksCoin && (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    openRoomBulkCoinModal(room);
+                                }}
+                                disabled={rigsInRoom === 0}
+                                title={
+                                    rigsInRoom === 0
+                                        ? 'Instale ao menos uma rig nesta sala.'
+                                        : 'Define a mesma moeda em todas as rigs desta sala.'
+                                }
+                                className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-[9px] font-bold uppercase tracking-wide transition-colors ${
+                                    rigsInRoom === 0
+                                        ? 'cursor-not-allowed border-slate-700 bg-slate-900/30 text-slate-600'
+                                        : 'border-amber-500/40 bg-amber-500/10 text-amber-400 hover:border-amber-500/60 hover:bg-amber-500/25'
+                                }`}
+                            >
+                                <Coins size={12} className="shrink-0" />
+                                Moeda em todas as rigs
+                                {rigsInRoom > 0 && <span className="font-mono opacity-80">({rigsInRoom})</span>}
+                            </button>
+                        )}
+                        {onSetRoomRacksBattery && (
+                            <button
+                                type="button"
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    openRoomBulkBatteryModal(room);
+                                }}
+                                disabled={rigsInRoom === 0}
+                                title={
+                                    rigsInRoom === 0
+                                        ? 'Instale ao menos uma rig nesta sala.'
+                                        : 'Define a mesma bateria (estoque) em todas as rigs compatíveis desta sala.'
+                                }
+                                className={`flex w-full items-center justify-center gap-1.5 rounded border px-2 py-1.5 text-[9px] font-bold uppercase tracking-wide transition-colors ${
+                                    rigsInRoom === 0
+                                        ? 'cursor-not-allowed border-slate-700 bg-slate-900/30 text-slate-600'
+                                        : 'border-yellow-600/40 bg-yellow-600/10 text-yellow-500 hover:border-yellow-600/60 hover:bg-yellow-600/20'
+                                }`}
+                            >
+                                <Battery size={12} className="shrink-0" />
+                                Bateria em todas as rigs
+                                {rigsInRoom > 0 && <span className="font-mono opacity-80">({rigsInRoom})</span>}
+                            </button>
+                        )}
+                    </div>
+                )}
+                {cap < room.maxCapacity && (
+                    <div className="mt-3 flex items-center justify-between border-t border-white/5 pt-2">
+                        <div className="text-[10px] font-bold text-amber-400">
+                            USDC{' '}
+                            {nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                openSlotPurchaseModal(room);
+                            }}
+                            disabled={!!purchaseBusyId}
+                            className={`rounded px-2 py-1 text-[9px] font-black uppercase transition-all ${
+                                purchaseBusyId
+                                    ? 'bg-slate-700 text-slate-500'
+                                    : 'border border-amber-500/30 bg-amber-500/20 text-amber-400 hover:bg-amber-500 hover:text-white'
+                            }`}
+                        >
+                            {purchaseBusyId ? 'Processando' : 'Novo Slot'}
+                        </button>
+                    </div>
+                )}
+            </>
+        );
+
+        if (variant === 'embedded') {
+            return <div className="flex min-h-0 flex-1 flex-col gap-2 text-left">{inner}</div>;
+        }
+
+        return (
+            <div
+                key={room.id}
+                className={`w-[min(100%,280px)] min-w-[240px] max-w-[280px] shrink-0 snap-start rounded-lg border p-3 sm:min-w-[260px] ${
+                    roomIndex === listIdx
+                        ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                        : 'border-slate-800 bg-slate-900/40'
+                }`}
+            >
+                {inner}
+            </div>
+        );
+    };
+
+    const promotedRoom = myRooms.length > PROMOTED_ROOM_LIST_INDEX ? myRooms[PROMOTED_ROOM_LIST_INDEX] : null;
+    const showPromotedRoomTop = Boolean(promotedRoom && userEmail);
+
     const showQuickControlRow = Boolean(onSetRoomRacksCoin || onSetRoomRacksBattery || userEmail);
 
     return (
@@ -548,7 +669,11 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
             </div>
 
             {showQuickControlRow && (
-                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-stretch">
+                <div
+                    className={`grid grid-cols-1 gap-4 ${
+                        showPromotedRoomTop ? 'lg:grid-cols-4' : 'lg:grid-cols-3'
+                    } lg:items-stretch`}
+                >
                     <RoomActionCard
                         icon={Coins}
                         title="Moeda da sala"
@@ -667,6 +792,16 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                         )}
                     </RoomActionCard>
+
+                    {showPromotedRoomTop && promotedRoom ? (
+                        <RoomActionCard
+                            icon={Box}
+                            title={promotedRoom.name}
+                            subtitle="4.ª sala da lista — mesmos atalhos da visão geral, aqui em cima."
+                        >
+                            {renderRoomOverviewTile(promotedRoom, PROMOTED_ROOM_LIST_INDEX, 'embedded')}
+                        </RoomActionCard>
+                    ) : null}
                 </div>
             )}
 
@@ -704,65 +839,10 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                     aria-label="Carrossel de salas de mineração"
                                     className="flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-0 pb-2 pt-1 sm:px-10 [scrollbar-width:thin] [scrollbar-color:rgba(245,158,11,0.35)_transparent] dark:[scrollbar-color:rgba(251,191,36,0.4)_transparent]"
                                 >
-                                {myRooms.map((room, idx) => {
-                                    const cap = room.initialCapacity + (room.unlockedSlots || 0);
-                                    const nextPrice = room.baseSlotPrice * Math.pow(1 + room.slotPriceIncreasePercent / 100, room.unlockedSlots || 0);
-                                    const rigsInRoom = placedRacks.filter((r) => sameRigRoom(r.roomId, room.id)).length;
-                                    return (
-                                        <div
-                                            key={room.id}
-                                            className={`w-[min(100%,280px)] min-w-[240px] max-w-[280px] shrink-0 snap-start rounded-lg border p-3 sm:min-w-[260px] ${roomIndex === idx ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'border-slate-800 bg-slate-900/40'}`}
-                                        >
-                                            <div className="flex justify-between items-center">
-                                                <button onClick={() => setRoomIndex(idx)} className="font-bold text-slate-200 text-sm text-left hover:text-amber-400 transition-colors uppercase tracking-wider">{room.name}</button>
-                                            </div>
-                                            <div className="text-[10px] text-slate-500 mt-1 font-mono uppercase">Slots: {cap} / {room.maxCapacity}</div>
-                                            {(onSetRoomRacksCoin || onSetRoomRacksBattery) && (
-                                                <div className="mt-2 flex flex-col gap-1.5">
-                                                    {onSetRoomRacksCoin && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => { e.stopPropagation(); openRoomBulkCoinModal(room); }}
-                                                            disabled={rigsInRoom === 0}
-                                                            title={rigsInRoom === 0 ? 'Instale ao menos uma rig nesta sala.' : 'Define a mesma moeda em todas as rigs desta sala.'}
-                                                            className={`w-full flex items-center justify-center gap-1.5 text-[9px] font-bold uppercase tracking-wide px-2 py-1.5 rounded border transition-colors ${rigsInRoom === 0 ? 'border-slate-700 text-slate-600 cursor-not-allowed bg-slate-900/30' : 'border-amber-500/40 text-amber-400 bg-amber-500/10 hover:bg-amber-500/25 hover:border-amber-500/60'}`}
-                                                        >
-                                                            <Coins size={12} className="shrink-0" />
-                                                            Moeda em todas as rigs
-                                                            {rigsInRoom > 0 && <span className="font-mono opacity-80">({rigsInRoom})</span>}
-                                                        </button>
-                                                    )}
-                                                    {onSetRoomRacksBattery && (
-                                                        <button
-                                                            type="button"
-                                                            onClick={(e) => { e.stopPropagation(); openRoomBulkBatteryModal(room); }}
-                                                            disabled={rigsInRoom === 0}
-                                                            title={rigsInRoom === 0 ? 'Instale ao menos uma rig nesta sala.' : 'Define a mesma bateria (estoque) em todas as rigs compatíveis desta sala.'}
-                                                            className={`w-full flex items-center justify-center gap-1.5 text-[9px] font-bold uppercase tracking-wide px-2 py-1.5 rounded border transition-colors ${rigsInRoom === 0 ? 'border-slate-700 text-slate-600 cursor-not-allowed bg-slate-900/30' : 'border-yellow-600/40 text-yellow-500 bg-yellow-600/10 hover:bg-yellow-600/20 hover:border-yellow-600/60'}`}
-                                                        >
-                                                            <Battery size={12} className="shrink-0" />
-                                                            Bateria em todas as rigs
-                                                            {rigsInRoom > 0 && <span className="font-mono opacity-80">({rigsInRoom})</span>}
-                                                        </button>
-                                                    )}
-                                                </div>
-                                            )}
-                                            {cap < room.maxCapacity && (
-                                                <div className="mt-3 flex justify-between items-center pt-2 border-t border-white/5">
-                                                    <div className="text-[10px] text-amber-400 font-bold">USDC {nextPrice.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                                                    <button
-                                                        type="button"
-                                                        onClick={(e) => { e.stopPropagation(); openSlotPurchaseModal(room); }}
-                                                        disabled={!!purchaseBusyId}
-                                                        className={`text-[9px] font-black px-2 py-1 rounded transition-all uppercase ${purchaseBusyId ? 'bg-slate-700 text-slate-500' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-500 hover:text-white'}`}
-                                                    >
-                                                        {purchaseBusyId ? 'Processando' : 'Novo Slot'}
-                                                    </button>
-                                                </div>
-                                            )}
-                                        </div>
-                                    );
-                                })}
+                                {myRooms
+                                    .map((room, idx) => ({ room, idx }))
+                                    .filter(({ idx }) => idx !== PROMOTED_ROOM_LIST_INDEX)
+                                    .map(({ room, idx }) => renderRoomOverviewTile(room, idx, 'carousel'))}
                                 </div>
                             </div>
                         )}

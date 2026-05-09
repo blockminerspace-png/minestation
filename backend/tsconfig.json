@@ -14,12 +14,14 @@
   "include": [
     "config/**/*.ts",
     "controllers/**/*.ts",
+    "services/**/*.ts",
     "models/**/*.ts",
     "validation/**/*.ts",
     "src/auth/**/*.ts",
     "lib/**/*.ts",
     "utils/**/*.ts",
     "workers/**/*.ts",
+    "cron/**/*.ts",
     "types/**/*.d.ts"
   ],
   "exclude": ["node_modules", "dist"]

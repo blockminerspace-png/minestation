@@ -107,7 +107,11 @@ import {
   isEmailParamInvalid,
   normalizeEmailParam
 } from './dist/lib/meUpgradeShopBundlePayload.js';
-import { runReferralCommissionOnTx } from './dist/models/referralCommissionModel.js';
+import {
+  runReferralCommissionOnTx,
+  creditDepositReferralCommissionPg,
+  newAdminUsdcGiftReferralIdempotencyKey
+} from './dist/models/referralCommissionModel.js';
 import { registerPromoRedeemRoutes } from './dist/controllers/promoRedeemController.js';
 import { runBulkRoomBattery, isValidRoomId } from './dist/lib/roomBatteryBulk.js';
 import {
@@ -129,6 +133,8 @@ import {
 import { registerSupportMutationRoutes } from './dist/controllers/supportMutationController.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
+import { registerInventoryRoutes } from './dist/controllers/inventoryController.js';
+import { registerPlayerCalculatorRoutes } from './dist/controllers/playerCalculatorController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
 import {
   sendInternalErrorOrPrisma,
@@ -768,8 +774,16 @@ const ensureUsdcDefault = async () => {
   }
 };
 
-// --- ADVANCED REFERRAL COMMISSION LOGIC ---
+// --- REFERRAL: depósito/gift USDC → comissão 5% idempotente; hardware/black_market → modelo de nível ---
 const processReferralCommission = async (client, userId, amount, type) => {
+  if (type === 'deposit') {
+    const uid = Number(userId);
+    const amt = Number(amount);
+    if (!Number.isFinite(uid) || uid <= 0 || !Number.isFinite(amt) || amt <= 0) return;
+    const key = newAdminUsdcGiftReferralIdempotencyKey(uid, amt);
+    await creditDepositReferralCommissionPg(client, uid, amt, key);
+    return;
+  }
   await runReferralCommissionOnTx(pgSqlTx(client), userId, amount, type);
 };
 
@@ -1405,6 +1419,21 @@ const passwordResetRequestLimiter = rateLimit({
   validate: { trustProxy: true }
 });
 
+/** Vincular código / rotas legacy de referral — bucket por IP + utilizador autenticado. */
+const referralClaimSensitiveLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseRateLimit(process.env.REFERRAL_CLAIM_MAX_PER_15M, 30, 5, 120),
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${getClientIp(req)}:${req.userId != null ? String(req.userId) : 'anon'}`,
+  skip: (req) => {
+    const ip = getClientIp(req);
+    return ip === '::1' || ip === '127.0.0.1' || ip === '::ffff:127.0.0.1';
+  },
+  message: { error: 'Muitas operações de indicação. Tente novamente mais tarde.' },
+  validate: { trustProxy: true }
+});
+
 app.use('/api/', limiter);
 app.use('/api/login', authLimiter);
 
@@ -1567,6 +1596,8 @@ registerPartnerYoutubeRoutes(app, {
   appendGameActivityLog
 });
 registerWorkshopMutationRoutes(app, { authenticateToken });
+registerInventoryRoutes(app, { authenticateToken });
+registerPlayerCalculatorRoutes(app, { authenticateToken });
 registerImageAssetRoutes(app, {
   isAdmin,
   imgDir: IMG_DIR,
@@ -3450,6 +3481,8 @@ async function tryCreditDepositFromReceipt(uid, txHash, net, settings, receipt) 
         server_updated_at = $2, last_updated_at = $2 WHERE user_id = $3`,
       [amountUsdc, now, uid]
     );
+    const depoKey = `deposit_tx:${String(txHash).toLowerCase()}`;
+    await creditDepositReferralCommissionPg(client, Number(uid), amountUsdc, depoKey);
     await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3)', [uid, `tx_${txHash}`, now]);
     await client.query('COMMIT');
     await db.query('DELETE FROM app_cache WHERE key = $1', [`deposit_pending:${txHash}`]);
@@ -5633,7 +5666,7 @@ app.get('/api/referrals/:email', async (req, res) => {
   } catch (e) { sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e); }
 });
 
-app.post('/api/referrals/claim-code', async (req, res) => {
+app.post('/api/referrals/claim-code', referralClaimSensitiveLimiter, async (req, res) => {
   const { code } = req.body || {};
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
   if (code == null || (typeof code === 'string' && !code.trim())) {
@@ -5658,19 +5691,14 @@ app.post('/api/referrals/claim-code', async (req, res) => {
 
     await client.query('BEGIN');
     await client.query('UPDATE users SET referred_by = $1 WHERE id = $2', [codeNormalized, uid]);
-    await client.query('INSERT INTO referrals (user_id, referred_username) VALUES ($1, $2) ON CONFLICT DO NOTHING', [referrer.id, current.username]);
-
-    // Grant Referee Reward (Receiver) - AUTOMATICALLY when claiming code
-    const gsRes = await client.query('SELECT referral_bonus_claimed FROM game_states WHERE user_id = $1', [uid]);
-    if (gsRes.rows[0] && !gsRes.rows[0].referral_bonus_claimed) {
-      const receiverBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_receiver'");
-      const now = Date.now();
-      for (const box of receiverBoxes.rows) {
-        await client.query('INSERT INTO unopened_boxes (user_id, box_id, qty) VALUES ($1, $2, 1) ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1', [uid, box.id]);
-        await client.query('INSERT INTO player_claimed_boxes (user_id, box_id, claimed_at) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING', [uid, box.id, now]);
-      }
-      await client.query('UPDATE game_states SET referral_bonus_claimed = 1 WHERE user_id = $1', [uid]);
-    }
+    await client.query(
+      `INSERT INTO referrals (user_id, referred_username)
+       SELECT $1, $2
+       WHERE NOT EXISTS (
+         SELECT 1 FROM referrals r WHERE r.user_id = $1 AND r.referred_username = $2
+       )`,
+      [referrer.id, current.username]
+    );
 
     await client.query('COMMIT');
     res.json({ ok: true });
@@ -5682,53 +5710,11 @@ app.post('/api/referrals/claim-code', async (req, res) => {
   }
 });
 
-app.post('/api/referrals/claim-reward', async (req, res) => {
+app.post('/api/referrals/claim-reward', referralClaimSensitiveLimiter, async (req, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-
-  const client = await db.connect();
-  try {
-    const uid = req.userId;
-    // count total referrals
-    const refCountRes = await client.query('SELECT COUNT(*) as total FROM referrals WHERE user_id = $1', [uid]);
-    const totalReferrals = parseInt(refCountRes.rows[0].total) || 0;
-
-    // get current claimed count from game_states
-    const gsRes = await client.query('SELECT claimed_referrals FROM game_states WHERE user_id = $1', [uid]);
-    const claimedCount = gsRes.rows[0]?.claimed_referrals || 0;
-
-    if (totalReferrals <= claimedCount) {
-      return res.status(400).json({ error: 'Não há prêmios disponíveis para resgate no momento.' });
-    }
-
-    const senderBoxes = await client.query("SELECT id FROM loot_boxes WHERE trigger = 'referral_sender'");
-    if (senderBoxes.rows.length === 0) {
-      return res.status(404).json({ error: 'Configuração de prêmio de indicação não encontrada.' });
-    }
-
-    await client.query('BEGIN');
-
-    // Grant ONE box for the next available referral
-    for (const box of senderBoxes.rows) {
-      await client.query(`
-        INSERT INTO unopened_boxes (user_id, box_id, qty) 
-        VALUES ($1, $2, 1) 
-        ON CONFLICT (user_id, box_id) DO UPDATE SET qty = unopened_boxes.qty + 1
-      `, [uid, box.id]);
-    }
-
-    // Increment claimed count
-    await client.query('UPDATE game_states SET claimed_referrals = claimed_referrals + 1 WHERE user_id = $1', [uid]);
-
-    await client.query('COMMIT');
-    res.json({ ok: true });
-
-  } catch (e) {
-    if (client) await client.query('ROLLBACK');
-    console.error('[ClaimReward] Error:', e);
-    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-  } finally {
-    if (client) client.release();
-  }
+  return res.status(410).json({
+    error: 'Este fluxo foi descontinuado. A comissão de indicação (5% em USDC) é creditada automaticamente quando o indicado deposita USDC.'
+  });
 });
 
 app.get('/api/wheel/config', async (req, res) => {
@@ -6323,34 +6309,6 @@ app.get('/api/load-game', async (req, res) => {
       claimedBoxes: claimedRows.map((r) => r.box_id)
     });
 
-    // Check for missing Referral Reward (Retroactive Fix)
-    if (u.referred_by && gs && !gs.referral_bonus_claimed) {
-      try {
-        const receiverBoxes = await prisma.loot_boxes.findMany({
-          where: { trigger: 'referral_receiver' },
-          select: { id: true }
-        });
-        const claimedAt = BigInt(Date.now());
-        for (const box of receiverBoxes) {
-          await prisma.unopened_boxes.upsert({
-            where: { user_id_box_id: { user_id: uid, box_id: box.id } },
-            create: { user_id: uid, box_id: box.id, qty: 1 },
-            update: { qty: { increment: 1 } }
-          });
-          await prisma.player_claimed_boxes.createMany({
-            data: [{ user_id: uid, box_id: box.id, claimed_at: claimedAt }],
-            skipDuplicates: true
-          });
-        }
-        await prisma.game_states.updateMany({
-          where: { user_id: uid },
-          data: { referral_bonus_claimed: 1 }
-        });
-        console.log(`[Retro Fix] Granted referral box to ${u.username}`);
-      } catch (err) {
-        console.error(`[Retro Fix] Failed for user ${uid}:`, err);
-      }
-    }
   } catch (e) {
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
@@ -7171,7 +7129,8 @@ const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
 async function validatePlacedRacksForSave(dbq, racks, userId) {
   if (!Array.isArray(racks)) return { ok: false, error: 'placedRacks inválido.' };
   if (racks.length > 350) return { ok: false, error: 'Número de rigs excede o permitido.' };
-  const storedBattCatalogByInstanceId = new Map();
+  const storedBattCatalogByInstanceId = new Map<string, string>();
+  const ownedStoredBatteryIds = new Set<string>();
   const uidNum = Number(userId);
   const catalogBatteryRows = await prisma.upgrades.findMany({
     where: { type: 'battery' },
@@ -7184,16 +7143,40 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
       ''
   ).trim();
 
+  const refreshOwnedStoredBatteryIds = async () => {
+    ownedStoredBatteryIds.clear();
+    if (!Number.isFinite(uidNum) || uidNum <= 0) return;
+    try {
+      const idRows = await dbq.query('SELECT id FROM stored_batteries WHERE user_id = $1', [uidNum]);
+      for (const row of idRows.rows || []) {
+        const rid = String(row.id ?? '').trim();
+        if (rid) ownedStoredBatteryIds.add(rid);
+      }
+    } catch (e) {
+      console.warn(
+        '[validatePlacedRacksForSave] owned stored_batteries ids:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+  };
+
   const mergeStoredBatteryRowIntoMap = (row: { id?: unknown; item_id?: unknown }) => {
     const iid = String(row.id ?? '').trim();
     if (!iid) return;
-    let resolvedItemId = String(row.item_id ?? '').trim();
-    if (!resolvedItemId || !catalogBatteryIds.has(resolvedItemId)) {
-      resolvedItemId = fallbackBatteryCatalogId;
+    const rawItem = String(row.item_id ?? '').trim();
+    if (rawItem && catalogBatteryIds.has(rawItem)) {
+      storedBattCatalogByInstanceId.set(iid, rawItem);
+      return;
     }
-    if (iid && resolvedItemId && catalogBatteryIds.has(resolvedItemId)) {
-      storedBattCatalogByInstanceId.set(iid, resolvedItemId);
+    if (fallbackBatteryCatalogId) {
+      storedBattCatalogByInstanceId.set(iid, fallbackBatteryCatalogId);
+      return;
     }
+    if (rawItem) {
+      storedBattCatalogByInstanceId.set(iid, rawItem);
+      return;
+    }
+    storedBattCatalogByInstanceId.set(iid, iid);
   };
 
   if (Number.isFinite(uidNum) && uidNum > 0) {
@@ -7226,6 +7209,7 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
       eRec instanceof Error ? eRec.message : String(eRec)
     );
   }
+  await refreshOwnedStoredBatteryIds();
   const nftRoomIds = await resolveNftAutoArmario1OnlyRoomIds(dbq);
   const upgradeIds = new Set();
   const coinIds = new Set();
@@ -7249,9 +7233,13 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
     if (r.wiringId) upgradeIds.add(String(r.wiringId));
     if (r.batteryId != null && String(r.batteryId).trim() !== '') {
       const bidRaw = String(r.batteryId).trim();
-      const fromStore = storedBattCatalogByInstanceId.get(bidRaw);
-      if (fromStore) {
-        upgradeIds.add(fromStore);
+      if (ownedStoredBatteryIds.has(bidRaw)) {
+        const fromStore = storedBattCatalogByInstanceId.get(bidRaw);
+        if (fromStore && catalogBatteryIds.has(fromStore)) {
+          upgradeIds.add(fromStore);
+        } else if (fallbackBatteryCatalogId) {
+          upgradeIds.add(fallbackBatteryCatalogId);
+        }
       } else if (catalogBatteryIds.has(bidRaw)) {
         upgradeIds.add(bidRaw);
       } else if (isRackBatteryInstanceUuidLocal(bidRaw) && fallbackBatteryCatalogId) {

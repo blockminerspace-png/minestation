@@ -1,11 +1,13 @@
 import { describe, it, expect, vi } from 'vitest';
 import {
   SAVE_GAME_ITEM_ID_RE,
+  STORED_BATTERY_CATALOG_PENDING_ID,
   isClientDailyActionKey,
   isAdminDailyActionKey,
   validateDailyActionsForSave,
   validateStockForSave,
   validateStoredBatteryWarehouseRemovalAllowed,
+  validateStoredBatteriesForSave,
   sanitizeStoredBatteriesForSavePayload,
   validateWorkshopSlotsPayloadForSave
 } from '../lib/saveGameEconomyValidate.js';
@@ -181,6 +183,45 @@ describe('saveGameEconomyValidate', () => {
       [{ id: 'rack1', batteryId: bid }]
     );
     expect(out).toHaveLength(0);
+  });
+
+  it('sanitizeStoredBatteriesForSavePayload aceita itemId vazio e usa marcador para validação posterior', () => {
+    const bid = 'dddddddd-bbbb-4ccc-dddd-eeeeeeeeeeee';
+    const out = sanitizeStoredBatteriesForSavePayload(
+      [{ id: bid, itemId: '', currentCharge: 12 }],
+      [],
+      []
+    );
+    expect(out).toHaveLength(1);
+    expect((out[0] as { itemId: string }).itemId).toBe(STORED_BATTERY_CATALOG_PENDING_ID);
+  });
+
+  it('validateStoredBatteriesForSave normaliza itemId pendente com fallback do catálogo', async () => {
+    const bat = {
+      id: 'eeeeeeee-bbbb-4ccc-dddd-eeeeeeeeeeee',
+      itemId: STORED_BATTERY_CATALOG_PENDING_ID,
+      currentCharge: 5
+    };
+    const client = {
+      query: vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+        if (String(sql).includes('FROM upgrades') && String(sql).includes('LIMIT 1')) {
+          return Promise.resolve({ rows: [{ id: 'small_battery' }] });
+        }
+        if (String(sql).includes('stored_batteries') && String(sql).includes('IS DISTINCT FROM')) {
+          return Promise.resolve({ rowCount: 0 });
+        }
+        if (String(sql).includes('stored_batteries') && String(sql).includes('id = ANY')) {
+          return Promise.resolve({ rows: [] });
+        }
+        if (String(sql).includes('upgrades') && String(sql).includes('ANY')) {
+          return Promise.resolve({ rows: [{ id: 'small_battery' }] });
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      })
+    };
+    const r = await validateStoredBatteriesForSave(client as never, 1, [bat]);
+    expect(r).toEqual({ ok: true });
+    expect(bat.itemId).toBe('small_battery');
   });
 
   it('validateWorkshopSlotsPayloadForSave retorna erro amigável quando a query upgrades falha', async () => {

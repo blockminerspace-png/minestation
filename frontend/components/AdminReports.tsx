@@ -741,25 +741,7 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
                             </div>
                         </div>
                     ) : (
-                        <PlayerCalculator
-                            gameState={{
-                                usdc: 0,
-                                startTime: Date.now(),
-                                stock: {},
-                                unopenedBoxes: {},
-                                storedBatteries: [],
-                                placedRacks: [],
-                                coinBalances: {},
-                                dailyActions: {},
-                                playerListings: [],
-                                claimedReferrals: 0,
-                                referralBonusClaimed: false
-                            }}
-                            upgrades={upgrades}
-                            miningCoins={miningCoins}
-                            onBack={() => setSubtab('transactions')}
-                            isAdmin={true}
-                        />
+                        <PlayerCalculator onBack={() => setSubtab('transactions')} isAdmin={true} />
                     )}
                 </div>
             )}

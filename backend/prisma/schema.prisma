@@ -64,6 +64,21 @@ model referrals {
   @@map("referrals")
 }
 
+/** Comissões de referral creditadas (idempotência por `idempotency_key`, ex. deposit_tx:0x…). */
+model referral_commission_ledger {
+  id                 String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  idempotency_key    String  @unique @db.VarChar(240)
+  referrer_user_id   Int
+  referred_user_id   Int
+  source_type        String  @default("deposit") @db.VarChar(32)
+  base_amount_usdc   Float
+  commission_percent Float
+  commission_usdc    Float
+  created_at         BigInt
+
+  @@map("referral_commission_ledger")
+}
+
 // --- Economia de mineração: moedas, catálogo de peças, compatibilidade de racks ---
 
 model mining_coins {
@@ -253,6 +268,7 @@ model stored_batteries {
   item_id        String
   current_charge Float
 
+  @@index([user_id])
   @@map("stored_batteries")
 }
 

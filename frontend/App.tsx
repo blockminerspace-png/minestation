@@ -42,7 +42,8 @@ import {
   setUpgrades as apiSetUpgrades,
   setAccessLevels as apiSetAccessLevels,
   setLootBoxes as apiSetLootBoxes,
-  logout as apiLogout
+  logout as apiLogout,
+  getPlayerInventoryMe
 } from './services/api';
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
@@ -434,10 +435,57 @@ export default function App() {
   const pendingSaveDomainRef = useRef<'full' | 'inventory' | 'servers' | 'workshop'>('full');
   /** Evita double-click / pedidos em paralelo na oficina (mutações servidor-authoritativas). */
   const workshopMutationBusyRef = useRef(false);
+  /** Geração de pedido GET `/api/inventory/me` — descarta respostas atrasadas ao mudar de separador. */
+  const inventoryMeRequestGenRef = useRef(0);
+  /** Baterias em armazém conforme o servidor (cheias vs parciais); `null` = ainda não hidratado nesta visita ao Estoque. */
+  const [inventoryBatterySplit, setInventoryBatterySplit] = useState<{
+    full: StoredBattery[];
+    partial: StoredBattery[];
+  } | null>(null);
 
   useEffect(() => {
     currentViewRef.current = currentView;
   }, [currentView]);
+
+  useEffect(() => {
+    if (currentView !== 'inventory') {
+      setInventoryBatterySplit(null);
+    }
+  }, [currentView]);
+
+  useEffect(() => {
+    if (currentView !== 'inventory' || !saveLoaded || !user || user.isAdmin || !gameSaveLoadKey) return;
+
+    const gen = ++inventoryMeRequestGenRef.current;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const r = await getPlayerInventoryMe();
+        if (cancelled || gen !== inventoryMeRequestGenRef.current) return;
+        if (r.ok !== true) {
+          console.warn('[inventory/me]', r.status, r.error || '');
+          return;
+        }
+        const merged = [...r.storedBatteriesPartial, ...r.storedBatteriesFull];
+        setInventoryBatterySplit({
+          full: r.storedBatteriesFull,
+          partial: r.storedBatteriesPartial
+        });
+        setGameState((p) => ({
+          ...p,
+          stock: { ...r.stock },
+          storedBatteries: merged
+        }));
+      } catch (e) {
+        console.error('[inventory/me]', e);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [currentView, saveLoaded, user?.id, user?.isAdmin, gameSaveLoadKey]);
 
   const [verticalAds, setVerticalAds] = useState<SystemNews[]>([]);
   const [bulkBatteryNotice, setBulkBatteryNotice] = useState<{ title: string; message: string } | null>(null);
@@ -2658,7 +2706,7 @@ export default function App() {
                   {saveLoaded && currentView === 'calculator' && !isOperatorAdminOnly && (
                     <div className="flex-1 overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-300">
                       <Suspense fallback={<LazyRouteFallback />}>
-                        <PlayerCalculator gameState={gameState} upgrades={gameUpgrades} miningCoins={miningCoins} onBack={() => goToGameView('servers')} userEmail={user?.email} isAdmin={user?.isAdmin} />
+                        <PlayerCalculator onBack={() => goToGameView('servers')} isAdmin={!!user?.isAdmin} />
                       </Suspense>
                     </div>
                   )}
@@ -2685,7 +2733,12 @@ export default function App() {
                     <div className="flex-1 flex flex-col">
                       <div className="flex-1 p-6">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <InventoryView stock={gameState.stock} storedBatteries={gameState.storedBatteries} upgrades={gameUpgrades} />
+                          <InventoryView
+                            stock={gameState.stock}
+                            storedBatteries={gameState.storedBatteries}
+                            inventoryBatterySplit={inventoryBatterySplit}
+                            upgrades={gameUpgrades}
+                          />
                         </Suspense>
                       </div>
                       <Footer />

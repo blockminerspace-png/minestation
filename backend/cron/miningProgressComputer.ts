@@ -215,12 +215,37 @@ export async function computeProgressForUser(
     const racksRes = await client.query('SELECT * FROM placed_racks WHERE user_id = $1', [userId]);
     const rows = racksRes.rows as Array<Record<string, unknown>>;
 
+    let firstBatteryCatalogId = '';
+    for (const [id, u] of upgradesMap.entries()) {
+      const t = String(u.type ?? '').toLowerCase();
+      const c = String(u.category ?? '').toLowerCase();
+      if (t === 'battery' || c === 'battery') {
+        if (id === 'small_battery') {
+          firstBatteryCatalogId = id;
+          break;
+        }
+        if (!firstBatteryCatalogId) firstBatteryCatalogId = id;
+      }
+    }
+
     const storedBattRes = await client.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [userId]);
     const storedBattCatalogByInstanceId = new Map<string, string>();
     for (const sb of storedBattRes.rows as Array<{ id?: unknown; item_id?: unknown }>) {
       const iid = String(sb.id ?? '').trim();
-      const itemId = String(sb.item_id ?? '').trim();
-      if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
+      if (!iid) continue;
+      const rawItem = String(sb.item_id ?? '').trim();
+      const def = rawItem ? upgradesMap.get(rawItem) : undefined;
+      const isBatt =
+        def &&
+        (String(def.type ?? '').toLowerCase() === 'battery' ||
+          String(def.category ?? '').toLowerCase() === 'battery');
+      if (rawItem && isBatt) {
+        storedBattCatalogByInstanceId.set(iid, rawItem);
+      } else if (firstBatteryCatalogId) {
+        storedBattCatalogByInstanceId.set(iid, firstBatteryCatalogId);
+      } else {
+        storedBattCatalogByInstanceId.set(iid, rawItem || iid);
+      }
     }
 
     if (rows.length > 0) {

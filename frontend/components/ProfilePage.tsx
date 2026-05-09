@@ -1,10 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
-import { User, SeasonPass, SeasonPurchase, AccessLevel, LootBox, GameState } from '@/types';
+import { User, SeasonPass, SeasonPurchase, AccessLevel, GameState } from '@/types';
 import { AUTH_PASSWORD_MAX, AUTH_REFERRAL_MAX, AUTH_USERNAME_MAX, AUTH_USERNAME_MIN } from '../constants/authLimits';
 import { PLAYER_NEWS_LINK_MAX, PLAYER_NEWS_TEXT_MAX } from '../constants/formLimits';
 import { User as UserIcon, Lock, Mail, Save, AlertCircle, CheckCircle2, Wallet, ShieldCheck, Share2, Copy, Newspaper, Unplug } from 'lucide-react';
-import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, claimReferralReward, getNewsFee, submitPlayerNews, getGameState, getLootBoxes, saveGameState, getProfilePageBundle, clearMyPolygonWallet } from '@/services/api';
+import { getSeasonPasses, getSeasonPurchases, getAccessLevels, getReferrals, claimReferralCode, getNewsFee, submitPlayerNews, getGameState, getProfilePageBundle, clearMyPolygonWallet } from '@/services/api';
 
 export type ProfileUpdateOptions = { skipApi?: boolean };
 
@@ -39,9 +39,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
   const [newsLink, setNewsLink] = useState('');
   const [newsFee, setNewsFeeState] = useState<number>(0);
   const [usdcBal, setUsdcBal] = useState<number>(0);
-  const [claimedReferralsCount, setClaimedReferralsCount] = useState<number>(0);
-  const [lootBoxes, setLootBoxesState] = useState<LootBox[]>([]);
-  const [gameSave, setGameSave] = useState<any>(null);
 
   useEffect(() => {
     setPolygonWallet(user.polygonWallet || '');
@@ -168,30 +165,6 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
     navigator.clipboard.writeText(url);
     alert("Link de indicação copiado!");
   }
-  const handleClaimReferral = async () => {
-    try {
-      setReferralClaimLoading(true);
-      const res = await claimReferralReward(user.email);
-      if (res && res.ok) {
-        // Refresh game state to see the new box and updated count
-        const gsRes = await getGameState(user.email);
-        if (gsRes.data) {
-          setGameSave(gsRes.data);
-          setClaimedReferralsCount(gsRes.data.claimedReferrals || 0);
-          setUsdcBal(gsRes.data.usdc || 0);
-          onUpdateGameState && onUpdateGameState(gsRes.data);
-          alert('Prêmio de indicação resgatado com sucesso! Verifique seu inventário.');
-        }
-      } else {
-        alert(res?.error || 'Falha ao resgatar prêmio.');
-      }
-    } catch (e) {
-      alert('Erro ao processar resgate.');
-    } finally {
-      setReferralClaimLoading(false);
-    }
-  };
-
   useEffect(() => {
     const load = async () => {
       const bundle = await getProfilePageBundle();
@@ -200,34 +173,25 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
         setSeasonPurchases(bundle.seasonPurchases);
         setAccessLevels(bundle.accessLevels);
         setReferrals((bundle.referrals || []).filter((r) => r !== user.username));
-        setLootBoxesState(bundle.lootBoxes);
         setNewsFeeState(bundle.newsFee);
         setUsdcBal(bundle.profileGame.usdc);
-        setClaimedReferralsCount(bundle.profileGame.claimedReferrals);
-        setGameSave({ claimedReferrals: bundle.profileGame.claimedReferrals });
         return;
       }
-      const [passes, purchases, levels, refs, boxes] = await Promise.all([
+      const [passes, purchases, levels, refs] = await Promise.all([
         getSeasonPasses(),
         getSeasonPurchases(user.email),
         getAccessLevels(),
-        getReferrals(user.email),
-        getLootBoxes()
+        getReferrals(user.email)
       ]);
       setSeasonPasses(passes);
       setSeasonPurchases(purchases);
       setAccessLevels(levels);
       setReferrals((refs || []).filter((r) => r !== user.username));
-      setLootBoxesState(boxes);
       const fee = await getNewsFee();
       setNewsFeeState(fee);
       const gsRes = await getGameState(user.email);
       const gs = gsRes.data;
       setUsdcBal(gs?.usdc || 0);
-      if (gs) {
-        setClaimedReferralsCount(gs.claimedReferrals || 0);
-        setGameSave(gs);
-      }
     };
     void load();
   }, [user.email, user.username]);
@@ -335,35 +299,22 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
 
                 {referrals.length > 0 ? (
                   <div className="max-h-48 overflow-y-auto custom-scrollbar space-y-1">
-                    {[...referrals].reverse().map((refName, displayIdx) => {
-                      const originalIdx = referrals.length - 1 - displayIdx;
-                      const claimed = originalIdx < (gameSave?.claimedReferrals || 0);
-                      const claimable = !claimed && originalIdx === (gameSave?.claimedReferrals || 0);
-                      return (
-                        <div key={originalIdx} className="text-xs text-slate-600 dark:text-slate-400 flex items-center justify-between gap-2">
-                          <div className="flex items-center gap-2">
-                            <div className={`w-1.5 h-1.5 rounded-full ${claimed ? 'bg-green-500' : 'bg-slate-400'}`}></div>
-                            <span>{refName}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            {claimed ? (
-                              <span className="text-[10px] bg-green-700/20 text-green-500 px-2 py-0.5 rounded border border-green-700/40">Resgatado</span>
-                            ) : (
-                              <button
-                                onClick={handleClaimReferral}
-                                disabled={!claimable}
-                                className={`text-[10px] px-2 py-1 rounded font-bold ${claimable ? 'bg-amber-600 text-white hover:bg-amber-500' : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed opacity-50'}`}
-                              >
-                                {claimable ? 'Resgatar' : 'Pendente'}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
+                    {[...referrals].reverse().map((refName, displayIdx) => (
+                      <div
+                        key={`${refName}-${displayIdx}`}
+                        className="text-xs text-slate-600 dark:text-slate-400 flex items-center gap-2"
+                      >
+                        <div className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                        <span>{refName}</span>
+                      </div>
+                    ))}
                   </div>
                 ) : (
-                  <div className="text-xs text-slate-400 italic">Nenhum indicado ainda. Convide amigos para ganhar recompensas!</div>
+                  <div className="text-xs text-slate-400 italic">
+                    Nenhum indicado ainda. Quando um indicado depositar USDC na conta dele, você recebe automaticamente{' '}
+                    <span className="font-semibold text-amber-700 dark:text-amber-400">5%</span> do valor creditado em USDC
+                    no seu saldo.
+                  </div>
                 )}
               </div>
 
@@ -387,7 +338,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                         setReferralClaimLoading(false);
                         if (res && res.ok) {
                           await onUpdateProfile({ ...user, referredBy: referralCodeInput.trim() }, { skipApi: true });
-                          alert('Código vinculado com sucesso. Recompensas de indicação ativadas.');
+                          alert('Código vinculado com sucesso. O indicador passa a receber 5% em USDC sobre os depósitos que você creditar.');
                         } else {
                           alert(res?.error || 'Falha ao vincular código');
                         }

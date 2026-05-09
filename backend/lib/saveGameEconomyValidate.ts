@@ -3,6 +3,12 @@ import type { Pool, PoolClient } from 'pg';
 /** Alinhado a `RACK_ID_RE` no servidor — IDs de item / instância. */
 export const SAVE_GAME_ITEM_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
 
+/**
+ * Marcador no payload sanitizado quando `itemId` vem vazio ou inválido.
+ * `validateStoredBatteriesForSave` substitui por valor da BD ou pela primeira bateria ativa do catálogo.
+ */
+export const STORED_BATTERY_CATALOG_PENDING_ID = 'legacy_battery_missing_catalog';
+
 const MAX_STOCK_KEYS = 3500;
 const MAX_STOCK_QTY = 50_000_000;
 const MAX_BOX_KEYS = 600;
@@ -260,8 +266,28 @@ export async function validateStoredBatteriesForSave(
         'Há demasiadas baterias listadas no armazém de uma só vez. Recarregue a página (F5); se for erro, contacte o suporte.'
     };
   }
-  const bIds: string[] = [];
-  const itemIds: string[] = [];
+
+  let fallbackCatalogId = '';
+  try {
+    const fbRes = await client.query<{ id: string }>(
+      `SELECT id::text FROM upgrades
+       WHERE LOWER(COALESCE(type::text, '')) = 'battery'
+         AND COALESCE(is_active, 1) <> 0
+       ORDER BY CASE WHEN id = 'small_battery' THEN 0 ELSE 1 END,
+                COALESCE(base_cost, 0) ASC NULLS LAST,
+                id ASC
+       LIMIT 1`
+    );
+    fallbackCatalogId = String(fbRes.rows[0]?.id || '').trim();
+  } catch (e) {
+    console.warn(
+      '[validateStoredBatteriesForSave] fallback bateria:',
+      e instanceof Error ? e.message : String(e)
+    );
+  }
+
+  type BatRow = { id: string; itemId: string; charge: number; obj: Record<string, unknown> };
+  const rows: BatRow[] = [];
   for (const b of batteries) {
     if (!b || typeof b !== 'object' || Array.isArray(b)) {
       return {
@@ -272,13 +298,15 @@ export async function validateStoredBatteriesForSave(
     }
     const o = b as Record<string, unknown>;
     const id = o.id != null ? String(o.id) : '';
-    const itemId = o.itemId != null ? String(o.itemId) : '';
-    if (!SAVE_GAME_ITEM_ID_RE.test(id) || !SAVE_GAME_ITEM_ID_RE.test(itemId)) {
+    let itemId = o.itemId != null ? String(o.itemId) : '';
+    if (!SAVE_GAME_ITEM_ID_RE.test(id)) {
       return {
         ok: false,
-        error:
-          'Identificador de bateria ou tipo de peça inválido. Recarregue a página (F5).'
+        error: 'Identificador de instância de bateria inválido. Recarregue a página (F5).'
       };
+    }
+    if (!itemId || !SAVE_GAME_ITEM_ID_RE.test(itemId)) {
+      itemId = STORED_BATTERY_CATALOG_PENDING_ID;
     }
     const ch = parseNumericCharge(o.currentCharge);
     if (ch === null || ch < -1 || ch > 1e15) {
@@ -288,10 +316,11 @@ export async function validateStoredBatteriesForSave(
           'O valor de carga de uma bateria no armazém é inválido. Recarregue a página (F5).'
       };
     }
-    bIds.push(id);
-    itemIds.push(itemId);
+    rows.push({ id, itemId, charge: ch, obj: o });
   }
-  if (bIds.length === 0) return { ok: true };
+  if (rows.length === 0) return { ok: true };
+
+  const bIds = rows.map((r) => r.id);
   const dupOther = await client.query(
     'SELECT id FROM stored_batteries WHERE id = ANY($1::text[]) AND user_id IS DISTINCT FROM $2 LIMIT 5',
     [bIds, uid]
@@ -303,18 +332,70 @@ export async function validateStoredBatteriesForSave(
         'Detectámos um conflito de identificadores de bateria (dados inconsistentes). Recarregue a página (F5); não uses contas ou sessões ao mesmo tempo no mesmo browser.'
     };
   }
-  const uniqItems = [...new Set(itemIds)];
-  const chk = await client.query(
-    `SELECT id FROM upgrades WHERE id = ANY($1::text[]) AND LOWER(COALESCE(type::text, '')) = 'battery'`,
-    [uniqItems]
-  );
-  if (chk.rowCount !== uniqItems.length) {
+
+  let dbMap = new Map<string, string>();
+  try {
+    const dbRes = await client.query<{ id: string; item_id: string | null }>(
+      'SELECT id, item_id FROM stored_batteries WHERE user_id = $1 AND id = ANY($2::text[])',
+      [uid, bIds]
+    );
+    for (const row of dbRes.rows || []) {
+      dbMap.set(String(row.id).trim(), String(row.item_id ?? '').trim());
+    }
+  } catch (e) {
+    console.warn(
+      '[validateStoredBatteriesForSave] SELECT stored_batteries:',
+      e instanceof Error ? e.message : String(e)
+    );
+    dbMap = new Map();
+  }
+
+  if (!SAVE_GAME_ITEM_ID_RE.test(fallbackCatalogId)) {
     return {
       ok: false,
       error:
-        'Uma bateria no armazém referencia um item que não existe ou não é uma bateria válida. Recarregue a página (F5).'
+        'Configuração do servidor incompleta (nenhuma bateria ativa no catálogo). Contacte o suporte.'
     };
   }
+
+  const resolvedIds: string[] = [];
+  for (const r of rows) {
+    let it = r.itemId;
+    if (it === STORED_BATTERY_CATALOG_PENDING_ID) {
+      const dbv = (dbMap.get(r.id) || '').trim();
+      it = SAVE_GAME_ITEM_ID_RE.test(dbv) ? dbv : fallbackCatalogId;
+    }
+    resolvedIds.push(it);
+  }
+
+  const uniqResolved = [...new Set(resolvedIds)];
+  let validBattery = new Set<string>();
+  try {
+    const chk = await client.query<{ id: string }>(
+      `SELECT id::text FROM upgrades WHERE id = ANY($1::text[]) AND LOWER(COALESCE(type::text, '')) = 'battery'`,
+      [uniqResolved]
+    );
+    validBattery = new Set((chk.rows || []).map((x) => String(x.id)));
+  } catch (e) {
+    console.warn(
+      '[validateStoredBatteriesForSave] upgrades battery check:',
+      e instanceof Error ? e.message : String(e)
+    );
+  }
+
+  for (let i = 0; i < rows.length; i++) {
+    let it = resolvedIds[i]!;
+    if (!validBattery.has(it)) {
+      console.warn(
+        '[validateStoredBatteriesForSave] item_id normalizado (legado ou catálogo alterado) inst=%s was=%s',
+        rows[i]!.id,
+        it
+      );
+      it = fallbackCatalogId;
+    }
+    rows[i]!.obj.itemId = it;
+  }
+
   return { ok: true };
 }
 
@@ -419,8 +500,11 @@ export function sanitizeStoredBatteriesForSavePayload(
     if (!b || typeof b !== 'object' || Array.isArray(b)) continue;
     const o = b as Record<string, unknown>;
     const id = o.id != null ? String(o.id).trim() : '';
-    const itemId = o.itemId != null ? String(o.itemId).trim() : '';
-    if (!SAVE_GAME_ITEM_ID_RE.test(id) || !SAVE_GAME_ITEM_ID_RE.test(itemId)) continue;
+    let itemId = o.itemId != null ? String(o.itemId).trim() : '';
+    if (!SAVE_GAME_ITEM_ID_RE.test(id)) continue;
+    if (!itemId || !SAVE_GAME_ITEM_ID_RE.test(itemId)) {
+      itemId = STORED_BATTERY_CATALOG_PENDING_ID;
+    }
     const ch = parseNumericCharge(o.currentCharge);
     if (ch === null || ch < -1 || ch > 1e15) continue;
     if (mounted.has(id)) continue;
