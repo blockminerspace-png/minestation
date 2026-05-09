@@ -61,13 +61,14 @@ export async function submitSupportTicket(payload: {
   files?: File[];
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
   const fd = new FormData();
+  fd.set('action', 'submit_ticket');
   fd.set('subject', payload.subject);
   fd.set('message', payload.message);
   for (const f of payload.files || []) {
     if (f && f.size > 0) fd.append('files', f);
   }
   try {
-    const res = await apiFetch(`${API_BASE}/support/submit`, { method: 'POST', body: fd });
+    const res = await apiFetch(`${API_BASE}/support/mutate`, { method: 'POST', body: fd });
     const data = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
     if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
     return { ok: true, id: data.id };

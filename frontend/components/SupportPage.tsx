@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
   LifeBuoy,
   Send,
@@ -21,7 +21,12 @@ import {
   type SupportTicketAttachment,
 } from '../services/api';
 import { safeSupportAttachmentHref } from '../utils/supportAttachmentUrls';
-import { SUPPORT_TICKET_MESSAGE_MAX, SUPPORT_TICKET_SUBJECT_MAX } from '../constants/formLimits';
+import {
+  SUPPORT_ATTACHMENT_MAX_BYTES,
+  SUPPORT_ATTACHMENT_MAX_COUNT,
+  SUPPORT_TICKET_MESSAGE_MAX,
+  SUPPORT_TICKET_SUBJECT_MAX,
+} from '../constants/formLimits';
 
 type Props = {
   userEmail?: string | null;
@@ -77,7 +82,29 @@ const AttLinks: React.FC<{ items: SupportTicketAttachment[] }> = ({ items }) => 
 
 type Tab = 'list' | 'new' | 'detail';
 
+function mergeSupportPicks(
+  prev: File[],
+  incoming: FileList | null,
+  maxCount: number,
+  maxBytes: number
+): { next: File[]; rejectReason: string | null } {
+  const next = [...prev];
+  let rejectReason: string | null = null;
+  if (!incoming?.length) return { next, rejectReason };
+  for (let i = 0; i < incoming.length && next.length < maxCount; i++) {
+    const f = incoming.item(i);
+    if (!f || f.size <= 0) continue;
+    if (f.size > maxBytes) {
+      rejectReason = `«${f.name}» ultrapassa o limite de ${Math.floor(maxBytes / (1024 * 1024))} MB por ficheiro.`;
+      continue;
+    }
+    next.push(f);
+  }
+  return { next, rejectReason };
+}
+
 export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
+  const supportMutateBusyRef = useRef(false);
   const [tab, setTab] = useState<Tab>('list');
   const [list, setList] = useState<MySupportTicketSummary[]>([]);
   const [listLoading, setListLoading] = useState(false);
@@ -130,12 +157,15 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
   const onPickFiles = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files;
     if (!list?.length) return;
+    setErr(null);
     setFiles((prev) => {
-      const next = [...prev];
-      for (let i = 0; i < list.length && next.length < 5; i++) {
-        const f = list.item(i);
-        if (f) next.push(f);
-      }
+      const { next, rejectReason } = mergeSupportPicks(
+        prev,
+        list,
+        SUPPORT_ATTACHMENT_MAX_COUNT,
+        SUPPORT_ATTACHMENT_MAX_BYTES
+      );
+      if (rejectReason) setErr(rejectReason);
       return next;
     });
     e.target.value = '';
@@ -147,7 +177,9 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (supportMutateBusyRef.current) return;
     setErr(null);
+    supportMutateBusyRef.current = true;
     setSending(true);
     try {
       const res = await submitSupportTicket({ subject, message, files });
@@ -161,6 +193,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
       setFiles([]);
       await loadList();
     } finally {
+      supportMutateBusyRef.current = false;
       setSending(false);
     }
   };
@@ -168,20 +201,24 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
   const onPickFollow = (e: React.ChangeEvent<HTMLInputElement>) => {
     const list = e.target.files;
     if (!list?.length) return;
+    setFollowErr(null);
     setFollowFiles((prev) => {
-      const next = [...prev];
-      for (let i = 0; i < list.length && next.length < 5; i++) {
-        const f = list.item(i);
-        if (f) next.push(f);
-      }
+      const { next, rejectReason } = mergeSupportPicks(
+        prev,
+        list,
+        SUPPORT_ATTACHMENT_MAX_COUNT,
+        SUPPORT_ATTACHMENT_MAX_BYTES
+      );
+      if (rejectReason) setFollowErr(rejectReason);
       return next;
     });
     e.target.value = '';
   };
 
   const sendFollow = async () => {
-    if (!detailId) return;
+    if (!detailId || supportMutateBusyRef.current) return;
     setFollowErr(null);
+    supportMutateBusyRef.current = true;
     setFollowSending(true);
     try {
       const r = await postPlayerSupportTicketReply({
@@ -198,6 +235,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
       await openDetail(detailId);
       await loadList();
     } finally {
+      supportMutateBusyRef.current = false;
       setFollowSending(false);
     }
   };

@@ -2,6 +2,10 @@
 export const SUPPORT_TICKET_SUBJECT_MAX = 180;
 export const SUPPORT_TICKET_MESSAGE_MAX = 8000;
 
+/** Por ficheiro / contagem; alinhado com `backend/lib/supportUploadLimits.ts`. */
+export const SUPPORT_ATTACHMENT_MAX_BYTES = 12 * 1024 * 1024;
+export const SUPPORT_ATTACHMENT_MAX_COUNT = 5;
+
 /** Alinhado com `server.ts` → `POST /api/player-news/submit` (truncagem no servidor). */
 export const PLAYER_NEWS_TEXT_MAX = 500;
 export const PLAYER_NEWS_LINK_MAX = 2048;

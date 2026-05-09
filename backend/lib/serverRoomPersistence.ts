@@ -2,6 +2,7 @@
  * Load/persist stock, stored batteries, and placed racks (with slots) for server-room actions.
  * Mirrors relevant blocks in server.js save-game / game-state.
  */
+import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
 import {
   validateStoredBatteryWarehouseRemovalAllowed,
@@ -157,12 +158,161 @@ export type GameStateChanges = {
 
 export type ActivityLogEntry = { action: string; meta: Record<string, unknown> };
 
+async function ensureStoredBatteriesInChanges(
+  client: PoolClient,
+  uid: number | string,
+  changes: GameStateChanges
+): Promise<void> {
+  if (Array.isArray(changes.storedBatteries)) return;
+  changes.storedBatteries = await loadUserStoredBatteries(client, uid);
+}
+
+/**
+ * Quando `POST /api/game/save-servers` envia só `placedRacks` (sem `stock`), o servidor remove rigs
+ * na BD mas não recebia os incrementos de estoque — os componentes «evaporavam».
+ * Recupera chassis, fiação, slots, multiplicadores e bateria a partir do estado anterior em BD.
+ */
+async function applyDismantledRacksStockRecoveryWhenStockOmitted(
+  client: PoolClient,
+  uid: number | string,
+  placedRacks: NonNullable<GameStateChanges['placedRacks']>,
+  changes: GameStateChanges
+): Promise<void> {
+  if (changes.stock !== undefined) return;
+
+  const prevRes = await client.query(
+    `SELECT id, item_id, wiring_id, battery_id, current_charge
+     FROM placed_racks WHERE user_id = $1`,
+    [uid]
+  );
+  type PrevRow = {
+    id: string;
+    item_id: string;
+    wiring_id: string | null;
+    battery_id: string | null;
+    current_charge: number;
+  };
+  const nextIds = new Set(placedRacks.map((r) => r.id));
+  const removed = (prevRes.rows as PrevRow[]).filter((r) => !nextIds.has(r.id));
+  if (removed.length === 0) return;
+
+  const additions: Record<string, number> = {};
+  const bump = (id: string | null | undefined, n = 1) => {
+    const t = id != null ? String(id).trim() : '';
+    if (!t || n <= 0) return;
+    additions[t] = (additions[t] || 0) + n;
+  };
+
+  for (const row of removed) {
+    bump(row.item_id, 1);
+    bump(row.wiring_id, 1);
+    const [slots, multis] = await Promise.all([
+      client.query(
+        'SELECT machine_item_id FROM rack_slots WHERE rack_id = $1 AND machine_item_id IS NOT NULL',
+        [row.id]
+      ),
+      client.query(
+        'SELECT multiplier_item_id FROM rack_multiplier_slots WHERE rack_id = $1 AND multiplier_item_id IS NOT NULL',
+        [row.id]
+      )
+    ]);
+    for (const s of slots.rows as { machine_item_id: string }[]) {
+      bump(s.machine_item_id, 1);
+    }
+    for (const m of multis.rows as { multiplier_item_id: string }[]) {
+      bump(m.multiplier_item_id, 1);
+    }
+
+    await returnRackBatteryFromDismantleToChanges(
+      client,
+      uid,
+      row.battery_id,
+      Number(row.current_charge) || 0,
+      additions,
+      changes
+    );
+  }
+
+  const keys = Object.keys(additions);
+  if (keys.length === 0) return;
+  const qtyRes = await client.query(
+    'SELECT item_id, qty FROM stock WHERE user_id = $1 AND item_id = ANY($2::text[])',
+    [uid, keys]
+  );
+  const prevQty = new Map<string, number>();
+  for (const r of qtyRes.rows as { item_id: string; qty: number }[]) {
+    prevQty.set(String(r.item_id), Number(r.qty) || 0);
+  }
+  changes.stock = {};
+  for (const k of keys) {
+    const base = prevQty.get(k) ?? 0;
+    changes.stock[k] = Math.floor(base + (additions[k] || 0));
+  }
+}
+
+async function returnRackBatteryFromDismantleToChanges(
+  client: PoolClient,
+  uid: number | string,
+  batteryId: string | null | undefined,
+  rackCurrentCharge: number,
+  additions: Record<string, number>,
+  changes: GameStateChanges
+): Promise<void> {
+  const bid = batteryId != null ? String(batteryId).trim() : '';
+  if (!bid) return;
+  const isUuid =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bid);
+  if (isUuid) {
+    const br = await client.query(
+      'SELECT id, item_id, current_charge FROM stored_batteries WHERE id = $1 AND user_id = $2',
+      [bid, uid]
+    );
+    if (br.rows[0]) {
+      await ensureStoredBatteriesInChanges(client, uid, changes);
+      const r = br.rows[0] as { id: string; item_id: string; current_charge: number };
+      if (!changes.storedBatteries!.some((x) => x.id === r.id)) {
+        changes.storedBatteries!.push({
+          id: r.id,
+          itemId: r.item_id,
+          currentCharge: Number(r.current_charge) || 0
+        });
+      }
+      return;
+    }
+  }
+  const u = await client.query('SELECT type, power_capacity FROM upgrades WHERE id = $1', [bid]);
+  const row = u.rows[0] as { type?: string; power_capacity?: unknown } | undefined;
+  if (row && String(row.type) === 'battery') {
+    const capRaw = row.power_capacity;
+    const cap = capRaw === null || capRaw === undefined ? null : Number(capRaw);
+    const charge = Number(rackCurrentCharge) || 0;
+    const isInf = cap === -1;
+    const isFull = isInf || (typeof cap === 'number' && cap > 0 && charge >= cap * 0.999);
+    if (isFull) {
+      additions[bid] = (additions[bid] || 0) + 1;
+    } else {
+      await ensureStoredBatteriesInChanges(client, uid, changes);
+      changes.storedBatteries!.push({
+        id: crypto.randomUUID(),
+        itemId: bid,
+        currentCharge: charge
+      });
+    }
+    return;
+  }
+  additions[bid] = (additions[bid] || 0) + 1;
+}
+
 export async function persistStockStoredBatteriesPlacedRacks(
   client: PoolClient,
   uid: number | string,
   changes: GameStateChanges,
   saveActivityLogs: ActivityLogEntry[]
 ): Promise<void> {
+  if (Array.isArray(changes.placedRacks) && changes.stock === undefined) {
+    await applyDismantledRacksStockRecoveryWhenStockOmitted(client, uid, changes.placedRacks, changes);
+  }
+
   const { stock, storedBatteries, placedRacks } = changes;
 
   let storedBatteriesNorm = storedBatteries;

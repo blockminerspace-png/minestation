@@ -4,6 +4,16 @@
 const API_BASE = '/api';
 const SESSION_HINT_KEY = 'genesis_has_session';
 
+const SUPPORT_PAYLOAD_TOO_LARGE_PT =
+  'Os anexos excedem o limite permitido. Cada ficheiro pode ter até 12 MB (até 5 anexos). Tenta comprimir ou enviar menos ficheiros.';
+
+function supportErrorFromJson(res: Response, data: Record<string, unknown>): string {
+  if (res.status === 413) return SUPPORT_PAYLOAD_TOO_LARGE_PT;
+  const err = data.error;
+  if (typeof err === 'string' && err.trim()) return err;
+  return `HTTP ${res.status}`;
+}
+
 let refreshInFlight: Promise<boolean> | null = null;
 
 function getSessionHint(): boolean {
@@ -112,25 +122,40 @@ export type MySupportTicketDetail = {
   playerReplies: SupportTicketPlayerReplyRow[];
 };
 
+/** `multipart/form-data` com `action` (`submit_ticket` | `player_reply`). */
+export async function postSupportMutate(
+  fd: FormData
+): Promise<{ ok: boolean; id?: string; error?: string; code?: string }> {
+  try {
+    const res = await apiFetch(`${API_BASE}/support/mutate`, { method: 'POST', body: fd });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: supportErrorFromJson(res, data),
+        code: typeof data.code === 'string' ? data.code : undefined
+      };
+    }
+    const id = typeof data.id === 'string' ? data.id : undefined;
+    return { ok: true, id };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
 export async function submitSupportTicket(payload: {
   subject: string;
   message: string;
   files?: File[];
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
   const fd = new FormData();
+  fd.set('action', 'submit_ticket');
   fd.set('subject', payload.subject);
   fd.set('message', payload.message);
   for (const f of payload.files || []) {
     if (f && f.size > 0) fd.append('files', f);
   }
-  try {
-    const res = await apiFetch(`${API_BASE}/support/submit`, { method: 'POST', body: fd });
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
-    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
-    return { ok: true, id: data.id };
-  } catch {
-    return { ok: false, error: 'Network error' };
-  }
+  return postSupportMutate(fd);
 }
 
 export async function getAdminSupportTickets(): Promise<{ tickets: SupportTicketRow[] }> {
@@ -164,9 +189,9 @@ export async function postAdminSupportTicketReply(payload: {
   }
   try {
     const res = await apiFetch(`${API_BASE}/admin/support-tickets/reply`, { method: 'POST', body: fd });
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
-    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
-    return { ok: true, id: data.id };
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, error: supportErrorFromJson(res, data) };
+    return { ok: true, id: typeof data.id === 'string' ? data.id : undefined };
   } catch {
     return { ok: false, error: 'Network error' };
   }
@@ -205,21 +230,13 @@ export async function postPlayerSupportTicketReply(payload: {
   files?: File[];
 }): Promise<{ ok: boolean; id?: string; error?: string }> {
   const fd = new FormData();
+  fd.set('action', 'player_reply');
+  fd.set('ticketId', payload.ticketId);
   fd.set('message', payload.message);
   for (const f of payload.files || []) {
     if (f && f.size > 0) fd.append('files', f);
   }
-  try {
-    const res = await apiFetch(`${API_BASE}/support/tickets/${encodeURIComponent(payload.ticketId)}/reply`, {
-      method: 'POST',
-      body: fd,
-    });
-    const data = (await res.json().catch(() => ({}))) as { ok?: boolean; id?: string; error?: string };
-    if (!res.ok) return { ok: false, error: data.error || `HTTP ${res.status}` };
-    return { ok: true, id: data.id };
-  } catch {
-    return { ok: false, error: 'Network error' };
-  }
+  return postSupportMutate(fd);
 }
 
 export async function updateAdminSupportTicketStatus(

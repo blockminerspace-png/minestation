@@ -75,6 +75,7 @@ import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
 import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controllers/backupController.js';
 import { createSupportTicketUploadMiddlewares, registerSupportTicketRoutes } from './dist/controllers/supportTicketController.js';
+import { registerSupportMutationRoutes } from './dist/controllers/supportMutationController.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
@@ -1398,10 +1399,14 @@ registerBackupRoutes(app, {
     getPgRestoreSpawnOptions,
     getPgRestorePath
 });
+registerSupportMutationRoutes(app, {
+    authenticateToken,
+    uploadSupport,
+    appendGameActivityLog
+});
 registerSupportTicketRoutes(app, {
     authenticateToken,
     isAdmin,
-    uploadSupport,
     uploadSupportReply,
     appendGameActivityLog
 });
@@ -7536,13 +7541,20 @@ app.post('/api/game/save-servers', async (req, res) => {
     const b = req.body && typeof req.body === 'object' ? req.body : {};
     const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? b.changes : null;
     const placedRacks = nested != null ? nested.placedRacks : b.placedRacks;
+    const stock = nested != null ? nested.stock : b.stock;
+    const storedBatteries = nested != null ? nested.storedBatteries : b.storedBatteries;
     const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
     if (placedRacks == null) {
         return res.status(400).json({ error: 'Envie placedRacks (corpo plano ou changes).' });
     }
     req.headers['x-game-save-domain'] = 'servers';
+    const srvChanges = { lastLoadTime, placedRacks };
+    if (stock !== undefined)
+        srvChanges.stock = stock;
+    if (storedBatteries !== undefined)
+        srvChanges.storedBatteries = storedBatteries;
     req.body = {
-        changes: { lastLoadTime, placedRacks },
+        changes: srvChanges,
         adminOverride: false
     };
     return handleSaveGamePost(req, res);
@@ -7554,13 +7566,20 @@ app.post('/api/game/save-workshop', async (req, res) => {
     const b = req.body && typeof req.body === 'object' ? req.body : {};
     const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? b.changes : null;
     const workshopSlots = nested != null ? nested.workshopSlots : b.workshopSlots;
+    const stock = nested != null ? nested.stock : b.stock;
+    const storedBatteries = nested != null ? nested.storedBatteries : b.storedBatteries;
     const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
     if (workshopSlots == null) {
         return res.status(400).json({ error: 'Envie workshopSlots (corpo plano ou changes).' });
     }
     req.headers['x-game-save-domain'] = 'workshop';
+    const wsChanges = { lastLoadTime, workshopSlots };
+    if (stock !== undefined)
+        wsChanges.stock = stock;
+    if (storedBatteries !== undefined)
+        wsChanges.storedBatteries = storedBatteries;
     req.body = {
-        changes: { lastLoadTime, workshopSlots },
+        changes: wsChanges,
         adminOverride: false
     };
     return handleSaveGamePost(req, res);

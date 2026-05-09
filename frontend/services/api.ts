@@ -1607,9 +1607,13 @@ export async function saveGameState(
   } else if (domain === 'servers') {
     url = `${base}/game/save-servers`;
     payload = { lastLoadTime: globalLastLoadTime, placedRacks: state.placedRacks };
+    if (state.stock != null) (payload as Record<string, unknown>).stock = state.stock;
+    if (state.storedBatteries != null) (payload as Record<string, unknown>).storedBatteries = state.storedBatteries;
   } else if (domain === 'workshop') {
     url = `${base}/game/save-workshop`;
     payload = { lastLoadTime: globalLastLoadTime, workshopSlots: state.workshopSlots };
+    if (state.stock != null) (payload as Record<string, unknown>).stock = state.stock;
+    if (state.storedBatteries != null) (payload as Record<string, unknown>).storedBatteries = state.storedBatteries;
   } else {
     payload = {
       changes: { ...state, lastLoadTime: globalLastLoadTime },
@@ -1658,6 +1662,7 @@ export type {
   MySupportTicketDetail,
 } from './supportTicketsApi';
 export {
+  postSupportMutate,
   submitSupportTicket,
   getAdminSupportTickets,
   postAdminSupportTicketReply,

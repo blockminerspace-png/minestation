@@ -6,10 +6,7 @@ import type { SupportTicketReplyDbRow, SupportTicketPlayerReplyDbRow } from '../
 import {
   getSupportTicketById,
   getTicketForAdminReply,
-  getTicketForPlayerAction,
   insertSupportAdminReply,
-  insertSupportPlayerReply,
-  insertSupportTicket,
   listAdminRepliesForTicket,
   listAdminRepliesForTicketIds,
   listMySupportTicketSummaries,
@@ -18,20 +15,17 @@ import {
   listTicketsForAdmin,
   updateSupportTicketStatus
 } from '../models/supportTicketModel.js';
+import { SUPPORT_UPLOAD_MAX_BYTES, SUPPORT_UPLOAD_MAX_FILES } from '../lib/supportUploadLimits.js';
+import {
+  SUPPORT_ALLOWED_EXT,
+  buildAttachmentsFromFiles,
+  sendSupportMulterError
+} from '../lib/supportTicketAttachments.js';
 import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 import { compressUploadedMulterFiles } from '../lib/compressMediaAsset.js';
 
-const SUPPORT_UPLOAD_MAX = 12 * 1024 * 1024;
-export const SUPPORT_ALLOWED_EXT = new Set([
-  '.png',
-  '.jpg',
-  '.jpeg',
-  '.gif',
-  '.webp',
-  '.mp4',
-  '.webm',
-  '.mov'
-]);
+/** @deprecated import from `../lib/supportTicketAttachments.js` */
+export { SUPPORT_ALLOWED_EXT };
 
 export type AppendGameActivityLog = (
   _q: unknown,
@@ -43,7 +37,6 @@ export type AppendGameActivityLog = (
 export type SupportTicketDeps = {
   authenticateToken: RequestHandler;
   isAdmin: RequestHandler;
-  uploadSupport: ReturnType<typeof multer>;
   uploadSupportReply: ReturnType<typeof multer>;
   appendGameActivityLog: AppendGameActivityLog;
 };
@@ -57,24 +50,6 @@ function uidNum(req: Request): number | null {
 
 function asJsonArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
-}
-
-function buildAttachmentsFromFiles(
-  files: Express.Multer.File[] | undefined
-): { list: { url: string; originalName: string; mime: string }[] } {
-  const list: { url: string; originalName: string; mime: string }[] = [];
-  const arr = Array.isArray(files) ? files : [];
-  for (const f of arr) {
-    if (!f?.filename) continue;
-    const ext = path.extname(f.filename).toLowerCase();
-    if (!SUPPORT_ALLOWED_EXT.has(ext)) continue;
-    list.push({
-      url: `/img/${f.filename}`,
-      originalName: String(f.originalname || f.filename).slice(0, 200),
-      mime: String(f.mimetype || '').slice(0, 120)
-    });
-  }
-  return { list };
 }
 
 /**
@@ -97,7 +72,7 @@ export function createSupportTicketUploadMiddlewares(uploadsDir: string): {
   });
   const uploadSupport = multer({
     storage: supportStorage,
-    limits: { fileSize: SUPPORT_UPLOAD_MAX, files: 5 },
+    limits: { fileSize: SUPPORT_UPLOAD_MAX_BYTES, files: SUPPORT_UPLOAD_MAX_FILES },
     fileFilter: (_req, file, cb) => {
       const ext = path.extname(file.originalname || '').toLowerCase();
       if (SUPPORT_ALLOWED_EXT.has(ext)) return cb(null, true);
@@ -117,7 +92,7 @@ export function createSupportTicketUploadMiddlewares(uploadsDir: string): {
   });
   const uploadSupportReply = multer({
     storage: supportReplyStorage,
-    limits: { fileSize: SUPPORT_UPLOAD_MAX, files: 5 },
+    limits: { fileSize: SUPPORT_UPLOAD_MAX_BYTES, files: SUPPORT_UPLOAD_MAX_FILES },
     fileFilter: (_req, file, cb) => {
       const ext = path.extname(file.originalname || '').toLowerCase();
       if (SUPPORT_ALLOWED_EXT.has(ext)) return cb(null, true);
@@ -128,62 +103,7 @@ export function createSupportTicketUploadMiddlewares(uploadsDir: string): {
 }
 
 export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDeps): void {
-  const { authenticateToken, isAdmin, uploadSupport, uploadSupportReply, appendGameActivityLog } = deps;
-
-  app.post(
-    '/api/support/submit',
-    authenticateToken,
-    (req, res, next) => {
-      uploadSupport.array('files', 5)(req, res, (err: unknown) => {
-        if (err) {
-          const msg = err instanceof Error ? err.message : 'Erro no upload';
-          return res.status(400).json({ error: msg || 'Erro no upload' });
-        }
-        next();
-      });
-    },
-    async (req: Request, res: Response) => {
-      const uid = uidNum(req);
-      if (!uid) {
-        res.status(401).json({ error: 'Não autenticado' });
-        return;
-      }
-      const subjectRaw = req.body?.subject != null ? String(req.body.subject) : '';
-      const messageRaw = req.body?.message != null ? String(req.body.message) : '';
-      const subject = subjectRaw.trim().slice(0, 180);
-      const message = messageRaw.trim().slice(0, 8000);
-      if (subject.length < 3) {
-        res.status(400).json({ error: 'Assunto demasiado curto (mín. 3 caracteres).' });
-        return;
-      }
-      if (message.length < 10) {
-        res.status(400).json({ error: 'Mensagem demasiado curta (mín. 10 caracteres).' });
-        return;
-      }
-      await compressUploadedMulterFiles(req.files as Express.Multer.File[] | undefined);
-      const { list: attachments } = buildAttachmentsFromFiles(req.files as Express.Multer.File[] | undefined);
-      const id = crypto.randomUUID();
-      const now = Date.now();
-      try {
-        await insertSupportTicket({
-          id,
-          userId: uid,
-          subject,
-          message,
-          attachmentsJson: JSON.stringify(attachments),
-          createdAt: now
-        });
-        await appendGameActivityLog(null, uid, 'support_ticket_submit', {
-          ticketId: id,
-          attachmentCount: attachments.length
-        });
-        res.json({ ok: true, id });
-      } catch (e) {
-        console.error('[POST /api/support/submit]', e);
-        res.status(500).json({ error: 'Erro ao registar o pedido.' });
-      }
-    }
-  );
+  const { authenticateToken, isAdmin, uploadSupportReply, appendGameActivityLog } = deps;
 
   app.get('/api/support/my-tickets', authenticateToken, async (req: Request, res: Response) => {
     const uid = uidNum(req);
@@ -261,77 +181,6 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       res.status(500).json({ error: 'Erro ao carregar o pedido.' });
     }
   });
-
-  app.post(
-    '/api/support/tickets/:ticketId/reply',
-    authenticateToken,
-    (req, res, next) => {
-      uploadSupport.array('files', 5)(req, res, (err: unknown) => {
-        if (err) {
-          const msg = err instanceof Error ? err.message : 'Erro no upload';
-          return res.status(400).json({ error: msg || 'Erro no upload' });
-        }
-        next();
-      });
-    },
-    async (req: Request, res: Response) => {
-      const uid = uidNum(req);
-      if (!uid) {
-        res.status(401).json({ error: 'Não autenticado' });
-        return;
-      }
-      const ticketId = String(req.params.ticketId || '').trim().slice(0, 80);
-      if (!ticketId) {
-        res.status(400).json({ error: 'Pedido inválido.' });
-        return;
-      }
-      const messageRaw = req.body?.message != null ? String(req.body.message) : '';
-      const message = messageRaw.trim().slice(0, 8000);
-      const files = req.files as Express.Multer.File[] | undefined;
-      const arr = Array.isArray(files) ? files : [];
-      if (message.length < 3 && arr.length === 0) {
-        res.status(400).json({
-          error: 'Escreve uma mensagem (mín. 3 caracteres) ou anexa ficheiros.'
-        });
-        return;
-      }
-      await compressUploadedMulterFiles(files);
-      const { list: attachments } = buildAttachmentsFromFiles(files);
-      try {
-        const t = await getTicketForPlayerAction(ticketId);
-        if (!t || Number(t.user_id) !== uid) {
-          res.status(404).json({ error: 'Pedido não encontrado.' });
-          return;
-        }
-        if (String(t.status) !== 'open') {
-          res.status(403).json({
-            error:
-              'Este pedido está arquivado. Só podes ver a conversa. Abre um novo pedido para falar connosco de novo.'
-          });
-          return;
-        }
-        const replyId = crypto.randomUUID();
-        const now = Date.now();
-        await insertSupportPlayerReply({
-          replyId,
-          ticketId,
-          userId: uid,
-          message,
-          attachmentsJson: JSON.stringify(attachments),
-          createdAt: now
-        });
-        await appendGameActivityLog(null, uid, 'support_ticket_player_reply', {
-          ticketId,
-          replyId,
-          attachmentCount: attachments.length
-        });
-        res.json({ ok: true, id: replyId });
-      } catch (e) {
-        console.error('[POST /api/support/tickets/:ticketId/reply]', e);
-        res.status(500).json({ error: 'Erro ao enviar a mensagem.' });
-      }
-    }
-  );
 
   app.get('/api/admin/support-tickets', isAdmin, async (req: Request, res: Response) => {
     try {
@@ -425,10 +274,10 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
     '/api/admin/support-tickets/reply',
     isAdmin,
     (req, res, next) => {
-      uploadSupportReply.array('files', 5)(req, res, (err: unknown) => {
+      uploadSupportReply.array('files', SUPPORT_UPLOAD_MAX_FILES)(req, res, (err: unknown) => {
         if (err) {
-          const msg = err instanceof Error ? err.message : 'Erro no upload';
-          return res.status(400).json({ error: msg || 'Erro no upload' });
+          sendSupportMulterError(res, err);
+          return;
         }
         next();
       });
