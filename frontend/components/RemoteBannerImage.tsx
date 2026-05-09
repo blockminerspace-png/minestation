@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ImageOff } from 'lucide-react';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
 
 export type RemoteBannerImageProps = {
   src: string;
@@ -25,6 +26,8 @@ export function RemoteBannerImage({
 }: RemoteBannerImageProps) {
   const [broken, setBroken] = useState(false);
 
+  const resolvedSrc = useMemo(() => normalizePublicAssetUrl(src) ?? src.trim(), [src]);
+
   useEffect(() => {
     setBroken(false);
   }, [src]);
@@ -33,7 +36,7 @@ export function RemoteBannerImage({
     setBroken(true);
   }, []);
 
-  if (!src.trim() || broken) {
+  if (!resolvedSrc || broken) {
     return (
       <div
         className="flex w-full h-full min-h-0 flex-col items-center justify-center gap-0.5 bg-slate-950 text-amber-500/90 overflow-hidden p-0.5"
@@ -55,7 +58,7 @@ export function RemoteBannerImage({
 
   return (
     <img
-      src={src}
+      src={resolvedSrc}
       alt={alt}
       className={className}
       loading="lazy"
