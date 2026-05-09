@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Wrench, Plus, X, Box, Power, Cog, Terminal, Zap, RefreshCw, PlayCircle, History, AlertTriangle } from 'lucide-react';
 import { Upgrade, SlotLayout, WorkshopStructure, StoredBattery } from '../types';
 import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
+import { resolveBatteryLayoutSlotIdForBatteryBar } from '../lib/workshopBatteryBarMap';
 import { ChargingHistory } from './ChargingHistory';
 
 /** `currentCharge` no armazém está em Wh — nunca usar como % directamente. */
@@ -144,6 +145,8 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                 <div className="absolute inset-0 z-10">
                                                     {item.layout.slots.map((slot, i) => {
                                                         const slotKey = `${benchReactKey}-${slot.id || i}`;
+                                                        const layoutSlots = item.layout!.slots;
+                                                        const batteryBarOrdinal = layoutSlots.slice(0, i).filter((s) => s.type === 'battery_bar').length;
                                                         const equippedId = getSlotVal(wsGroup.internalSlots, slot.id);
                                                         const chargeWh = getSlotVal(wsGroup.slotCharges, slot.id) ?? 0;
 
@@ -193,21 +196,14 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     return bChargeVal < (bD?.powerCapacity || 100);
                                                                 }) ?? false);
                                                             } else {
-                                                                // É uma battery_bar, precisamos achar o slot da bateria correspondente
-                                                                // Tenta extrair o índice do ID da barra (ex: battery_bar_0 -> 0)
-                                                                let targetBatteryIndex = 0;
-                                                                const parts = slot.id.split('_');
-                                                                if (parts.length > 2 && !isNaN(parseInt(parts[2]))) {
-                                                                    targetBatteryIndex = parseInt(parts[2]);
-                                                                }
-
-                                                                // Tenta achar o slot battery com o mesmo índice (ex: battery_0)
-                                                                let bSlot = item.layout?.slots.find(s => s.id === `battery_${targetBatteryIndex}`);
-
-                                                                // Fallback: se não achar por ID exato, e for o índice 0, tenta achar qualquer bateria (comportamento legado para layouts sem índice)
-                                                                if (!bSlot && targetBatteryIndex === 0) {
-                                                                    bSlot = item.layout?.slots.find(s => s.type === 'battery');
-                                                                }
+                                                                const mappedBatId = resolveBatteryLayoutSlotIdForBatteryBar(
+                                                                    layoutSlots,
+                                                                    slot,
+                                                                    batteryBarOrdinal
+                                                                );
+                                                                const bSlot = mappedBatId
+                                                                    ? layoutSlots.find((s) => s.id === mappedBatId) ?? null
+                                                                    : null;
 
                                                                 if (bSlot) {
                                                                     const bChargeWh = getSlotVal(wsGroup.slotCharges, bSlot.id) ?? 0;
@@ -408,11 +404,15 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                         if (slot.type === 'stat_monitor') {
                                                             const attachedCount = Object.values(wsGroup.internalSlots).filter(v => v !== null).length;
 
-                                                            // Calcular capacidade total das baterias instaladas para a média de %
-                                                            let totalCapacity = 0;
-                                                            let totalCharge = 0;
-                                                            Object.entries(wsGroup.internalSlots).forEach(([sid, iid]) => {
-                                                                if (!iid) return;
+                                                            const batteryLayoutSlots = (item.layout?.slots || []).filter((s) => s.type === 'battery');
+                                                            const cellPercents: string[] = [];
+                                                            for (const bs of batteryLayoutSlots) {
+                                                                const sid = bs.id;
+                                                                const iid = getSlotVal(wsGroup.internalSlots, sid);
+                                                                if (!iid) {
+                                                                    cellPercents.push('—');
+                                                                    continue;
+                                                                }
                                                                 const savedItemId = getSlotVal(wsGroup.slotItemIds, sid);
                                                                 let def = savedItemId
                                                                     ? upgrades.find((u) => u.id === savedItemId) ?? undefined
@@ -428,15 +428,36 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                     def = orphanCatalogUpgrade(String(savedItemId), 'battery');
                                                                 if (!def && String(iid).trim())
                                                                     def = orphanCatalogUpgrade(String(iid), 'battery');
-                                                                if (def && def.powerCapacity) {
-                                                                    totalCapacity += def.powerCapacity;
-                                                                    totalCharge += (getSlotVal(wsGroup.slotCharges, sid) || 0);
+                                                                const cap = def?.powerCapacity;
+                                                                const wh = Number(getSlotVal(wsGroup.slotCharges, sid)) || 0;
+                                                                if (typeof cap === 'number' && cap > 0) {
+                                                                    cellPercents.push(`${Math.min(100, (wh / cap) * 100).toFixed(0)}%`);
+                                                                } else if (cap === -1) {
+                                                                    cellPercents.push('∞');
+                                                                } else {
+                                                                    cellPercents.push('—');
                                                                 }
-                                                            });
-                                                            const avgValue = totalCapacity > 0 ? (totalCharge / totalCapacity * 100) : 0;
-                                                            const avgPercent = totalCapacity > 0 ? avgValue.toFixed(1) : "---";
+                                                            }
+                                                            const cellsLabel = cellPercents.length > 0 ? cellPercents.join(' · ') : '—';
                                                             const internalCapacity = item?.powerCapacity || 100;
-                                                            const isGlobalCharging = wsGroup.currentCharge > 0.1 && avgValue < 99.9;
+                                                            const isGlobalCharging =
+                                                                wsGroup.currentCharge > 0.1 &&
+                                                                batteryLayoutSlots.some((bs) => {
+                                                                    const iid = getSlotVal(wsGroup.internalSlots, bs.id);
+                                                                    if (!iid) return false;
+                                                                    const wh = Number(getSlotVal(wsGroup.slotCharges, bs.id)) || 0;
+                                                                    const savedItemId = getSlotVal(wsGroup.slotItemIds, bs.id);
+                                                                    let def = savedItemId
+                                                                        ? upgrades.find((u) => u.id === savedItemId)
+                                                                        : undefined;
+                                                                    if (!def) {
+                                                                        const inst = storedBatteries.find((b) => b.id === iid);
+                                                                        if (inst)
+                                                                            def = upgrades.find((u) => u.id === inst.itemId) ?? undefined;
+                                                                    }
+                                                                    const cap = def?.powerCapacity ?? 100;
+                                                                    return cap !== -1 && wh < cap * 0.999;
+                                                                });
 
                                                             return (
                                                                 <div
@@ -463,9 +484,11 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                             <span className="text-slate-600 uppercase text-[6px] font-bold">Attached</span>
                                                                             <span className="text-amber-400 font-bold truncate">{attachedCount} items</span>
                                                                         </div>
-                                                                        <div className="flex flex-col">
-                                                                            <span className="text-slate-600 uppercase text-[6px] font-bold">Avg_Btt</span>
-                                                                            <span className="text-emerald-500 font-bold truncate">{avgPercent}%</span>
+                                                                        <div className="flex flex-col min-w-0">
+                                                                            <span className="text-slate-600 uppercase text-[6px] font-bold">Células</span>
+                                                                            <span className="text-emerald-500 font-bold truncate" title="Carga por slot de bateria (ordem do layout)">
+                                                                                {cellsLabel}
+                                                                            </span>
                                                                         </div>
                                                                         <div className="flex flex-col">
                                                                             <span className="text-slate-600 uppercase text-[6px] font-bold">Status</span>
