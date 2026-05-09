@@ -398,6 +398,37 @@ export async function validateStoredBatteryWarehouseRemovalAllowed(
   return { ok: true };
 }
 
+/**
+ * Normaliza o array `storedBatteries` antes de validar/persistir:
+ * - deduplica por `id` (mantém a última entrada — alinhado ao estado mais recente do cliente);
+ * - remove entradas cujo `id` já está montado na oficina (`internalSlots`) ou numa rig (`batteryId`),
+ *   evitando duplicar a mesma instância no armazém (bug do carregador Genesis / cliente).
+ */
+export function sanitizeStoredBatteriesForSavePayload(
+  batteries: unknown[],
+  workshopSlots: unknown,
+  placedRacks: unknown
+): unknown[] {
+  if (!Array.isArray(batteries)) return [];
+  const mounted = new Set<string>([
+    ...collectBatteryInstanceRefsFromWorkshopPayload(workshopSlots),
+    ...collectBatteryIdsFromPlacedRacksPayload(placedRacks)
+  ]);
+  const byId = new Map<string, { id: string; itemId: string; currentCharge: number }>();
+  for (const b of batteries) {
+    if (!b || typeof b !== 'object' || Array.isArray(b)) continue;
+    const o = b as Record<string, unknown>;
+    const id = o.id != null ? String(o.id).trim() : '';
+    const itemId = o.itemId != null ? String(o.itemId).trim() : '';
+    if (!SAVE_GAME_ITEM_ID_RE.test(id) || !SAVE_GAME_ITEM_ID_RE.test(itemId)) continue;
+    const ch = parseNumericCharge(o.currentCharge);
+    if (ch === null || ch < -1 || ch > 1e15) continue;
+    if (mounted.has(id)) continue;
+    byId.set(id, { id, itemId, currentCharge: ch });
+  }
+  return [...byId.values()];
+}
+
 const WORKSHOP_SLOT_COUNT = 6;
 const MAX_WORKSHOP_JSON_KEYS = 400;
 

@@ -1951,7 +1951,9 @@ export default function App() {
             if (isFull) {
               ns[originalItemId] = (ns[originalItemId] || 0) + 1;
             } else {
-              nb.push({ id: vid.length > 20 ? vid : crypto.randomUUID(), itemId: originalItemId, currentCharge: charge });
+              const instId = vid.length > 20 ? vid : crypto.randomUUID();
+              nb = nb.filter((b) => b.id !== instId);
+              nb.push({ id: instId, itemId: originalItemId, currentCharge: charge });
             }
           } else {
             ns[vid] = (ns[vid] || 0) + 1;
@@ -2066,15 +2068,16 @@ export default function App() {
         const oldUpg = gameUpgrades.find(u => u.id === oldItemId);
         const oldIsBattery = oldUpg?.type === 'battery' || oldInstanceId.length > 20;
         if (oldIsBattery) {
-          const oldCharge = item.slotCharges?.[slotId] ?? 0;
-          const capacity = oldUpg?.powerCapacity || 100;
-          const isFull = oldCharge >= (capacity * 0.999);
-          if (isFull) {
-            ns[oldItemId] = (ns[oldItemId] || 0) + 1;
+            const oldCharge = item.slotCharges?.[slotId] ?? 0;
+            const capacity = oldUpg?.powerCapacity || 100;
+            const isFull = oldCharge >= (capacity * 0.999);
+            if (isFull) {
+              ns[oldItemId] = (ns[oldItemId] || 0) + 1;
+            } else {
+              nb = nb.filter((b) => b.id !== oldInstanceId);
+              nb.push({ id: oldInstanceId, itemId: oldItemId, currentCharge: oldCharge });
+            }
           } else {
-            nb.push({ id: oldInstanceId, itemId: oldItemId, currentCharge: oldCharge });
-          }
-        } else {
           ns[oldItemId] = (ns[oldItemId] || 0) + 1;
         }
       }
@@ -2185,7 +2188,9 @@ export default function App() {
           ns = { ...ns, [originalItemId]: (ns[originalItemId] || 0) + 1 };
         } else {
           // Less than 100% stays as unique instance
-          nb.push({ id: val.length > 20 ? val : crypto.randomUUID(), itemId: originalItemId, currentCharge: charge });
+          const instId = val.length > 20 ? val : crypto.randomUUID();
+          nb = nb.filter((b) => b.id !== instId);
+          nb.push({ id: instId, itemId: originalItemId, currentCharge: charge });
         }
       }
       else {

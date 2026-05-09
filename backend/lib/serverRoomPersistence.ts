@@ -5,6 +5,7 @@
 import type { PoolClient } from 'pg';
 import {
   validateStoredBatteryWarehouseRemovalAllowed,
+  sanitizeStoredBatteriesForSavePayload,
   StoredBatterySaveGuardError
 } from './saveGameEconomyValidate.js';
 
@@ -164,8 +165,14 @@ export async function persistStockStoredBatteriesPlacedRacks(
 ): Promise<void> {
   const { stock, storedBatteries, placedRacks } = changes;
 
+  let storedBatteriesNorm = storedBatteries;
   if (storedBatteries) {
-    const incomingBatIds = storedBatteries.map((b) => b.id);
+    storedBatteriesNorm = sanitizeStoredBatteriesForSavePayload(
+      storedBatteries,
+      changes.workshopSlots,
+      changes.placedRacks
+    ) as typeof storedBatteries;
+    const incomingBatIds = storedBatteriesNorm.map((b) => b.id);
     const rm = await validateStoredBatteryWarehouseRemovalAllowed(
       client,
       uid,
@@ -192,17 +199,17 @@ export async function persistStockStoredBatteriesPlacedRacks(
     }
   }
 
-  if (storedBatteries) {
-    const incomingIds = storedBatteries.map((b) => b.id);
+  if (storedBatteriesNorm) {
+    const incomingIds = storedBatteriesNorm.map((b) => b.id);
     if (incomingIds.length > 0) {
       await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, incomingIds]);
     } else {
       await client.query('DELETE FROM stored_batteries WHERE user_id = $1', [uid]);
     }
-    if (storedBatteries.length > 0) {
-      const bIds = storedBatteries.map((b) => b.id);
-      const bItemIds = storedBatteries.map((b) => b.itemId);
-      const bCharges = storedBatteries.map((b) => b.currentCharge || 0);
+    if (storedBatteriesNorm.length > 0) {
+      const bIds = storedBatteriesNorm.map((b) => b.id);
+      const bItemIds = storedBatteriesNorm.map((b) => b.itemId);
+      const bCharges = storedBatteriesNorm.map((b) => b.currentCharge || 0);
       await client.query(
         `
           INSERT INTO stored_batteries (id, user_id, item_id, current_charge) 

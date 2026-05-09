@@ -161,6 +161,7 @@ import {
   validateUnopenedBoxesForSave,
   validateDailyActionsForSave,
   validateStoredBatteriesForSave,
+  sanitizeStoredBatteriesForSavePayload,
   validateStoredBatteryWarehouseRemovalAllowed,
   StoredBatterySaveGuardError,
   validateWorkshopSlotsPayloadForSave,
@@ -7512,6 +7513,11 @@ async function handleSaveGamePost(req, res) {
           error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
         });
       }
+      changes.storedBatteries = sanitizeStoredBatteriesForSavePayload(
+        changes.storedBatteries,
+        changes.workshopSlots,
+        changes.placedRacks
+      );
       const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
       if (!batVal.ok) {
         throw new HttpControlledError(400, { error: batVal.error });

@@ -6,6 +6,7 @@ import {
   validateDailyActionsForSave,
   validateStockForSave,
   validateStoredBatteryWarehouseRemovalAllowed,
+  sanitizeStoredBatteriesForSavePayload,
   validateWorkshopSlotsPayloadForSave
 } from '../lib/saveGameEconomyValidate.js';
 
@@ -147,6 +148,39 @@ describe('saveGameEconomyValidate', () => {
       true
     );
     expect(r).toEqual({ ok: true });
+  });
+
+  it('sanitizeStoredBatteriesForSavePayload deduplica por id (última entrada vence)', () => {
+    const out = sanitizeStoredBatteriesForSavePayload(
+      [
+        { id: 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee', itemId: 'small_battery', currentCharge: 10 },
+        { id: 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee', itemId: 'small_battery', currentCharge: 99 }
+      ],
+      [],
+      []
+    );
+    expect(out).toHaveLength(1);
+    expect((out[0] as { currentCharge: number }).currentCharge).toBe(99);
+  });
+
+  it('sanitizeStoredBatteriesForSavePayload remove instância montada na oficina', () => {
+    const bid = 'bbbbbbbb-bbbb-4ccc-dddd-eeeeeeeeeeee';
+    const out = sanitizeStoredBatteriesForSavePayload(
+      [{ id: bid, itemId: 'small_battery', currentCharge: 50 }],
+      [{ itemId: 'genesis_charger', internalSlots: { bat: bid }, currentCharge: 0 }],
+      []
+    );
+    expect(out).toHaveLength(0);
+  });
+
+  it('sanitizeStoredBatteriesForSavePayload remove instância montada na rig', () => {
+    const bid = 'cccccccc-bbbb-4ccc-dddd-eeeeeeeeeeee';
+    const out = sanitizeStoredBatteriesForSavePayload(
+      [{ id: bid, itemId: 'small_battery', currentCharge: 50 }],
+      [],
+      [{ id: 'rack1', batteryId: bid }]
+    );
+    expect(out).toHaveLength(0);
   });
 
   it('validateWorkshopSlotsPayloadForSave retorna erro amigável quando a query upgrades falha', async () => {
