@@ -4,6 +4,15 @@ import { Upgrade, SlotLayout, WorkshopStructure, StoredBattery } from '../types'
 import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { ChargingHistory } from './ChargingHistory';
 
+/** `currentCharge` no armazém está em Wh — nunca usar como % directamente. */
+function storedBatteryChargePercent(bat: StoredBattery, upg: Upgrade | null | undefined): number {
+    const wh = Number(bat.currentCharge) || 0;
+    const cap = upg?.powerCapacity;
+    if (cap === -1) return 100;
+    if (cap == null || !(cap > 0)) return Math.min(100, wh);
+    return Math.min(100, (wh / cap) * 100);
+}
+
 interface WorkshopRoomProps {
     slots: (WorkshopStructure | null)[];
     stock: Record<string, number>;
@@ -295,9 +304,15 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 if (equippedId && contentItem) {
                                                                     let chargePercent = undefined;
                                                                     if (slot.type === 'battery') {
-                                                                        const bChargeWh = getSlotVal(wsGroup.slotCharges, slot.id) ?? 0;
-                                                                        const bCapacity = contentItem.powerCapacity || 100;
-                                                                        chargePercent = (bChargeWh / bCapacity) * 100;
+                                                                        const bChargeWh = Number(getSlotVal(wsGroup.slotCharges, slot.id)) || 0;
+                                                                        const bCapacity = contentItem.powerCapacity ?? 100;
+                                                                        if (bCapacity === -1) {
+                                                                            chargePercent = 100;
+                                                                        } else if (bCapacity > 0) {
+                                                                            chargePercent = Math.min(100, (bChargeWh / bCapacity) * 100);
+                                                                        } else {
+                                                                            chargePercent = 0;
+                                                                        }
                                                                     }
                                                                     setDetailContext({ wsIdx: idx, slotId: slot.id, type: slot.type, item: contentItem, instanceId, chargePercent });
                                                                 } else {
@@ -600,6 +615,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                             const upg =
                                                 upgrades.find((u) => u.id === bat.itemId) ??
                                                 orphanCatalogUpgrade(String(bat.itemId || bat.id), 'battery');
+                                            const chargePct = storedBatteryChargePercent(bat, upg);
                                             return (
                                                 <button
                                                     key={bat.id}
@@ -619,10 +635,10 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                     <div className="flex-1">
                                                         <div className="font-bold text-sm text-slate-800 dark:text-slate-200">{upg?.name || 'Bateria'}</div>
                                                         <div className="w-full bg-slate-200 dark:bg-slate-950 h-1.5 rounded-full mt-2 overflow-hidden">
-                                                            <div className="bg-orange-500 h-full rounded-full" style={{ width: `${bat.currentCharge}%` }}></div>
+                                                            <div className="bg-orange-500 h-full rounded-full" style={{ width: `${chargePct}%` }}></div>
                                                         </div>
                                                     </div>
-                                                    <div className="text-xs font-mono text-orange-600 font-bold">{bat.currentCharge}%</div>
+                                                    <div className="text-xs font-mono text-orange-600 font-bold">{chargePct.toFixed(1)}%</div>
                                                 </button>
                                             );
                                         })
@@ -698,18 +714,31 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
 
                             {detailContext.type === 'battery' && (detailContext.instanceId || detailContext.chargePercent !== undefined) && (
                                 <div className="space-y-2">
-                                    <div className="flex justify-between text-xs font-bold text-slate-500 uppercase tracking-tighter">
-                                        <span>Status da Carga</span>
-                                        <span className="text-orange-500 font-mono">
-                                            {(detailContext.chargePercent ?? storedBatteries.find(b => b.id === detailContext.instanceId)?.currentCharge ?? 0).toFixed(1)}%
-                                        </span>
-                                    </div>
-                                    <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-950 rounded-full overflow-hidden border border-slate-300 dark:border-slate-800">
-                                        <div
-                                            className="h-full bg-orange-500 transition-all duration-500"
-                                            style={{ width: `${detailContext.chargePercent ?? (storedBatteries.find(b => b.id === detailContext.instanceId)?.currentCharge ?? 0)}%` }}
-                                        />
-                                    </div>
+                                    {(() => {
+                                        const sb = detailContext.instanceId
+                                            ? storedBatteries.find((b) => b.id === detailContext.instanceId)
+                                            : undefined;
+                                        const detailPct =
+                                            detailContext.chargePercent !== undefined
+                                                ? detailContext.chargePercent
+                                                : sb
+                                                  ? storedBatteryChargePercent(sb, detailContext.item)
+                                                  : 0;
+                                        return (
+                                            <>
+                                                <div className="flex justify-between text-xs font-bold text-slate-500 uppercase tracking-tighter">
+                                                    <span>Status da Carga</span>
+                                                    <span className="text-orange-500 font-mono">{detailPct.toFixed(1)}%</span>
+                                                </div>
+                                                <div className="w-full h-1.5 bg-slate-200 dark:bg-slate-950 rounded-full overflow-hidden border border-slate-300 dark:border-slate-800">
+                                                    <div
+                                                        className="h-full bg-orange-500 transition-all duration-500"
+                                                        style={{ width: `${Math.min(100, detailPct)}%` }}
+                                                    />
+                                                </div>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             )}
 
