@@ -94,8 +94,9 @@ function sameRigRoom(a: string | null | undefined, b: string | null | undefined)
     return normalizePlacedRackRoomId(a) === normalizePlacedRackRoomId(b);
 }
 
-/** Índice 0-based da sala promovida da «Visão geral» para a fila de atalhos (4.º quadrado). */
-const PROMOTED_ROOM_LIST_INDEX = 3;
+/** Primeiras salas mostradas em grelha `lg:grid-cols-4`; o carrossel começa no índice seguinte. */
+const ROOM_TOP_GRID_COUNT = 4;
+const ROOM_CAROUSEL_START_INDEX = ROOM_TOP_GRID_COUNT;
 
 interface ServerRoomProps {
     stock: Record<string, number>;
@@ -636,8 +637,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         );
     };
 
-    const promotedRoom = myRooms.length > PROMOTED_ROOM_LIST_INDEX ? myRooms[PROMOTED_ROOM_LIST_INDEX] : null;
-    const showPromotedRoomTop = Boolean(promotedRoom && userEmail);
+    const showRoomTopFourGrid = Boolean(userEmail && myRooms.length >= ROOM_TOP_GRID_COUNT && !roomsLoading);
+    const roomsForCarousel =
+        myRooms.length >= ROOM_TOP_GRID_COUNT ? myRooms.slice(ROOM_CAROUSEL_START_INDEX) : myRooms;
 
     const showQuickControlRow = Boolean(onSetRoomRacksCoin || onSetRoomRacksBattery || userEmail);
 
@@ -669,11 +671,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
             </div>
 
             {showQuickControlRow && (
-                <div
-                    className={`grid grid-cols-1 gap-4 ${
-                        showPromotedRoomTop ? 'lg:grid-cols-4' : 'lg:grid-cols-3'
-                    } lg:items-stretch`}
-                >
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-stretch">
                     <RoomActionCard
                         icon={Coins}
                         title="Moeda da sala"
@@ -792,16 +790,6 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                         )}
                     </RoomActionCard>
-
-                    {showPromotedRoomTop && promotedRoom ? (
-                        <RoomActionCard
-                            icon={Box}
-                            title={promotedRoom.name}
-                            subtitle="4.ª sala da lista — mesmos atalhos da visão geral, aqui em cima."
-                        >
-                            {renderRoomOverviewTile(promotedRoom, PROMOTED_ROOM_LIST_INDEX, 'embedded')}
-                        </RoomActionCard>
-                    ) : null}
                 </div>
             )}
 
@@ -816,35 +804,61 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         ) : myRooms.length === 0 ? (
                             <div className="text-xs text-slate-500">Nenhuma sala configurada.</div>
                         ) : (
-                            <div className="relative">
-                                <button
-                                    type="button"
-                                    aria-label="Deslizar salas para a esquerda"
-                                    onClick={() => scrollRoomsCarousel(-1)}
-                                    className="absolute left-0 top-1/2 z-[2] hidden h-11 w-9 -translate-y-1/2 items-center justify-center rounded-r-lg border border-amber-600/30 bg-slate-950/95 text-amber-300 shadow-md backdrop-blur-sm transition hover:bg-slate-900 hover:text-amber-200 sm:flex dark:border-amber-500/40"
-                                >
-                                    <ChevronLeft className="h-5 w-5" aria-hidden />
-                                </button>
-                                <button
-                                    type="button"
-                                    aria-label="Deslizar salas para a direita"
-                                    onClick={() => scrollRoomsCarousel(1)}
-                                    className="absolute right-0 top-1/2 z-[2] hidden h-11 w-9 -translate-y-1/2 items-center justify-center rounded-l-lg border border-amber-600/30 bg-slate-950/95 text-amber-300 shadow-md backdrop-blur-sm transition hover:bg-slate-900 hover:text-amber-200 sm:flex dark:border-amber-500/40"
-                                >
-                                    <ChevronRight className="h-5 w-5" aria-hidden />
-                                </button>
-                                <div
-                                    ref={roomsCarouselRef}
-                                    role="region"
-                                    aria-label="Carrossel de salas de mineração"
-                                    className="flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-0 pb-2 pt-1 sm:px-10 [scrollbar-width:thin] [scrollbar-color:rgba(245,158,11,0.35)_transparent] dark:[scrollbar-color:rgba(251,191,36,0.4)_transparent]"
-                                >
-                                {myRooms
-                                    .map((room, idx) => ({ room, idx }))
-                                    .filter(({ idx }) => idx !== PROMOTED_ROOM_LIST_INDEX)
-                                    .map(({ room, idx }) => renderRoomOverviewTile(room, idx, 'carousel'))}
-                                </div>
-                            </div>
+                            <>
+                                {showRoomTopFourGrid ? (
+                                    <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                        {myRooms.slice(0, ROOM_TOP_GRID_COUNT).map((room, idx) => (
+                                            <div
+                                                key={room.id}
+                                                className={`flex min-h-[200px] flex-col rounded-lg border p-3 ${
+                                                    roomIndex === idx
+                                                        ? 'border-amber-700 bg-amber-900/10 shadow-[0_0_15px_rgba(245,158,11,0.1)]'
+                                                        : 'border-slate-800 bg-slate-900/40'
+                                                }`}
+                                            >
+                                                {renderRoomOverviewTile(room, idx, 'embedded')}
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : null}
+                                {roomsForCarousel.length === 0 ? (
+                                    showRoomTopFourGrid ? (
+                                        <p className="text-center text-[10px] text-slate-500 dark:text-slate-400">
+                                            Todas as salas estão na grelha acima.
+                                        </p>
+                                    ) : null
+                                ) : (
+                                    <div className="relative">
+                                        <button
+                                            type="button"
+                                            aria-label="Deslizar salas para a esquerda"
+                                            onClick={() => scrollRoomsCarousel(-1)}
+                                            className="absolute left-0 top-1/2 z-[2] hidden h-11 w-9 -translate-y-1/2 items-center justify-center rounded-r-lg border border-amber-600/30 bg-slate-950/95 text-amber-300 shadow-md backdrop-blur-sm transition hover:bg-slate-900 hover:text-amber-200 sm:flex dark:border-amber-500/40"
+                                        >
+                                            <ChevronLeft className="h-5 w-5" aria-hidden />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            aria-label="Deslizar salas para a direita"
+                                            onClick={() => scrollRoomsCarousel(1)}
+                                            className="absolute right-0 top-1/2 z-[2] hidden h-11 w-9 -translate-y-1/2 items-center justify-center rounded-l-lg border border-amber-600/30 bg-slate-950/95 text-amber-300 shadow-md backdrop-blur-sm transition hover:bg-slate-900 hover:text-amber-200 sm:flex dark:border-amber-500/40"
+                                        >
+                                            <ChevronRight className="h-5 w-5" aria-hidden />
+                                        </button>
+                                        <div
+                                            ref={roomsCarouselRef}
+                                            role="region"
+                                            aria-label="Carrossel de salas de mineração"
+                                            className="flex snap-x snap-mandatory gap-3 overflow-x-auto scroll-smooth px-0 pb-2 pt-1 sm:px-10 [scrollbar-width:thin] [scrollbar-color:rgba(245,158,11,0.35)_transparent] dark:[scrollbar-color:rgba(251,191,36,0.4)_transparent]"
+                                        >
+                                            {roomsForCarousel.map((room, j) => {
+                                                const idx = myRooms.length >= ROOM_TOP_GRID_COUNT ? j + ROOM_CAROUSEL_START_INDEX : j;
+                                                return renderRoomOverviewTile(room, idx, 'carousel');
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </div>
             )}
