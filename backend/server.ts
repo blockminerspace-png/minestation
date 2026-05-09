@@ -127,6 +127,7 @@ import {
   registerSupportTicketRoutes
 } from './dist/controllers/supportTicketController.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
+import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
 import {
   sendInternalErrorOrPrisma,
@@ -1560,6 +1561,7 @@ registerPartnerYoutubeRoutes(app, {
   isAdmin,
   appendGameActivityLog
 });
+registerWorkshopMutationRoutes(app, { authenticateToken });
 registerImageAssetRoutes(app, {
   isAdmin,
   imgDir: IMG_DIR,

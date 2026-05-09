@@ -8,3 +8,5 @@ export {
 } from './backupModel.js';
 
 export { pool, query, getClient, connect } from './connection.js';
+export { WorkshopMutationError, runWorkshopMutation } from './workshopMutationModel.js';
+export type { WorkshopMutateBody, WorkshopMutateOk, WorkshopMutateAction } from './workshopMutationModel.js';

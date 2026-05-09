@@ -1449,6 +1449,56 @@ export async function logout(): Promise<void> {
 
 let globalLastLoadTime = 0;
 
+/** Revisão do servidor usada em saves e mutações autoritárias (ex.: oficina). */
+export function getGlobalLastLoadTime(): number {
+  return globalLastLoadTime;
+}
+
+export type WorkshopMutateAction = 'equip_bench' | 'unequip_bench' | 'equip_component' | 'unequip_component';
+
+/** Oficina: mutação autoritária no servidor (stock, armazém, workshop_slots, histórico). */
+export async function postWorkshopMutate(payload: {
+  action: WorkshopMutateAction;
+  slotIndex: number;
+  itemId?: string;
+  componentSlotId?: string;
+  storedBatteryId?: string;
+  expectedServerUpdatedAt?: number;
+}): Promise<
+  | {
+      ok: true;
+      serverUpdatedAt: number;
+      workshopSlots: unknown[];
+      stock: Record<string, number>;
+      storedBatteries: StoredBattery[];
+    }
+  | { ok: false; error: string; forceReload?: boolean }
+> {
+  try {
+    const res = await apiFetch(`${base}/workshop/mutate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+      return { ok: false as const, error: err, forceReload: !!data.forceReload };
+    }
+    const su = Number(data.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) globalLastLoadTime = su;
+    return {
+      ok: true as const,
+      serverUpdatedAt: su,
+      workshopSlots: Array.isArray(data.workshopSlots) ? data.workshopSlots : [],
+      stock: (data.stock as Record<string, number>) || {},
+      storedBatteries: Array.isArray(data.storedBatteries) ? (data.storedBatteries as StoredBattery[]) : []
+    };
+  } catch {
+    return { ok: false as const, error: 'Network error' };
+  }
+}
+
 // fetchGameState removida em favor de getGameState unificada
 
 /** Bateria em massa na sala (Servidores) — servidor aplica regras e persiste. */

@@ -76,6 +76,7 @@ import { getPgRestorePath } from './dist/config/pgRestore.js';
 import { registerBackupRoutes, startScheduledSqlBackups } from './dist/controllers/backupController.js';
 import { createSupportTicketUploadMiddlewares, registerSupportTicketRoutes } from './dist/controllers/supportTicketController.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
+import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
 import { sendInternalErrorOrPrisma, sendInternalErrorSafeMessageOrPrisma, sendInternalErrorShapeOrPrisma, HttpControlledError, respondIfHttpControlledError } from './dist/utils/apiErrorResponse.js';
 import { appendGameActivityLogMongo, listGameActivityLogsMongo } from './dist/lib/mongoLogs.js';
@@ -84,7 +85,7 @@ import { getAdminMiningRankingPayload, getPublicMiningRankingPayload } from './d
 import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
 import { ActivityThrottleMaps, resolveActivityThrottleConfig } from './dist/lib/activityThrottle.js';
 import { mountImageStaticMiddleware, registerImageAssetRoutes, runImageRootStartupOrganizeIfEnabled } from './dist/controllers/imageAssetController.js';
-import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, validateStoredBatteryWarehouseRemovalAllowed, StoredBatterySaveGuardError, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from './dist/lib/saveGameEconomyValidate.js';
+import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, sanitizeStoredBatteriesForSavePayload, validateStoredBatteryWarehouseRemovalAllowed, StoredBatterySaveGuardError, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from './dist/lib/saveGameEconomyValidate.js';
 import { validateLoginEmail, validateLoginFieldsPresent, validateLoginPassword, validateSignupPassword, validateSignupUsername, validateOptionalPolygonWallet, validateOptionalAccessLevelId, validateOptionalReferralCodeInput, validateAccessLevelIdsArray, EMAIL_ADDRESS_MAX_LENGTH, SIGNUP_EMAIL_MAX_TOTAL } from './dist/models/registrationValidation.js';
 import { getUserIdByEmail, EmailPolicyError, IpLimitError } from './dist/models/userModel.js';
 import { findUserByEmail, insertSession, recordLoginIp, ensureUserReferralCode, updateUserPasswordHash, listUserAccessLevelIds, findUserById, findSessionRow, findActiveSessionUserId, findSessionUserIdIgnoringExpiry, deleteSessionBySessionId, updateUserPolygonAndAccess, clearUserPolygonWallet } from './dist/models/authModel.js';
@@ -1409,6 +1410,7 @@ registerPartnerYoutubeRoutes(app, {
     isAdmin,
     appendGameActivityLog
 });
+registerWorkshopMutationRoutes(app, { authenticateToken });
 registerImageAssetRoutes(app, {
     isAdmin,
     imgDir: IMG_DIR,
@@ -7095,6 +7097,7 @@ async function handleSaveGamePost(req, res) {
                         error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
                     });
                 }
+                changes.storedBatteries = sanitizeStoredBatteriesForSavePayload(changes.storedBatteries, changes.workshopSlots, changes.placedRacks);
                 const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
                 if (!batVal.ok) {
                     throw new HttpControlledError(400, { error: batVal.error });

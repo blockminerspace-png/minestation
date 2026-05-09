@@ -37,6 +37,8 @@ import {
   saveGameState as apiSaveGameState,
   postServerRoomBulkBatteries,
   postServerRoomRoomCoins,
+  postWorkshopMutate,
+  getGlobalLastLoadTime,
   setUpgrades as apiSetUpgrades,
   setAccessLevels as apiSetAccessLevels,
   setLootBoxes as apiSetLootBoxes,
@@ -431,6 +433,8 @@ export default function App() {
   const currentViewRef = useRef<View>(currentView);
   const gamePathHydratedRef = useRef(false);
   const pendingSaveDomainRef = useRef<'full' | 'inventory' | 'servers' | 'workshop'>('full');
+  /** Evita double-click / pedidos em paralelo na oficina (mutações servidor-authoritativas). */
+  const workshopMutationBusyRef = useRef(false);
 
   useEffect(() => {
     currentViewRef.current = currentView;
@@ -467,6 +471,18 @@ export default function App() {
       setGameUpgrades(freshUpgrades);
     }
   }, [user]);
+
+  const applyWorkshopServerSlice = useCallback(
+    (r: { workshopSlots: unknown[]; stock: Record<string, number>; storedBatteries: StoredBattery[] }) => {
+      setGameState((p) => ({
+        ...p,
+        workshopSlots: r.workshopSlots as GameState['workshopSlots'],
+        stock: { ...r.stock },
+        storedBatteries: [...r.storedBatteries]
+      }));
+    },
+    []
+  );
 
   /** Save completo + retentativas em falhas transitórias (502/522/rede). Usado pelo debounce e pelo auto-save. */
   const runPlayerSaveWithRetries = useCallback(
@@ -1838,377 +1854,102 @@ export default function App() {
     }));
   }, []);
 
-  const handleEquipWorkshop = useCallback((idx: number, mid: string) => {
-    setGameState(p => {
-      if ((p.stock[mid] || 0) < 1) return p;
-      const ns = { ...p.stock };
-      const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-      if (nw[idx] && nw[idx].itemId) return p;
-      const structure: any = { id: `ws_${user?.email || 'anon'}_${idx}`, itemId: mid, internalSlots: {}, currentCharge: 0, installedAt: Date.now() };
-      nw[idx] = structure;
-      ns[mid]--;
-      const newState = { ...p, stock: ns, workshopSlots: nw };
-      return newState;
-    });
-    requestSave();
-  }, [user, requestSave]);
-
-  const handleUnequipWorkshop = useCallback((idx: number) => {
-    // Generate logs BEFORE state update to avoid duplicates
-    const currentState = gameStateRef.current;
-    const currentItem = currentState.workshopSlots?.[idx];
-
-    if (currentItem) {
-      const def = gameUpgrades.find(u => u.id === currentItem.itemId);
-      let allowed = true;
-      if (def?.type === 'charger') {
-        if ((currentItem.currentCharge ?? 0) > 0.000001) allowed = false;
-        const installedAt = currentItem.installedAt || 0;
-        if (installedAt > 0) {
-          const instDate = new Date(installedAt);
-          const midnight = new Date(instDate);
-          midnight.setDate(midnight.getDate() + 1);
-          midnight.setHours(0, 0, 0, 0);
-          if (Date.now() < midnight.getTime()) allowed = false;
-        }
-      }
-
-      if (allowed) {
-        Object.entries(currentItem.internalSlots || {}).forEach(([slotId, val]) => {
-          const vid = val as string | null;
-          if (vid) {
-            const originalItemId = currentItem.slotItemIds?.[slotId];
-            if (originalItemId) {
-              const upg = gameUpgrades.find(u => u.id === originalItemId);
-              const isBattery = upg?.type === 'battery' || vid.length > 20;
-              if (isBattery) {
-                const charge = currentItem.slotCharges?.[slotId] ?? 0;
-                const logData = {
-                  action: 'removed_to_stock',
-                  workshop_slot_index: idx,
-                  component_slot_id: slotId,
-                  battery_instance_id: vid,
-                  battery_item_id: originalItemId,
-                  charge_amount: charge,
-                  stock_confirmed: true,
-                  details: { batteryName: upg?.name || originalItemId, method: 'structure_removal' }
-                };
-                fetch('/api/charging-history/log', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(logData)
-                }).catch(e => console.error('[Log] Failed:', e));
-              }
-            }
-          }
+  const handleEquipWorkshop = useCallback(
+    async (idx: number, mid: string) => {
+      if (workshopMutationBusyRef.current) return;
+      workshopMutationBusyRef.current = true;
+      try {
+        const r = await postWorkshopMutate({
+          action: 'equip_bench',
+          slotIndex: idx,
+          itemId: mid,
+          expectedServerUpdatedAt: getGlobalLastLoadTime()
         });
-      }
-    }
-
-    setGameState(p => {
-      const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-      const item = nw[idx];
-      if (!item) return p;
-      const def = gameUpgrades.find(u => u.id === item.itemId);
-      if (def?.type === 'charger') {
-        if ((item.currentCharge ?? 0) > 0.000001) return p;
-
-        // 00:00 Restriction
-        const installedAt = item.installedAt || 0;
-        if (installedAt > 0) {
-          const instDate = new Date(installedAt);
-          const midnight = new Date(instDate);
-          midnight.setDate(midnight.getDate() + 1);
-          midnight.setHours(0, 0, 0, 0);
-
-          if (Date.now() < midnight.getTime()) {
-            alert('Este carregador só pode ser removido após as 00:00 do dia seguinte à instalação.');
-            return p;
-          }
+        if (r.ok === false) {
+          if (r.forceReload) await handleReloadGameState();
+          else alert(r.error);
+          return;
         }
+        applyWorkshopServerSlice(r);
+      } finally {
+        workshopMutationBusyRef.current = false;
       }
-      let ns = { ...p.stock };
-      ns[item.itemId] = (ns[item.itemId] || 0) + 1;
-      nw[idx] = null;
-      let nb = [...p.storedBatteries];
-      Object.entries(item.internalSlots || {}).forEach(([slotId, val]) => {
-        const vid = val as string | null;
-        if (vid) {
-          const originalItemId = item.slotItemIds?.[slotId];
-          if (!originalItemId) {
-            console.error(`[App] Critical: Missing originalItemId for ${vid} in full removal. Skipping to prevent data corruption.`);
-            return;
-          }
+    },
+    [applyWorkshopServerSlice, handleReloadGameState]
+  );
 
-          const upg = gameUpgrades.find(u => u.id === originalItemId);
-          const isBattery = upg?.type === 'battery' || vid.length > 20;
-
-          if (isBattery) {
-            const charge = item.slotCharges?.[slotId] ?? 0;
-            const capacity = upg?.powerCapacity || 100;
-            const isFull = charge >= (capacity * 0.999);
-
-            if (isFull) {
-              ns[originalItemId] = (ns[originalItemId] || 0) + 1;
-            } else {
-              const instId = vid.length > 20 ? vid : crypto.randomUUID();
-              nb = nb.filter((b) => b.id !== instId);
-              nb.push({ id: instId, itemId: originalItemId, currentCharge: charge });
-            }
-          } else {
-            ns[vid] = (ns[vid] || 0) + 1;
-          }
+  const handleUnequipWorkshop = useCallback(
+    async (idx: number) => {
+      if (workshopMutationBusyRef.current) return;
+      workshopMutationBusyRef.current = true;
+      try {
+        const r = await postWorkshopMutate({
+          action: 'unequip_bench',
+          slotIndex: idx,
+          expectedServerUpdatedAt: getGlobalLastLoadTime()
+        });
+        if (r.ok === false) {
+          if (r.forceReload) await handleReloadGameState();
+          else alert(r.error);
+          return;
         }
-      });
-      return { ...p, stock: ns, storedBatteries: nb, workshopSlots: nw };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
-
-  const handleEquipWorkshopComponent = useCallback((wsIdx: number, slotId: string, iid: string, sbid?: string) => {
-    // [LOGGING] Prepare log and ID outside state updater
-    const currentState = gameStateRef.current;
-    const nwGlobal = currentState.workshopSlots || [null, null, null, null, null, null];
-    const sourceItemGlobal = nwGlobal[wsIdx];
-
-    let preCalculatedId: string | null = null;
-    let logPayload = null;
-
-    if (sourceItemGlobal) {
-      // --- [FIX] Log removal of old item if it's a battery being replaced ---
-      const oldInstanceId = sourceItemGlobal.internalSlots[slotId];
-      const oldItemId = sourceItemGlobal.slotItemIds?.[slotId];
-      if (oldInstanceId && oldItemId) {
-        const oldUpg = gameUpgrades.find(u => u.id === oldItemId);
-        const oldIsBattery = oldUpg?.type === 'battery' || oldInstanceId.length > 20;
-        if (oldIsBattery) {
-          const oldCharge = sourceItemGlobal.slotCharges?.[slotId] ?? 0;
-          fetch('/api/charging-history/log', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              action: 'removed_to_stock',
-              workshop_slot_index: wsIdx,
-              component_slot_id: slotId,
-              battery_instance_id: oldInstanceId,
-              battery_item_id: oldItemId,
-              charge_amount: oldCharge,
-              stock_confirmed: true, // It will be confirmed in this very handle call
-              details: { batteryName: oldUpg?.name || oldItemId, note: 'replaced_during_equip' }
-            })
-          }).catch(e => console.error('[Log] Removal Failed:', e));
-        }
+        applyWorkshopServerSlice(r);
+      } finally {
+        workshopMutationBusyRef.current = false;
       }
-      // ----------------------------------------------------------------------
+    },
+    [applyWorkshopServerSlice, handleReloadGameState]
+  );
 
-      const upgrade = gameUpgrades.find(u => u.id === sourceItemGlobal.itemId);
-      const layoutSlot = upgrade?.layout?.slots.find(s => s.id === slotId);
-      const isBattery = layoutSlot?.type === 'battery';
-
-      if (isBattery) {
-        let actualItemId = iid;
-        let initCharge = 0;
-        let valid = false;
-
-        if (sbid) {
-          const s = currentState.storedBatteries.find(b => b.id === sbid);
-          if (s) {
-            preCalculatedId = sbid;
-            actualItemId = s.itemId;
-            initCharge = s.currentCharge;
-            valid = true;
-          }
-        } else {
-          if ((currentState.stock[iid] || 0) >= 1) {
-            preCalculatedId = crypto.randomUUID();
-            actualItemId = iid;
-            const batDef = gameUpgrades.find(u => u.id === iid);
-            initCharge = batDef?.powerCapacity || 100;
-            valid = true;
-          }
+  const handleEquipWorkshopComponent = useCallback(
+    async (wsIdx: number, slotId: string, iid: string, sbid?: string) => {
+      if (workshopMutationBusyRef.current) return;
+      workshopMutationBusyRef.current = true;
+      try {
+        const r = await postWorkshopMutate({
+          action: 'equip_component',
+          slotIndex: wsIdx,
+          componentSlotId: slotId,
+          itemId: iid,
+          storedBatteryId: sbid,
+          expectedServerUpdatedAt: getGlobalLastLoadTime()
+        });
+        if (r.ok === false) {
+          if (r.forceReload) await handleReloadGameState();
+          else alert(r.error);
+          return;
         }
+        applyWorkshopServerSlice(r);
+      } finally {
+        workshopMutationBusyRef.current = false;
+      }
+    },
+    [applyWorkshopServerSlice, handleReloadGameState]
+  );
 
-        if (valid && preCalculatedId) {
-          logPayload = {
-            action: 'inserted',
-            workshop_slot_index: wsIdx,
-            component_slot_id: slotId,
-            battery_instance_id: preCalculatedId,
-            battery_item_id: actualItemId,
-            charge_amount: initCharge,
-            stock_confirmed: false,
-            details: { batteryName: gameUpgrades.find(u => u.id === actualItemId)?.name || actualItemId }
-          };
+  const handleUnequipWorkshopComponent = useCallback(
+    async (wsIdx: number, slotId: string) => {
+      if (workshopMutationBusyRef.current) return;
+      workshopMutationBusyRef.current = true;
+      try {
+        const r = await postWorkshopMutate({
+          action: 'unequip_component',
+          slotIndex: wsIdx,
+          componentSlotId: slotId,
+          expectedServerUpdatedAt: getGlobalLastLoadTime()
+        });
+        if (r.ok === false) {
+          if (r.forceReload) await handleReloadGameState();
+          else alert(r.error);
+          return;
         }
+        applyWorkshopServerSlice(r);
+      } finally {
+        workshopMutationBusyRef.current = false;
       }
-    }
-
-    if (logPayload) {
-      fetch('/api/charging-history/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(logPayload)
-      }).catch(e => console.error('[Log] Insert Failed:', e));
-    }
-
-    setGameState(p => {
-      const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-      const sourceItem = nw[wsIdx];
-      if (!sourceItem) return p;
-
-      // Create a shallow copy of the workshop structure to avoid direct mutation
-      const item = { ...sourceItem };
-      let ns = { ...p.stock };
-      let nb = [...p.storedBatteries];
-
-      // --- [FIX] Recover old item before overwriting ---
-      const oldInstanceId = item.internalSlots[slotId];
-      const oldItemId = item.slotItemIds?.[slotId];
-      if (oldInstanceId && oldItemId) {
-        const oldUpg = gameUpgrades.find(u => u.id === oldItemId);
-        const oldIsBattery = oldUpg?.type === 'battery' || oldInstanceId.length > 20;
-        if (oldIsBattery) {
-            const oldCharge = item.slotCharges?.[slotId] ?? 0;
-            const capacity = oldUpg?.powerCapacity || 100;
-            const isFull = oldCharge >= (capacity * 0.999);
-            if (isFull) {
-              ns[oldItemId] = (ns[oldItemId] || 0) + 1;
-            } else {
-              nb = nb.filter((b) => b.id !== oldInstanceId);
-              nb.push({ id: oldInstanceId, itemId: oldItemId, currentCharge: oldCharge });
-            }
-          } else {
-          ns[oldItemId] = (ns[oldItemId] || 0) + 1;
-        }
-      }
-      // -----------------------------------------------
-
-      let initCharge = 0;
-      const upgrade = gameUpgrades.find(u => u.id === item.itemId);
-      const layoutSlot = upgrade?.layout?.slots.find(s => s.id === slotId);
-      const isBattery = layoutSlot?.type === 'battery';
-
-      if (isBattery) {
-        let actualItemId = iid;
-        let finalInstanceId = sbid;
-
-        if (sbid) {
-          const s = nb.find(b => b.id === sbid);
-          if (!s) return p;
-          initCharge = s.currentCharge;
-          actualItemId = s.itemId;
-          finalInstanceId = sbid;
-          nb = nb.filter(b => b.id !== sbid);
-        }
-        else {
-          if ((ns[iid] || 0) < 1) return p;
-          ns = { ...ns, [iid]: ns[iid] - 1 };
-          const batDef = gameUpgrades.find(u => u.id === iid);
-          initCharge = batDef?.powerCapacity || 100;
-          actualItemId = iid;
-          // Generate UUID for any battery coming from stock
-          finalInstanceId = preCalculatedId || crypto.randomUUID();
-        }
-
-        item.internalSlots = { ...item.internalSlots, [slotId]: finalInstanceId! };
-        item.slotCharges = { ...item.slotCharges, [slotId]: initCharge };
-        item.slotItemIds = { ...(item.slotItemIds || {}), [slotId]: actualItemId };
-      } else {
-        if ((ns[iid] || 0) < 1) return p;
-        ns = { ...ns, [iid]: ns[iid] - 1 };
-        item.internalSlots = { ...item.internalSlots, [slotId]: iid };
-        item.slotItemIds = { ...(item.slotItemIds || {}), [slotId]: iid };
-      }
-
-      nw[wsIdx] = item;
-      return { ...p, stock: ns, storedBatteries: nb, workshopSlots: nw };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
-
-  const handleUnequipWorkshopComponent = useCallback((wsIdx: number, slotId: string) => {
-    const currentState = gameStateRef.current;
-    const currentWS = currentState.workshopSlots?.[wsIdx];
-    if (!currentWS) return;
-    const valPreview = currentWS.internalSlots?.[slotId];
-    if (!valPreview) return;
-    const originalPreview = currentWS.slotItemIds?.[slotId];
-    if (!originalPreview) {
-      console.error(
-        `[App] Oficina: falta referência da peça (slotItemIds) no slot ${slotId}. Recarrega (F5) para o servidor reparar o estado.`
-      );
-      return;
-    }
-
-    const chargePreview = currentWS.slotCharges?.[slotId] ?? 0;
-    const upgPreview = gameUpgrades.find(u => u.id === originalPreview);
-    const isBatteryPreview = upgPreview?.type === 'battery' || String(valPreview).length > 20;
-    if (isBatteryPreview) {
-      fetch('/api/charging-history/log', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'removed_to_stock',
-          workshop_slot_index: wsIdx,
-          component_slot_id: slotId,
-          battery_instance_id: valPreview,
-          battery_item_id: originalPreview,
-          charge_amount: chargePreview,
-          stock_confirmed: true,
-          details: { batteryName: upgPreview?.name || originalPreview }
-        })
-      }).catch(e => console.error('[Log] Failed:', e));
-    }
-
-    setGameState(p => {
-      const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-      const items = nw[wsIdx];
-      if (!items) return p;
-      const val = items.internalSlots[slotId];
-      if (!val) return p;
-
-      let ns = { ...p.stock };
-      let nb = [...p.storedBatteries];
-      const charge = items.slotCharges?.[slotId] ?? 0;
-      const originalItemId = items.slotItemIds?.[slotId];
-
-      if (!originalItemId) {
-        return p;
-      }
-
-      const upg = gameUpgrades.find(u => u.id === originalItemId);
-      const isBattery = upg?.type === 'battery' || val.length > 20;
-
-      if (isBattery) {
-        const capacity = upg?.powerCapacity || 100;
-        const isFull = charge >= (capacity * 0.999);
-
-        if (isFull) {
-          // Rule: 100% charge batteries go back to stock (state of "new")
-          ns = { ...ns, [originalItemId]: (ns[originalItemId] || 0) + 1 };
-        } else {
-          // Less than 100% stays as unique instance
-          const instId = val.length > 20 ? val : crypto.randomUUID();
-          nb = nb.filter((b) => b.id !== instId);
-          nb.push({ id: instId, itemId: originalItemId, currentCharge: charge });
-        }
-      }
-      else {
-        ns = { ...ns, [originalItemId]: (ns[originalItemId] || 0) + 1 };
-      }
-
-      const newInternal = { ...items.internalSlots };
-      delete newInternal[slotId];
-      const newCharges = { ...(items.slotCharges || {}) };
-      delete newCharges[slotId];
-      const newItemIds = { ...(items.slotItemIds || {}) };
-      delete newItemIds[slotId];
-
-      nw[wsIdx] = { ...items, internalSlots: newInternal, slotCharges: newCharges, slotItemIds: newItemIds };
-      return { ...p, stock: ns, storedBatteries: nb, workshopSlots: nw };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
+    },
+    [applyWorkshopServerSlice, handleReloadGameState]
+  );
 
   const handleWorkshopInstantRecharge = useCallback(async (wsIdx: number) => {
     if (!user?.email) return;
