@@ -104,21 +104,23 @@ const TelegramIcon = ({ size = 18 }: { size?: number }) => (
 
 // --- GAME LOGIC HELPERS ---
 
-/** Catálogo para stock / `stored_batteries.item_id` quando `batteryId` na rig é UUID ou catálogo com metadados em falta. */
+/** Catálogo para stock / `stored_batteries.item_id` quando `batteryId` na rig é UUID (sem fallback para “primeira bateria”). */
 function resolveEquippedBatteryCatalogId(
   batteryId: string | null | undefined,
   storedBatteries: StoredBattery[],
-  upgrades: Upgrade[]
+  upgrades: Upgrade[],
+  hints?: Readonly<Record<string, string>> | null
 ): string | null {
   if (batteryId == null) return null;
   const bid = String(batteryId).trim();
   if (!bid) return null;
+  const hinted = hints?.[bid] != null ? String(hints[bid]).trim() : '';
+  if (hinted && upgrades.some((u) => u.id === hinted && u.type === 'battery')) return hinted;
   if (upgrades.some((u) => u.id === bid && u.type === 'battery')) return bid;
   const row = storedBatteries.find((b) => String(b.id) === bid);
   const cat = row?.itemId != null ? String(row.itemId).trim() : '';
   if (cat && upgrades.some((u) => u.id === cat && u.type === 'battery')) return cat;
-  const fb = upgrades.find((u) => u.type === 'battery');
-  return fb?.id != null ? String(fb.id).trim() : null;
+  return null;
 }
 
 const calculateProduction = (placedRacks: PlacedRack[], upgradesList: Upgrade[]) => {
@@ -318,7 +320,21 @@ export default function App() {
   /** UUID na rig (bateria tirada do stock) → id de catálogo até existir linha em `stored_batteries` após save/reload. */
   const rackBatteryFromStockCatalogRef = useRef<Map<string, string>>(new Map());
 
-
+  /** Sincroniza hints UUID→catálogo com `stored_batteries` (GET/recuperação) e remove chaves órfãs. */
+  useEffect(() => {
+    const seen = new Set<string>();
+    for (const r of gameState.placedRacks) {
+      const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+      if (!bid) continue;
+      seen.add(bid);
+      const row = gameState.storedBatteries.find((b) => String(b.id).trim() === bid);
+      const itemId = row?.itemId != null ? String(row.itemId).trim() : '';
+      if (itemId) rackBatteryFromStockCatalogRef.current.set(bid, itemId);
+    }
+    for (const key of [...rackBatteryFromStockCatalogRef.current.keys()]) {
+      if (!seen.has(key)) rackBatteryFromStockCatalogRef.current.delete(key);
+    }
+  }, [gameState.placedRacks, gameState.storedBatteries]);
 
   const handleRewardComplete = useCallback(() => {
     setShowRewardModal(false);
@@ -1053,7 +1069,12 @@ export default function App() {
         // --- 1.2 RACK DEPLETION (Real-time Battery Drain) ---
         // Battery drain remains continuous (real-time physics)
         const nextRacks = prev.placedRacks.map(r => {
-          const catBid = resolveEquippedBatteryCatalogId(r.batteryId, prev.storedBatteries, gameUpgrades);
+          const catBid = resolveEquippedBatteryCatalogId(
+            r.batteryId,
+            prev.storedBatteries,
+            gameUpgrades,
+            Object.fromEntries(rackBatteryFromStockCatalogRef.current)
+          );
           const batt = catBid
             ? gameUpgrades.find((u) => u.id === catBid)
             : gameUpgrades.find((u) => u.id === r.batteryId);
@@ -1706,8 +1727,9 @@ export default function App() {
       (Array.isArray(r.multiplierSlots) ? r.multiplierSlots : []).forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
       if (r.wiringId) ns[r.wiringId] = (ns[r.wiringId] || 0) + 1;
       if (r.batteryId) {
+        const hintSnap = Object.fromEntries(rackBatteryFromStockCatalogRef.current);
         rackBatteryFromStockCatalogRef.current.delete(String(r.batteryId));
-        const catId = resolveEquippedBatteryCatalogId(r.batteryId, nb, gameUpgrades);
+        const catId = resolveEquippedBatteryCatalogId(r.batteryId, nb, gameUpgrades, hintSnap);
         if (catId) {
           const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
           const capacity = upg?.powerCapacity || 100;
@@ -1760,9 +1782,10 @@ export default function App() {
       }
 
       if (oldItemId) {
+        const hintSnapOld = Object.fromEntries(rackBatteryFromStockCatalogRef.current);
         rackBatteryFromStockCatalogRef.current.delete(String(oldItemId));
         if (type === 'battery') {
-          const catOld = resolveEquippedBatteryCatalogId(oldItemId, nb, gameUpgrades);
+          const catOld = resolveEquippedBatteryCatalogId(oldItemId, nb, gameUpgrades, hintSnapOld);
           if (catOld) {
             const upg = gameUpgrades.find((u) => u.id === catOld && u.type === 'battery');
             const capacity = upg?.powerCapacity || 100;
@@ -1786,6 +1809,7 @@ export default function App() {
           const s = nb.find((b) => b.id === sbid);
           if (!s) return p;
           initCharge = s.currentCharge;
+          rackBatteryFromStockCatalogRef.current.set(sbid, String(s.itemId).trim());
           nb = nb.filter((b) => b.id !== sbid);
           r.batteryId = sbid;
         } else {
@@ -1814,9 +1838,8 @@ export default function App() {
       if (type === 'battery') id = r.batteryId; else if (type === 'wiring') id = r.wiringId; else if (type === 'multiplier' && idx !== undefined) id = r.multiplierSlots[idx];
       if (!id) return p; let ns = { ...p.stock }; let nb = [...p.storedBatteries];
       if (type === 'battery') {
-        const catId =
-          rackBatteryFromStockCatalogRef.current.get(id) ??
-          resolveEquippedBatteryCatalogId(id, p.storedBatteries, gameUpgrades);
+        const hintSnap = Object.fromEntries(rackBatteryFromStockCatalogRef.current);
+        const catId = resolveEquippedBatteryCatalogId(id, p.storedBatteries, gameUpgrades, hintSnap);
         if (!catId) return p;
         rackBatteryFromStockCatalogRef.current.delete(id);
         const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
@@ -1869,7 +1892,12 @@ export default function App() {
       if (ri === -1) return p;
       const r = p.placedRacks[ri];
       if (!r.batteryId) return p;
-      const cat = resolveEquippedBatteryCatalogId(r.batteryId, p.storedBatteries, gameUpgrades);
+      const cat = resolveEquippedBatteryCatalogId(
+        r.batteryId,
+        p.storedBatteries,
+        gameUpgrades,
+        Object.fromEntries(rackBatteryFromStockCatalogRef.current)
+      );
       const cap = (cat && gameUpgrades.find((u) => u.id === cat)?.powerCapacity) || 0;
       const ur = [...p.placedRacks];
       ur[ri] = { ...r, currentCharge: cap };
@@ -2728,7 +2756,26 @@ export default function App() {
                     <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
                       <div className="flex-1 flex flex-col">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <ServerRoom {...gameState} onPlaceRack={handlePlaceRack} onRemoveRack={handleRemoveRack} onEquipMiner={handleEquipMiner} onUnequipMiner={handleUnequipMiner} onEquipAux={handleEquipAux} onUnequipAux={handleUnequipAux} onTogglePower={handleTogglePower} onRecharge={handleRecharge} upgrades={gameUpgrades} miningCoins={miningCoins} onSetRackCoin={handleSetRackCoin} onSetRoomRacksCoin={handleSetRoomRacksCoin} onSetRoomRacksBattery={handleSetRoomRacksBattery} userEmail={user?.email} onRoomPurchase={() => handleReloadGameState()} onOpenCalculator={isOperatorAdminOnly ? undefined : () => goToGameView('calculator')} />
+                          <ServerRoom
+                            {...gameState}
+                            rackBatteryCatalogHints={Object.fromEntries(rackBatteryFromStockCatalogRef.current)}
+                            onPlaceRack={handlePlaceRack}
+                            onRemoveRack={handleRemoveRack}
+                            onEquipMiner={handleEquipMiner}
+                            onUnequipMiner={handleUnequipMiner}
+                            onEquipAux={handleEquipAux}
+                            onUnequipAux={handleUnequipAux}
+                            onTogglePower={handleTogglePower}
+                            onRecharge={handleRecharge}
+                            upgrades={gameUpgrades}
+                            miningCoins={miningCoins}
+                            onSetRackCoin={handleSetRackCoin}
+                            onSetRoomRacksCoin={handleSetRoomRacksCoin}
+                            onSetRoomRacksBattery={handleSetRoomRacksBattery}
+                            userEmail={user?.email}
+                            onRoomPurchase={() => handleReloadGameState()}
+                            onOpenCalculator={isOperatorAdminOnly ? undefined : () => goToGameView('calculator')}
+                          />
                         </Suspense>
                       </div>
                       <Footer />

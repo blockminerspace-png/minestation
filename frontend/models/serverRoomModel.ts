@@ -10,19 +10,24 @@ export function isRackBatteryInstanceUuid(batteryId: string | null | undefined):
   return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId ?? '').trim());
 }
 
-function firstBatteryCatalogId(upgrades: Upgrade[] | null | undefined): string | null {
-  const u = (upgrades || []).find((x) => x.type === 'battery');
-  return u?.id != null ? String(u.id).trim() : null;
-}
-
-/** `rack.batteryId` deve ser UUID de instância; catálogo só em legado até migração. */
+/** `rack.batteryId` deve ser UUID de instância; catálogo só em legado até migração.
+ * `batteryInstanceCatalogHints`: mapa instância UUID → id de catálogo (ex.: após equipar do armazém a linha some do array local). */
 export function resolvePlacedRackBatteryCatalogId(
   rack: PlacedRack,
   storedBatteries: StoredBattery[] | null | undefined,
-  upgrades?: Upgrade[] | null
+  upgrades?: Upgrade[] | null,
+  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
 ): string | null {
   const bid = rack.batteryId != null ? String(rack.batteryId).trim() : '';
   if (!bid) return null;
+
+  const hintedRaw = batteryInstanceCatalogHints?.[bid];
+  const hinted = hintedRaw != null ? String(hintedRaw).trim() : '';
+  if (hinted && upgrades?.length) {
+    const ok = upgrades.some((u) => u.id === hinted && u.type === 'battery');
+    if (ok) return hinted;
+  }
+
   const row = (storedBatteries || []).find((b) => String(b.id).trim() === bid);
   const catFromRow = row?.itemId != null ? String(row.itemId).trim() : '';
 
@@ -33,11 +38,6 @@ export function resolvePlacedRackBatteryCatalogId(
     }
     const direct = upgrades.find((u) => u.id === bid && u.type === 'battery');
     if (direct) return bid;
-    // Linha em armazém com mesmo id da rig mas item_id inválido/vazio — não bloquear UI nem cálculos com null.
-    if (row && String(row.id).trim() === bid) {
-      const fb = firstBatteryCatalogId(upgrades);
-      if (fb) return fb;
-    }
     return null;
   }
   if (catFromRow) return catFromRow;
@@ -80,9 +80,10 @@ export function calculateRackConsumptionWatts(rack: PlacedRack, upgrades: Upgrad
 export function estimateRackBatteryRuntimeSeconds(
   rack: PlacedRack,
   upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null
+  storedBatteries?: StoredBattery[] | null,
+  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
 ): number | null {
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
   if (!catalogId) return null;
   const battery = upgrades.find((u) => u.id === catalogId);
   if (!battery || battery.powerCapacity === -1) return null;
@@ -125,14 +126,15 @@ export function formatBatteryRuntimeShortPt(totalSec: number): string {
 export function getRackBatteryRuntimeShortLabel(
   rack: PlacedRack,
   upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null
+  storedBatteries?: StoredBattery[] | null,
+  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
 ): string {
   if (!rack.batteryId) return '—';
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
   const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
   if (!battery) return '—';
   if (battery.powerCapacity === -1) return '∞';
-  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries);
+  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries, batteryInstanceCatalogHints);
   if (sec == null) return '—';
   return `~${formatBatteryRuntimeShortPt(sec)}`;
 }
@@ -141,10 +143,11 @@ export function getRackBatteryRuntimeShortLabel(
 export function getRackBatteryRuntimeHint(
   rack: PlacedRack,
   upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null
+  storedBatteries?: StoredBattery[] | null,
+  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
 ): string {
   if (!rack.batteryId) return 'Sem bateria instalada.';
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
+  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
   const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
   if (!battery) {
     return 'Referência de bateria inválida (sincronize com F5 ou re-equipe a bateria).';
@@ -152,7 +155,7 @@ export function getRackBatteryRuntimeHint(
   if (battery.powerCapacity === -1) return 'Bateria ilimitada.';
   const watts = calculateRackConsumptionWatts(rack, upgrades);
   if (watts <= 0) return 'Sem consumo (0 W): a carga não desce com o equipamento atual.';
-  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries);
+  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries, batteryInstanceCatalogHints);
   if (sec == null) return '';
   const w = watts;
   return `Autonomia estimada: ~${formatBatteryRuntimeShortPt(sec)} até 0 Wh ao consumo atual (${w} W). Com a rig desligada a bateria não gasta.`;
@@ -161,11 +164,12 @@ export function getRackBatteryRuntimeHint(
 export function calculatePlacedRacksProductionHashrate(
   racks: PlacedRack[],
   upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null
+  storedBatteries?: StoredBattery[] | null,
+  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
 ): number {
   let total = 0;
   racks.forEach((rack) => {
-    const cat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades);
+    const cat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
     const battery = cat ? upgrades.find((u) => u.id === cat) : null;
     const isInfinite = battery && battery.powerCapacity === -1;
     const isOperational =

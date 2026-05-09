@@ -25,10 +25,17 @@ describe('serverRoomModel', () => {
     expect(formatBatteryRuntimeShortPt(4000)).toMatch(/h/);
   });
 
-  it('resolvePlacedRackBatteryCatalogId usa catálogo em fallback quando item_id da instância está vazio', () => {
+  it('resolvePlacedRackBatteryCatalogId não adivinha catálogo com item_id vazio (sem hints)', () => {
     const rack = { batteryId: 'inst-1' } as PlacedRack;
     const upgrades = [{ id: 'bat_a', type: 'battery' } as Upgrade];
     const stored = [{ id: 'inst-1', itemId: '', currentCharge: 10 } as StoredBattery];
-    expect(resolvePlacedRackBatteryCatalogId(rack, stored, upgrades)).toBe('bat_a');
+    expect(resolvePlacedRackBatteryCatalogId(rack, stored, upgrades)).toBe(null);
+  });
+
+  it('resolvePlacedRackBatteryCatalogId usa hints quando a linha local não traz item_id', () => {
+    const rack = { batteryId: 'inst-1' } as PlacedRack;
+    const upgrades = [{ id: 'bat_a', type: 'battery' } as Upgrade];
+    const stored = [{ id: 'inst-1', itemId: '', currentCharge: 10 } as StoredBattery];
+    expect(resolvePlacedRackBatteryCatalogId(rack, stored, upgrades, { 'inst-1': 'bat_a' })).toBe('bat_a');
   });
 });
