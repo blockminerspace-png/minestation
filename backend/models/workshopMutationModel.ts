@@ -184,7 +184,7 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
     const bid = rawInst != null ? String(rawInst).trim() : '';
     if (!bid || !INSTANCE_UUID_RE.test(bid)) continue;
 
-    // Catálogo: lê do slotItemIds (canon → legacy)
+    // Catálogo: canon → legacy
     let catalogId: string | undefined;
     const legacyKey = String(layout[li]?.id || '').trim();
     if (Object.prototype.hasOwnProperty.call(slotItemIds, canonKey)) {
@@ -194,38 +194,60 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
     }
     if (!catalogId || !SAVE_GAME_ITEM_ID_RE.test(catalogId)) continue;
 
-    const wh = chargeWhAtBatteryLayoutIndex(slotCharges, layout, li);
+    // Carga: stored_batteries é a fonte de verdade mais recente (o cron escreve lá diretamente).
+    // slot_charges pode estar stale se o cron não ainda não escreveu nesta transação.
+    // Usamos o MAX entre os dois para nunca regredir a carga.
+    const whFromSlotCharges = chargeWhAtBatteryLayoutIndex(slotCharges, layout, li);
+    const existingRow = await tx.stored_batteries.findUnique({ where: { id: bid }, select: { current_charge: true } });
+    const whFromStored = existingRow ? Number(existingRow.current_charge) : 0;
+    const wh = Math.max(whFromSlotCharges, Number.isFinite(whFromStored) ? whFromStored : 0);
 
-    // Busca definição da bateria para preencher metadados no upsert
-    const batDef = await tx.upgrades.findUnique({
-      where: { id: catalogId },
-      select: { power_capacity: true, name: true, image: true }
-    });
+    // Busca metadados só se vamos criar (upsert cria se não existe)
+    const batDef = existingRow
+      ? null
+      : await tx.upgrades.findUnique({
+          where: { id: catalogId },
+          select: { power_capacity: true, name: true, image: true }
+        });
     const imgUrl =
       batDef?.image != null && String(batDef.image).trim() !== ''
         ? String(batDef.image).trim().slice(0, 2048)
         : null;
 
-    // UPSERT — garante que a linha existe mesmo que tenha sido apagada
-    await tx.stored_batteries.upsert({
-      where: { id: bid },
-      create: {
-        id: bid,
-        user_id: userId,
-        item_id: catalogId,
-        current_charge: wh,
-        power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : null,
-        display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : null,
-        image_url: imgUrl,
-        workshop_slot_index: slotIndex,
-        workshop_component_slot_id: canonKey
-      },
-      update: {
-        current_charge: wh,
-        workshop_slot_index: slotIndex,
-        workshop_component_slot_id: canonKey
-      }
-    });
+    if (existingRow) {
+      // Linha já existe: só atualiza slot linkage e carga (sem regredir)
+      await tx.stored_batteries.update({
+        where: { id: bid },
+        data: {
+          current_charge: wh,
+          workshop_slot_index: slotIndex,
+          workshop_component_slot_id: canonKey
+        }
+      });
+    } else {
+      // Linha não existe (fantasma): recria com metadados completos
+      const fullDef = await tx.upgrades.findUnique({
+        where: { id: catalogId },
+        select: { power_capacity: true, name: true, image: true }
+      });
+      const fullImg =
+        fullDef?.image != null && String(fullDef.image).trim() !== ''
+          ? String(fullDef.image).trim().slice(0, 2048)
+          : null;
+      await tx.stored_batteries.create({
+        data: {
+          id: bid,
+          user_id: userId,
+          item_id: catalogId,
+          current_charge: wh,
+          power_capacity_wh: fullDef?.power_capacity != null ? Number(fullDef.power_capacity) : null,
+          display_name: fullDef?.name != null ? String(fullDef.name).slice(0, 500) : null,
+          image_url: fullImg,
+          workshop_slot_index: slotIndex,
+          workshop_component_slot_id: canonKey
+        }
+      });
+    }
   }
 }
 
@@ -1007,7 +1029,15 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
         const upg = await loadUpgrade(tx, originalItemId);
         const isBattery = isBatteryUpgrade(upg) || INSTANCE_UUID_RE.test(val);
         if (isBattery && upg) {
-          const charge =
+          // Lê a carga directamente de stored_batteries — fonte de verdade mais recente.
+          // slot_charges pode estar desatualizado porque o cron escreve via pg pool separado
+          // e a transação Prisma pode ter lido wsRow antes dessa escrita ser visível.
+          const storedBatRow = await tx.stored_batteries.findUnique({
+            where: { id: val },
+            select: { current_charge: true }
+          });
+          const chargeFromStored = storedBatRow ? Number(storedBatRow.current_charge) : null;
+          const chargeFromSlot =
             slotTypeU === 'battery' && layoutU && resolvedBatteryLayoutIndexU != null
               ? chargeWhAtBatteryLayoutIndex(slotCharges, layoutU, resolvedBatteryLayoutIndexU)
               : chargeWhOnMapKeys(
@@ -1015,6 +1045,11 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
                   persistSlotKeyU,
                   legacySlotKeyU !== persistSlotKeyU ? legacySlotKeyU : undefined
                 );
+          // Usa o MAIOR dos dois valores para nunca regredir a carga
+          const charge =
+            chargeFromStored != null && Number.isFinite(chargeFromStored)
+              ? Math.max(chargeFromStored, chargeFromSlot)
+              : chargeFromSlot;
           await logCharging(tx, email, {
             action: 'removed_to_stock',
             workshop_slot_index: slotIndex,
