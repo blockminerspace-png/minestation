@@ -39,8 +39,8 @@ describe('lootBoxModel', () => {
   });
 
   it('LootBoxBuyError inclui missing opcional', () => {
-    const e = new LootBoxBuyError(400, 'Saldo USDC insuficiente.', { missing: 2.5 });
-    expect(e.statusCode).toBe(400);
+    const e = new LootBoxBuyError(422, 'Saldo USDC insuficiente.', { missing: 2.5 });
+    expect(e.statusCode).toBe(422);
     expect(e.message).toBe('Saldo USDC insuficiente.');
     expect(e.missing).toBe(2.5);
     const plain = new LootBoxBuyError(404, 'Caixa não encontrada.');

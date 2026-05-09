@@ -400,6 +400,17 @@ export const initDb = async () => {
       );
       CREATE INDEX IF NOT EXISTS idx_support_ticket_player_replies_ticket ON support_ticket_player_replies (ticket_id, created_at ASC);
 
+      CREATE TABLE IF NOT EXISTS support_submission_idempotency (
+        user_id INTEGER NOT NULL,
+        scope TEXT NOT NULL DEFAULT 'support_submit_ticket',
+        idempotency_key TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, scope, idempotency_key)
+      );
+      CREATE INDEX IF NOT EXISTS support_submission_idempotency_created_idx
+        ON support_submission_idempotency (created_at DESC);
+
       CREATE TABLE IF NOT EXISTS rig_rooms (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -541,6 +552,43 @@ export const initDb = async () => {
           ALTER TABLE loot_boxes ADD COLUMN is_active INTEGER DEFAULT 1;
         END IF;
 
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='loot_boxes' AND column_name='stock') THEN
+          ALTER TABLE loot_boxes ADD COLUMN stock INTEGER NULL;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='loot_boxes' AND column_name='max_per_order') THEN
+          ALTER TABLE loot_boxes ADD COLUMN max_per_order INTEGER NOT NULL DEFAULT 20;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='loot_boxes' AND column_name='max_per_user') THEN
+          ALTER TABLE loot_boxes ADD COLUMN max_per_user INTEGER NULL;
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'lucky_box_openings') THEN
+          CREATE TABLE lucky_box_openings (
+            id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            box_id TEXT NOT NULL,
+            rewards_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+            gained_usdc DECIMAL(24, 8) NOT NULL DEFAULT 0,
+            created_at BIGINT NOT NULL,
+            idempotency_key VARCHAR(128) NULL
+          );
+          CREATE INDEX idx_lucky_box_openings_user_created ON lucky_box_openings (user_id, created_at DESC);
+          CREATE INDEX idx_lucky_box_openings_box ON lucky_box_openings (box_id);
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'lucky_box_idempotency') THEN
+          CREATE TABLE lucky_box_idempotency (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            scope VARCHAR(32) NOT NULL,
+            idempotency_key VARCHAR(128) NOT NULL,
+            http_status INTEGER NOT NULL,
+            body_json TEXT NOT NULL,
+            created_at BIGINT NOT NULL,
+            PRIMARY KEY (user_id, scope, idempotency_key)
+          );
+          CREATE INDEX idx_lucky_box_idem_created ON lucky_box_idempotency (created_at DESC);
+        END IF;
+
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='ranking_excluded') THEN
           ALTER TABLE users ADD COLUMN ranking_excluded INTEGER DEFAULT 0;
         END IF;
@@ -568,6 +616,50 @@ export const initDb = async () => {
 
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='economy_settings' AND column_name='black_market_price_band_percent') THEN
           ALTER TABLE economy_settings ADD COLUMN black_market_price_band_percent DOUBLE PRECISION DEFAULT 20;
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='version') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='slug') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN slug TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='category') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN category TEXT NOT NULL DEFAULT 'PROMO_PACK';
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='original_price_usdc') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN original_price_usdc NUMERIC(18,6);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='stock_remaining') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN stock_remaining INTEGER;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='max_per_user') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN max_per_user INTEGER NOT NULL DEFAULT 1;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='starts_at') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN starts_at BIGINT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='ends_at') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN ends_at BIGINT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='sort_order') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='admin_upgrades' AND column_name='image_url') THEN
+          ALTER TABLE admin_upgrades ADD COLUMN image_url TEXT;
+        END IF;
+
+        IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'upgrade_purchase_idempotency') THEN
+          CREATE TABLE upgrade_purchase_idempotency (
+            user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            scope TEXT NOT NULL DEFAULT 'upgrade_purchase',
+            idempotency_key TEXT NOT NULL,
+            response_json TEXT NOT NULL,
+            created_at BIGINT NOT NULL,
+            PRIMARY KEY (user_id, scope, idempotency_key)
+          );
+          CREATE INDEX IF NOT EXISTS upgrade_purchase_idempotency_created_idx
+            ON upgrade_purchase_idempotency (created_at DESC);
         END IF;
 
         IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'device_fingerprint_logs') THEN
@@ -848,12 +940,120 @@ export const initDb = async () => {
     }
 
     await client.query(`
+      ALTER TABLE wheel_prizes ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1;
+      ALTER TABLE wheel_prizes ADD COLUMN IF NOT EXISTS tier TEXT NOT NULL DEFAULT 'BASIC';
+
+      CREATE TABLE IF NOT EXISTS wheel_config (
+        id INTEGER PRIMARY KEY DEFAULT 1,
+        spin_price_usdc DECIMAL(18,6) NOT NULL DEFAULT 0.10,
+        currency TEXT NOT NULL DEFAULT 'USDC',
+        is_enabled INTEGER NOT NULL DEFAULT 1,
+        min_spin_price_usdc DECIMAL(18,6) NOT NULL DEFAULT 0.10,
+        max_spins_per_request INTEGER NOT NULL DEFAULT 1,
+        daily_limit INTEGER,
+        cooldown_seconds INTEGER NOT NULL DEFAULT 0,
+        starts_at BIGINT,
+        ends_at BIGINT,
+        updated_at BIGINT NOT NULL,
+        metadata_json TEXT
+      );
+
+      INSERT INTO wheel_config (
+        id, spin_price_usdc, currency, is_enabled, min_spin_price_usdc,
+        max_spins_per_request, daily_limit, cooldown_seconds, starts_at, ends_at, updated_at, metadata_json
+      )
+      SELECT 1, 0.10, 'USDC', 1, 0.10, 1, NULL, 0, NULL, NULL,
+        (FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000))::BIGINT, NULL
+      WHERE NOT EXISTS (SELECT 1 FROM wheel_config WHERE id = 1);
+
+      CREATE TABLE IF NOT EXISTS wheel_spins (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        code TEXT,
+        won_item_id TEXT NOT NULL,
+        box_id TEXT,
+        charged_usdc DECIMAL(18,6),
+        status TEXT NOT NULL DEFAULT 'completed',
+        idempotency_key TEXT,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS wheel_spins_user_created_idx ON wheel_spins (user_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS wheel_spins_user_idem_idx ON wheel_spins (user_id, idempotency_key);
+      CREATE UNIQUE INDEX IF NOT EXISTS wheel_spins_user_paid_idem_unique
+        ON wheel_spins (user_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL AND kind = 'paid';
+
+      CREATE TABLE IF NOT EXISTS wheel_idempotency (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        scope TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, scope, idempotency_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS wallet_idempotency (
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        scope TEXT NOT NULL,
+        idempotency_key TEXT NOT NULL,
+        response_json TEXT NOT NULL,
+        created_at BIGINT NOT NULL,
+        PRIMARY KEY (user_id, scope, idempotency_key)
+      );
+
+      CREATE TABLE IF NOT EXISTS wallet_ledger_entries (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        entry_type TEXT NOT NULL,
+        coin_id TEXT,
+        sold_crypto NUMERIC(38,18) NOT NULL DEFAULT 0,
+        gross_usdc NUMERIC(38,18) NOT NULL DEFAULT 0,
+        fee_usdc NUMERIC(38,18) NOT NULL DEFAULT 0,
+        net_usdc NUMERIC(38,18) NOT NULL DEFAULT 0,
+        idempotency_key TEXT,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS wallet_ledger_entries_user_created_idx
+        ON wallet_ledger_entries (user_id, created_at DESC);
+      CREATE UNIQUE INDEX IF NOT EXISTS wallet_ledger_entries_user_idem_unique
+        ON wallet_ledger_entries (user_id, idempotency_key)
+        WHERE idempotency_key IS NOT NULL;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS wheel_paid_pending (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         won_item_id TEXT NOT NULL,
         charged_usdc DOUBLE PRECISION NOT NULL DEFAULT 1,
         rolled_at BIGINT NOT NULL
       );
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS profile_wallet_connect_challenges (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        message TEXT NOT NULL,
+        expires_at BIGINT NOT NULL,
+        used_at BIGINT
+      );
+      CREATE INDEX IF NOT EXISTS profile_wallet_challenges_user_idx
+        ON profile_wallet_connect_challenges (user_id);
+      CREATE INDEX IF NOT EXISTS profile_wallet_challenges_expires_idx
+        ON profile_wallet_connect_challenges (expires_at);
+
+      CREATE TABLE IF NOT EXISTS profile_audit_log (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        action VARCHAR(120) NOT NULL,
+        route VARCHAR(200),
+        request_id VARCHAR(64),
+        meta TEXT,
+        created_at BIGINT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS profile_audit_user_created_idx
+        ON profile_audit_log (user_id, created_at DESC);
     `);
 
     await client.query('COMMIT');

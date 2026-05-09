@@ -5,7 +5,7 @@ import {
   roletaClaimInTransaction,
   paidWheelRollInTransaction,
   paidWheelClaimInTransaction,
-  PAID_WHEEL_SPIN_PRICE_USDC
+  fetchPaidWheelSpinPriceUsdcNumber
 } from '../models/roletaModel.js';
 import {
   RoletaAppError,
@@ -148,13 +148,14 @@ export function registerRoletaPlayerRoutes(app: Express, deps: RoletaPlayerDeps)
         });
       }
 
+      const spinPriceUsdc = await fetchPaidWheelSpinPriceUsdcNumber();
       return res.json({
         ok: true,
         wonItemId: result.wonItemId,
         item: result.item,
         newUsdc: result.newUsdc,
         idempotent: result.idempotent,
-        spinPriceUsdc: PAID_WHEEL_SPIN_PRICE_USDC
+        spinPriceUsdc
       });
     } catch (e) {
       if (e instanceof RoletaAppError) {

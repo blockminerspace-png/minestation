@@ -67,13 +67,27 @@ export async function insertSupportTicket(params: {
   attachmentsJson: string;
   createdAt: number;
 }): Promise<void> {
+  await insertSupportTicketInTx(prisma, params);
+}
+
+export async function insertSupportTicketInTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    id: string;
+    userId: number;
+    subject: string;
+    message: string;
+    attachmentsJson: string;
+    createdAt: number;
+  }
+): Promise<void> {
   let attachments: Prisma.InputJsonValue;
   try {
     attachments = JSON.parse(params.attachmentsJson) as Prisma.InputJsonValue;
   } catch {
     attachments = [];
   }
-  await prisma.support_tickets.create({
+  await tx.support_tickets.create({
     data: {
       id: params.id,
       user_id: params.userId,
@@ -86,17 +100,48 @@ export async function insertSupportTicket(params: {
   });
 }
 
-export async function listMySupportTicketSummaries(userId: number): Promise<SupportTicketSummaryRow[]> {
+export async function listMySupportTicketSummaries(
+  userId: number,
+  opts?: { limit?: number; cursorCreatedAt?: bigint | null }
+): Promise<SupportTicketSummaryRow[]> {
+  const lim = Math.min(100, Math.max(1, opts?.limit ?? 100));
+  const cursor = opts?.cursorCreatedAt;
+  if (cursor != null) {
+    return prisma.$queryRaw<SupportTicketSummaryRow[]>`
+      SELECT t.id, t.subject, t.status, t.created_at,
+        (SELECT COUNT(*)::int FROM support_ticket_replies r WHERE r.ticket_id = t.id) AS admin_reply_count,
+        COALESCE((SELECT MAX(r.created_at) FROM support_ticket_replies r WHERE r.ticket_id = t.id), 0) AS last_admin_at,
+        COALESCE((SELECT MAX(p.created_at) FROM support_ticket_player_replies p WHERE p.ticket_id = t.id), t.created_at) AS last_player_at
+      FROM support_tickets t
+      WHERE t.user_id = ${userId} AND t.created_at < ${cursor}
+      ORDER BY t.created_at DESC
+      LIMIT ${lim}
+    `;
+  }
   return prisma.$queryRaw<SupportTicketSummaryRow[]>`
     SELECT t.id, t.subject, t.status, t.created_at,
       (SELECT COUNT(*)::int FROM support_ticket_replies r WHERE r.ticket_id = t.id) AS admin_reply_count,
       COALESCE((SELECT MAX(r.created_at) FROM support_ticket_replies r WHERE r.ticket_id = t.id), 0) AS last_admin_at,
-      COALESCE((SELECT MAX(p.created_at) FROM support_ticket_player_replies p WHERE p.ticket_id = t.id), 0) AS last_player_at
+      COALESCE((SELECT MAX(p.created_at) FROM support_ticket_player_replies p WHERE p.ticket_id = t.id), t.created_at) AS last_player_at
     FROM support_tickets t
     WHERE t.user_id = ${userId}
     ORDER BY t.created_at DESC
-    LIMIT 100
+    LIMIT ${lim}
   `;
+}
+
+/** Arquivar / reabrir apenas se o ticket pertencer ao utilizador. */
+export async function updateSupportTicketStatusForUser(
+  ticketId: string,
+  userId: number,
+  nextStatus: 'archived' | 'open',
+  currentMustBe: 'open' | 'archived'
+): Promise<number> {
+  const r = await prisma.support_tickets.updateMany({
+    where: { id: ticketId, user_id: userId, status: currentMustBe },
+    data: { status: nextStatus }
+  });
+  return r.count;
 }
 
 export async function getSupportTicketById(ticketId: string): Promise<SupportTicketRow | null> {
@@ -154,13 +199,27 @@ export async function insertSupportPlayerReply(params: {
   attachmentsJson: string;
   createdAt: number;
 }): Promise<void> {
+  await insertSupportPlayerReplyInTx(prisma, params);
+}
+
+export async function insertSupportPlayerReplyInTx(
+  tx: Prisma.TransactionClient,
+  params: {
+    replyId: string;
+    ticketId: string;
+    userId: number;
+    message: string;
+    attachmentsJson: string;
+    createdAt: number;
+  }
+): Promise<void> {
   let attachments: Prisma.InputJsonValue;
   try {
     attachments = JSON.parse(params.attachmentsJson) as Prisma.InputJsonValue;
   } catch {
     attachments = [];
   }
-  await prisma.support_ticket_player_replies.create({
+  await tx.support_ticket_player_replies.create({
     data: {
       id: params.replyId,
       ticket_id: params.ticketId,
@@ -170,6 +229,31 @@ export async function insertSupportPlayerReply(params: {
       created_at: BigInt(params.createdAt)
     }
   });
+}
+
+/** Verifica se o nome guardado aparece em anexos JSON do ticket ou respostas (download seguro). */
+export async function supportStoredNameReferencedOnTicket(
+  ticketId: string,
+  storedName: string
+): Promise<boolean> {
+  if (!storedName || /["\\\x00-\x1f]/.test(storedName)) return false;
+  const t = await prisma.support_tickets.findUnique({
+    where: { id: ticketId },
+    select: { attachments: true }
+  });
+  if (!t) return false;
+  const hay = [JSON.stringify(t.attachments)];
+  const adminRows = await prisma.support_ticket_replies.findMany({
+    where: { ticket_id: ticketId },
+    select: { attachments: true }
+  });
+  for (const r of adminRows) hay.push(JSON.stringify(r.attachments));
+  const playerRows = await prisma.support_ticket_player_replies.findMany({
+    where: { ticket_id: ticketId },
+    select: { attachments: true }
+  });
+  for (const r of playerRows) hay.push(JSON.stringify(r.attachments));
+  return hay.some((s) => s.includes(storedName));
 }
 
 export async function listTicketsForAdmin(limit: number): Promise<AdminTicketListRow[]> {

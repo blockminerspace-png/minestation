@@ -47,8 +47,8 @@ export async function loadAdminUpgradesForUser(userId: number | undefined): Prom
   }
 
   const query = isAdminUser
-    ? 'SELECT * FROM admin_upgrades ORDER BY created_at DESC'
-    : 'SELECT * FROM admin_upgrades WHERE is_active = 1 ORDER BY created_at DESC';
+    ? 'SELECT * FROM admin_upgrades ORDER BY COALESCE(sort_order, 0) ASC, created_at DESC'
+    : 'SELECT * FROM admin_upgrades WHERE is_active = 1 ORDER BY COALESCE(sort_order, 0) ASC, created_at DESC';
   const upsRes = await pool.query(query);
   const itemsRes = await pool.query('SELECT * FROM admin_upgrade_items');
   const boxesRes = await pool.query('SELECT * FROM admin_upgrade_boxes');
@@ -90,7 +90,20 @@ export async function loadAdminUpgradesForUser(userId: number | undefined): Prom
     passes: passesMap[String(u.id)] || [],
     coins: coinsMap[String(u.id)] || [],
     visibleToAccessLevelIds: visibilityMap[String(u.id)] || [],
-    alreadyOwned: u.id === '53f0c699-0471-4e65-a147-17064e3aafe0' && userRoomIds.includes('room_1765936323521')
+    alreadyOwned: u.id === '53f0c699-0471-4e65-a147-17064e3aafe0' && userRoomIds.includes('room_1765936323521'),
+    version: u.version != null ? Number(u.version) : 1,
+    slug: u.slug ?? null,
+    category: u.category != null ? String(u.category) : 'PROMO_PACK',
+    originalPriceUsdc:
+      u.original_price_usdc != null && String(u.original_price_usdc).trim() !== ''
+        ? String(u.original_price_usdc)
+        : null,
+    stockRemaining: u.stock_remaining != null ? Number(u.stock_remaining) : null,
+    maxPerUser: u.max_per_user != null ? Number(u.max_per_user) : 1,
+    startsAt: u.starts_at != null ? Number(u.starts_at) : null,
+    endsAt: u.ends_at != null ? Number(u.ends_at) : null,
+    sortOrder: u.sort_order != null ? Number(u.sort_order) : 0,
+    imageUrl: u.image_url != null ? String(u.image_url) : null
   }));
 }
 

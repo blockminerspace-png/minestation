@@ -144,6 +144,10 @@ export interface StoredBattery {
   id: string; // Instance ID
   itemId: string; // Type ID (e.g. battery_aa)
   currentCharge: number;
+  /** Quando preenchido pelo servidor (`/api/inventory/state`), percentagem 0–100 para UI. */
+  chargePercent?: number | null;
+  /** Rótulo curto derivado do id (servidor). */
+  publicRef?: string | null;
   /** Wh máximo na instância (cópia do catálogo na persistência). */
   powerCapacityWh?: number | null;
   displayName?: string | null;
@@ -482,6 +486,9 @@ export interface WheelItem {
   color: string;
   itemId?: string; // Links to game item ID
   image?: string; // Optional image URL or emoji
+  /** 1 = entra no sorteio público; 0 = desativado */
+  isActive?: number;
+  tier?: string;
 }
 
 export interface Prediction {

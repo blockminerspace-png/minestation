@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { GameState, MarketListing, Upgrade, P2PMarketTradeHistoryEntry } from '../types';
 import { Skull, DollarSign, PlusCircle, Package, Tag, Trash2, ArrowRight, Lock, ShieldCheck, History, Search } from 'lucide-react';
 
@@ -12,7 +12,18 @@ const P2P_TYPE_OPTIONS: { value: '' | Upgrade['type']; label: string }[] = [
   { value: 'multiplier', label: 'Multiplicadores' },
   { value: 'charger', label: 'Carregadores' }
 ];
-import { getMarketListings, reserveMarketListing, cancelMarketReservation, buyMarketListing, claimMarketFunds, getCustodyListings, claimCustodyItem, getMarketTradeHistory } from '../services/api';
+import {
+  getMarketListings,
+  reserveMarketListing,
+  cancelMarketReservation,
+  buyMarketListing,
+  claimMarketFunds,
+  getCustodyListings,
+  claimCustodyItem,
+  getMarketTradeHistory,
+  getBlackMarketState,
+  getBlackMarketListingsPage
+} from '../services/api';
 import { resolvePlacedRackBatteryCatalogId } from '../models/serverRoomModel';
 
 /** Preço USDC digitado (ex.: "0,1" em PT). `parseFloat("0,1")` dá 0 — evitar isso. */
@@ -50,8 +61,9 @@ interface BlackMarketProps {
   priceBandPercent?: number;
 }
 
-export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListing, onCreateListing, onCancelListing, upgrades, currentUserName, currentUserEmail, isEnabled = true, onClaimSuccess, refreshTrigger = 0, priceBandPercent: priceBandProp = 20 }) => {
-  const band = Math.min(90, Math.max(1, Number(priceBandProp) || 20));
+export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListing: _onBuyListing, onCreateListing, onCancelListing, upgrades, currentUserName, currentUserEmail, isEnabled = true, onClaimSuccess, refreshTrigger = 0, priceBandPercent: priceBandProp = 20 }) => {
+  const [bmPriceBandPercent, setBmPriceBandPercent] = useState<number | null>(null);
+  const band = Math.min(90, Math.max(1, Number(bmPriceBandPercent ?? priceBandProp) || 20));
   const minFactor = 1 - band / 100;
   const maxFactor = 1 + band / 100;
   if (!upgrades || upgrades.length === 0) return <div className="p-8 text-center text-slate-500 animate-pulse">Sincronizando ofertas P2P…</div>;
@@ -62,6 +74,10 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
   const modeRef = useRef(mode);
   useEffect(() => { modeRef.current = mode; }, [mode]);
   const [marketListings, setMarketListings] = useState<MarketListing[]>([]);
+  const [listingsTotal, setListingsTotal] = useState(0);
+  const [buyFilterCategoriesServer, setBuyFilterCategoriesServer] = useState<string[]>([]);
+  const [bmSnapshotUsdc, setBmSnapshotUsdc] = useState<number | null>(null);
+  const [bmSnapshotBmb, setBmSnapshotBmb] = useState<number | null>(null);
   const [custodyListings, setCustodyListings] = useState<CustodyListingRow[]>([]);
   const [historyPurchases, setHistoryPurchases] = useState<P2PMarketTradeHistoryEntry[]>([]);
   const [historySales, setHistorySales] = useState<P2PMarketTradeHistoryEntry[]>([]);
@@ -78,6 +94,21 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
   const [sellFilterSearch, setSellFilterSearch] = useState('');
   const [sellFilterCategory, setSellFilterCategory] = useState('');
   const [sellFilterType, setSellFilterType] = useState<'' | Upgrade['type']>('');
+
+  const useServerBuyBook = Boolean(currentUserEmail);
+  const buyFiltersRef = useRef({ buySearch, buyCategory, buyType, buyPriceSort });
+  useEffect(() => {
+    buyFiltersRef.current = { buySearch, buyCategory, buyType, buyPriceSort };
+  }, [buySearch, buyCategory, buyType, buyPriceSort]);
+
+  const buyIdempotencyKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    buyIdempotencyKeyRef.current = null;
+  }, [confirmListing?.id]);
+
+  const walletUsdcDisplay = useServerBuyBook && bmSnapshotUsdc != null ? bmSnapshotUsdc : gameState.usdc;
+  const vaultProceedsDisplay =
+    useServerBuyBook && bmSnapshotBmb != null ? bmSnapshotBmb : gameState.blackMarketBalance || 0;
 
   /** Começar em 1 unidade: antes o rascunho ia para o lote inteiro e muitos confirmavam sem alterar → compravam tudo. */
   useEffect(() => {
@@ -132,26 +163,156 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
     setSellPrice(suggest > 0 ? String(suggest) : '');
   }, [sellItemId, upgrades, marketListings]);
 
-  useEffect(() => {
-    (async () => {
+  const refreshBuyListings = useCallback(async () => {
+    if (currentUserEmail) {
+      const f = buyFiltersRef.current;
+      const pg = await getBlackMarketListingsPage({
+        search: f.buySearch,
+        category: f.buyCategory,
+        type: f.buyType,
+        sort: f.buyPriceSort,
+        limit: 60,
+        offset: 0
+      });
+      if (pg.ok) {
+        setMarketListings(pg.items);
+        setListingsTotal(pg.total);
+      }
+    } else {
       const list = await getMarketListings();
       setMarketListings(list);
-      if (mode === 'vault') {
-        const custody = await getCustodyListings();
-        setCustodyListings(custody as CustodyListingRow[]);
+      setListingsTotal(0);
+    }
+  }, [currentUserEmail]);
+
+  const refreshBuyListingsRef = useRef(refreshBuyListings);
+  useEffect(() => {
+    refreshBuyListingsRef.current = refreshBuyListings;
+  }, [refreshBuyListings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!currentUserEmail) {
+        const list = await getMarketListings();
+        if (cancelled) return;
+        setMarketListings(list);
+        setListingsTotal(0);
+        setBuyFilterCategoriesServer([]);
+        setBmSnapshotUsdc(null);
+        setBmSnapshotBmb(null);
+        setBmPriceBandPercent(null);
+        if (mode === 'vault') {
+          const custody = await getCustodyListings();
+          if (!cancelled) setCustodyListings(custody as CustodyListingRow[]);
+        }
+        if (mode === 'history') {
+          setHistoryLoading(true);
+          try {
+            const h = await getMarketTradeHistory();
+            if (!cancelled) {
+              setHistoryPurchases(h.purchases);
+              setHistorySales(h.sales);
+            }
+          } finally {
+            if (!cancelled) setHistoryLoading(false);
+          }
+        }
+        return;
       }
-      if (mode === 'history') {
-        setHistoryLoading(true);
-        try {
-          const h = await getMarketTradeHistory();
-          setHistoryPurchases(h.purchases);
-          setHistorySales(h.sales);
-        } finally {
+
+      if (mode === 'history') setHistoryLoading(true);
+      const st = await getBlackMarketState();
+      if (cancelled) return;
+
+      if (st.ok) {
+        setBmSnapshotUsdc(st.usdc);
+        setBmSnapshotBmb(st.blackMarketBalance);
+        setBmPriceBandPercent(st.priceBandPercent);
+        setBuyFilterCategoriesServer(st.buyFilterCategories);
+
+        if (mode === 'buy') {
+          const f = buyFiltersRef.current;
+          const pg = await getBlackMarketListingsPage({
+            search: f.buySearch,
+            category: f.buyCategory,
+            type: f.buyType,
+            sort: f.buyPriceSort,
+            limit: 60,
+            offset: 0
+          });
+          if (cancelled) return;
+          if (pg.ok) {
+            setMarketListings(pg.items);
+            setListingsTotal(pg.total);
+          } else {
+            setMarketListings(st.listings.items);
+            setListingsTotal(st.listings.total);
+          }
+        } else if (mode === 'vault') {
+          setCustodyListings(st.custody as CustodyListingRow[]);
+        } else if (mode === 'history') {
+          setHistoryPurchases(st.history.purchases);
+          setHistorySales(st.history.sales);
           setHistoryLoading(false);
+        }
+      } else {
+        const list = await getMarketListings();
+        if (cancelled) return;
+        setMarketListings(list);
+        setListingsTotal(list.length);
+        setBuyFilterCategoriesServer([]);
+        setBmSnapshotUsdc(null);
+        setBmSnapshotBmb(null);
+        setBmPriceBandPercent(null);
+        if (mode === 'vault') {
+          const custody = await getCustodyListings();
+          if (!cancelled) setCustodyListings(custody as CustodyListingRow[]);
+        }
+        if (mode === 'history') {
+          try {
+            const h = await getMarketTradeHistory();
+            if (!cancelled) {
+              setHistoryPurchases(h.purchases);
+              setHistorySales(h.sales);
+            }
+          } finally {
+            if (!cancelled) setHistoryLoading(false);
+          }
         }
       }
     })();
-  }, [mode, refreshTrigger, historyReloadNonce]);
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, refreshTrigger, historyReloadNonce, currentUserEmail]);
+
+  useEffect(() => {
+    if (!currentUserEmail || mode !== 'buy') return;
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        const f = buyFiltersRef.current;
+        const pg = await getBlackMarketListingsPage({
+          search: f.buySearch,
+          category: f.buyCategory,
+          type: f.buyType,
+          sort: f.buyPriceSort,
+          limit: 60,
+          offset: 0
+        });
+        if (cancelled) return;
+        if (pg.ok) {
+          setMarketListings(pg.items);
+          setListingsTotal(pg.total);
+        }
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [buySearch, buyCategory, buyType, buyPriceSort, currentUserEmail, mode]);
 
   useEffect(() => {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -171,8 +332,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
 
     let listingsRefreshTimer: number | null = null;
     const refresh = async () => {
-      const list = await getMarketListings();
-      setMarketListings(list);
+      await refreshBuyListingsRef.current();
       if (modeRef.current === 'vault') {
         const custody = await getCustodyListings();
         setCustodyListings(custody as CustodyListingRow[]);
@@ -293,13 +453,13 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
   }, [sellableFiltered, sellItemId]);
 
   const buyCategoryOptions = useMemo(() => {
-    const set = new Set<string>();
+    const set = new Set<string>(buyFilterCategoriesServer);
     for (const l of marketListings) {
       const u = upgrades.find((x) => x.id === l.itemId);
       if (u?.category) set.add(u.category);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'pt'));
-  }, [marketListings, upgrades]);
+  }, [buyFilterCategoriesServer, marketListings, upgrades]);
 
   const sellCategoryOptions = useMemo(() => {
     const set = new Set<string>();
@@ -313,12 +473,16 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
     return marketListings.filter((listing) => {
       const item = upgrades.find((u) => u.id === listing.itemId);
       if (!item || item.sellInBlackMarket === false) return false;
-      const isOwn = listing.sellerName === currentUserName || listing.sellerName === currentUserEmail;
-      return !isOwn;
+      if (!useServerBuyBook) {
+        const isOwn = listing.sellerName === currentUserName || listing.sellerName === currentUserEmail;
+        if (isOwn) return false;
+      }
+      return true;
     });
-  }, [marketListings, upgrades, currentUserName, currentUserEmail]);
+  }, [marketListings, upgrades, currentUserName, currentUserEmail, useServerBuyBook]);
 
   const filteredBuyListings = useMemo(() => {
+    if (useServerBuyBook) return buyListingsFromOthers;
     return buyListingsFromOthers.filter((listing) => {
       const item = upgrades.find((u) => u.id === listing.itemId);
       if (!item) return false;
@@ -331,9 +495,10 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
       }
       return true;
     });
-  }, [buyListingsFromOthers, upgrades, buySearch, buyCategory, buyType]);
+  }, [buyListingsFromOthers, useServerBuyBook, upgrades, buySearch, buyCategory, buyType]);
 
   const sortedBuyListings = useMemo(() => {
+    if (useServerBuyBook) return filteredBuyListings;
     const arr = [...filteredBuyListings];
     arr.sort((a, b) => {
       const pa = Number(a.price);
@@ -344,7 +509,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
       return buyPriceSort === 'asc' ? d : -d;
     });
     return arr;
-  }, [filteredBuyListings, buyPriceSort]);
+  }, [filteredBuyListings, buyPriceSort, useServerBuyBook]);
 
   const selectedSellItem = upgrades.find(u => u.id === sellItemId);
   const marketPrice = selectedSellItem ? getMarketPrice(selectedSellItem.id) : 0;
@@ -370,10 +535,10 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
         </div>
 
         <div className="flex gap-2 items-center">
-          {(gameState.blackMarketBalance || 0) > 0 && (
+          {vaultProceedsDisplay > 0 && (
             <div className="mr-2 flex items-center gap-2 bg-yellow-900/50 px-3 py-1 rounded border border-yellow-700 animate-in fade-in zoom-in">
               <span className="text-[10px] text-yellow-500 uppercase font-bold">Proventos:</span>
-              <span className="text-sm font-mono font-bold text-yellow-400">${formatCost(gameState.blackMarketBalance || 0)}</span>
+              <span className="text-sm font-mono font-bold text-yellow-400">${formatCost(vaultProceedsDisplay)}</span>
               <div className="text-[10px] text-yellow-600">(liquidar no cofre)</div>
             </div>
           )}
@@ -499,9 +664,13 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
         {/* BUY MODE */}
         {mode === 'buy' && (
           <div className="space-y-3">
-            {marketListings.length === 0 ? (
+            {marketListings.length === 0 && (!useServerBuyBook || listingsTotal === 0) ? (
               <div className="text-center py-8 text-slate-400 border border-dashed border-slate-800 rounded-lg">
                 Nenhuma oferta aberta neste instante.
+              </div>
+            ) : marketListings.length === 0 ? (
+              <div className="text-center py-8 text-amber-200/80 border border-dashed border-amber-900/40 rounded-lg text-sm">
+                Nenhuma oferta coincide com os filtros. Limpa a pesquisa ou muda categoria/tipo.
               </div>
             ) : (
               <>
@@ -553,8 +722,9 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                     </select>
                   </div>
                   <p className="text-[10px] text-slate-500">
-                    {filteredBuyListings.length} de {buyListingsFromOthers.length} ofertas (filtro aplicado; as tuas não
-                    aparecem na compra).
+                    {filteredBuyListings.length} de{' '}
+                    {useServerBuyBook ? listingsTotal : buyListingsFromOthers.length} ofertas (filtro aplicado; as tuas
+                    não aparecem na compra).
                   </p>
                 </div>
                 {filteredBuyListings.length === 0 ? (
@@ -572,9 +742,9 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
 
                   const lineTotal = p2pLineTotal(listing);
                   const unitPrice = Number(listing.price);
-                  const canAffordFull = gameState.usdc >= lineTotal;
+                  const canAffordFull = walletUsdcDisplay >= lineTotal;
                   const canAffordAny =
-                    Number.isFinite(unitPrice) && unitPrice > 0 && gameState.usdc >= unitPrice;
+                    Number.isFinite(unitPrice) && unitPrice > 0 && walletUsdcDisplay >= unitPrice;
                   const isReservedForOther = listing.reservedBy && listing.reservedBy !== currentUserName && listing.reservedBy !== currentUserEmail;
                   const hasImage = item.image;
                   return (
@@ -612,7 +782,10 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                         <button
                           onClick={async () => {
                             const r = await reserveMarketListing(listing.id);
-                            if (r && r.ok) { setConfirmListing(listing); const list = await getMarketListings(); setMarketListings(list); }
+                            if (r && r.ok) {
+                              setConfirmListing(listing);
+                              await refreshBuyListings();
+                            }
                           }}
                           disabled={!canAffordAny || isOwn || isReservedForOther || !isEnabled}
                           className={`
@@ -638,11 +811,11 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
       {mode === 'vault' && (
         <div className="space-y-4">
           {/* CLAIM FUNDS UI */}
-          {(gameState.blackMarketBalance || 0) > 0 && (
+          {vaultProceedsDisplay > 0 && (
             <div className="bg-yellow-900/20 border border-yellow-800/50 p-4 rounded-lg flex items-center justify-between">
               <div>
                 <div className="text-yellow-500 font-bold text-sm uppercase mb-1">Proventos de vendas</div>
-                <div className="text-2xl font-mono text-yellow-400 font-bold">${formatCost(gameState.blackMarketBalance || 0)}</div>
+                <div className="text-2xl font-mono text-yellow-400 font-bold">${formatCost(vaultProceedsDisplay)}</div>
               </div>
               <button
                 onClick={async () => {
@@ -937,7 +1110,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                 const buyQ = Number.isFinite(parsed) && parsed >= 1 ? Math.min(maxQ, parsed) : 1;
                 const unit = Number(confirmListing.price);
                 const confirmTotal = (Number.isFinite(unit) ? unit : 0) * buyQ;
-                const canAfford = gameState.usdc >= confirmTotal;
+                const canAfford = walletUsdcDisplay >= confirmTotal;
                 return (
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
@@ -976,19 +1149,20 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-slate-400">Reserva USDC</span>
-                      <span className="font-mono text-slate-300">${formatCost(gameState.usdc)}</span>
+                      <span className="font-mono text-slate-300">${formatCost(walletUsdcDisplay)}</span>
                     </div>
                     <div className="flex justify-between text-xs">
                       <span className="text-slate-400">Saldo após compra</span>
-                      <span className={`font-mono ${canAfford ? 'text-slate-300' : 'text-red-500'}`}>${formatCost(gameState.usdc - confirmTotal)}</span>
+                      <span className={`font-mono ${canAfford ? 'text-slate-300' : 'text-red-500'}`}>
+                        ${formatCost(walletUsdcDisplay - confirmTotal)}
+                      </span>
                     </div>
                     <div className="flex gap-2 pt-2">
                       <button onClick={async () => {
                         if (!confirmListing) return;
                         await cancelMarketReservation(confirmListing.id);
                         setConfirmListing(null);
-                        const list = await getMarketListings();
-                        setMarketListings(list);
+                        await refreshBuyListings();
                       }} className="flex-1 px-3 py-2 text-xs font-bold uppercase rounded border bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300">
                         Cancelar
                       </button>
@@ -998,7 +1172,15 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                         const trimmed = String(buyQtyDraft ?? '').trim();
                         const pq = parseInt(trimmed, 10);
                         const qBuy = Number.isFinite(pq) && pq >= 1 ? Math.min(mq, pq) : 1;
-                        const res = await buyMarketListing(confirmListing.id, qBuy);
+                        if (!buyIdempotencyKeyRef.current) {
+                          buyIdempotencyKeyRef.current =
+                            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+                              ? crypto.randomUUID()
+                              : `p2p_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+                        }
+                        const res = await buyMarketListing(confirmListing.id, qBuy, {
+                          idempotencyKey: buyIdempotencyKeyRef.current
+                        });
                         if (res && res.ok) {
                           const got = typeof res.purchasedQty === 'number' ? res.purchasedQty : qBuy;
                           const paid = typeof res.totalUsdc === 'number' ? res.totalUsdc : null;
@@ -1008,11 +1190,13 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                           setHistoryReloadNonce((n) => n + 1);
                           if (onClaimSuccess) onClaimSuccess();
                           setConfirmListing(null);
-                          const list = await getMarketListings();
-                          setMarketListings(list);
+                          await refreshBuyListings();
                         } else {
-                          if (res.error === 'Insufficient USDC') alert(`USDC insuficiente. Déficit: $${res.missing?.toFixed(2) || '0.00'}`);
-                          else alert(res.error || 'Não foi possível concluir a compra.');
+                          const insuff =
+                            res.error === 'Insufficient USDC' ||
+                            /insufficient|insuficiente/i.test(String(res.error || res.message || ''));
+                          if (insuff) alert(`USDC insuficiente. Déficit: $${res.missing?.toFixed(2) || '0.00'}`);
+                          else alert(res.error || res.message || 'Não foi possível concluir a compra.');
                         }
                       }} disabled={!canAfford || confirmTotal <= 0} className="flex-1 px-3 py-2 text-xs font-bold uppercase rounded border bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white border-red-700">
                         Confirmar

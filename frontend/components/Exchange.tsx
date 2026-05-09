@@ -1,31 +1,59 @@
 import React, { useState, useEffect } from 'react';
-import { RefreshCcw, Coins, AlertCircle } from 'lucide-react';
+import { RefreshCcw, Coins } from 'lucide-react';
 import { getExchangeSettings } from '../services/api';
 
 interface ExchangeProps {
   coinBalances: Record<string, number>;
-  miningCoins: { id: string; name: string; usdcRate: number }[];
-  onSellCoin: (coinId: string, percentage: number) => void;
+  miningCoins: { id: string; name: string; usdcRate: number; showInExchange?: boolean }[];
+  /** Atalhos 10 / 50 / 100 — o servidor recalcula a quantidade. */
+  onSellCoin: (coinId: string, percentagePoints: 10 | 50 | 100) => Promise<void>;
+  /** Piso e taxa vindos de GET /api/wallet/state (evita divergência com /exchange-settings). */
+  serverDeskSettings?: { minExchangeAmount: number; exchangeFeePercent: number } | null;
 }
 
-export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, onSellCoin }) => {
+export const Exchange: React.FC<ExchangeProps> = ({
+  coinBalances,
+  miningCoins,
+  onSellCoin,
+  serverDeskSettings = null
+}) => {
   const [settings, setSettings] = useState<{ minExchangeAmount: number; exchangeFeePercent: number } | null>(null);
+  const [pendingKey, setPendingKey] = useState<string | null>(null);
 
   useEffect(() => {
-    loadSettings();
-    const interval = setInterval(loadSettings, 10000); // Atualiza a cada 10 segundos
-    return () => clearInterval(interval);
-  }, []);
-
-  const loadSettings = async () => {
-    try {
-      const s = await getExchangeSettings();
+    if (serverDeskSettings) {
       setSettings({
-        minExchangeAmount: Math.max(0, Number(s.minExchangeAmount) || 0),
-        exchangeFeePercent: Math.max(0, Math.min(100, Number(s.exchangeFeePercent) || 0)),
+        minExchangeAmount: Math.max(0, Number(serverDeskSettings.minExchangeAmount) || 0),
+        exchangeFeePercent: Math.max(0, Math.min(100, Number(serverDeskSettings.exchangeFeePercent) || 0))
       });
-    } catch (err) {
-      console.error("Failed to load exchange settings", err);
+      return;
+    }
+    const loadSettings = async () => {
+      try {
+        const s = await getExchangeSettings();
+        setSettings({
+          minExchangeAmount: Math.max(0, Number(s.minExchangeAmount) || 0),
+          exchangeFeePercent: Math.max(0, Math.min(100, Number(s.exchangeFeePercent) || 0))
+        });
+      } catch (err) {
+        console.error('Failed to load exchange settings', err);
+      }
+    };
+    void loadSettings();
+    const interval = setInterval(loadSettings, 10000);
+    return () => clearInterval(interval);
+  }, [serverDeskSettings]);
+
+  const runDeskPct = async (coinId: string, pct: 10 | 50 | 100) => {
+    const key = `${coinId}-${pct}`;
+    if (pendingKey) return;
+    setPendingKey(key);
+    try {
+      await onSellCoin(coinId, pct);
+    } catch (e) {
+      console.error('[Exchange desk]', e);
+    } finally {
+      setPendingKey(null);
     }
   };
 
@@ -98,9 +126,30 @@ export const Exchange: React.FC<ExchangeProps> = ({ coinBalances, miningCoins, o
                     </div>
 
                     <div className="grid grid-cols-3 gap-1">
-                      <button onClick={() => onSellCoin(c.id, 0.1)} disabled={bal <= 0 || isBelowMin} className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-[10px] py-1 px-2 rounded border border-slate-200 dark:border-slate-700 transition-colors">10%</button>
-                      <button onClick={() => onSellCoin(c.id, 0.5)} disabled={bal <= 0 || isBelowMin} className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-[10px] py-1 px-2 rounded border border-slate-200 dark:border-slate-700 transition-colors">50%</button>
-                      <button onClick={() => onSellCoin(c.id, 1)} disabled={bal <= 0 || isBelowMin} className="bg-green-100 dark:bg-green-900/40 hover:bg-green-200 dark:hover:bg-green-800/60 disabled:opacity-50 disabled:cursor-not-allowed text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50 text-[10px] py-1 px-2 rounded font-bold transition-colors">Liquidar tudo</button>
+                      <button
+                        type="button"
+                        onClick={() => void runDeskPct(c.id, 10)}
+                        disabled={bal <= 0 || isBelowMin || pendingKey !== null}
+                        className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-[10px] py-1 px-2 rounded border border-slate-200 dark:border-slate-700 transition-colors"
+                      >
+                        {pendingKey === `${c.id}-10` ? '…' : '10%'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void runDeskPct(c.id, 50)}
+                        disabled={bal <= 0 || isBelowMin || pendingKey !== null}
+                        className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-slate-700 dark:text-slate-300 text-[10px] py-1 px-2 rounded border border-slate-200 dark:border-slate-700 transition-colors"
+                      >
+                        {pendingKey === `${c.id}-50` ? '…' : '50%'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void runDeskPct(c.id, 100)}
+                        disabled={bal <= 0 || isBelowMin || pendingKey !== null}
+                        className="bg-green-100 dark:bg-green-900/40 hover:bg-green-200 dark:hover:bg-green-800/60 disabled:opacity-50 disabled:cursor-not-allowed text-green-700 dark:text-green-400 border border-green-200 dark:border-green-800/50 text-[10px] py-1 px-2 rounded font-bold transition-colors"
+                      >
+                        {pendingKey === `${c.id}-100` ? '…' : 'Liquidar tudo'}
+                      </button>
                     </div>
                     {isBelowMin && (
                       <div className="text-[9px] text-red-500 text-center">Abaixo do piso mínimo em USDC</div>

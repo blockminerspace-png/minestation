@@ -2,8 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { safeSupportAttachmentHref } from '../utils/supportAttachmentUrls';
 
 describe('safeSupportAttachmentHref', () => {
-  it('aceita só caminhos /img/ na mesma origem', () => {
+  it('aceita caminhos /img/ e download API seguro', () => {
     expect(safeSupportAttachmentHref('/img/uploads/x.png')).toBe('/img/uploads/x.png');
+    const tid = 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee';
+    const dl = `/api/support/attachments/download?file=${encodeURIComponent('support-1-2-a.png')}&ticket=${encodeURIComponent(tid)}`;
+    expect(safeSupportAttachmentHref(dl)).toBe(dl);
   });
 
   it('rejeita URLs absolutas e esquemas', () => {

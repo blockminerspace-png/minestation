@@ -27,12 +27,14 @@ export const AdminGames: React.FC<AdminGamesProps> = ({ gameUpgrades }) => {
             const res = await fetch('/api/admin/wheel/config');
             if (res.ok) {
                 const data = await res.json();
-                setWheelItems(data.map((d: any) => ({
-                    id: d.id,
-                    label: d.label,
-                    weight: d.weight,
-                    color: d.color,
-                    itemId: d.item_id
+                setWheelItems(data.map((d: Record<string, unknown>) => ({
+                    id: String(d.id),
+                    label: String(d.label),
+                    weight: Number(d.weight),
+                    color: String(d.color),
+                    itemId: typeof d.itemId === 'string' ? d.itemId : typeof d.item_id === 'string' ? d.item_id : undefined,
+                    isActive: d.isActive != null ? Number(d.isActive) : 1,
+                    tier: typeof d.tier === 'string' ? d.tier : 'BASIC'
                 })));
             }
         } catch (error) {
@@ -50,7 +52,9 @@ export const AdminGames: React.FC<AdminGamesProps> = ({ gameUpgrades }) => {
                 label: item.label,
                 weight: item.weight,
                 color: item.color,
-                itemId: item.itemId
+                itemId: item.itemId,
+                isActive: item.isActive ?? 1,
+                tier: item.tier ?? 'BASIC'
             }));
 
             const res = await fetch('/api/admin/wheel/config', {

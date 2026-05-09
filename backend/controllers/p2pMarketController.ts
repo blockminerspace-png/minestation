@@ -331,12 +331,29 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
           await tx.$queryRawUnsafe('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', userId);
           const lr = await tx.$queryRawUnsafe('SELECT * FROM player_listings WHERE id = $1 FOR UPDATE', listingId);
           const lrArr = Array.isArray(lr) ? lr : [];
-          const l = lrArr[0] as { user_id?: number; status?: string; item_id?: string; qty?: number } | undefined;
+          const l = lrArr[0] as
+            | {
+                user_id?: number;
+                status?: string;
+                item_id?: string;
+                qty?: number;
+                reserved_by?: number | null;
+                reserved_until?: string | number | bigint | null;
+              }
+            | undefined;
           if (!l || Number(l.user_id) !== userId) {
             throw new P2pUserError(404, { error: 'Anúncio não encontrado.' });
           }
           if (l.status !== 'active') {
             throw new P2pUserError(400, { error: 'Este anúncio já não pode ser cancelado.' });
+          }
+          const nowC = Date.now();
+          const rb = l.reserved_by != null ? Number(l.reserved_by) : null;
+          const rt = l.reserved_until != null ? timestampMsFromDb(l.reserved_until) : 0;
+          if (rb != null && rt > nowC) {
+            throw new P2pUserError(409, {
+              error: 'Anúncio com reserva activa ou compra em curso. Tenta mais tarde.'
+            });
           }
           const q = listingQtyFromRow(l.qty);
           await tx.$executeRawUnsafe(
@@ -472,6 +489,24 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
       res.status(403).json({ error: 'Mercado negro desativado.' });
       return;
     }
+    const idemRaw =
+      typeof (bodyBuy as { idempotencyKey?: string })?.idempotencyKey === 'string'
+        ? String((bodyBuy as { idempotencyKey: string }).idempotencyKey).trim()
+        : '';
+    const idemKey = idemRaw.length > 128 ? idemRaw.slice(0, 128) : idemRaw;
+    if (idemKey.length > 0) {
+      const prev = await prisma.p2p_market_buy_idempotency.findUnique({
+        where: { buyer_id_idempotency_key: { buyer_id: buyerId, idempotency_key: idemKey } }
+      });
+      if (prev && prev.http_status >= 200) {
+        try {
+          const cached = JSON.parse(prev.body_json) as Record<string, unknown>;
+          return res.status(prev.http_status).json(cached);
+        } catch {
+          return res.status(200).json({ ok: true });
+        }
+      }
+    }
     try {
       const out = await prisma.$transaction(
         async (tx) => {
@@ -567,7 +602,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
           }
           const buyerUsdc = Number(br?.usdc || 0);
           if (buyerUsdc < totalPrice) {
-            throw new P2pUserError(400, { error: 'Insufficient USDC', missing: totalPrice - buyerUsdc });
+            throw new P2pUserError(422, { error: 'Insufficient USDC', missing: totalPrice - buyerUsdc });
           }
           const settingsRows = await tx.$queryRawUnsafe(
             'SELECT market_tax_percent FROM economy_settings WHERE id = 1'
@@ -584,7 +619,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
           );
           const payArr = Array.isArray(payRows) ? payRows : [];
           if (payArr.length === 0) {
-            throw new P2pUserError(400, {
+            throw new P2pUserError(422, {
               error: 'Insufficient USDC',
               missing: Math.max(0, totalPrice - buyerUsdc)
             });
@@ -684,13 +719,29 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         totalUsdc: out.totalPrice,
         unitPrice: out.unitPrice
       });
-      res.json({
+      const responseBody = {
         ok: true,
         message: 'Compra realizada. Retire o item no cofre (P2P).',
         purchasedQty: out.buyQty,
         totalUsdc: out.totalPrice,
         unitPrice: out.unitPrice
-      });
+      };
+      if (idemKey.length > 0) {
+        try {
+          await prisma.p2p_market_buy_idempotency.create({
+            data: {
+              buyer_id: buyerId,
+              idempotency_key: idemKey,
+              http_status: 200,
+              body_json: JSON.stringify(responseBody),
+              created_at: BigInt(Date.now())
+            }
+          });
+        } catch {
+          /* duplicate idempotency insert — safe to ignore */
+        }
+      }
+      res.json(responseBody);
     } catch (e: unknown) {
       if (e instanceof P2pUserError) {
         res.status(e.status).json(e.body);

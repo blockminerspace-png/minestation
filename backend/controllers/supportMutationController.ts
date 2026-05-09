@@ -76,24 +76,27 @@ export function registerSupportMutationRoutes(app: Express, deps: SupportMutatio
       const { list: attachments } = buildAttachmentsFromFiles(files);
       try {
         if (action === 'submit_ticket') {
-          const { id } = await runSupportSubmitTicketMutation({
+          const { id, idempotentReplay } = await runSupportSubmitTicketMutation({
             userId: uid,
             subjectRaw: req.body?.subject,
             messageRaw: req.body?.message,
-            attachments
+            attachments,
+            idempotencyKeyRaw: req.body?.idempotencyKey
           });
           await appendGameActivityLog(null, uid, 'support_ticket_submit', {
             ticketId: id,
-            attachmentCount: attachments.length
+            attachmentCount: attachments.length,
+            idempotentReplay: !!idempotentReplay
           });
-          res.json({ ok: true, id, action: 'submit_ticket' });
+          res.json({ ok: true, id, action: 'submit_ticket', idempotentReplay: !!idempotentReplay });
           return;
         }
-        const { replyId } = await runSupportPlayerReplyMutation({
+        const { replyId, idempotentReplay } = await runSupportPlayerReplyMutation({
           userId: uid,
           ticketIdRaw: req.body?.ticketId,
           messageRaw: req.body?.message,
-          attachments
+          attachments,
+          idempotencyKeyRaw: req.body?.idempotencyKey
         });
         const ticketId = String(req.body?.ticketId ?? '')
           .trim()
@@ -103,7 +106,7 @@ export function registerSupportMutationRoutes(app: Express, deps: SupportMutatio
           replyId,
           attachmentCount: attachments.length
         });
-        res.json({ ok: true, id: replyId, action: 'player_reply' });
+        res.json({ ok: true, id: replyId, action: 'player_reply', idempotentReplay: !!idempotentReplay });
       } catch (e) {
         if (e instanceof SupportMutationError) {
           const payload: Record<string, unknown> = { error: e.message };

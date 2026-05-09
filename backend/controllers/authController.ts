@@ -205,8 +205,15 @@ export function registerAuthRoutes(app: Express, deps: AuthControllerDeps): void
     try {
       const loaded = await loadSessionUser(sid);
       if (!loaded) return res.status(401).json({ error: 'No session' });
-      const { polygonWallet } = (req.body || {}) as { polygonWallet?: unknown };
-      await updateUserPolygonAndAccess(loaded.user.id as string | number, polygonWallet);
+      const body = (req.body || {}) as Record<string, unknown>;
+      if (body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'polygonWallet')) {
+        return res.status(422).json({
+          error:
+            'A carteira Polygon só pode ser ligada pelo perfil com assinatura (POST /api/profile/wallet/connect/challenge e /verify).',
+          code: 'POLYGON_USE_PROFILE'
+        });
+      }
+      await updateUserPolygonAndAccess(loaded.user.id as string | number, undefined);
       const wid = Number(loaded.user.id);
       logUserAction(Number.isFinite(wid) ? wid : null, 'wallet_link', {});
       res.json({ ok: true });

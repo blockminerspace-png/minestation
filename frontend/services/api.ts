@@ -1,4 +1,4 @@
-import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog, PlacedRack, StoredBattery, P2PMarketTradeHistory, P2PMarketTradeHistoryEntry, WorkshopStructure } from '../types';
+import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog, PlacedRack, StoredBattery, P2PMarketTradeHistory, P2PMarketTradeHistoryEntry, WorkshopStructure, WheelItem } from '../types';
 import { GAME_NAV_LABEL_KEYS } from '../constants/gameNavLabels';
 
 const base = '/api';
@@ -101,6 +101,11 @@ export type PartnerYoutubeVideoPublic = {
   userId?: number;
   partnerChannelUrl?: string;
   partnerAvatarUrl?: string;
+  /** Vitrine modular: URL de miniatura validada no servidor. */
+  thumbnailUrl?: string;
+  embedUrl?: string;
+  publishedAt?: number;
+  creator?: { displayName: string; channelUrl: string; avatarUrl: string };
 };
 
 export type PartnerYoutubeMySubmission = {
@@ -115,16 +120,99 @@ export type PartnerYoutubeMySubmission = {
   rejectReason?: string;
 };
 
+export type PartnersShowcaseVideoDto = {
+  publicId: string;
+  title: string;
+  youtubeUrl: string;
+  youtubeVideoId: string;
+  thumbnailUrl: string;
+  embedUrl: string;
+  description?: string;
+  publishedAt: number;
+  creator: { displayName: string; channelUrl: string; avatarUrl: string };
+};
+
+export type PartnersStatePayload = {
+  ok?: boolean;
+  page?: { emptyMessage?: string; subtitle?: string; title?: string; rules?: Record<string, unknown> };
+  showcase?: {
+    videos: PartnersShowcaseVideoDto[];
+    pagination?: { nextCursor: string | null; limit: number };
+    empty?: boolean;
+  };
+  auth?: {
+    authenticated?: boolean;
+    isPartner?: boolean;
+    canSubmitToday?: boolean;
+    submissionsToday?: number;
+  };
+  mySubmissions?: Array<{
+    publicId: string;
+    title: string;
+    youtubeUrl: string;
+    youtubeVideoId: string;
+    description?: string;
+    status: string;
+    createdAt: number;
+    reviewedAt?: number;
+    rejectReasonPublic?: string;
+  }>;
+};
+
+function mapShowcaseToLegacyVideos(videos: PartnersShowcaseVideoDto[]): PartnerYoutubeVideoPublic[] {
+  return videos.map((v) => ({
+    id: v.publicId,
+    title: v.title,
+    youtubeUrl: v.youtubeUrl,
+    youtubeVideoId: v.youtubeVideoId,
+    description: v.description,
+    createdAt: v.publishedAt,
+    approvedAt: v.publishedAt,
+    username: v.creator?.displayName || 'Parceiro',
+    userId: undefined,
+    partnerChannelUrl: v.creator?.channelUrl,
+    partnerAvatarUrl: v.creator?.avatarUrl,
+    thumbnailUrl: v.thumbnailUrl,
+    embedUrl: v.embedUrl,
+    publishedAt: v.publishedAt,
+    creator: v.creator
+  }));
+}
+
+export async function getPartnersState(opts?: { limit?: number; cursor?: string }): Promise<PartnersStatePayload | null> {
+  try {
+    const qs = new URLSearchParams();
+    if (opts?.limit != null) qs.set('limit', String(opts.limit));
+    if (opts?.cursor) qs.set('cursor', opts.cursor);
+    const res = await apiFetch(`${base}/partners/state?${qs.toString()}`);
+    if (!res.ok) return null;
+    return (await res.json().catch(() => null)) as PartnersStatePayload | null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getPartnerYoutubeVideosPublic(
   limit = 24,
   offset = 0
-): Promise<{ videos: PartnerYoutubeVideoPublic[] }> {
+): Promise<{ videos: PartnerYoutubeVideoPublic[]; pagination?: { nextCursor: string | null; limit: number } }> {
   try {
+    if (offset === 0) {
+      const st = await getPartnersState({ limit });
+      const raw = Array.isArray(st?.showcase?.videos) ? st!.showcase!.videos : [];
+      return {
+        videos: mapShowcaseToLegacyVideos(raw),
+        pagination: st?.showcase?.pagination
+      };
+    }
     const q = new URLSearchParams({ limit: String(limit), offset: String(offset) });
     const res = await apiFetch(`${base}/partner-videos/public?${q.toString()}`);
-    const data = (await res.json().catch(() => ({}))) as { videos?: PartnerYoutubeVideoPublic[] };
+    const data = (await res.json().catch(() => ({}))) as {
+      videos?: PartnerYoutubeVideoPublic[];
+      pagination?: { nextCursor: string | null; limit: number };
+    };
     if (!res.ok) return { videos: [] };
-    return { videos: Array.isArray(data.videos) ? data.videos : [] };
+    return { videos: Array.isArray(data.videos) ? data.videos : [], pagination: data.pagination };
   } catch {
     return { videos: [] };
   }
@@ -137,21 +225,28 @@ export async function getPartnerYoutubeMyContext(): Promise<{
   submissions: PartnerYoutubeMySubmission[];
 }> {
   try {
-    const res = await apiFetch(`${base}/partner-videos/my`);
-    const data = (await res.json().catch(() => ({}))) as {
-      isPartner?: boolean;
-      canSubmitToday?: boolean;
-      submissionsToday?: number;
-      submissions?: PartnerYoutubeMySubmission[];
-    };
-    if (!res.ok) {
+    const st = await getPartnersState({ limit: 24 });
+    if (!st?.ok) {
       return { isPartner: false, canSubmitToday: false, submissionsToday: 0, submissions: [] };
     }
+    const auth = st.auth || {};
+    const raw = Array.isArray(st.mySubmissions) ? st.mySubmissions : [];
+    const submissions: PartnerYoutubeMySubmission[] = raw.map((s) => ({
+      id: s.publicId,
+      title: s.title,
+      youtubeUrl: s.youtubeUrl,
+      youtubeVideoId: s.youtubeVideoId,
+      description: s.description,
+      status: s.status,
+      createdAt: s.createdAt,
+      reviewedAt: s.reviewedAt,
+      rejectReason: s.rejectReasonPublic
+    }));
     return {
-      isPartner: !!data.isPartner,
-      canSubmitToday: !!data.canSubmitToday,
-      submissionsToday: Number(data.submissionsToday) || 0,
-      submissions: Array.isArray(data.submissions) ? data.submissions : []
+      isPartner: !!auth.isPartner,
+      canSubmitToday: !!auth.canSubmitToday,
+      submissionsToday: Number(auth.submissionsToday) || 0,
+      submissions
     };
   } catch {
     return { isPartner: false, canSubmitToday: false, submissionsToday: 0, submissions: [] };
@@ -164,7 +259,7 @@ export async function submitPartnerYoutubeVideo(payload: {
   description?: string;
 }): Promise<{ ok: boolean; error?: string; code?: string; id?: string; status?: string }> {
   try {
-    const res = await apiFetch(`${base}/partner-videos/submit`, {
+    const res = await apiFetch(`${base}/partners/videos/submit`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -495,6 +590,46 @@ export type ProfilePageBundle = {
   profileGame: { usdc: number; claimedReferrals: number };
 };
 
+/** Estado consolidado do perfil (`GET /api/profile/state`). */
+export type ProfileApiState = {
+  ok: true;
+  identity: {
+    email: string;
+    username: string;
+    displayName: string;
+    accessLevelId: string;
+    accessLevelLabel: string;
+    status: string;
+    emailReadOnly: boolean;
+  };
+  permissions: {
+    canChangeUsername: boolean;
+    canBindReferral: boolean;
+    canConnectWallet: boolean;
+    canRemoveWallet: boolean;
+  };
+  limits: { usernameMin: number; usernameMax: number; passwordMax: number; referralCodeMax: number };
+  referral: {
+    code: string | null;
+    inviteUrl: string;
+    invitedCount: number;
+    commissionPercent: number;
+    commissionRule: string;
+    referredBy: string | null;
+  };
+  wallet: { network: string; chainId: number; address: string | null };
+  badges: Array<{
+    passId: string;
+    seasonId: string;
+    name: string;
+    imageUrl: string | null;
+    purchasedAt: number;
+  }>;
+  bundle: ProfilePageBundle;
+  accessLevelsCatalog: Array<{ id: string; name: string; isActive: boolean; newsPostingEnabled: boolean }>;
+  userAccessLevelIds: string[];
+};
+
 /** Resposta de `GET /api/me/upgrade-shop-bundle` (página Upgrade). */
 export type UpgradeShopBundle = {
   seasonPasses: SeasonPass[];
@@ -529,15 +664,125 @@ export async function getUpgradeShopBundle(): Promise<UpgradeShopBundle | null> 
   }
 }
 
-/** Remove a carteira Polygon do perfil autenticado (`polygon_wallet` → null na BD). */
-export async function clearMyPolygonWallet(): Promise<{ ok: boolean; error?: string }> {
+/** Remove a carteira Polygon do perfil (exige palavra-passe se a conta tiver senha). */
+export async function clearMyPolygonWallet(
+  currentPassword?: string
+): Promise<{ ok: boolean; error?: string; code?: string }> {
   try {
-    const res = await apiFetch(`${base}/me/polygon-wallet`, { method: 'DELETE' });
-    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    const res = await apiFetch(`${base}/profile/wallet`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(currentPassword ? { currentPassword } : {})
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
     if (!res.ok) {
-      return { ok: false, error: data.error || `Erro ${res.status}` };
+      return { ok: false, error: data.error || `Erro ${res.status}`, code: data.code };
     }
     return { ok: true };
+  } catch {
+    return { ok: false, error: 'Erro de rede.' };
+  }
+}
+
+export async function getProfileState(): Promise<ProfileApiState | null> {
+  try {
+    const res = await apiFetch(`${base}/profile/state`);
+    const raw = await res.json().catch(() => null);
+    if (!res.ok || !raw || typeof raw !== 'object' || (raw as { ok?: unknown }).ok !== true) return null;
+    return raw as ProfileApiState;
+  } catch {
+    return null;
+  }
+}
+
+export async function patchProfileIdentity(username: string): Promise<{ ok: boolean; error?: string; code?: string }> {
+  try {
+    const res = await apiFetch(`${base}/profile/identity`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username })
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (!res.ok) return { ok: false, error: data.error || `Erro ${res.status}`, code: data.code };
+    return { ok: true, ...(typeof data === 'object' ? data : {}) } as { ok: boolean; error?: string; code?: string };
+  } catch {
+    return { ok: false, error: 'Erro de rede.' };
+  }
+}
+
+export async function postProfilePasswordChange(payload: {
+  currentPassword: string;
+  newPassword: string;
+  confirmPassword: string;
+}): Promise<{ ok: boolean; error?: string; code?: string; message?: string }> {
+  try {
+    const res = await apiFetch(`${base}/profile/password/change`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      message?: string;
+    };
+    if (!res.ok) return { ok: false, error: data.error || `Erro ${res.status}`, code: data.code };
+    return { ok: true, message: data.message };
+  } catch {
+    return { ok: false, error: 'Erro de rede.' };
+  }
+}
+
+export async function postProfileWalletChallenge(): Promise<{
+  ok: boolean;
+  challengeId?: string;
+  message?: string;
+  expiresAt?: number;
+  chainId?: number;
+  error?: string;
+  code?: string;
+}> {
+  try {
+    const res = await apiFetch(`${base}/profile/wallet/connect/challenge`, { method: 'POST' });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: (data.error as string) || `Erro ${res.status}`,
+        code: data.code as string | undefined
+      };
+    }
+    return {
+      ok: true,
+      challengeId: typeof data.challengeId === 'string' ? data.challengeId : undefined,
+      message: typeof data.message === 'string' ? data.message : undefined,
+      expiresAt: typeof data.expiresAt === 'number' ? data.expiresAt : undefined,
+      chainId: typeof data.chainId === 'number' ? data.chainId : undefined
+    };
+  } catch {
+    return { ok: false, error: 'Erro de rede.' };
+  }
+}
+
+export async function postProfileWalletVerify(payload: {
+  challengeId: string;
+  address: string;
+  signature: string;
+  chainId: number;
+}): Promise<{ ok: boolean; error?: string; code?: string; address?: string }> {
+  try {
+    const res = await apiFetch(`${base}/profile/wallet/connect/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string;
+      code?: string;
+      address?: string;
+    };
+    if (!res.ok) return { ok: false, error: data.error || `Erro ${res.status}`, code: data.code };
+    return { ok: true, address: data.address };
   } catch {
     return { ok: false, error: 'Erro de rede.' };
   }
@@ -1072,6 +1317,501 @@ export async function getPlayerInventoryMe(): Promise<
   }
 }
 
+/** Linha de item empilhável vinda de `GET /api/inventory/state`. */
+export type InventoryStackableRowApi = {
+  stockKey: string;
+  catalogItemId: string;
+  displayQuantity: number;
+  availableQuantity: number;
+  name: string;
+  description: string;
+  category: string;
+  type: string;
+  image: string | null;
+  icon: string;
+  baseProduction: number;
+  powerConsumption: number;
+  powerCapacity: number;
+  slotsCapacity: number;
+  aiSlotsCapacity: number;
+  isNft: boolean;
+};
+
+export type InventoryStackableCategoryApi = {
+  category: string;
+  items: InventoryStackableRowApi[];
+};
+
+export type PlayerInventoryStateOk = {
+  ok: true;
+  version: 1;
+  serverUpdatedAt: number;
+  stock: Record<string, number>;
+  partialChargeBatteries: StoredBattery[];
+  fullChargeBatteries: StoredBattery[];
+  stackableCategories: InventoryStackableCategoryApi[];
+};
+
+function parseInventoryBatteryInstance(raw: unknown): StoredBattery | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const o = raw as Record<string, unknown>;
+  const id = typeof o.id === 'string' ? o.id.trim() : '';
+  const itemId = typeof o.itemId === 'string' ? o.itemId.trim() : '';
+  const chRaw = o.currentCharge;
+  const ch = typeof chRaw === 'number' ? chRaw : Number(chRaw);
+  if (!id || !itemId || !Number.isFinite(ch)) return null;
+  const pwhRaw = o.powerCapacityWh;
+  const pwh = pwhRaw == null ? null : Number(pwhRaw);
+  const dn = o.displayName;
+  const iu = o.imageUrl;
+  const cpRaw = o.chargePercent;
+  const cp = typeof cpRaw === 'number' ? cpRaw : Number(cpRaw);
+  const pr = o.publicRef;
+  return {
+    id,
+    itemId,
+    currentCharge: ch,
+    chargePercent: Number.isFinite(cp) ? cp : null,
+    publicRef: typeof pr === 'string' && pr.trim() ? pr.trim() : null,
+    powerCapacityWh: pwh != null && Number.isFinite(pwh) ? pwh : null,
+    displayName: typeof dn === 'string' && dn.trim() ? dn.trim() : null,
+    imageUrl: typeof iu === 'string' && iu.trim() ? iu.trim() : null
+  };
+}
+
+function parseStackableCategories(raw: unknown): InventoryStackableCategoryApi[] {
+  if (!Array.isArray(raw)) return [];
+  const out: InventoryStackableCategoryApi[] = [];
+  for (const c of raw) {
+    if (!c || typeof c !== 'object') continue;
+    const co = c as Record<string, unknown>;
+    const cat = typeof co.category === 'string' ? co.category : '';
+    const itemsRaw = co.items;
+    const items: InventoryStackableRowApi[] = [];
+    if (Array.isArray(itemsRaw)) {
+      for (const it of itemsRaw) {
+        if (!it || typeof it !== 'object') continue;
+        const r = it as Record<string, unknown>;
+        const stockKey = typeof r.stockKey === 'string' ? r.stockKey : '';
+        const catalogItemId = typeof r.catalogItemId === 'string' ? r.catalogItemId : '';
+        if (!stockKey || !catalogItemId) continue;
+        const dq = Number(r.displayQuantity);
+        const aq = Number(r.availableQuantity);
+        items.push({
+          stockKey,
+          catalogItemId,
+          displayQuantity: Number.isFinite(dq) ? dq : 0,
+          availableQuantity: Number.isFinite(aq) ? aq : 0,
+          name: typeof r.name === 'string' ? r.name : stockKey,
+          description: typeof r.description === 'string' ? r.description : '',
+          category: typeof r.category === 'string' ? r.category : 'Outros',
+          type: typeof r.type === 'string' ? r.type : 'other',
+          image: typeof r.image === 'string' ? r.image : null,
+          icon: typeof r.icon === 'string' ? r.icon : '',
+          baseProduction: Number(r.baseProduction) || 0,
+          powerConsumption: Number(r.powerConsumption) || 0,
+          powerCapacity: Number(r.powerCapacity) || 0,
+          slotsCapacity: Number(r.slotsCapacity) || 0,
+          aiSlotsCapacity: Number(r.aiSlotsCapacity) || 0,
+          isNft: !!r.isNft
+        });
+      }
+    }
+    if (cat) out.push({ category: cat, items });
+  }
+  return out;
+}
+
+/**
+ * Inventário consolidado (`GET /api/inventory/state`) — grupos para a UI + stock + baterias.
+ */
+export async function getPlayerInventoryState(): Promise<
+  PlayerInventoryStateOk | { ok: false; status: number; error?: string; code?: string }
+> {
+  try {
+    const res = await apiFetch(`${base}/inventory/state?t=${Date.now()}`, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (res.status === 429) {
+      return {
+        ok: false,
+        status: 429,
+        error: 'Demasiados pedidos. Aguarda um minuto.',
+        code: 'RATE_LIMIT'
+      };
+    }
+    if (!res.ok) {
+      let error: string | undefined;
+      let code: string | undefined;
+      try {
+        const j = (await res.json()) as { error?: unknown; code?: unknown };
+        if (typeof j?.error === 'string' && j.error.trim()) error = j.error.trim();
+        if (typeof j?.code === 'string' && j.code.trim()) code = j.code.trim();
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, status: res.status, error, code };
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = (await res.json()) as Record<string, unknown>;
+    } catch {
+      return { ok: false, status: 502, error: 'Resposta inválida do servidor.' };
+    }
+    if (body.version !== 1) {
+      return { ok: false, status: 502, error: 'Resposta inválida do servidor.' };
+    }
+    const stockRaw = body.stock;
+    const stock: Record<string, number> =
+      stockRaw && typeof stockRaw === 'object' && !Array.isArray(stockRaw)
+        ? Object.fromEntries(
+            Object.entries(stockRaw as Record<string, unknown>).filter(
+              ([k, v]) => typeof k === 'string' && k.trim() && typeof v === 'number' && Number.isFinite(v) && v > 0
+            )
+          ) as Record<string, number>
+        : {};
+    const partial: StoredBattery[] = [];
+    const full: StoredBattery[] = [];
+    if (Array.isArray(body.partialChargeBatteries)) {
+      for (const x of body.partialChargeBatteries) {
+        const b = parseInventoryBatteryInstance(x);
+        if (b) partial.push(b);
+      }
+    }
+    if (Array.isArray(body.fullChargeBatteries)) {
+      for (const x of body.fullChargeBatteries) {
+        const b = parseInventoryBatteryInstance(x);
+        if (b) full.push(b);
+      }
+    }
+    const su = Number(body.serverUpdatedAt);
+    const serverUpdatedAt = Number.isFinite(su) ? su : 0;
+    if (serverUpdatedAt > 0) globalLastLoadTime = serverUpdatedAt;
+    return {
+      ok: true,
+      version: 1,
+      serverUpdatedAt,
+      stock,
+      partialChargeBatteries: partial,
+      fullChargeBatteries: full,
+      stackableCategories: parseStackableCategories(body.stackableCategories)
+    };
+  } catch (e) {
+    console.error('[APIService] getPlayerInventoryState failed', e);
+    return { ok: false, status: 500, error: 'Erro de rede ao carregar o inventário.' };
+  }
+}
+
+/** Produto da Lojinha Miner (`GET /api/shop/state`). */
+export type ShopProductApi = {
+  id: string;
+  name: string;
+  category: string;
+  type: string;
+  baseCost: number;
+  baseProduction: number;
+  powerConsumption?: number;
+  powerCapacity?: number;
+  multiplier?: number;
+  slotsCapacity?: number;
+  aiSlotsCapacity?: number;
+  description: string;
+  icon: string;
+  status: string;
+  isNft: boolean;
+  maxGlobalStock?: number;
+  totalSold: number;
+  image?: string;
+  compatibleRacks: string[];
+  rewardWh: number;
+  sellInHardwareMarket: boolean;
+  isActive: boolean;
+};
+
+export type ShopCartLineApi = {
+  lineId: string;
+  productId: string;
+  qty: number;
+  unitPrice: number;
+  lineTotal: number;
+};
+
+export type ShopStateV1Ok = {
+  ok: true;
+  version: 1;
+  hardwareMarketEnabled: boolean;
+  usdc: number;
+  products: ShopProductApi[];
+  cart: { cartId: string; lines: ShopCartLineApi[]; totalUsdc: number };
+};
+
+const SHOP_UPGRADE_TYPES = new Set(['machine', 'infrastructure', 'battery', 'wiring', 'multiplier', 'charger']);
+
+function parseShopProduct(raw: unknown): ShopProductApi | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' ? r.id.trim() : '';
+  if (!id) return null;
+  const typeStr = typeof r.type === 'string' && SHOP_UPGRADE_TYPES.has(r.type) ? r.type : 'machine';
+  const racksRaw = r.compatibleRacks;
+  const compatibleRacks = Array.isArray(racksRaw)
+    ? racksRaw.filter((x): x is string => typeof x === 'string' && x.trim().length > 0).map((x) => x.trim())
+    : [];
+  return {
+    id,
+    name: typeof r.name === 'string' ? r.name : id,
+    category: typeof r.category === 'string' ? r.category : '',
+    type: typeStr,
+    baseCost: Number(r.baseCost) || 0,
+    baseProduction: Number(r.baseProduction) || 0,
+    powerConsumption: r.powerConsumption != null ? Number(r.powerConsumption) : undefined,
+    powerCapacity: r.powerCapacity != null ? Number(r.powerCapacity) : undefined,
+    multiplier: r.multiplier != null ? Number(r.multiplier) : undefined,
+    slotsCapacity: r.slotsCapacity != null ? Number(r.slotsCapacity) : undefined,
+    aiSlotsCapacity: r.aiSlotsCapacity != null ? Number(r.aiSlotsCapacity) : undefined,
+    description: typeof r.description === 'string' ? r.description : '',
+    icon: typeof r.icon === 'string' ? r.icon : '📦',
+    status: typeof r.status === 'string' ? r.status : 'normal',
+    isNft: !!r.isNft,
+    maxGlobalStock: r.maxGlobalStock != null ? Number(r.maxGlobalStock) : undefined,
+    totalSold: Number(r.totalSold) || 0,
+    image: typeof r.image === 'string' && r.image.trim() ? r.image.trim() : undefined,
+    compatibleRacks,
+    rewardWh: Number(r.rewardWh) || 0,
+    sellInHardwareMarket: r.sellInHardwareMarket !== false,
+    isActive: r.isActive !== false
+  };
+}
+
+function parseShopCartLine(raw: unknown): ShopCartLineApi | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const lineId = typeof r.lineId === 'string' ? r.lineId.trim() : '';
+  const productId = typeof r.productId === 'string' ? r.productId.trim() : '';
+  const qty = Math.floor(Number(r.qty));
+  const unitPrice = Number(r.unitPrice);
+  const lineTotal = Number(r.lineTotal);
+  if (!lineId || !productId || !Number.isInteger(qty) || qty < 0) return null;
+  if (!Number.isFinite(unitPrice) || !Number.isFinite(lineTotal)) return null;
+  return { lineId, productId, qty, unitPrice, lineTotal };
+}
+
+export function parseShopStateV1Body(body: Record<string, unknown>): ShopStateV1Ok | null {
+  if (body.version !== 1) return null;
+  const productsRaw = body.products;
+  const products: ShopProductApi[] = [];
+  if (Array.isArray(productsRaw)) {
+    for (const p of productsRaw) {
+      const pr = parseShopProduct(p);
+      if (pr) products.push(pr);
+    }
+  }
+  const cartRaw = body.cart;
+  if (!cartRaw || typeof cartRaw !== 'object' || Array.isArray(cartRaw)) return null;
+  const co = cartRaw as Record<string, unknown>;
+  const cartId = typeof co.cartId === 'string' ? co.cartId.trim() : '';
+  if (!cartId) return null;
+  const linesRaw = co.lines;
+  const lines: ShopCartLineApi[] = [];
+  if (Array.isArray(linesRaw)) {
+    for (const ln of linesRaw) {
+      const l = parseShopCartLine(ln);
+      if (l && l.qty > 0) lines.push(l);
+    }
+  }
+  const totalUsdc = Number(co.totalUsdc);
+  if (!Number.isFinite(totalUsdc) || totalUsdc < 0) return null;
+  const usdc = Number(body.usdc);
+  if (!Number.isFinite(usdc) || usdc < 0) return null;
+  return {
+    ok: true,
+    version: 1,
+    hardwareMarketEnabled: body.hardwareMarketEnabled !== false,
+    usdc,
+    products,
+    cart: { cartId, lines, totalUsdc }
+  };
+}
+
+export async function getShopState(): Promise<
+  ShopStateV1Ok | { ok: false; status: number; error?: string; code?: string }
+> {
+  try {
+    const res = await apiFetch(`${base}/shop/state?t=${Date.now()}`, {
+      headers: { 'Content-Type': 'application/json' }
+    });
+    if (res.status === 429) {
+      return {
+        ok: false,
+        status: 429,
+        error: 'Demasiados pedidos. Aguarda um minuto.',
+        code: 'RATE_LIMIT'
+      };
+    }
+    if (!res.ok) {
+      let error: string | undefined;
+      let code: string | undefined;
+      try {
+        const j = (await res.json()) as { error?: unknown; code?: unknown };
+        if (typeof j?.error === 'string' && j.error.trim()) error = j.error.trim();
+        if (typeof j?.code === 'string' && j.code.trim()) code = j.code.trim();
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, status: res.status, error, code };
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = (await res.json()) as Record<string, unknown>;
+    } catch {
+      return { ok: false, status: 502, error: 'Resposta inválida do servidor.' };
+    }
+    const parsed = parseShopStateV1Body(body);
+    if (!parsed) return { ok: false, status: 502, error: 'Resposta inválida do servidor.' };
+    return parsed;
+  } catch (e) {
+    console.error('[APIService] getShopState failed', e);
+    return { ok: false, status: 500, error: 'Erro de rede ao carregar a loja.' };
+  }
+}
+
+async function parseShopMutationResponse(res: Response): Promise<{
+  ok: boolean;
+  shop?: ShopStateV1Ok;
+  error?: string;
+  status: number;
+}> {
+  const status = res.status;
+  let body: Record<string, unknown> = {};
+  try {
+    body = (await res.json()) as Record<string, unknown>;
+  } catch {
+    /* ignore */
+  }
+  if (!res.ok) {
+    const err = typeof body.error === 'string' ? body.error : `Erro HTTP ${status}`;
+    return { ok: false, status, error: err };
+  }
+  const shopRaw = body.shop;
+  if (shopRaw && typeof shopRaw === 'object' && !Array.isArray(shopRaw)) {
+    const shop = parseShopStateV1Body(shopRaw as Record<string, unknown>);
+    if (shop) return { ok: true, status, shop };
+  }
+  return { ok: true, status };
+}
+
+export async function postShopCartItem(
+  productId: string,
+  quantity: number
+): Promise<{ ok: boolean; shop?: ShopStateV1Ok; error?: string; status: number }> {
+  try {
+    const res = await apiFetch(`${base}/shop/cart/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ productId, quantity })
+    });
+    return parseShopMutationResponse(res);
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
+export async function patchShopCartLine(
+  lineId: string,
+  quantity: number
+): Promise<{ ok: boolean; shop?: ShopStateV1Ok; error?: string; status: number }> {
+  try {
+    const res = await apiFetch(`${base}/shop/cart/items/${encodeURIComponent(lineId)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quantity })
+    });
+    return parseShopMutationResponse(res);
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
+export async function deleteShopCartLineApi(
+  lineId: string
+): Promise<{ ok: boolean; shop?: ShopStateV1Ok; error?: string; status: number }> {
+  try {
+    const res = await apiFetch(`${base}/shop/cart/items/${encodeURIComponent(lineId)}`, {
+      method: 'DELETE'
+    });
+    return parseShopMutationResponse(res);
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
+export async function clearShopCartApi(): Promise<{ ok: boolean; shop?: ShopStateV1Ok; error?: string; status: number }> {
+  try {
+    const res = await apiFetch(`${base}/shop/cart`, { method: 'DELETE' });
+    return parseShopMutationResponse(res);
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
+export type ShopCheckoutApiResult =
+  | {
+      ok: true;
+      newUsdc: number;
+      totalPaid?: number;
+      cached?: boolean;
+      orderId?: string;
+      shop?: ShopStateV1Ok;
+    }
+  | { ok: false; status: number; error?: string; missing?: number };
+
+export async function postShopCheckout(idempotencyKey?: string | null): Promise<ShopCheckoutApiResult> {
+  try {
+    const res = await apiFetch(`${base}/shop/checkout`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        idempotencyKey: idempotencyKey && String(idempotencyKey).trim() ? String(idempotencyKey).trim() : undefined
+      })
+    });
+    const status = res.status;
+    let body: Record<string, unknown> = {};
+    try {
+      body = (await res.json()) as Record<string, unknown>;
+    } catch {
+      /* ignore */
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        status,
+        error: typeof body.error === 'string' ? body.error : `Erro HTTP ${status}`,
+        missing: body.missing != null ? Number(body.missing) : undefined
+      };
+    }
+    const newUsdc = Number(body.newUsdc);
+    if (!Number.isFinite(newUsdc)) {
+      return { ok: false, status: 502, error: 'Resposta inválida do servidor.' };
+    }
+    const shopRaw = body.shop;
+    let shop: ShopStateV1Ok | undefined;
+    if (shopRaw && typeof shopRaw === 'object' && !Array.isArray(shopRaw)) {
+      const p = parseShopStateV1Body(shopRaw as Record<string, unknown>);
+      if (p) shop = p;
+    }
+    return {
+      ok: true,
+      newUsdc,
+      totalPaid: body.totalPaid != null ? Number(body.totalPaid) : undefined,
+      cached: !!body.cached,
+      orderId: typeof body.orderId === 'string' && body.orderId.trim() ? body.orderId.trim() : undefined,
+      shop
+    };
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
 /** Resposta GET `/api/calculator/me` — projeções calculadas no servidor. */
 export type PlayerCalculatorMeOk = {
   ok: true;
@@ -1204,6 +1944,207 @@ export async function getMarketListings(): Promise<MarketListing[]> {
   }
 }
 
+function parseMarketListingRow(raw: unknown): MarketListing | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const r = raw as Record<string, unknown>;
+  const id = typeof r.id === 'string' ? r.id.trim() : '';
+  const sellerName = typeof r.sellerName === 'string' ? r.sellerName : '';
+  const itemId = typeof r.itemId === 'string' ? r.itemId.trim() : '';
+  if (!id || !itemId) return null;
+  const price = Number(r.price);
+  const qty = Math.max(1, Math.floor(Number(r.qty)) || 1);
+  const lineTotal =
+    r.lineTotal != null && Number.isFinite(Number(r.lineTotal)) ? Number(r.lineTotal) : price * qty;
+  return {
+    id,
+    sellerName,
+    itemId,
+    price: Number.isFinite(price) ? price : 0,
+    qty,
+    lineTotal,
+    buyerPaidUsdc: r.buyerPaidUsdc != null ? Number(r.buyerPaidUsdc) : undefined,
+    expiresAt: typeof r.expiresAt === 'number' ? r.expiresAt : parseInt(String(r.expiresAt ?? '0'), 10) || 0,
+    reservedBy: typeof r.reservedBy === 'string' ? r.reservedBy : undefined,
+    reservedUntil:
+      typeof r.reservedUntil === 'number' ? r.reservedUntil : r.reservedUntil != null ? Number(r.reservedUntil) : undefined,
+    status: r.status === 'active' || r.status === 'sold' ? r.status : undefined
+  };
+}
+
+export type BlackMarketStateV1Ok = {
+  ok: true;
+  version: 1;
+  enabled: boolean;
+  usdc: number;
+  blackMarketBalance: number;
+  priceBandPercent: number;
+  listings: { items: MarketListing[]; total: number; limit: number; offset: number };
+  myActiveListings: MarketListing[];
+  custody: MarketListing[];
+  sellableStock: Array<{ itemId: string; qty: number }>;
+  buyFilterCategories: string[];
+  history: { purchases: P2PMarketTradeHistoryEntry[]; sales: P2PMarketTradeHistoryEntry[]; limit: number };
+};
+
+export async function getBlackMarketState(): Promise<
+  BlackMarketStateV1Ok | { ok: false; status: number; error?: string }
+> {
+  try {
+    const res = await apiFetch(`${base}/black-market/state?t=${Date.now()}`);
+    if (!res.ok) {
+      let error: string | undefined;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (typeof j?.error === 'string') error = j.error;
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, status: res.status, error };
+    }
+    const raw = (await res.json()) as Record<string, unknown>;
+    if (raw.version !== 1) return { ok: false, status: 502, error: 'Resposta inválida.' };
+    const listingsRaw = raw.listings;
+    const items: MarketListing[] = [];
+    if (listingsRaw && typeof listingsRaw === 'object' && !Array.isArray(listingsRaw)) {
+      const lr = listingsRaw as Record<string, unknown>;
+      const arr = Array.isArray(lr.items) ? lr.items : [];
+      for (const x of arr) {
+        const m = parseMarketListingRow(x);
+        if (m) items.push(m);
+      }
+      const total = Number((lr as { total?: unknown }).total);
+      const limit = Number((lr as { limit?: unknown }).limit);
+      const offset = Number((lr as { offset?: unknown }).offset);
+      const myRaw = Array.isArray(raw.myActiveListings) ? raw.myActiveListings : [];
+      const myActiveListings = myRaw.map(parseMarketListingRow).filter((x): x is MarketListing => x != null);
+      const custRaw = Array.isArray(raw.custody) ? raw.custody : [];
+      const custody = custRaw.map(parseMarketListingRow).filter((x): x is MarketListing => x != null);
+      const sellRaw = Array.isArray(raw.sellableStock) ? raw.sellableStock : [];
+      const sellableStock = sellRaw
+        .map((s) => {
+          if (!s || typeof s !== 'object') return null;
+          const o = s as Record<string, unknown>;
+          const itemId = typeof o.itemId === 'string' ? o.itemId : '';
+          const qty = Math.floor(Number(o.qty));
+          if (!itemId || !Number.isFinite(qty)) return null;
+          return { itemId, qty };
+        })
+        .filter((x): x is { itemId: string; qty: number } => x != null);
+      const catRaw = Array.isArray(raw.buyFilterCategories) ? raw.buyFilterCategories : [];
+      const buyFilterCategories = catRaw
+        .filter((c): c is string => typeof c === 'string' && c.trim() !== '')
+        .map((c) => c.trim());
+      const histRaw = raw.history;
+      const histPurch: P2PMarketTradeHistoryEntry[] = [];
+      const histSales: P2PMarketTradeHistoryEntry[] = [];
+      if (histRaw && typeof histRaw === 'object' && !Array.isArray(histRaw)) {
+        const h = histRaw as Record<string, unknown>;
+        const parseHist = (row: unknown): P2PMarketTradeHistoryEntry | null => {
+          if (!row || typeof row !== 'object') return null;
+          const r = row as Record<string, unknown>;
+          const itemId = typeof r.itemId === 'string' ? r.itemId : '';
+          if (!itemId) return null;
+          return {
+            at: typeof r.at === 'number' ? r.at : parseInt(String(r.at ?? '0'), 10) || 0,
+            itemId,
+            qty: Math.max(1, parseInt(String(r.qty ?? 1), 10) || 1),
+            unitPrice: Number(r.unitPrice) || 0,
+            buyerPaidUsdc: Number(r.buyerPaidUsdc) || 0,
+            sellerReceivedUsdc: Number(r.sellerReceivedUsdc) || 0,
+            taxUsdc: Number(r.taxUsdc) || 0,
+            counterpartName: typeof r.counterpartName === 'string' ? r.counterpartName : '—'
+          };
+        };
+        if (Array.isArray(h.purchases)) for (const x of h.purchases) {
+          const p = parseHist(x);
+          if (p) histPurch.push(p);
+        }
+        if (Array.isArray(h.sales)) for (const x of h.sales) {
+          const p = parseHist(x);
+          if (p) histSales.push(p);
+        }
+      }
+      return {
+        ok: true,
+        version: 1,
+        enabled: raw.enabled !== false,
+        usdc: Number(raw.usdc) || 0,
+        blackMarketBalance: Number(raw.blackMarketBalance) || 0,
+        priceBandPercent: Number(raw.priceBandPercent) || 20,
+        listings: {
+          items,
+          total: Number.isFinite(total) ? total : items.length,
+          limit: Number.isFinite(limit) ? limit : 60,
+          offset: Number.isFinite(offset) ? offset : 0
+        },
+        myActiveListings,
+        custody,
+        sellableStock,
+        buyFilterCategories,
+        history: {
+          purchases: histPurch,
+          sales: histSales,
+          limit: typeof (histRaw as Record<string, unknown>)?.limit === 'number' ? (histRaw as { limit: number }).limit : 80
+        }
+      };
+    }
+    return { ok: false, status: 502, error: 'Resposta inválida.' };
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
+export type BlackMarketListingsPageOk = {
+  ok: true;
+  items: MarketListing[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export async function getBlackMarketListingsPage(params: {
+  search?: string;
+  category?: string;
+  type?: string;
+  sort?: 'asc' | 'desc';
+  limit?: number;
+  offset?: number;
+}): Promise<BlackMarketListingsPageOk | { ok: false; status: number; error?: string }> {
+  const sp = new URLSearchParams();
+  if (params.search?.trim()) sp.set('q', params.search.trim());
+  if (params.category?.trim()) sp.set('category', params.category.trim());
+  if (params.type?.trim()) sp.set('type', params.type.trim());
+  if (params.sort) sp.set('sort', params.sort);
+  if (params.limit != null) sp.set('limit', String(params.limit));
+  if (params.offset != null) sp.set('offset', String(params.offset));
+  try {
+    const res = await apiFetch(`${base}/black-market/listings?${sp.toString()}&t=${Date.now()}`);
+    if (!res.ok) {
+      let error: string | undefined;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (typeof j?.error === 'string') error = j.error;
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, status: res.status, error };
+    }
+    const raw = (await res.json()) as Record<string, unknown>;
+    if (raw.version !== 1) return { ok: false, status: 502, error: 'Resposta inválida.' };
+    const arr = Array.isArray(raw.items) ? raw.items : [];
+    const items = arr.map(parseMarketListingRow).filter((x): x is MarketListing => x != null);
+    return {
+      ok: true,
+      items,
+      total: Number(raw.total) || 0,
+      limit: Number(raw.limit) || 60,
+      offset: Number(raw.offset) || 0
+    };
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
 const emptyP2pHistory: P2PMarketTradeHistory = { purchases: [], sales: [] };
 
 export async function getMarketTradeHistory(): Promise<P2PMarketTradeHistory> {
@@ -1276,7 +2217,11 @@ export type BuyMarketListingResult = {
   unitPrice?: number;
 };
 
-export async function buyMarketListing(listingId: string, qty?: number): Promise<BuyMarketListingResult> {
+export async function buyMarketListing(
+  listingId: string,
+  qty?: number,
+  opts?: { idempotencyKey?: string }
+): Promise<BuyMarketListingResult> {
   try {
     const body: Record<string, unknown> = { listingId };
     if (qty != null) {
@@ -1286,6 +2231,8 @@ export async function buyMarketListing(listingId: string, qty?: number): Promise
         body.quantity = q;
       }
     }
+    const ik = opts?.idempotencyKey?.trim();
+    if (ik) body.idempotencyKey = ik.slice(0, 128);
     const res = await apiFetch(`${base}/market/buy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (!res.ok) {
       try { return await res.json(); } catch { return { ok: false, error: 'Purchase failed' }; }
@@ -1435,6 +2382,109 @@ export async function purchaseAdminUpgrade(email: string, upgradeId: string): Pr
   } catch { return { ok: false, error: 'Network error' } }
 }
 
+export type UpgradesStatePackagePreview = {
+  rewardType: string;
+  catalogId: string;
+  quantity: number;
+  label: string;
+};
+
+export type UpgradesStatePackage = {
+  id: string;
+  slug: string | null;
+  name: string;
+  description: string | null;
+  imageUrl: string | null;
+  category: string;
+  currency: string;
+  finalPrice: string;
+  originalPrice: string | null;
+  discountPercent: number | null;
+  version: number;
+  isPurchasable: boolean;
+  unpurchasableReason: string | null;
+  stockRemaining: number | null;
+  maxPerUser: number;
+  startsAt: number | null;
+  endsAt: number | null;
+  sortOrder: number;
+  alreadyOwned: boolean;
+  itemsPreview: UpgradesStatePackagePreview[];
+};
+
+export type UpgradesStatePayload = {
+  ok: boolean;
+  title: string;
+  usdcBalance: number;
+  categories: string[];
+  packages: UpgradesStatePackage[];
+  purchaseHistory: Array<{
+    upgradeId: string;
+    name: string;
+    paidUsdc: string;
+    purchasedAt: number;
+  }>;
+  notice?: string;
+};
+
+export async function getUpgradesState(): Promise<UpgradesStatePayload | null> {
+  try {
+    const res = await apiFetch(`${base}/upgrades/state`);
+    if (!res.ok) return null;
+    const j = (await res.json()) as UpgradesStatePayload;
+    return j && j.ok ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+export type UpgradesPurchaseResult =
+  | { ok: true; newUsdc: number; idempotentReplay: boolean; packageVersion: number }
+  | { ok: false; error?: string; status?: number; missing?: number };
+
+/** Compra de pacote (Upgrades) — idempotência obrigatória. */
+export async function postUpgradesPurchase(params: {
+  packageId: string;
+  idempotencyKey: string;
+  clientPackageVersion?: number;
+}): Promise<UpgradesPurchaseResult> {
+  try {
+    const res = await apiFetch(`${base}/upgrades/purchase`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        packageId: params.packageId,
+        idempotencyKey: params.idempotencyKey,
+        clientPackageVersion: params.clientPackageVersion
+      })
+    });
+    const text = await res.text();
+    let json: Record<string, unknown> = {};
+    try {
+      json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    } catch {
+      return { ok: false, error: 'Resposta inválida do servidor.', status: res.status };
+    }
+    if (!res.ok) {
+      const missing = typeof json.missing === 'number' ? json.missing : undefined;
+      return {
+        ok: false,
+        error: typeof json.error === 'string' ? json.error : 'Pedido rejeitado.',
+        status: res.status,
+        missing
+      };
+    }
+    return {
+      ok: true,
+      newUsdc: typeof json.newUsdc === 'number' ? json.newUsdc : 0,
+      idempotentReplay: json.idempotentReplay === true,
+      packageVersion: typeof json.packageVersion === 'number' ? json.packageVersion : 1
+    };
+  } catch {
+    return { ok: false, error: 'Erro de rede' };
+  }
+}
+
 /** Flags de «desativar depósito» vindas da API/BD (boolean, 1, "1", "true"). */
 export function web3DepositFlagDisabled(v: unknown): boolean {
   if (v === true || v === 1) return true;
@@ -1483,6 +2533,117 @@ export async function getPendingRoletaCode(): Promise<string | null> {
     return t.length > 0 ? t : null;
   } catch {
     return null;
+  }
+}
+
+export function newWheelIdempotencyKey(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* ignore */
+  }
+  return `idem_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
+}
+
+export type WheelStatePayload = {
+  spinPriceUsdc: number;
+  usdcBalance: number;
+  legacyPaidPending: { wonItemId: string } | null;
+  prizes: WheelItem[];
+  notice?: string;
+};
+
+export async function getWheelState(): Promise<
+  { ok: true; data: WheelStatePayload } | { ok: false; error: string; status?: number }
+> {
+  try {
+    const res = await apiFetch(`${base}/wheel/state`, { credentials: 'include' });
+    const raw = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = typeof (raw as { error?: unknown }).error === 'string' ? (raw as { error: string }).error : `HTTP ${res.status}`;
+      return { ok: false, error: err, status: res.status };
+    }
+    const j = raw as Record<string, unknown>;
+    const spinPriceUsdc = typeof j.spinPriceUsdc === 'number' ? j.spinPriceUsdc : Number(j.spinPriceUsdc) || 0.1;
+    const usdcBalance = typeof j.usdcBalance === 'number' ? j.usdcBalance : Number(j.usdcBalance) || 0;
+    const leg = j.legacyPaidPending as { wonItemId?: string } | null | undefined;
+    const legacyPaidPending =
+      leg && typeof leg.wonItemId === 'string' && leg.wonItemId.trim() ? { wonItemId: leg.wonItemId.trim() } : null;
+    const prizes = Array.isArray(j.prizes) ? (j.prizes as WheelItem[]) : [];
+    const notice = typeof j.notice === 'string' ? j.notice : undefined;
+    return { ok: true, data: { spinPriceUsdc, usdcBalance, legacyPaidPending, prizes, notice } };
+  } catch {
+    return { ok: false, error: 'Erro de rede' };
+  }
+}
+
+export async function postWheelSpin(idempotencyKey: string): Promise<
+  | {
+      ok: true;
+      spinId: string;
+      wonItemId: string;
+      item?: unknown;
+      newUsdc?: number;
+      chargedUsdc: number;
+      boxId: string;
+      boxName: string;
+      idempotentReplay?: boolean;
+    }
+  | { ok: false; error: string; status?: number }
+> {
+  try {
+    const res = await apiFetch(`${base}/wheel/spin`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ idempotencyKey })
+    });
+    const raw = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const err = typeof (raw as { error?: unknown }).error === 'string' ? (raw as { error: string }).error : `HTTP ${res.status}`;
+      return { ok: false, error: err, status: res.status };
+    }
+    const j = raw as Record<string, unknown>;
+    return {
+      ok: true,
+      spinId: String(j.spinId ?? ''),
+      wonItemId: String(j.wonItemId ?? ''),
+      item: j.item,
+      newUsdc: typeof j.newUsdc === 'number' ? j.newUsdc : undefined,
+      chargedUsdc: Number(j.chargedUsdc) || 0,
+      boxId: String(j.boxId ?? ''),
+      boxName: String(j.boxName ?? ''),
+      idempotentReplay: Boolean(j.idempotentReplay)
+    };
+  } catch {
+    return { ok: false, error: 'Erro de rede' };
+  }
+}
+
+export async function postWheelRedeemCode(
+  code: string,
+  idempotencyKey: string
+): Promise<{ ok: boolean; error?: string; status?: number; data?: unknown }> {
+  try {
+    const res = await apiFetch(`${base}/wheel/redeem-code`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
+      body: JSON.stringify({ code, idempotencyKey })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: typeof (data as { error?: unknown }).error === 'string' ? (data as { error: string }).error : `HTTP ${res.status}`,
+        status: res.status
+      };
+    }
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'Erro de rede' };
   }
 }
 
@@ -1924,6 +3085,8 @@ export type {
   SupportTicketRow,
   MySupportTicketSummary,
   MySupportTicketDetail,
+  SupportStatePayload,
+  SupportStateTicketRow,
 } from './supportTicketsApi';
 export {
   postSupportMutate,
@@ -1934,6 +3097,10 @@ export {
   getMySupportTickets,
   getMySupportTicketDetail,
   postPlayerSupportTicketReply,
+  getSupportState,
+  newSupportIdempotencyKey,
+  archiveSupportTicket,
+  reopenSupportTicket,
 } from './supportTicketsApi';
 
 export async function getReferrals(email: string): Promise<string[]> {
@@ -1944,14 +3111,24 @@ export async function getReferrals(email: string): Promise<string[]> {
   } catch { return []; }
 }
 
-export async function claimReferralCode(email: string, code: string): Promise<{ ok: boolean; error?: string }> {
+export async function claimReferralCode(
+  _email: string,
+  code: string
+): Promise<{ ok: boolean; error?: string; code?: string }> {
   try {
-    const res = await apiFetch(`${base}/referrals/claim-code`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
+    const res = await apiFetch(`${base}/profile/referral/bind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
     if (!res.ok) {
-      try { return await res.json(); } catch { return { ok: false }; }
+      return { ok: false, error: data.error || `Erro ${res.status}`, code: data.code };
     }
-    try { return await res.json(); } catch { return { ok: true }; }
-  } catch { return { ok: false, error: 'Network error' }; }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
 }
 
 export async function getSeasonPasses(): Promise<SeasonPass[]> {
@@ -2284,6 +3461,167 @@ export async function buyLootBox(
 }
 
 /** Descarta caixas não abertas (sem prémio). `qty` omitido = todas as unidades desse `boxId`. */
+/** Estado consolidado Caixas da Sorte (`GET /api/lucky-boxes/state`). */
+export type LuckyBoxRewardSlotPublic = { kind: string; label: string; rangeText: string };
+export type LuckyBoxShopEntryV1 = {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  priceUsdc: number;
+  currency: 'USDC';
+  trigger: string;
+  maxPerOrder: number;
+  stockRemaining: number | null;
+  rewardSummary: { slotCount: number; slots: LuckyBoxRewardSlotPublic[] };
+};
+export type LuckyBoxInventoryEntryV1 = {
+  boxId: string;
+  qty: number;
+  name: string;
+  description: string;
+  icon: string;
+  trigger: string;
+  openableHere: boolean;
+  rewardSummary: { slotCount: number; slots: LuckyBoxRewardSlotPublic[] };
+};
+export type LuckyBoxesStateV1 = {
+  version: 1;
+  usdc: number;
+  banner: { text: string; variant: 'info' | 'warning' } | null;
+  promoHelp: string;
+  roulettePromoNote: string;
+  shop: LuckyBoxShopEntryV1[];
+  shopEmptyMessage: string;
+  inventory: LuckyBoxInventoryEntryV1[];
+  history: { items: unknown[]; limit: number; nextCursor: string | null };
+};
+
+export async function getLuckyBoxesState(): Promise<
+  LuckyBoxesStateV1 | { ok: false; status: number; error?: string }
+> {
+  try {
+    const res = await apiFetch(`${base}/lucky-boxes/state?t=${Date.now()}`);
+    if (!res.ok) {
+      let error: string | undefined;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (typeof j?.error === 'string') error = j.error;
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, status: res.status, error };
+    }
+    const raw = (await res.json()) as Record<string, unknown>;
+    if (raw.version !== 1) return { ok: false, status: 502, error: 'Resposta inválida.' };
+    return raw as unknown as LuckyBoxesStateV1;
+  } catch {
+    return { ok: false, status: 500, error: 'Erro de rede.' };
+  }
+}
+
+export async function postLuckyBoxPurchase(body: {
+  boxId: string;
+  email?: string;
+  quantity?: number;
+  idempotencyKey?: string;
+}): Promise<{ ok: boolean; newUsdc?: number; qtyPurchased?: number; error?: string; missing?: number }> {
+  try {
+    const payload: Record<string, unknown> = { boxId: body.boxId };
+    if (body.email) payload.email = body.email;
+    if (body.quantity != null && Number.isFinite(body.quantity) && body.quantity >= 1) {
+      payload.quantity = Math.floor(body.quantity);
+    }
+    if (body.idempotencyKey?.trim()) payload.idempotencyKey = body.idempotencyKey.trim().slice(0, 128);
+    const res = await apiFetch(`${base}/lucky-boxes/purchase`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      error?: string;
+      newUsdc?: number;
+      qtyPurchased?: number;
+      missing?: number;
+    };
+    if (!res.ok) {
+      const missing =
+        typeof data.missing === 'number' && Number.isFinite(data.missing) && data.missing > 0
+          ? data.missing
+          : undefined;
+      return { ok: false, error: data.error || `Erro HTTP ${res.status}`, missing };
+    }
+    return { ok: !!data.ok, newUsdc: data.newUsdc, qtyPurchased: data.qtyPurchased };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+export async function postLuckyBoxOpen(body: {
+  boxId: string;
+  email?: string;
+  idempotencyKey?: string;
+}): Promise<{ ok: boolean; rewards?: unknown[]; openingId?: string; error?: string }> {
+  try {
+    const payload: Record<string, unknown> = { boxId: body.boxId };
+    if (body.email) payload.email = body.email;
+    if (body.idempotencyKey?.trim()) payload.idempotencyKey = body.idempotencyKey.trim().slice(0, 128);
+    const res = await apiFetch(`${base}/lucky-boxes/open`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as {
+      ok?: boolean;
+      rewards?: unknown[];
+      openingId?: string;
+      error?: string;
+    };
+    if (!res.ok) return { ok: false, error: data.error || `Erro HTTP ${res.status}` };
+    return { ok: !!data.ok, rewards: data.rewards, openingId: data.openingId };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+export async function redeemLuckyBoxPromoCode(body: {
+  code: string;
+  idempotencyKey?: string;
+}): Promise<{
+  ok: boolean;
+  type?: 'roleta' | 'standard';
+  code?: string;
+  unopenedBoxes?: Record<string, number>;
+  stock?: Record<string, number>;
+  lootBoxId?: string | null;
+  error?: string;
+}> {
+  try {
+    const payload: Record<string, unknown> = { code: body.code.trim() };
+    if (body.idempotencyKey?.trim()) payload.idempotencyKey = body.idempotencyKey.trim().slice(0, 128);
+    const res = await apiFetch(`${base}/lucky-boxes/promocodes/redeem`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) return { ok: false, error: typeof data.error === 'string' ? data.error : `Erro HTTP ${res.status}` };
+    if (data.type === 'roleta') {
+      return { ok: true, type: 'roleta', code: typeof data.code === 'string' ? data.code : undefined };
+    }
+    return {
+      ok: true,
+      type: 'standard',
+      unopenedBoxes: data.unopenedBoxes as Record<string, number> | undefined,
+      stock: data.stock as Record<string, number> | undefined,
+      lootBoxId: (data.lootBoxId as string | null | undefined) ?? null
+    };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
 export async function discardLootBox(
   email: string,
   boxId: string,
@@ -2542,6 +3880,112 @@ export async function sellCoin(coinId: string, percentage: number): Promise<{ ok
     const res = await apiFetch(`${base}/exchange/sell`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ coinId, percentage }) });
     return await res.json();
   } catch { return { ok: false, error: 'Network error' }; }
+}
+
+export type WalletMinedBalanceRow = {
+  coinId: string;
+  name: string;
+  symbol: string;
+  usdcRate: number;
+  showInExchange: boolean;
+  minedBalance: number;
+  grossUsdcEstimate: number;
+  feeUsdcEstimate: number;
+  netUsdcEstimate: number;
+};
+
+export type WalletStatePayload = {
+  ok: boolean;
+  usdcBalance: number;
+  polygonWallet: string | null;
+  exchange: {
+    minUsdc: number;
+    feePercent: number;
+    networkUsdcHint: string;
+  };
+  minedBalances: WalletMinedBalanceRow[];
+  withdrawTokens: unknown[];
+  ledger: unknown[];
+  withdrawals: unknown[];
+  notice?: string;
+};
+
+/** Estado consolidado da carteira (servidor é fonte da verdade). */
+export async function getWalletState(): Promise<WalletStatePayload | null> {
+  try {
+    const res = await apiFetch(`${base}/wallet/state`);
+    if (!res.ok) return null;
+    const j = (await res.json()) as WalletStatePayload;
+    return j && j.ok ? j : null;
+  } catch {
+    return null;
+  }
+}
+
+export type WalletExchangeLiquidateOk = {
+  ok: true;
+  soldAmount?: number;
+  netUsdc?: number;
+  feeUsdc?: number;
+  grossUsdc?: number;
+  newUsdc?: number;
+  newCoinBalance?: number;
+  idempotentReplay?: boolean;
+};
+
+export type WalletExchangeLiquidateErr = {
+  ok: false;
+  error?: string;
+  status?: number;
+};
+
+export type WalletExchangeLiquidateResult = WalletExchangeLiquidateOk | WalletExchangeLiquidateErr;
+
+/** Liquidação pelo desk (atalhos 10/50/100) com idempotência obrigatória. */
+export async function postWalletExchangeLiquidate(params: {
+  coinId: string;
+  mode: 'PERCENTAGE';
+  percentage: 10 | 50 | 100;
+  idempotencyKey: string;
+}): Promise<WalletExchangeLiquidateResult> {
+  try {
+    const res = await apiFetch(`${base}/wallet/exchange/liquidate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        coinId: params.coinId,
+        mode: params.mode,
+        percentage: params.percentage,
+        idempotencyKey: params.idempotencyKey
+      })
+    });
+    const text = await res.text();
+    let json: Record<string, unknown> = {};
+    try {
+      json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+    } catch {
+      return { ok: false, error: 'Resposta inválida do servidor.', status: res.status };
+    }
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: typeof json.error === 'string' ? json.error : 'Pedido rejeitado.',
+        status: res.status
+      };
+    }
+    return {
+      ok: true,
+      soldAmount: typeof json.soldAmount === 'number' ? json.soldAmount : undefined,
+      netUsdc: typeof json.netUsdc === 'number' ? json.netUsdc : undefined,
+      feeUsdc: typeof json.feeUsdc === 'number' ? json.feeUsdc : undefined,
+      grossUsdc: typeof json.grossUsdc === 'number' ? json.grossUsdc : undefined,
+      newUsdc: typeof json.newUsdc === 'number' ? json.newUsdc : undefined,
+      newCoinBalance: typeof json.newCoinBalance === 'number' ? json.newCoinBalance : undefined,
+      idempotentReplay: json.idempotentReplay === true
+    };
+  } catch {
+    return { ok: false, error: 'Erro de rede' };
+  }
 }
 
 export async function getReferralModels(): Promise<ReferralModel[]> {

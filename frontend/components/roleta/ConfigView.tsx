@@ -64,7 +64,9 @@ const ConfigView: React.FC<ConfigViewProps> = ({ items, setItems, onSave, gameUp
       label: label,
       weight: newItemWeight || 1,
       color: randomColor,
-      itemId: selectedItemId
+      itemId: selectedItemId,
+      isActive: 1,
+      tier: 'BASIC'
     };
 
     setItems([...items, newItem]);

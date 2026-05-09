@@ -89,12 +89,20 @@ import {
 } from './dist/src/auth/index.js';
 import { registerDeviceFingerprintAdminRoutes } from './dist/controllers/deviceFingerprintAdminController.js';
 import { registerP2pMarketRoutes } from './dist/controllers/p2pMarketController.js';
+import { registerBlackMarketModuleRoutes } from './dist/modules/black-market/black-market.controller.js';
+import { registerLuckyBoxesModuleRoutes } from './dist/modules/lucky-boxes/lucky-boxes.controller.js';
 import {
   registerLootBoxPlayerRoutes,
   registerLootBoxAdminRoutes
 } from './dist/controllers/lootBoxController.js';
 import { registerRoletaPlayerRoutes } from './dist/controllers/roletaController.js';
-import { fetchWheelPrizesForApiConfig } from './dist/models/roletaModel.js';
+import { registerWheelPlayerRoutes } from './dist/modules/wheel/wheelPlayerController.js';
+import { registerWalletPlayerRoutes } from './dist/modules/wallet/walletPlayerController.js';
+import { runExchangeLiquidation } from './dist/modules/wallet/walletExchangeLiquidation.js';
+import { registerUpgradesPlayerRoutes } from './dist/modules/upgrades/upgradesPlayer.controller.js';
+import { runUpgradePackagePurchase } from './dist/modules/upgrades/upgradesPurchase.service.js';
+import { RoletaAppError, parseIdempotencyKey } from './dist/validation/roletaValidation.js';
+import { fetchWheelPrizesForApiConfig, fetchWheelPrizesForAdminWheelEditor } from './dist/models/roletaModel.js';
 import { grantAdminUpgradeRewardsInTx, grantPassRewardsInTx } from './dist/models/adminUpgradeGrantModel.js';
 import { pgSqlTx, prismaTxToPoolLikeClient } from './dist/lib/sqlTransaction.js';
 import { getPublicBootstrapPayload } from './dist/lib/publicBootstrapPayload.js';
@@ -146,9 +154,14 @@ import {
   registerSupportTicketRoutes
 } from './dist/controllers/supportTicketController.js';
 import { registerSupportMutationRoutes } from './dist/controllers/supportMutationController.js';
+import { registerSupportPlayerRoutes } from './dist/modules/support/supportPlayer.controller.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
+import { registerPartnersPlayerRoutes } from './dist/modules/partners/partnersPlayer.controller.js';
 import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
 import { registerInventoryRoutes } from './dist/controllers/inventoryController.js';
+import { registerInventoryModuleRoutes } from './dist/modules/inventory/inventory.controller.js';
+import { registerShopModuleRoutes } from './dist/modules/shop/shop.controller.js';
+import { parseHardwareCartOrError, runHardwareCheckoutTransaction } from './dist/modules/shop/shop.checkout.service.js';
 import { registerPlayerCalculatorRoutes } from './dist/controllers/playerCalculatorController.js';
 import { ensurePartnerYoutubeSchema } from './dist/models/partnerYoutubeModel.js';
 import {
@@ -202,9 +215,14 @@ import {
   validateOptionalAccessLevelId,
   validateOptionalReferralCodeInput,
   validateAccessLevelIdsArray,
+  getConflictingUserIdByUsername,
   EMAIL_ADDRESS_MAX_LENGTH,
   SIGNUP_EMAIL_MAX_TOTAL
 } from './dist/models/registrationValidation.js';
+import { isReservedProfileUsername } from './dist/models/profileUsernameReserved.js';
+import { registerProfilePlayerRoutes } from './dist/modules/profile/profilePlayer.controller.js';
+import { bindProfileReferralCode } from './dist/modules/profile/profileReferralBind.service.js';
+import { removeProfileWallet } from './dist/modules/profile/profileWallet.service.js';
 import { getUserIdByEmail, EmailPolicyError, IpLimitError } from './dist/models/userModel.js';
 import {
   findUserByEmail,
@@ -218,8 +236,7 @@ import {
   findActiveSessionUserId,
   findSessionUserIdIgnoringExpiry,
   deleteSessionBySessionId,
-  updateUserPolygonAndAccess,
-  clearUserPolygonWallet
+  updateUserPolygonAndAccess
 } from './dist/models/authModel.js';
 import { executeUserPutCoreTransaction } from './dist/models/userPutCoreTransaction.js';
 
@@ -1501,7 +1518,7 @@ app.get('/api/me/profile-bundle', authenticateToken, async (req, res) => {
   }
 });
 
-/** Desliga a carteira Polygon do perfil (persiste `polygon_wallet = null`). */
+/** @deprecated Preferir `DELETE /api/profile/wallet` (mesma regra de palavra-passe). */
 app.delete('/api/me/polygon-wallet', authenticateToken, async (req, res) => {
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
   const uid = Number(req.userId);
@@ -1509,9 +1526,16 @@ app.delete('/api/me/polygon-wallet', authenticateToken, async (req, res) => {
     return res.status(400).json({ error: 'Sessão inválida.' });
   }
   try {
-    await clearUserPolygonWallet(uid);
+    const body = req.body && typeof req.body === 'object' ? (req.body as { currentPassword?: unknown }) : {};
+    await removeProfileWallet({
+      userId: uid,
+      currentPassword: body.currentPassword,
+      requestId: null,
+      route: 'DELETE /api/me/polygon-wallet'
+    });
     res.json({ ok: true });
   } catch (e) {
+    if (respondIfHttpControlledError(res, e)) return;
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
@@ -1577,11 +1601,31 @@ app.use(async (req, res, next) => {
 
 registerDeviceFingerprintAdminRoutes(app, { isAdmin });
 registerP2pMarketRoutes(app, { emitMarketWs });
+registerBlackMarketModuleRoutes(app, { authenticateToken });
 registerLootBoxPlayerRoutes(app, {
   appendGameActivityLog
 });
+registerLuckyBoxesModuleRoutes(app, {
+  authenticateToken,
+  appendGameActivityLog,
+  grantAdminUpgradeRewards: grantAdminUpgradeRewardsInTx
+});
 registerLootBoxAdminRoutes(app, { isAdmin });
 registerRoletaPlayerRoutes(app, {
+  authenticateToken,
+  appendGameActivityLog
+});
+registerWheelPlayerRoutes(app, {
+  authenticateToken,
+  appendGameActivityLog,
+  grantAdminUpgradeRewards: grantAdminUpgradeRewardsInTx,
+  parseCookies
+});
+registerWalletPlayerRoutes(app, {
+  authenticateToken,
+  appendGameActivityLog
+});
+registerUpgradesPlayerRoutes(app, {
   authenticateToken,
   appendGameActivityLog
 });
@@ -1601,6 +1645,12 @@ registerSupportMutationRoutes(app, {
   uploadSupport,
   appendGameActivityLog
 });
+registerSupportPlayerRoutes(app, {
+  authenticateToken,
+  uploadSupport,
+  appendGameActivityLog,
+  uploadsDir: IMG_UPLOADS_DIR
+});
 registerSupportTicketRoutes(app, {
   authenticateToken,
   isAdmin,
@@ -1612,8 +1662,20 @@ registerPartnerYoutubeRoutes(app, {
   isAdmin,
   appendGameActivityLog
 });
+registerPartnersPlayerRoutes(app, {
+  authenticateToken,
+  appendGameActivityLog
+});
+registerProfilePlayerRoutes(app, {
+  authenticateToken,
+  getClientIp,
+  revokeJwtRefreshForUser,
+  referralClaimSensitiveLimiter
+});
 registerWorkshopMutationRoutes(app, { authenticateToken });
 registerInventoryRoutes(app, { authenticateToken });
+registerInventoryModuleRoutes(app, { authenticateToken });
+registerShopModuleRoutes(app, { pool: db, authenticateToken });
 registerPlayerCalculatorRoutes(app, { authenticateToken });
 registerImageAssetRoutes(app, {
   isAdmin,
@@ -1773,7 +1835,7 @@ app.post('/api/charging-history/log', authenticateToken, async (req, res) => {
 
 app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
   try {
-    const items = await fetchWheelPrizesForApiConfig();
+    const items = await fetchWheelPrizesForAdminWheelEditor();
     res.json(items);
   } catch (e) {
     console.error(e);
@@ -1796,13 +1858,99 @@ app.post('/api/admin/wheel/config', isAdmin, async (req, res) => {
             label: String(item.label),
             weight: Number(item.weight),
             color: String(item.color),
-            item_id: item.itemId != null && String(item.itemId).trim() !== '' ? String(item.itemId) : null
+            item_id: item.itemId != null && String(item.itemId).trim() !== '' ? String(item.itemId) : null,
+            is_active: item.isActive === 0 || item.isActive === false ? 0 : 1,
+            tier:
+              item.tier != null && String(item.tier).trim() !== ''
+                ? String(item.tier).slice(0, 32)
+                : 'BASIC'
           }
         });
       }
     });
     res.json({ ok: true });
   } catch (e) {
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
+});
+
+app.get('/api/admin/wheel/runtime-config', isAdmin, async (req, res) => {
+  try {
+    const row = await prisma.wheel_config.findUnique({ where: { id: 1 } });
+    if (!row) {
+      return res.status(404).json({ error: 'wheel_config não encontrada' });
+    }
+    return res.json({
+      spinPriceUsdc: Number(row.spin_price_usdc),
+      minSpinPriceUsdc: Number(row.min_spin_price_usdc),
+      currency: row.currency,
+      isEnabled: row.is_enabled === 1,
+      maxSpinsPerRequest: row.max_spins_per_request,
+      dailyLimit: row.daily_limit,
+      cooldownSeconds: row.cooldown_seconds,
+      startsAtMs: row.starts_at != null ? String(row.starts_at) : null,
+      endsAtMs: row.ends_at != null ? String(row.ends_at) : null,
+      updatedAtMs: String(row.updated_at)
+    });
+  } catch (e) {
+    console.error(e);
+    sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+  }
+});
+
+app.post('/api/admin/wheel/runtime-config', isAdmin, async (req, res) => {
+  const b = req.body as Record<string, unknown>;
+  const floor = new Prisma.Decimal('0.10');
+  try {
+    const spinRaw = b.spinPriceUsdc;
+    const minRaw = b.minSpinPriceUsdc ?? b.spinPriceUsdc;
+    if (spinRaw == null) {
+      return res.status(400).json({ error: 'spinPriceUsdc obrigatório' });
+    }
+    const spinDec = new Prisma.Decimal(String(spinRaw));
+    const minDec = new Prisma.Decimal(String(minRaw));
+    if (spinDec.lt(floor) || minDec.lt(floor)) {
+      return res.status(422).json({ error: 'Preço mínimo permitido: 0.10 USDC' });
+    }
+    const isEn = b.isEnabled === 0 || b.isEnabled === false ? 0 : 1;
+    const maxSp = Number(b.maxSpinsPerRequest);
+    const maxSpinsPerRequest = Number.isFinite(maxSp) && maxSp > 0 ? Math.floor(maxSp) : 1;
+    const dailyLimit =
+      b.dailyLimit === null || b.dailyLimit === undefined || b.dailyLimit === ''
+        ? null
+        : Math.max(0, Math.floor(Number(b.dailyLimit)));
+    const cd = Number(b.cooldownSeconds);
+    const cooldownSeconds = Number.isFinite(cd) && cd >= 0 ? Math.floor(cd) : 0;
+    const now = BigInt(Date.now());
+    await prisma.wheel_config.upsert({
+      where: { id: 1 },
+      create: {
+        id: 1,
+        spin_price_usdc: spinDec,
+        min_spin_price_usdc: minDec,
+        currency: typeof b.currency === 'string' && b.currency.trim() ? String(b.currency).slice(0, 12) : 'USDC',
+        is_enabled: isEn,
+        max_spins_per_request: maxSpinsPerRequest,
+        daily_limit: dailyLimit,
+        cooldown_seconds: cooldownSeconds,
+        starts_at: null,
+        ends_at: null,
+        updated_at: now,
+        metadata_json: null
+      },
+      update: {
+        spin_price_usdc: spinDec,
+        min_spin_price_usdc: minDec,
+        is_enabled: isEn,
+        max_spins_per_request: maxSpinsPerRequest,
+        daily_limit: dailyLimit,
+        cooldown_seconds: cooldownSeconds,
+        updated_at: now
+      }
+    });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error(e);
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
   }
 });
@@ -2271,7 +2419,8 @@ app.post('/api/admin-upgrades', isAdmin, async (req, res) => {
       INSERT INTO admin_upgrades (id, name, description, price_usdc, grant_usdc, grant_access_level_id, is_active, created_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
       ON CONFLICT (id) DO UPDATE SET
-      name=$2, description=$3, price_usdc=$4, grant_usdc=$5, grant_access_level_id=$6, is_active=$7
+      name=$2, description=$3, price_usdc=$4, grant_usdc=$5, grant_access_level_id=$6, is_active=$7,
+      version = COALESCE(admin_upgrades.version, 0) + 1
     `, [u.id, u.name, u.description, u.priceUsdc, u.grantUsdc, u.grantAccessLevelId || null, u.isActive ? 1 : 0, Date.now()]);
 
     // Clear children
@@ -2344,82 +2493,48 @@ app.post('/api/admin-upgrades/purchase', async (req, res) => {
   if (!upgradeId) return res.status(400).json({ error: 'Missing fields' });
 
   const uid = req.userId;
+  const body = req.body as Record<string, unknown>;
+  const idemOpt = parseIdempotencyKey(body.idempotencyKey);
+  const clientVRaw = body.clientPackageVersion;
+  const clientPackageVersion =
+    clientVRaw == null || clientVRaw === ''
+      ? null
+      : typeof clientVRaw === 'number'
+        ? clientVRaw
+        : parseInt(String(clientVRaw), 10);
+  const clientPackageVersionNorm =
+    clientPackageVersion != null && Number.isFinite(clientPackageVersion) ? clientPackageVersion : null;
+
   try {
-    const newUsdc = await prisma.$transaction(
-      async (tx) => {
-        const user = await tx.users.findUnique({
-          where: { id: uid },
-          select: { id: true, access_level_id: true }
-        });
-        if (!user) throw new Error('Usuário não encontrado');
-
-        const gs = await tx.game_states.findUnique({
-          where: { user_id: uid },
-          select: { usdc: true }
-        });
-        const usdc = Number(gs?.usdc ?? 0);
-
-        const upgrade = await tx.admin_upgrades.findUnique({
-          where: { id: String(upgradeId) }
-        });
-        if (!upgrade) throw new Error('Upgrade não encontrado');
-        if (!upgrade.is_active) throw new Error('Upgrade inativo/expirado');
-
-        const dup = await tx.admin_upgrade_purchases.findUnique({
-          where: { user_id_upgrade_id: { user_id: uid, upgrade_id: upgrade.id } }
-        });
-        if (dup) throw new Error('Você já possui este upgrade');
-
-        if (
-          upgrade.grant_access_level_id &&
-          user.access_level_id === upgrade.grant_access_level_id
-        ) {
-          throw new Error(`Você já possui o nível de acesso ${upgrade.grant_access_level_id}`);
-        }
-
-        if (String(upgradeId) === '53f0c699-0471-4e65-a147-17064e3aafe0') {
-          const room = await tx.user_rig_rooms.findUnique({
-            where: { user_id_room_id: { user_id: uid, room_id: 'room_1765936323521' } }
-          });
-          if (room) throw new Error('Você já possui a Sala Gênesis deste pacote.');
-        }
-
-        const price = Number(upgrade.price_usdc);
-        if (usdc < price) {
-          throw new HttpControlledError(400, {
-            ok: false,
-            error: 'Saldo insuficiente',
-            missing: price - usdc
-          });
-        }
-
-        await tx.game_states.updateMany({
-          where: { user_id: uid },
-          data: { usdc: { decrement: price } }
-        });
-
-        await tx.admin_upgrade_purchases.create({
-          data: {
-            user_id: uid,
-            upgrade_id: upgrade.id,
-            purchased_at: BigInt(Date.now())
-          }
-        });
-
-        await grantAdminUpgradeRewardsInTx(uid, upgrade.id, tx);
-
-        const final = await tx.game_states.findUnique({
-          where: { user_id: uid },
-          select: { usdc: true }
-        });
-        return Number(final?.usdc ?? 0);
-      },
-      { timeout: 60_000, maxWait: 10_000 }
-    );
-
-    res.json({ ok: true, newUsdc });
+    const out = await runUpgradePackagePurchase({
+      userId: uid,
+      packageIdRaw: upgradeId,
+      idempotencyKey: idemOpt,
+      clientPackageVersion: clientPackageVersionNorm
+    });
+    res.json({ ok: true, newUsdc: out.newUsdc, idempotentReplay: out.idempotentReplay, packageVersion: out.packageVersion });
   } catch (e) {
-    if (respondIfHttpControlledError(res, e)) return;
+    if (e instanceof RoletaAppError) {
+      const msg = e.message;
+      if (e.statusCode === 422 && msg.includes('Saldo USDC insuficiente')) {
+        try {
+          const gs = await prisma.game_states.findUnique({
+            where: { user_id: uid },
+            select: { usdc: true }
+          });
+          const bal = Number(gs?.usdc ?? 0);
+          const up = await prisma.admin_upgrades.findUnique({
+            where: { id: String(upgradeId) },
+            select: { price_usdc: true }
+          });
+          const price = Number(up?.price_usdc ?? 0);
+          return res.status(400).json({ ok: false, error: 'Saldo insuficiente', missing: Math.max(0, price - bal) });
+        } catch {
+          /* fall through */
+        }
+      }
+      return res.status(e.statusCode).json({ error: msg, ok: false });
+    }
     console.error('Purchase error:', e);
     sendInternalErrorShapeOrPrisma(res, 'admin-upgrade-purchase', e, { ok: false }, 'Erro ao processar a compra.');
   }
@@ -2575,172 +2690,25 @@ app.post('/api/upgrades', isAdmin, async (req, res) => {
 });
 
 app.post('/api/upgrades/buy', async (req, res) => {
-  const { cart } = req.body || {};
   if (!req.userId) return res.status(401).json({ error: 'Não autenticado' });
-  if (!cart || typeof cart !== 'object' || Array.isArray(cart)) {
-    return res.status(400).json({ error: 'Carrinho vazio ou inválido' });
-  }
+  const uid = typeof req.userId === 'number' ? req.userId : parseInt(String(req.userId), 10);
+  if (!Number.isFinite(uid) || uid <= 0) return res.status(401).json({ error: 'Sessão inválida' });
 
-  const entries = Object.entries(cart);
-  if (entries.length === 0 || entries.length > 100) {
-    return res.status(400).json({ error: 'Carrinho inválido' });
+  const parsed = parseHardwareCartOrError((req.body || {}).cart);
+  if (typeof parsed === 'object' && parsed !== null && 'ok' in parsed && parsed.ok === false) {
+    return res.status(parsed.status).json({ error: parsed.error });
   }
+  const cart = parsed as Record<string, number>;
 
-  const ID_RE = /^[a-zA-Z0-9_.-]{1,160}$/;
-  const MAX_LINE_QTY = 50000;
-  for (const [id, rawQty] of entries) {
-    if (!ID_RE.test(id)) return res.status(400).json({ error: 'Item inválido no carrinho.' });
-    const q = Number(rawQty);
-    if (!Number.isInteger(q) || q < 1 || q > MAX_LINE_QTY) {
-      return res.status(400).json({ error: 'Quantidade inválida.' });
-    }
-  }
-
-  const hwVal = await getSettingValue('hardware_market_enabled');
-  if (hwVal != null && hwVal !== '1') {
-    return res.status(403).json({ error: 'Mercado de hardware pausado.' });
-  }
-
-  const client = await db.connect();
   try {
-    const uid = req.userId;
-    await client.query('BEGIN');
-
-    const upgradeIds = Object.keys(cart).sort();
-    const upgradesRes = await client.query(
-      `SELECT id, base_cost, name, sell_in_hardware_market, status, max_global_stock, total_sold,
-              COALESCE(is_active, 1) AS ia, COALESCE(is_nft, 0) AS is_nft
-       FROM upgrades WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE`,
-      [upgradeIds]
-    );
-    if (upgradesRes.rows.length !== upgradeIds.length) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Um ou mais itens do carrinho não existem.' });
+    const out = await runHardwareCheckoutTransaction(db, uid, cart);
+    if (!out.ok) {
+      return res.status(out.status).json({ error: out.error, missing: out.missing });
     }
-
-    let totalCost = 0;
-    const itemsToBuy = [];
-    const limitedItemsToUpdate = [];
-
-    for (const [id, rawQty] of Object.entries(cart)) {
-      const qty = Number(rawQty);
-      const u = upgradesRes.rows.find(x => x.id === id);
-      if (!u) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: `Item inválido: ${id}` });
-      }
-      if (Number(u.ia) === 0) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: `Item indisponível: ${u.name}` });
-      }
-      if (u.sell_in_hardware_market === 0) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: `Item não disponível para venda: ${u.name}` });
-      }
-      if (Number(u.is_nft) === 1) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({
-          error: 'Itens NFT não podem ser comprados na Lojinha com USDC. Usa os fluxos de carteira / NFT do jogo.'
-        });
-      }
-
-      if (u.status === 'limited') {
-        const available = (Number(u.max_global_stock) || 0) - (Number(u.total_sold) || 0);
-        if (available < qty) {
-          await client.query('ROLLBACK');
-          return res.status(400).json({ error: `Estoque insuficiente para ${u.name}. Restam ${available}.` });
-        }
-        limitedItemsToUpdate.push({ id: u.id, qty });
-      }
-
-      const unit = Number(u.base_cost);
-      if (!Number.isFinite(unit) || unit < 0 || unit > 1e12) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Preço de item inválido.' });
-      }
-      const cost = unit * qty;
-      if (!Number.isFinite(cost) || cost < 0 || cost > 1e15) {
-        await client.query('ROLLBACK');
-        return res.status(400).json({ error: 'Valor de compra inválido.' });
-      }
-      totalCost += cost;
-      itemsToBuy.push({ id, qty, name: u.name });
-    }
-
-    const gsRes = await client.query('SELECT usdc FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
-    const currentUsdc = Number(gsRes.rows[0]?.usdc) || 0;
-    if (currentUsdc < totalCost) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Saldo insuficiente', missing: totalCost - currentUsdc });
-    }
-
-    const newUsdc = currentUsdc - totalCost;
-    const now = Date.now();
-    const deductRes = await client.query(
-      `UPDATE game_states SET usdc = $1, last_updated_at = $2, server_updated_at = $2
-       WHERE user_id = $3 AND usdc >= $4`,
-      [newUsdc, now, uid, totalCost]
-    );
-    if (deductRes.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Saldo insuficiente' });
-    }
-
-    for (const lim of limitedItemsToUpdate) {
-      const updateRes = await client.query(
-        `UPDATE upgrades SET total_sold = total_sold + $1
-         WHERE id = $2 AND (max_global_stock - total_sold) >= $1`,
-        [lim.qty, lim.id]
-      );
-      if (updateRes.rowCount === 0) {
-        throw Object.assign(
-          new Error('Este item esgotou enquanto confirmavas a compra. Atualiza a página e tenta de novo.'),
-          { buyClientError: true, httpStatus: 409 }
-        );
-      }
-    }
-
-    for (const item of itemsToBuy) {
-      await client.query(
-        `INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3)
-         ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty`,
-        [uid, item.id, item.qty]
-      );
-    }
-
-    await client.query('COMMIT');
-
-    const unameRes = await db.query('SELECT username FROM users WHERE id = $1', [uid]);
-    const username = unameRes.rows[0]?.username || '';
-    console.log('[HardwareBuy] ts=%s userId=%s username=%s totalUsdc=%s newUsdc=%s lines=%s',
-      new Date().toISOString(),
-      uid,
-      username,
-      totalCost.toFixed(6),
-      newUsdc.toFixed(6),
-      JSON.stringify(itemsToBuy.map((i) => ({ id: i.id, qty: i.qty, name: i.name })))
-    );
-    await appendGameActivityLog(db, uid, 'hardware_buy', {
-      totalUsdc: Number(totalCost.toFixed(6)),
-      newUsdc: Number(newUsdc.toFixed(6)),
-      lines: itemsToBuy.map((i) => ({ id: i.id, qty: i.qty, name: i.name }))
-    });
-
-    res.json({ ok: true, newUsdc });
+    res.json({ ok: true, newUsdc: out.newUsdc });
   } catch (e) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      /* ignore */
-    }
-    const err = e as { buyClientError?: boolean; httpStatus?: number; message?: string };
-    if (err && err.buyClientError && typeof err.message === 'string') {
-      return res.status(Number.isInteger(err.httpStatus) ? err.httpStatus : 400).json({ error: err.message });
-    }
     console.error('[BuyUpgrades] Error:', e);
     sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao processar compra.');
-  } finally {
-    client.release();
   }
 });
 
@@ -5522,41 +5490,18 @@ app.post('/api/referrals/claim-code', referralClaimSensitiveLimiter, async (req,
   if (code == null || (typeof code === 'string' && !code.trim())) {
     return res.status(400).json({ error: 'Parâmetros inválidos' });
   }
-  const codeCheck = validateOptionalReferralCodeInput(code);
-  if (!codeCheck.ok) return res.status(400).json({ error: codeCheck.error });
-  if (!codeCheck.code) return res.status(400).json({ error: 'Parâmetros inválidos' });
-  const codeNormalized = codeCheck.code;
-  const client = await db.connect();
   try {
-    const uid = req.userId;
-    const currentRes = await client.query('SELECT username, referred_by FROM users WHERE id = $1', [uid]);
-    const current = currentRes.rows[0];
-    if (!current) return res.status(400).json({ error: 'Usuário não encontrado' });
-    if (current.referred_by) return res.status(400).json({ error: 'Código já vinculado' });
-
-    const referrerRes = await client.query('SELECT id FROM users WHERE referral_code = $1', [codeNormalized]);
-    const referrer = referrerRes.rows[0];
-    if (!referrer) return res.status(400).json({ error: 'Código inválido' });
-    if (referrer.id === uid) return res.status(400).json({ error: 'Você não pode usar seu próprio código' });
-
-    await client.query('BEGIN');
-    await client.query('UPDATE users SET referred_by = $1 WHERE id = $2', [codeNormalized, uid]);
-    await client.query(
-      `INSERT INTO referrals (user_id, referred_username)
-       SELECT $1, $2
-       WHERE NOT EXISTS (
-         SELECT 1 FROM referrals r WHERE r.user_id = $1 AND r.referred_username = $2
-       )`,
-      [referrer.id, current.username]
-    );
-
-    await client.query('COMMIT');
+    await bindProfileReferralCode({
+      userId: Number(req.userId),
+      codeRaw: code,
+      clientIp: getClientIp(req),
+      requestId: null,
+      route: '/api/referrals/claim-code'
+    });
     res.json({ ok: true });
   } catch (e) {
-    if (client) await client.query('ROLLBACK');
+    if (respondIfHttpControlledError(res, e)) return;
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-  } finally {
-    if (client) client.release();
   }
 });
 
@@ -5985,8 +5930,15 @@ app.post('/api/session', async (req, res) => {
       uid = await findActiveSessionUserId(sid);
     }
     if (!uid) return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
-    const { polygonWallet } = req.body || {};
-    await updateUserPolygonAndAccess(uid, polygonWallet);
+    const body = req.body || {};
+    if (body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'polygonWallet')) {
+      return res.status(422).json({
+        error:
+          'A carteira Polygon só pode ser ligada pelo perfil com assinatura (POST /api/profile/wallet/connect/challenge e /verify).',
+        code: 'POLYGON_USE_PROFILE'
+      });
+    }
+    await updateUserPolygonAndAccess(uid, undefined);
     res.json({ ok: true });
   } catch (e) {
     sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
@@ -6276,7 +6228,16 @@ app.put('/api/user', async (req, res) => {
       uid = await getUserIdByEmail(normalizedEmail, getClientIp(req));
     }
 
+    const editingSelf = req.userId != null && Number(uid) === Number(req.userId);
+
     const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
+
+    if (editingSelf && hasPassword) {
+      return res.status(422).json({
+        error: 'Utilize POST /api/profile/password/change para alterar a palavra-passe.',
+        code: 'PASSWORD_USE_PROFILE'
+      });
+    }
 
     if (req.userId) {
       const actRes = await db.query(
@@ -6340,7 +6301,24 @@ app.put('/api/user', async (req, res) => {
       }
       usernameForUpdate = userVu.username;
     } else if (typeof u.username === 'string' && u.username.trim() !== '') {
-      usernameForUpdate = u.username.trim();
+      const userVu = validateSignupUsername(u.username);
+      if (!userVu.ok) {
+        return res.status(400).json({ error: userVu.error });
+      }
+      usernameForUpdate = userVu.username;
+      const clash = await getConflictingUserIdByUsername(userVu.username, uid);
+      if (clash != null) {
+        return res.status(409).json({
+          error: 'Este nome de utilizador já está em uso.',
+          code: 'DUPLICATE'
+        });
+      }
+      if (editingSelf && isReservedProfileUsername(userVu.username)) {
+        return res.status(422).json({
+          error: 'Este nome de utilizador é reservado ou não é permitido.',
+          code: 'USERNAME_RESERVED'
+        });
+      }
     }
 
     if (hasPassword) {
@@ -6352,6 +6330,13 @@ app.put('/api/user', async (req, res) => {
 
     const polygonWalletInBody =
       u && typeof u === 'object' && Object.prototype.hasOwnProperty.call(u, 'polygonWallet');
+    if (editingSelf && polygonWalletInBody) {
+      return res.status(422).json({
+        error:
+          'Utilize o fluxo seguro do perfil (desafio + assinatura) para ligar a carteira Polygon: POST /api/profile/wallet/connect/challenge e /verify.',
+        code: 'POLYGON_USE_PROFILE'
+      });
+    }
     let polygonForUpdate: string | null | undefined = undefined;
     if (polygonWalletInBody) {
       const pwc = validateOptionalPolygonWallet(u.polygonWallet);
@@ -6365,7 +6350,13 @@ app.put('/api/user', async (req, res) => {
     if (!refVal.ok) {
       return res.status(400).json({ error: refVal.error });
     }
-    const referredByForUpdate = refVal.code;
+    let referredByForUpdate = refVal.code;
+    if (editingSelf && referredByForUpdate) {
+      return res.status(422).json({
+        error: 'Utilize POST /api/profile/referral/bind para vincular o código de indicação.',
+        code: 'REFERRAL_USE_PROFILE'
+      });
+    }
 
     let accessLevelIdsValidated: string[] | null = null;
     if (allowAccessLevelFromBody && Array.isArray(u.accessLevelIds)) {
@@ -9145,97 +9136,58 @@ app.post('/api/exchange/sell', async (req, res) => {
   const client = await db.connect();
   try {
     const uid = req.userId;
+    const serverNowMs = Date.now();
+    const result = await runExchangeLiquidation(client, {
+      userId: uid,
+      coinId: cid,
+      fraction: pct,
+      fractionMode: 'legacy',
+      minUsdc,
+      feePercent,
+      idempotencyKey: null,
+      idempotencyScope: 'legacy_exchange_sell',
+      serverNowMs
+    });
 
-    await client.query('BEGIN');
-
-    const coinRes = await client.query(
-      `SELECT id, name, usdc_rate, COALESCE(show_in_exchange, 1) AS sx, is_active
-       FROM mining_coins WHERE id = $1`,
-      [cid]
+    const coinRes = await client.query(`SELECT name FROM mining_coins WHERE id = $1`, [cid]);
+    const coinName = coinRes.rows[0]?.name ?? cid;
+    console.log(
+      '[ExchangeSell] userId=%s coinId=%s coinName=%s pct=%s soldAmount=%s grossUsdc=%s feeUsdc=%s netUsdc=%s',
+      uid,
+      cid,
+      coinName,
+      String(pct),
+      result.soldAmount,
+      result.grossUsdc.toFixed(8),
+      result.feeUsdc.toFixed(8),
+      result.netUsdc.toFixed(8)
     );
-    const coinDef = coinRes.rows[0];
-    if (!coinDef || !coinDef.is_active) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Moeda não encontrada ou inativa.' });
-    }
-    if (Number(coinDef.sx) === 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Esta moeda não está disponível no desk de câmbio.' });
-    }
-
-    const rate = Number(coinDef.usdc_rate);
-    if (!Number.isFinite(rate) || rate <= 0) {
-      await client.query('ROLLBACK');
-      return res.status(500).json({ error: 'Taxa USDC da moeda indisponível.' });
-    }
-
-    const balRes = await client.query(
-      'SELECT amount FROM coin_balances WHERE user_id = $1 AND coin_id = $2 FOR UPDATE',
-      [uid, cid]
-    );
-    const balance = Number(balRes.rows[0]?.amount) || 0;
-
-    if (balance <= 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Insufficient balance' });
-    }
-
-    const sellAmount = balance * pct;
-    if (!Number.isFinite(sellAmount) || sellAmount <= 0 || sellAmount > balance + 1e-12) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Valor de troca inválido.' });
-    }
-
-    const grossUsdc = sellAmount * rate;
-    if (!Number.isFinite(grossUsdc) || grossUsdc < minUsdc) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: `Valor mínimo para troca é $${minUsdc.toFixed(2)} USDC` });
-    }
-
-    const feeAmount = grossUsdc * (feePercent / 100);
-    const netUsdc = grossUsdc - feeAmount;
-    if (!Number.isFinite(netUsdc) || netUsdc <= 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Valor líquido inválido após taxas.' });
-    }
-
-    const updCoin = await client.query(
-      'UPDATE coin_balances SET amount = amount - $1 WHERE user_id = $2 AND coin_id = $3 AND amount >= $1 RETURNING amount',
-      [sellAmount, uid, cid]
-    );
-    if (updCoin.rowCount === 0) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Insufficient balance' });
-    }
-
-    await client.query('UPDATE game_states SET usdc = COALESCE(usdc, 0) + $1 WHERE user_id = $2', [netUsdc, uid]);
-
-    await client.query('COMMIT');
-
-    const finalGs = await client.query('SELECT usdc FROM game_states WHERE user_id = $1', [uid]);
-    const finalBal = await client.query('SELECT amount FROM coin_balances WHERE user_id = $1 AND coin_id = $2', [uid, cid]);
-
-    console.log('[ExchangeSell] userId=%s coinId=%s coinName=%s pct=%s soldAmount=%s grossUsdc=%s feeUsdc=%s netUsdc=%s',
-      uid, cid, coinDef.name, String(pct), sellAmount, grossUsdc.toFixed(8), feeAmount.toFixed(8), netUsdc.toFixed(8));
     await appendGameActivityLog(db, uid, 'exchange_sell', {
       coinId: cid,
-      coinName: coinDef.name,
+      coinName,
       pct: Number(pct),
-      soldAmount: Number(sellAmount),
-      netUsdc: Number(netUsdc.toFixed(8))
+      soldAmount: Number(result.soldAmount),
+      netUsdc: Number(result.netUsdc.toFixed(8))
     });
 
     res.json({
       ok: true,
-      soldAmount: sellAmount,
-      netUsdc,
-      feeUsdc: feeAmount,
-      newUsdc: finalGs.rows[0]?.usdc || 0,
-      newCoinBalance: finalBal.rows[0]?.amount || 0
+      soldAmount: result.soldAmount,
+      netUsdc: result.netUsdc,
+      feeUsdc: result.feeUsdc,
+      newUsdc: result.newUsdc,
+      newCoinBalance: result.newCoinBalance
     });
   } catch (e) {
-    try { await client.query('ROLLBACK'); } catch (rbErr) { /* ignore */ }
-    console.error('[ExchangeSell]', e.message);
+    if (e instanceof RoletaAppError) {
+      return res.status(e.statusCode).json({ error: e.message });
+    }
+    try {
+      await client.query('ROLLBACK');
+    } catch (rbErr) {
+      /* ignore */
+    }
+    console.error('[ExchangeSell]', (e as Error)?.message);
     res.status(500).json({ error: 'Erro ao processar troca.' });
   } finally {
     client.release();
@@ -9477,6 +9429,23 @@ const startServer = async () => {
       await ensureUserLevels(); // Restore levels (Moved from top-level)
       await ensureStockItemIdsSane();
       await ensureStoredBatteriesIntegrity(db);
+
+      try {
+        await db.query(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_placed_racks_battery_instance_uuid_unique
+          ON placed_racks (battery_id)
+          WHERE battery_id IS NOT NULL
+            AND btrim(battery_id::text) <> ''
+            AND battery_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        `);
+        console.log('[DB] idx_placed_racks_battery_instance_uuid_unique verificado/criado.');
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(
+          '[DB] idx_placed_racks_battery_instance_uuid_unique não aplicado (duplicados ou permissão):',
+          msg
+        );
+      }
 
       async function ensureShowInExchangeColumn() {
         try {

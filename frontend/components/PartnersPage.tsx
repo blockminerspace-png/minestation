@@ -12,11 +12,11 @@ import {
   Play
 } from 'lucide-react';
 import {
-  getPartnerYoutubeVideosPublic,
-  getPartnerYoutubeMyContext,
+  getPartnersState,
   submitPartnerYoutubeVideo,
-  type PartnerYoutubeVideoPublic,
   type PartnerYoutubeMySubmission,
+  type PartnersShowcaseVideoDto,
+  type PartnersStatePayload,
 } from '../services/api';
 import {
   PARTNER_VIDEO_DESCRIPTION_MAX,
@@ -53,7 +53,7 @@ function statusClass(st: string): string {
 }
 
 type ShowcaseCreator = {
-  userId: number;
+  key: string;
   username: string;
   channelUrl: string;
   avatarUrl: string;
@@ -80,7 +80,7 @@ function PartnerShowcaseAvatar({ name, imageUrl }: { name: string; imageUrl: str
 }
 
 export const PartnersPage: React.FC = () => {
-  const [videos, setVideos] = useState<PartnerYoutubeVideoPublic[]>([]);
+  const [videos, setVideos] = useState<PartnersShowcaseVideoDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -88,6 +88,7 @@ export const PartnersPage: React.FC = () => {
   const [isPartner, setIsPartner] = useState(false);
   const [canSubmitToday, setCanSubmitToday] = useState(false);
   const [mySubs, setMySubs] = useState<PartnerYoutubeMySubmission[]>([]);
+  const submitBusyRef = React.useRef(false);
 
   const [formOpen, setFormOpen] = useState(true);
   const [title, setTitle] = useState('');
@@ -96,54 +97,72 @@ export const PartnersPage: React.FC = () => {
   const [submitting, setSubmitting] = useState(false);
   const [submitErr, setSubmitErr] = useState<string | null>(null);
 
-  const loadPublic = useCallback(async () => {
-    setLoading(true);
-    setErr(null);
-    try {
-      const { videos: v } = await getPartnerYoutubeVideosPublic(48, 0);
-      setVideos(v);
-    } catch {
-      setErr('Não foi possível carregar os vídeos.');
-    } finally {
-      setLoading(false);
-    }
+  const mapStateToUi = useCallback((st: PartnersStatePayload) => {
+    const raw = Array.isArray(st.showcase?.videos) ? st.showcase!.videos : [];
+    setVideos(raw);
+    const auth = st.auth || {};
+    setIsPartner(!!auth.isPartner);
+    setCanSubmitToday(!!auth.canSubmitToday);
+    const ms = Array.isArray(st.mySubmissions) ? st.mySubmissions : [];
+    setMySubs(
+      ms.map((s) => ({
+        id: s.publicId,
+        title: s.title,
+        youtubeUrl: s.youtubeUrl,
+        youtubeVideoId: s.youtubeVideoId,
+        description: s.description,
+        status: s.status,
+        createdAt: s.createdAt,
+        reviewedAt: s.reviewedAt,
+        rejectReason: s.rejectReasonPublic
+      }))
+    );
   }, []);
 
-  const loadMy = useCallback(async () => {
+  const loadAll = useCallback(async () => {
+    setLoading(true);
     setCtxLoading(true);
+    setErr(null);
     try {
-      const c = await getPartnerYoutubeMyContext();
-      setIsPartner(c.isPartner);
-      setCanSubmitToday(c.canSubmitToday);
-      setMySubs(c.submissions);
+      const st = await getPartnersState({ limit: 48 });
+      if (!st?.ok) {
+        setErr('Não foi possível carregar os vídeos.');
+        setVideos([]);
+        setIsPartner(false);
+        setCanSubmitToday(false);
+        setMySubs([]);
+        return;
+      }
+      mapStateToUi(st);
     } catch {
+      setErr('Não foi possível carregar os vídeos.');
+      setVideos([]);
       setIsPartner(false);
       setCanSubmitToday(false);
       setMySubs([]);
     } finally {
+      setLoading(false);
       setCtxLoading(false);
     }
-  }, []);
+  }, [mapStateToUi]);
 
   useEffect(() => {
-    void loadPublic();
-  }, [loadPublic]);
-
-  useEffect(() => {
-    void loadMy();
-  }, [loadMy]);
+    void loadAll();
+  }, [loadAll]);
 
   /** Criadores únicos na vitrine (links/fotos definidos pelo admin). */
   const showcaseCreators = useMemo((): ShowcaseCreator[] => {
-    const m = new Map<number, ShowcaseCreator>();
+    const m = new Map<string, ShowcaseCreator>();
     for (const v of videos) {
-      const uid = Number(v.userId);
-      if (!Number.isFinite(uid) || uid < 1 || m.has(uid)) continue;
-      m.set(uid, {
-        userId: uid,
-        username: String(v.username || '').trim() || `User #${uid}`,
-        channelUrl: String(v.partnerChannelUrl || '').trim(),
-        avatarUrl: String(v.partnerAvatarUrl || '').trim()
+      const username = String(v.creator?.displayName || '').trim() || 'Parceiro';
+      const channelUrl = String(v.creator?.channelUrl || '').trim();
+      const key = `${username}|${channelUrl}`;
+      if (m.has(key)) continue;
+      m.set(key, {
+        key,
+        username,
+        channelUrl,
+        avatarUrl: String(v.creator?.avatarUrl || '').trim()
       });
     }
     return [...m.values()].slice(0, 32);
@@ -151,7 +170,9 @@ export const PartnersPage: React.FC = () => {
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (submitBusyRef.current) return;
     setSubmitErr(null);
+    submitBusyRef.current = true;
     setSubmitting(true);
     try {
       const r = await submitPartnerYoutubeVideo({ title, youtubeUrl, description });
@@ -162,9 +183,9 @@ export const PartnersPage: React.FC = () => {
       setTitle('');
       setYoutubeUrl('');
       setDescription('');
-      await loadMy();
-      await loadPublic();
+      await loadAll();
     } finally {
+      submitBusyRef.current = false;
       setSubmitting(false);
     }
   };
@@ -322,13 +343,15 @@ export const PartnersPage: React.FC = () => {
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 sm:gap-4">
             {videos.map((v) => {
-              const creatorSearch = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${v.username} channel`)}`;
-              const customChannel = String(v.partnerChannelUrl || '').trim();
+              const displayName = String(v.creator?.displayName || '').trim() || 'Parceiro';
+              const creatorSearch = `https://www.youtube.com/results?search_query=${encodeURIComponent(`${displayName} channel`)}`;
+              const customChannel = String(v.creator?.channelUrl || '').trim();
               const channelHref = customChannel || creatorSearch;
               const channelLabel = customChannel ? 'Ver canal' : 'Procurar canal';
+              const thumb = v.thumbnailUrl || thumbUrl(v.youtubeVideoId);
               return (
                 <article
-                  key={v.id}
+                  key={v.publicId}
                   className="rounded-xl border border-slate-600/80 bg-slate-950/60 overflow-hidden flex flex-col shadow-xl shadow-black/30 ring-1 ring-white/5 hover:ring-amber-500/20 transition-all"
                 >
                   <a
@@ -338,7 +361,7 @@ export const PartnersPage: React.FC = () => {
                     className="relative block aspect-video bg-slate-950 group"
                   >
                     <img
-                      src={thumbUrl(v.youtubeVideoId)}
+                      src={thumb}
                       alt=""
                       className="w-full h-full object-cover opacity-95 group-hover:opacity-100 group-hover:scale-[1.02] transition-transform duration-300"
                     />
@@ -352,10 +375,10 @@ export const PartnersPage: React.FC = () => {
                     <h3 className="font-bold text-sm text-white leading-snug line-clamp-2 min-h-[2.5rem]">{v.title}</h3>
                     <div className="text-[11px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-1">
                       <span className="inline-flex items-center gap-1 text-slate-400">
-                        <User size={12} /> {v.username}
+                        <User size={12} /> {displayName}
                       </span>
                       <span className="inline-flex items-center gap-1">
-                        <Calendar size={12} /> {fmtDate(v.approvedAt || v.createdAt)}
+                        <Calendar size={12} /> {fmtDate(v.publishedAt)}
                       </span>
                     </div>
                     <div className="mt-auto grid grid-cols-2 gap-2 pt-1">
@@ -398,7 +421,7 @@ export const PartnersPage: React.FC = () => {
               const href = c.channelUrl || fallbackSearch;
               return (
                 <a
-                  key={c.userId}
+                  key={c.key}
                   href={href}
                   target="_blank"
                   rel="noopener noreferrer"

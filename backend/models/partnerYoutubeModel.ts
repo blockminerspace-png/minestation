@@ -13,6 +13,7 @@ const PARTNER_YOUTUBE_DDL_STATEMENTS = [
         reviewed_at BIGINT,
         reviewed_by INTEGER REFERENCES users(id),
         reject_reason TEXT,
+        submit_utc_day INTEGER,
         CONSTRAINT partner_youtube_submissions_status_chk CHECK (status IN ('pending','approved','rejected'))
       )`,
   `CREATE INDEX IF NOT EXISTS idx_partner_youtube_user_created ON partner_youtube_submissions (user_id, created_at DESC)`,
@@ -28,7 +29,15 @@ const PARTNER_YOUTUBE_DDL_STATEMENTS = [
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
         added_at BIGINT NOT NULL,
         added_by INTEGER REFERENCES users(id)
-      )`
+      )`,
+  `ALTER TABLE partner_youtube_submissions ADD COLUMN IF NOT EXISTS submit_utc_day INTEGER`,
+  `UPDATE partner_youtube_submissions SET submit_utc_day = CAST(
+      TO_CHAR((TIMESTAMP 'epoch' + (created_at::BIGINT / 1000) * INTERVAL '1 second') AT TIME ZONE 'UTC', 'YYYYMMDD') AS INTEGER
+    ) WHERE submit_utc_day IS NULL`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS partner_youtube_submissions_user_utcday_uidx
+     ON partner_youtube_submissions (user_id, submit_utc_day)`,
+  `CREATE INDEX IF NOT EXISTS partner_youtube_submissions_video_id_status_idx
+     ON partner_youtube_submissions (youtube_video_id, status)`
 ];
 
 export async function ensurePartnerYoutubeSchema(): Promise<void> {
@@ -57,6 +66,26 @@ export async function getPartnerAccessLevelIdsLower(userId: number): Promise<Set
 export async function countPartnerSubmissionsForUserSince(userId: number, sinceMs: number): Promise<number> {
   return prisma.partner_youtube_submissions.count({
     where: { user_id: userId, created_at: { gte: BigInt(sinceMs) } }
+  });
+}
+
+/** Envios no dia civil UTC (via `submit_utc_day`). */
+export async function countPartnerSubmissionsForUserUtcDay(
+  userId: number,
+  submitUtcDay: number
+): Promise<number> {
+  return prisma.partner_youtube_submissions.count({
+    where: { user_id: userId, submit_utc_day: submitUtcDay }
+  });
+}
+
+/** Vídeo já na fila ou vitrine — evita duplicar o mesmo ID de vídeo. */
+export async function countPartnerYoutubeActiveDuplicateVideo(youtubeVideoId: string): Promise<number> {
+  return prisma.partner_youtube_submissions.count({
+    where: {
+      youtube_video_id: youtubeVideoId,
+      status: { in: ['pending', 'approved'] }
+    }
   });
 }
 
@@ -91,6 +120,63 @@ export async function listPartnerYoutubeApprovedPublic(
     ORDER BY COALESCE(s.reviewed_at, s.created_at) DESC, s.id DESC
     LIMIT ${limit} OFFSET ${offset}
   `;
+}
+
+export async function listPartnerYoutubeApprovedPublicCursor(
+  limit: number,
+  cursor: { sortTs: bigint; id: string } | null
+): Promise<PartnerYoutubeApprovedPublicRow[]> {
+  const lim = Math.min(48, Math.max(1, limit));
+  if (!cursor) {
+    return prisma.$queryRaw<PartnerYoutubeApprovedPublicRow[]>`
+      SELECT s.id, s.title, s.youtube_url, s.youtube_video_id, s.description, s.created_at, s.reviewed_at,
+             u.id AS user_id,
+             u.username,
+             COALESCE(NULLIF(BTRIM(p.channel_url), ''), '') AS partner_channel_url,
+             COALESCE(NULLIF(BTRIM(p.avatar_url), ''), '') AS partner_avatar_url
+      FROM partner_youtube_submissions s
+      JOIN users u ON u.id = s.user_id
+      LEFT JOIN partner_youtube_creator_profiles p ON p.user_id = u.id
+      WHERE s.status = 'approved'
+      ORDER BY COALESCE(s.reviewed_at, s.created_at) DESC, s.id DESC
+      LIMIT ${lim}
+    `;
+  }
+  return prisma.$queryRaw<PartnerYoutubeApprovedPublicRow[]>`
+    SELECT s.id, s.title, s.youtube_url, s.youtube_video_id, s.description, s.created_at, s.reviewed_at,
+           u.id AS user_id,
+           u.username,
+           COALESCE(NULLIF(BTRIM(p.channel_url), ''), '') AS partner_channel_url,
+           COALESCE(NULLIF(BTRIM(p.avatar_url), ''), '') AS partner_avatar_url
+    FROM partner_youtube_submissions s
+    JOIN users u ON u.id = s.user_id
+    LEFT JOIN partner_youtube_creator_profiles p ON p.user_id = u.id
+    WHERE s.status = 'approved'
+      AND (
+        COALESCE(s.reviewed_at, s.created_at) < ${cursor.sortTs}
+        OR (COALESCE(s.reviewed_at, s.created_at) = ${cursor.sortTs} AND s.id < ${cursor.id})
+      )
+    ORDER BY COALESCE(s.reviewed_at, s.created_at) DESC, s.id DESC
+    LIMIT ${lim}
+  `;
+}
+
+export async function getPartnerYoutubeApprovedByPublicId(
+  publicId: string
+): Promise<PartnerYoutubeApprovedPublicRow | null> {
+  const rows = await prisma.$queryRaw<PartnerYoutubeApprovedPublicRow[]>`
+    SELECT s.id, s.title, s.youtube_url, s.youtube_video_id, s.description, s.created_at, s.reviewed_at,
+           u.id AS user_id,
+           u.username,
+           COALESCE(NULLIF(BTRIM(p.channel_url), ''), '') AS partner_channel_url,
+           COALESCE(NULLIF(BTRIM(p.avatar_url), ''), '') AS partner_avatar_url
+    FROM partner_youtube_submissions s
+    JOIN users u ON u.id = s.user_id
+    LEFT JOIN partner_youtube_creator_profiles p ON p.user_id = u.id
+    WHERE s.status = 'approved' AND s.id = ${publicId}
+    LIMIT 1
+  `;
+  return rows[0] ?? null;
 }
 
 export async function getPartnerYoutubeCreatorProfile(
@@ -172,6 +258,7 @@ export async function insertPartnerYoutubeSubmission(params: {
   youtubeVideoId: string;
   description: string;
   createdAt: number;
+  submitUtcDay: number;
 }): Promise<void> {
   await prisma.partner_youtube_submissions.create({
     data: {
@@ -182,7 +269,8 @@ export async function insertPartnerYoutubeSubmission(params: {
       youtube_video_id: params.youtubeVideoId,
       description: params.description,
       status: 'pending',
-      created_at: BigInt(params.createdAt)
+      created_at: BigInt(params.createdAt),
+      submit_utc_day: params.submitUtcDay
     }
   });
 }

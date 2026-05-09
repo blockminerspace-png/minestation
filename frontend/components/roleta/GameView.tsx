@@ -2,7 +2,13 @@ import React, { useState, useCallback, useRef, useMemo } from 'react';
 import { Wallet } from 'lucide-react';
 import Wheel from '../Wheel';
 import { WheelItem, Upgrade } from '../../types';
-import { rollWheel, rollWheelPaid, claimWheelPaid, getPaidWheelPending } from '../../services/api';
+import {
+  rollWheel,
+  claimWheelPaid,
+  getWheelState,
+  postWheelSpin,
+  newWheelIdempotencyKey
+} from '../../services/api';
 import { UiNoticeModal, type UiNotice } from '../UiNoticeModal';
 
 interface GameViewProps {
@@ -11,7 +17,7 @@ interface GameViewProps {
   upgrades?: Upgrade[];
   /** Giro pago (USDC); não combinar com `redeemCode` no mesmo ecrã. */
   paidSpin?: boolean;
-  /** Saldo USDC (jogo) para validar US$1 antes de girar. */
+  /** Saldo USDC (jogo) para validar preço do giro antes de girar. */
   usdcBalance?: number;
   /** Após cobrar o giro ou resgatar o prémio (atualizar saldo/caixas). */
   onPaidBalanceRefresh?: () => void | Promise<void>;
@@ -37,6 +43,11 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
   const [configRetryKey, setConfigRetryKey] = useState(0);
   const [notice, setNotice] = useState<UiNotice | null>(null);
   const afterNoticeClose = useRef<(() => void) | null>(null);
+  const [spinPriceUsdc, setSpinPriceUsdc] = useState(0.1);
+  const [legacyPaidWonItemId, setLegacyPaidWonItemId] = useState<string | null>(null);
+  const [paidAlreadyDelivered, setPaidAlreadyDelivered] = useState(false);
+  const [paidSpinBusy, setPaidSpinBusy] = useState(false);
+  const paidSpinIdemRef = useRef<string | null>(null);
 
   const saldoFormatado = useMemo(() => {
     if (usdcBalance < 0.01 && usdcBalance > 0) return usdcBalance.toFixed(3);
@@ -50,9 +61,51 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
     fn?.();
   }, []);
 
-  // Fetch config se roleta por código ou roleta paga (jogador)
+  // Roleta paga: estado consolidado (preço, prémios, legado pendente).
   React.useEffect(() => {
-    if (!redeemCode && !paidSpin) {
+    if (!paidSpin) return;
+    let cancelled = false;
+    setConfigLoading(true);
+    setConfigError(null);
+    setItems([]);
+    setLegacyPaidWonItemId(null);
+    setPaidAlreadyDelivered(false);
+    void (async () => {
+      const st = await getWheelState();
+      if (cancelled) return;
+      if (st.ok === false) {
+        setConfigError(st.error || 'Erro ao carregar a roleta.');
+        setConfigLoading(false);
+        return;
+      }
+      setSpinPriceUsdc(st.data.spinPriceUsdc > 0 ? st.data.spinPriceUsdc : 0.1);
+      setLegacyPaidWonItemId(st.data.legacyPaidPending?.wonItemId ?? null);
+      const list = st.data.prizes;
+      if (Array.isArray(list) && list.length > 0) {
+        const mapped = list.map((item) => {
+          if (item.itemId && upgrades) {
+            const u = upgrades.find((up) => up.id === item.itemId);
+            if (u && u.image) {
+              return { ...item, image: u.image };
+            }
+          }
+          return item;
+        });
+        setItems(mapped);
+      } else {
+        setConfigError('A roleta ainda não tem prémios configurados.');
+      }
+      setConfigLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [paidSpin, upgrades, configRetryKey]);
+
+  // Roleta por código: lista pública de prémios.
+  React.useEffect(() => {
+    if (paidSpin) return;
+    if (!redeemCode) {
       setConfigLoading(false);
       setConfigError(null);
       return;
@@ -100,38 +153,58 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
     };
   }, [redeemCode, paidSpin, upgrades, configRetryKey]);
 
-  /** Retomar prémio pago pendente (já cobrado) após recarregar a página. */
+  /** Retomar prémio pago legado (fluxo antigo com `wheel_paid_pending`). */
   React.useEffect(() => {
-    if (!paidSpin || items.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      const p = await getPaidWheelPending();
-      if (cancelled || !p.wonItemId) return;
-      const w =
-        items.find((i) => (i.itemId && i.itemId === p.wonItemId) || i.id === p.wonItemId) || null;
-      if (w) {
-        setTargetWinner(w);
-        setShowResult(true);
-        setIsSpinning(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [paidSpin, items]);
+    if (!paidSpin || items.length === 0 || !legacyPaidWonItemId) return;
+    const w =
+      items.find((i) => (i.itemId && i.itemId === legacyPaidWonItemId) || i.id === legacyPaidWonItemId) || null;
+    if (w) {
+      setTargetWinner(w);
+      setShowResult(true);
+      setIsSpinning(false);
+      setPaidAlreadyDelivered(false);
+    }
+  }, [paidSpin, items, legacyPaidWonItemId]);
 
   const handleStartSpin = async () => {
-    if (isSpinning || configLoading || items.length === 0) return;
+    if (isSpinning || configLoading || items.length === 0 || paidSpinBusy) return;
+    if (paidSpin && legacyPaidWonItemId) {
+      setNotice({
+        variant: 'info',
+        message: 'Tens um giro pago antigo por concluir: usa «Resgatar prémio» abaixo.'
+      });
+      return;
+    }
 
     let selected: WheelItem | null = null;
 
     if (paidSpin) {
-      const res = await rollWheelPaid();
-      if (!res.ok) {
+      if (!paidSpinIdemRef.current) paidSpinIdemRef.current = newWheelIdempotencyKey();
+      const idem = paidSpinIdemRef.current;
+      setPaidSpinBusy(true);
+      let res: Awaited<ReturnType<typeof postWheelSpin>>;
+      try {
+        res = await postWheelSpin(idem);
+      } finally {
+        setPaidSpinBusy(false);
+      }
+      if (res.ok === false) {
+        paidSpinIdemRef.current = null;
+        const st = res.status;
+        if (st === 409 || st === 422) {
+          void (async () => {
+            const r = await getWheelState();
+            if (r.ok === true) setSpinPriceUsdc(r.data.spinPriceUsdc);
+            void onPaidBalanceRefresh?.();
+          })();
+        }
         setNotice({ variant: 'error', message: res.error || 'Erro ao iniciar o sorteio.' });
         return;
       }
       void onPaidBalanceRefresh?.();
+      paidSpinIdemRef.current = null;
+      setPaidAlreadyDelivered(true);
+      setLegacyPaidWonItemId(null);
       selected =
         items.find((i) => (i.itemId && i.itemId === res.wonItemId) || i.id === res.wonItemId) || null;
       if (!selected) {
@@ -185,6 +258,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
 
   const handleClaim = async () => {
     if ((!redeemCode && !paidSpin) || !targetWinner || claiming) return;
+    if (paidSpin && paidAlreadyDelivered) return;
     setClaiming(true);
     try {
       const wonItemId = String(targetWinner.itemId || targetWinner.id || '').trim();
@@ -259,10 +333,15 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       {paidSpin && !configLoading && !configError && (
         <div className="w-full text-center">
           <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-emerald-500/90">Roleta paga</p>
-          <h2 className="mt-1 font-black tracking-tight text-slate-100 text-xl sm:text-2xl">Giro US$1,00</h2>
+          <h2 className="mt-1 font-black tracking-tight text-slate-100 text-xl sm:text-2xl">
+            Giro US${spinPriceUsdc.toFixed(2)}
+          </h2>
           <p className="mt-2 max-w-sm mx-auto text-xs leading-relaxed text-slate-500">
-            Cada giro debita <span className="font-bold text-slate-300">US$1,00</span> do teu saldo USDC no jogo. O
-            sorteio é no servidor; resgata o prémio para receberes a caixa.
+            Cada giro debita{' '}
+            <span className="font-bold text-slate-300">
+              {spinPriceUsdc.toFixed(2)} USDC
+            </span>{' '}
+            do teu saldo no jogo. Apenas recompensas básicas de baixo impacto; o sorteio é no servidor.
           </p>
           <div className="mt-3 flex justify-center">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/35 bg-slate-950/80 px-3 py-1.5 shadow-[0_0_24px_rgba(16,185,129,0.12)] backdrop-blur-sm sm:px-4 sm:py-2">
@@ -325,7 +404,9 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
             items.length === 0 ||
             configLoading ||
             Boolean(configError) ||
-            (paidSpin && usdcBalance < 1)
+            paidSpinBusy ||
+            (paidSpin && Boolean(legacyPaidWonItemId)) ||
+            (paidSpin && usdcBalance + 1e-9 < spinPriceUsdc)
           }
           className={`w-full max-w-[min(20rem,calc(100vw-2rem))] rounded-xl px-5 py-3.5 text-sm font-black uppercase tracking-widest text-white shadow-lg transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 sm:max-w-xs sm:px-8 sm:py-4 sm:text-base md:text-lg ${
             paidSpin
@@ -333,7 +414,11 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
               : 'bg-gradient-to-r from-orange-600 to-amber-600 shadow-orange-900/40 hover:from-orange-500 hover:to-amber-500 hover:shadow-orange-500/25'
           }`}
         >
-          {paidSpin ? 'Girar (US$1,00)' : redeemCode ? 'Girar agora' : 'Girar roleta'}
+          {paidSpin
+            ? `Girar (US$${spinPriceUsdc.toFixed(2)})`
+            : redeemCode
+              ? 'Girar agora'
+              : 'Girar roleta'}
         </button>
       )}
 
@@ -348,11 +433,20 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
             {redeemCode || paidSpin ? (
               <button
                 type="button"
-                onClick={handleClaim}
+                onClick={paidSpin && paidAlreadyDelivered ? () => {
+                  setShowResult(false);
+                  setTargetWinner(null);
+                  setPaidAlreadyDelivered(false);
+                  void onRedeemComplete?.();
+                } : handleClaim}
                 disabled={claiming}
                 className="w-full rounded-xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-50 sm:py-3.5 sm:text-sm"
               >
-                {claiming ? 'A resgatar…' : 'Resgatar prémio'}
+                {paidSpin && paidAlreadyDelivered
+                  ? 'OK'
+                  : claiming
+                    ? 'A resgatar…'
+                    : 'Resgatar prémio'}
               </button>
             ) : (
               <button

@@ -126,8 +126,11 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
 
-      const { rewards, gainedUsdc, boxName } = await prisma.$transaction(
-        (tx) => executeLootBoxOpenInTransaction(tx, { userId, boxId }),
+      const idkRaw = (req.body as { idempotencyKey?: unknown })?.idempotencyKey;
+      const idempotencyKey =
+        typeof idkRaw === 'string' && idkRaw.trim() ? idkRaw.trim().slice(0, 128) : undefined;
+      const { rewards, gainedUsdc, boxName, openingId } = await prisma.$transaction(
+        (tx) => executeLootBoxOpenInTransaction(tx, { userId, boxId, idempotencyKey: idempotencyKey ?? null }),
         { timeout: 60_000, maxWait: 10_000 }
       );
 
@@ -154,7 +157,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         rewardsPreview: rewards.slice(0, 12)
       });
 
-      res.json({ ok: true, rewards });
+      res.json({ ok: true, rewards, openingId });
     } catch (err: unknown) {
       if (err instanceof LootBoxOpenError) {
         res.status(err.statusCode).json({ error: err.message });
@@ -188,8 +191,17 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         return;
       }
 
-      const { newUsdc, boxName, trigger, price } = await prisma.$transaction(
-        (tx) => executeLootBoxBuyInTransaction(tx, { userId, boxId }),
+      const body = req.body as { qty?: unknown; quantity?: unknown };
+      const qtyRaw = body.quantity ?? body.qty;
+      const qtyParsed =
+        typeof qtyRaw === 'number'
+          ? qtyRaw
+          : typeof qtyRaw === 'string'
+            ? parseInt(qtyRaw, 10)
+            : NaN;
+      const qty = Number.isFinite(qtyParsed) && qtyParsed >= 1 ? Math.floor(qtyParsed) : undefined;
+      const { newUsdc, boxName, trigger, price, qtyPurchased } = await prisma.$transaction(
+        (tx) => executeLootBoxBuyInTransaction(tx, { userId, boxId, qty }),
         { timeout: 60_000, maxWait: 10_000 }
       );
 
@@ -217,7 +229,7 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         trigger
       });
 
-      res.json({ ok: true, newUsdc });
+      res.json({ ok: true, newUsdc, qtyPurchased });
     } catch (err: unknown) {
       if (err instanceof LootBoxBuyError) {
         const body: { error: string; missing?: number } = { error: err.message };

@@ -3,6 +3,7 @@ import { GameState, LootBox, LootBoxItem, Upgrade } from '../types';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import { Gift, Package, Sparkles, DollarSign, Box, CheckCircle2, Ticket, Store, Trash2, Loader2 } from 'lucide-react';
 import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
+import { getLuckyBoxesState, redeemLuckyBoxPromoCode, type LuckyBoxesStateV1, type LuckyBoxShopEntryV1 } from '../services/api';
 
 /** Caixas criadas pelo prémio da roleta guardam o item em `description` (`reward_for_<upgradeId>`), não sempre em `items`. */
 function effectiveLootBoxItems(def: LootBox | undefined, upgradesList: Upgrade[]): LootBoxItem[] {
@@ -40,8 +41,10 @@ interface LuckyBoxStoreProps {
     gameState: GameState;
     lootBoxes: LootBox[];
     upgrades: Upgrade[];
+    /** Sessão: usado para carregar `GET /api/lucky-boxes/state` (loja segura sem pesos). */
+    userEmail?: string | null;
     onBuyBox: (boxId: string) => void | Promise<void>;
-    onOpenBox: (boxId: string) => Promise<{ rewards: any[] } | null>;
+    onOpenBox: (boxId: string, opts?: { idempotencyKey?: string }) => Promise<{ rewards: any[] } | null>;
     /** Remove caixas não abertas do inventário (sem prémio). */
     onDiscardBox?: (boxId: string) => Promise<{ ok: boolean; error?: string }>;
     onRedeemSuccess?: (unopenedBoxes: Record<string, number>) => void;
@@ -49,10 +52,17 @@ interface LuckyBoxStoreProps {
     onOpenRoleta?: (code: string) => void;
 }
 
+function serverShopAvailability(entry: LuckyBoxShopEntryV1): { canBuy: boolean; label: string | null } {
+    if (entry.stockRemaining === 0) return { canBuy: false, label: 'ESGOTADO' };
+    if (entry.priceUsdc <= 0) return { canBuy: true, label: 'GRATIS' };
+    return { canBuy: true, label: null };
+}
+
 export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
     gameState,
     lootBoxes,
     upgrades,
+    userEmail = null,
     onBuyBox,
     onOpenBox,
     onDiscardBox,
@@ -67,6 +77,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
     const [redeeming, setRedeeming] = useState(false);
     const [buyingBoxId, setBuyingBoxId] = useState<string | null>(null);
     const [notice, setNotice] = useState<UiNotice | null>(null);
+    const [luckyStateV1, setLuckyStateV1] = useState<LuckyBoxesStateV1 | null>(null);
 
     type LuckyTab = 'inventario' | 'loja';
 
@@ -90,6 +101,26 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
         lastOwnedRef.current = openableInventoryTotal;
     }, [openableInventoryTotal]);
 
+    useEffect(() => {
+        if (!userEmail?.trim()) {
+            setLuckyStateV1(null);
+            return;
+        }
+        let cancelled = false;
+        void (async () => {
+            const r = await getLuckyBoxesState();
+            if (cancelled) return;
+            if (r && typeof r === 'object' && 'version' in r && (r as LuckyBoxesStateV1).version === 1) {
+                setLuckyStateV1(r as LuckyBoxesStateV1);
+            }
+        })();
+        return () => {
+            cancelled = true;
+        };
+    }, [userEmail, gameState.unopenedBoxes, gameState.claimedBoxes, gameState.usdc]);
+
+    const reserveUsdc = luckyStateV1 != null ? luckyStateV1.usdc : gameState.usdc;
+
     const lojaBoxes = useMemo(() => {
         const claimed = gameState.claimedBoxes || [];
         return shopBoxes.filter(b => {
@@ -99,6 +130,19 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
             return true;
         });
     }, [shopBoxes, gameState.claimedBoxes]);
+
+    const lojaRows = useMemo(() => {
+        if (luckyStateV1?.shop && luckyStateV1.shop.length > 0) {
+            return luckyStateV1.shop.map((entry) => ({ kind: 'server' as const, entry }));
+        }
+        return lojaBoxes.map((box) => ({ kind: 'defs' as const, box }));
+    }, [luckyStateV1, lojaBoxes]);
+
+    const shopEmptyMessage = useMemo(() => {
+        if (lojaRows.length > 0) return '';
+        if (luckyStateV1?.shop && luckyStateV1.shop.length === 0) return luckyStateV1.shopEmptyMessage;
+        return 'Nenhuma caixa disponível para compra no momento.';
+    }, [lojaRows.length, luckyStateV1]);
 
     // Helper to render icon (emoji or image)
     const renderIcon = (icon: string, sizeClass: string = "text-xl", imgClass: string = "") => {
@@ -144,28 +188,33 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                 .filter(([_, qty]) => qty > 0)
                 .map(([id, qty]) => {
                     const def = lootBoxes.find((b) => b.id === id);
+                    const invSrv = luckyStateV1?.inventory?.find((x) => x.boxId === id);
                     return {
                         id,
                         qty,
-                        name: displayLootBoxName(def?.name),
-                        description: def?.description || 'Recompensa obtida.',
-                        icon: def?.icon || '🎁',
-                        trigger: def?.trigger,
+                        name: displayLootBoxName(invSrv?.name || def?.name),
+                        description: invSrv?.description || def?.description || 'Recompensa obtida.',
+                        icon: invSrv?.icon || def?.icon || '🎁',
+                        trigger: invSrv?.trigger ?? def?.trigger,
                         items: effectiveLootBoxItems(def, upgrades),
                         /** Caixa retirada do catálogo público; inventário e abertura continuam válidos. */
                         isRetiredCatalog: def?.isActive === false
                     };
                 })
                 .filter((box) => box.trigger !== 'roleta_code'),
-        [gameState.unopenedBoxes, lootBoxes, upgrades]
+        [gameState.unopenedBoxes, lootBoxes, upgrades, luckyStateV1]
     );
 
     const handleOpen = (boxId: string) => {
         setOpeningBox(boxId);
+        const ik =
+            typeof crypto !== 'undefined' && 'randomUUID' in crypto
+                ? crypto.randomUUID()
+                : `lb_o_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
         // Animation Delay
         setTimeout(async () => {
-            const result = await onOpenBox(boxId);
+            const result = await onOpenBox(boxId, { idempotencyKey: ik });
             if (result) {
                 setRewards(result.rewards);
             }
@@ -206,14 +255,30 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
         if (!promoCode.trim()) return;
         setRedeeming(true);
         try {
-            const res = await fetch('/api/redeem-code', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                credentials: 'include',
-                body: JSON.stringify({ code: promoCode.trim() })
-            });
-            const data = await res.json();
-            if (res.ok) {
+            const idempotencyKey =
+                typeof crypto !== 'undefined' && 'randomUUID' in crypto
+                    ? crypto.randomUUID()
+                    : `promo_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+            const data = userEmail?.trim()
+                ? await redeemLuckyBoxPromoCode({ code: promoCode.trim(), idempotencyKey })
+                : await (async () => {
+                      const res = await fetch('/api/redeem-code', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          credentials: 'include',
+                          body: JSON.stringify({ code: promoCode.trim() })
+                      });
+                      const j = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+                      return {
+                          ok: res.ok,
+                          type: j.type as 'roleta' | 'standard' | undefined,
+                          code: j.code as string | undefined,
+                          unopenedBoxes: j.unopenedBoxes as Record<string, number> | undefined,
+                          error: j.error as string | undefined
+                      };
+                  })();
+
+            if (data.ok) {
                 if (data.type === 'roleta') {
                     const c = typeof data.code === 'string' ? data.code.trim() : '';
                     setPromoCode('');
@@ -238,7 +303,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
             } else {
                 setNotice({ variant: 'error', message: data.error || 'Erro ao resgatar código' });
             }
-        } catch (e) {
+        } catch {
             setNotice({ variant: 'error', message: 'Falha na comunicação com o servidor' });
         } finally {
             setRedeeming(false);
@@ -335,6 +400,19 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                     Loja
                 </button>
             </nav>
+
+            {luckyStateV1?.banner && (
+                <div
+                    className={`mb-4 rounded-xl border px-4 py-3 text-sm ${
+                        luckyStateV1.banner.variant === 'warning'
+                            ? 'border-amber-500/40 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100'
+                            : 'border-slate-300 bg-slate-50 text-slate-700 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-200'
+                    }`}
+                    role="status"
+                >
+                    {luckyStateV1.banner.text}
+                </div>
+            )}
 
             {activeTab === 'inventario' && (
                 <div className="mb-8">
@@ -444,95 +522,195 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                 </h3>
                 <p className="text-xs text-slate-500 mb-4 -mt-2">Só aparecem ofertas que você ainda pode comprar. Caixas que você já tem ficam em <span className="font-semibold text-slate-600 dark:text-slate-400">Meu inventário</span>.</p>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                    {lojaBoxes.map(box => {
+                    {lojaRows.map((row) => {
+                        if (row.kind === 'server') {
+                            const entry = row.entry;
+                            const availability = serverShopAvailability(entry);
+                            const canAfford = reserveUsdc >= entry.priceUsdc;
+                            const buyingThis = buyingBoxId === entry.id;
+                            const shopBusyElsewhere = buyingBoxId !== null && !buyingThis;
+                            const disabledShop = !availability.canBuy || !canAfford || shopBusyElsewhere || buyingThis;
+                            const showBuyActive = (availability.canBuy && canAfford) || buyingThis;
+                            return (
+                                <div
+                                    key={entry.id}
+                                    className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 rounded-xl p-4 flex flex-col items-center text-center shadow-sm transition-all relative overflow-hidden group"
+                                >
+                                    <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner group-hover:scale-110 transition-transform overflow-hidden">
+                                        {renderIcon(entry.icon || '📦', 'text-3xl', 'w-10 h-10')}
+                                    </div>
+                                    <div className="font-bold text-slate-800 dark:text-white">{displayLootBoxName(entry.name)}</div>
+                                    <div className="text-xs text-slate-500 mb-3 h-8 line-clamp-2">{entry.description}</div>
+                                    <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-1">
+                                        Gatilho: {entry.trigger || 'sem gatilho'}
+                                    </div>
+                                    {entry.stockRemaining != null && (
+                                        <div className="text-[10px] font-mono text-amber-700 dark:text-amber-400 mb-2">
+                                            Stock: {entry.stockRemaining}
+                                        </div>
+                                    )}
+                                    <div className="w-full text-left mb-3">
+                                        <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conteúdo (servidor)</div>
+                                        <div className="space-y-1">
+                                            {entry.rewardSummary.slots.map((s, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded p-2 text-[12px]"
+                                                >
+                                                    <span className="flex-1 text-slate-700 dark:text-slate-300">{s.label}</span>
+                                                    <span className="font-mono text-slate-600 dark:text-slate-400">{s.rangeText}</span>
+                                                </div>
+                                            ))}
+                                            {entry.rewardSummary.slots.length === 0 && (
+                                                <div className="text-[12px] text-slate-500">Pool de prémios no servidor.</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="mt-auto w-full">
+                                        <button
+                                            type="button"
+                                            onClick={async () => {
+                                                if (!availability.canBuy || buyingBoxId) return;
+                                                setBuyingBoxId(entry.id);
+                                                try {
+                                                    await Promise.resolve(onBuyBox(entry.id));
+                                                } finally {
+                                                    setBuyingBoxId(null);
+                                                }
+                                            }}
+                                            disabled={disabledShop}
+                                            className={`
+                                w-full py-2 rounded-lg font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-1
+                                ${showBuyActive
+                                                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}
+                            `}
+                                        >
+                                            {buyingThis ? (
+                                                <>
+                                                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                                                    <span className="uppercase tracking-wider">A comprar</span>
+                                                </>
+                                            ) : availability.label ? (
+                                                <span className="flex items-center gap-1 uppercase tracking-wider">
+                                                    <Gift size={14} /> {availability.label}
+                                                </span>
+                                            ) : entry.priceUsdc <= 0 ? (
+                                                <span className="flex items-center gap-1 uppercase tracking-wider">
+                                                    <Gift size={14} /> GRÁTIS
+                                                </span>
+                                            ) : (
+                                                <>
+                                                    <DollarSign size={14} /> {formatCost(entry.priceUsdc)}
+                                                </>
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        }
+                        const box = row.box;
                         const availability = getBoxAvailability(box);
-                        const canAfford = gameState.usdc >= box.price;
+                        const canAfford = reserveUsdc >= box.price;
                         const buyingThis = buyingBoxId === box.id;
                         const shopBusyElsewhere = buyingBoxId !== null && !buyingThis;
                         const disabledShop = !availability.canBuy || !canAfford || shopBusyElsewhere || buyingThis;
                         const showBuyActive = (availability.canBuy && canAfford) || buyingThis;
                         return (
-                        <div key={box.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 rounded-xl p-4 flex flex-col items-center text-center shadow-sm transition-all relative overflow-hidden group">
-                            <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner group-hover:scale-110 transition-transform overflow-hidden">
-                                {renderIcon(box.icon || '📦', "text-3xl", "w-10 h-10")}
-                            </div>
-                            <div className="font-bold text-slate-800 dark:text-white">{displayLootBoxName(box.name)}</div>
-                            <div className="text-xs text-slate-500 mb-3 h-8 line-clamp-2">{box.description}</div>
-                            <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-3">
-                                Gatilho: {box.trigger || 'sem gatilho'}
-                            </div>
-                            <div className="w-full text-left mb-3">
-                                <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conteúdo</div>
-                                <div className="space-y-1">
-                                    {effectiveLootBoxItems(box, upgrades).map((it, idx) => {
-                                        const isCurrency = it.type === 'currency';
-                                        const itemDef = !isCurrency ? upgrades.find(u => u.id === it.id) : null;
-                                        const name = isCurrency ? 'USDC' : (itemDef?.name || it.id);
-                                        const icon = isCurrency ? '💵' : (itemDef?.icon || '📦');
-                                        return (
-                                            <div key={idx} className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded p-2 text-[12px]">
-                                                <span className="text-base flex items-center justify-center w-5 h-5">{renderIcon(icon, "text-base", "w-4 h-4")}</span>
-                                                <span className="flex-1 text-slate-700 dark:text-slate-300">{name}</span>
-                                                <span className="font-mono text-slate-600 dark:text-slate-400">x{it.minQty}-{it.maxQty}</span>
-                                                <span className="text-yellow-600 dark:text-yellow-400 font-mono">{Math.round(it.probability)}%</span>
-                                            </div>
-                                        );
-                                    })}
-                                    {effectiveLootBoxItems(box, upgrades).length === 0 && (
-                                        <div className="text-[12px] text-slate-500">
-                                            {box.trigger === 'roleta_code'
-                                                ? 'Prémio pela roleta após resgatar um código — não há lista fixa de itens.'
-                                                : 'Sem itens definidos.'}
-                                        </div>
-                                    )}
+                            <div
+                                key={box.id}
+                                className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-amber-500 dark:hover:border-amber-500 rounded-xl p-4 flex flex-col items-center text-center shadow-sm transition-all relative overflow-hidden group"
+                            >
+                                <div className="w-16 h-16 bg-slate-100 dark:bg-slate-800 rounded-full flex items-center justify-center text-3xl mb-3 shadow-inner group-hover:scale-110 transition-transform overflow-hidden">
+                                    {renderIcon(box.icon || '📦', 'text-3xl', 'w-10 h-10')}
                                 </div>
-                            </div>
+                                <div className="font-bold text-slate-800 dark:text-white">{displayLootBoxName(box.name)}</div>
+                                <div className="text-xs text-slate-500 mb-3 h-8 line-clamp-2">{box.description}</div>
+                                <div className="text-[10px] uppercase tracking-widest text-slate-500 mb-3">
+                                    Gatilho: {box.trigger || 'sem gatilho'}
+                                </div>
+                                <div className="w-full text-left mb-3">
+                                    <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conteúdo</div>
+                                    <div className="space-y-1">
+                                        {effectiveLootBoxItems(box, upgrades).map((it, idx) => {
+                                            const isCurrency = it.type === 'currency';
+                                            const itemDef = !isCurrency ? upgrades.find((u) => u.id === it.id) : null;
+                                            const name = isCurrency ? 'USDC' : itemDef?.name || it.id;
+                                            const icon = isCurrency ? '💵' : itemDef?.icon || '📦';
+                                            return (
+                                                <div
+                                                    key={idx}
+                                                    className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded p-2 text-[12px]"
+                                                >
+                                                    <span className="text-base flex items-center justify-center w-5 h-5">
+                                                        {renderIcon(icon, 'text-base', 'w-4 h-4')}
+                                                    </span>
+                                                    <span className="flex-1 text-slate-700 dark:text-slate-300">{name}</span>
+                                                    <span className="font-mono text-slate-600 dark:text-slate-400">
+                                                        x{it.minQty}-{it.maxQty}
+                                                    </span>
+                                                    <span className="text-yellow-600 dark:text-yellow-400 font-mono">
+                                                        {Math.round(it.probability)}%
+                                                    </span>
+                                                </div>
+                                            );
+                                        })}
+                                        {effectiveLootBoxItems(box, upgrades).length === 0 && (
+                                            <div className="text-[12px] text-slate-500">
+                                                {box.trigger === 'roleta_code'
+                                                    ? 'Prémio pela roleta após resgatar um código — não há lista fixa de itens.'
+                                                    : 'Sem itens definidos.'}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
 
-                            <div className="mt-auto w-full">
-                                <button
-                                    type="button"
-                                    onClick={async () => {
-                                        if (!availability.canBuy || buyingBoxId) return;
-                                        setBuyingBoxId(box.id);
-                                        try {
-                                            await Promise.resolve(onBuyBox(box.id));
-                                        } finally {
-                                            setBuyingBoxId(null);
-                                        }
-                                    }}
-                                    disabled={disabledShop}
-                                    className={`
+                                <div className="mt-auto w-full">
+                                    <button
+                                        type="button"
+                                        onClick={async () => {
+                                            if (!availability.canBuy || buyingBoxId) return;
+                                            setBuyingBoxId(box.id);
+                                            try {
+                                                await Promise.resolve(onBuyBox(box.id));
+                                            } finally {
+                                                setBuyingBoxId(null);
+                                            }
+                                        }}
+                                        disabled={disabledShop}
+                                        className={`
                                 w-full py-2 rounded-lg font-bold text-sm transition-all active:scale-95 flex items-center justify-center gap-1
                                 ${showBuyActive
-                                            ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-500/20'
-                                            : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}
+                                                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                                                    : 'bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed'}
                             `}
-                                >
-                                    {buyingThis ? (
-                                        <>
-                                            <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
-                                            <span className="uppercase tracking-wider">A comprar</span>
-                                        </>
-                                    ) : availability.label ? (
-                                        <span className="flex items-center gap-1 uppercase tracking-wider">
-                                            <Gift size={14} /> {availability.label}
-                                        </span>
-                                    ) : box.price <= 0 ? (
-                                        <span className="flex items-center gap-1 uppercase tracking-wider">
-                                            <Gift size={14} /> GRÁTIS
-                                        </span>
-                                    ) : (
-                                        <>
-                                            <DollarSign size={14} /> {formatCost(box.price)}
-                                        </>
-                                    )}
-                                </button>
+                                    >
+                                        {buyingThis ? (
+                                            <>
+                                                <Loader2 className="h-4 w-4 shrink-0 animate-spin" aria-hidden />
+                                                <span className="uppercase tracking-wider">A comprar</span>
+                                            </>
+                                        ) : availability.label ? (
+                                            <span className="flex items-center gap-1 uppercase tracking-wider">
+                                                <Gift size={14} /> {availability.label}
+                                            </span>
+                                        ) : box.price <= 0 ? (
+                                            <span className="flex items-center gap-1 uppercase tracking-wider">
+                                                <Gift size={14} /> GRÁTIS
+                                            </span>
+                                        ) : (
+                                            <>
+                                                <DollarSign size={14} /> {formatCost(box.price)}
+                                            </>
+                                        )}
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                    )})}
-                    {lojaBoxes.length === 0 && (
+                        );
+                    })}
+                    {lojaRows.length === 0 && (
                         <div className="col-span-full text-center py-12 text-slate-500 italic border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-xl">
-                            Nenhuma caixa disponível para compra no momento.
+                            {shopEmptyMessage}
                         </div>
                     )}
                 </div>

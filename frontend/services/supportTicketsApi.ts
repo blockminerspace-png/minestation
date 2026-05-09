@@ -101,6 +101,7 @@ export type MySupportTicketSummary = {
   createdAt: number;
   adminReplyCount: number;
   lastActivityAt: number;
+  unreadStaffReply?: boolean;
 };
 
 export type MySupportTicketDetail = {
@@ -122,10 +123,62 @@ export type MySupportTicketDetail = {
   playerReplies: SupportTicketPlayerReplyRow[];
 };
 
-/** `multipart/form-data` com `action` (`submit_ticket` | `player_reply`). */
+export type SupportStateTicketRow = {
+  publicId: string;
+  subject: string;
+  status: string;
+  statusLabel: string;
+  createdAt: number;
+  adminReplyCount: number;
+  lastActivityAt: number;
+  unreadStaffReply: boolean;
+};
+
+export type SupportStatePayload = {
+  ok?: boolean;
+  account?: { emailHint: string | null; username: string | null };
+  limits?: {
+    maxAttachmentBytes: number;
+    maxAttachmentCount: number;
+    maxSubjectLength: number;
+    maxMessageLength: number;
+  };
+  allowedExtensions?: string[];
+  tickets?: SupportStateTicketRow[];
+  pagination?: { limit: number; nextCursor: string | null };
+  unreadStaffReplyCount?: number;
+  notice?: string;
+};
+
+/** Chave 8–128 caracteres `[a-zA-Z0-9_.:-]` alinhada ao `parseIdempotencyKey` do backend. */
+export function newSupportIdempotencyKey(): string {
+  const u =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const raw = `sup:${u}`;
+  const safe = raw.replace(/[^a-zA-Z0-9_.:-]/g, 'x');
+  return safe.length >= 8 ? safe.slice(0, 128) : `sup:${safe}xxxxxxxx`.slice(0, 36);
+}
+
+export async function getSupportState(query?: { limit?: string; cursor?: string }): Promise<SupportStatePayload | null> {
+  const qs = new URLSearchParams();
+  if (query?.limit) qs.set('limit', query.limit);
+  if (query?.cursor) qs.set('cursor', query.cursor);
+  const q = qs.toString();
+  try {
+    const res = await apiFetch(`${API_BASE}/support/state${q ? `?${q}` : ''}`);
+    if (!res.ok) return null;
+    return (await res.json()) as SupportStatePayload;
+  } catch {
+    return null;
+  }
+}
+
+/** `multipart/form-data` com `action` (`submit_ticket` | `player_reply`) — legado. */
 export async function postSupportMutate(
   fd: FormData
-): Promise<{ ok: boolean; id?: string; error?: string; code?: string }> {
+): Promise<{ ok: boolean; id?: string; error?: string; code?: string; idempotentReplay?: boolean }> {
   try {
     const res = await apiFetch(`${API_BASE}/support/mutate`, { method: 'POST', body: fd });
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
@@ -137,7 +190,11 @@ export async function postSupportMutate(
       };
     }
     const id = typeof data.id === 'string' ? data.id : undefined;
-    return { ok: true, id };
+    return {
+      ok: true,
+      id,
+      idempotentReplay: data.idempotentReplay === true
+    };
   } catch {
     return { ok: false, error: 'Network error' };
   }
@@ -147,15 +204,30 @@ export async function submitSupportTicket(payload: {
   subject: string;
   message: string;
   files?: File[];
-}): Promise<{ ok: boolean; id?: string; error?: string }> {
+  idempotencyKey?: string;
+}): Promise<{ ok: boolean; id?: string; error?: string; idempotentReplay?: boolean }> {
   const fd = new FormData();
-  fd.set('action', 'submit_ticket');
   fd.set('subject', payload.subject);
   fd.set('message', payload.message);
+  fd.set('idempotencyKey', payload.idempotencyKey || newSupportIdempotencyKey());
   for (const f of payload.files || []) {
     if (f && f.size > 0) fd.append('files', f);
   }
-  return postSupportMutate(fd);
+  try {
+    const res = await apiFetch(`${API_BASE}/support/tickets`, { method: 'POST', body: fd });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: supportErrorFromJson(res, data),
+        idempotentReplay: data.idempotentReplay === true
+      };
+    }
+    const id = typeof data.publicId === 'string' ? data.publicId : typeof data.id === 'string' ? data.id : undefined;
+    return { ok: true, id, idempotentReplay: data.idempotentReplay === true };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
 }
 
 export async function getAdminSupportTickets(): Promise<{ tickets: SupportTicketRow[] }> {
@@ -197,12 +269,25 @@ export async function postAdminSupportTicketReply(payload: {
   }
 }
 
-export async function getMySupportTickets(): Promise<{ tickets: MySupportTicketSummary[] }> {
-  const res = await apiFetch(`${API_BASE}/support/my-tickets`);
+export async function getMySupportTickets(params?: {
+  limit?: number;
+  cursor?: string;
+}): Promise<{ tickets: MySupportTicketSummary[]; pagination?: { limit: number; nextCursor: string | null } }> {
+  const qs = new URLSearchParams();
+  if (params?.limit != null) qs.set('limit', String(params.limit));
+  if (params?.cursor) qs.set('cursor', params.cursor);
+  const q = qs.toString();
+  const res = await apiFetch(`${API_BASE}/support/my-tickets${q ? `?${q}` : ''}`);
   if (!res.ok) return { tickets: [] };
   try {
-    const data = (await res.json()) as { tickets?: MySupportTicketSummary[] };
-    return { tickets: Array.isArray(data.tickets) ? data.tickets : [] };
+    const data = (await res.json()) as {
+      tickets?: MySupportTicketSummary[];
+      pagination?: { limit: number; nextCursor: string | null };
+    };
+    return {
+      tickets: Array.isArray(data.tickets) ? data.tickets : [],
+      pagination: data.pagination
+    };
   } catch {
     return { tickets: [] };
   }
@@ -228,15 +313,60 @@ export async function postPlayerSupportTicketReply(payload: {
   ticketId: string;
   message: string;
   files?: File[];
-}): Promise<{ ok: boolean; id?: string; error?: string }> {
+  idempotencyKey?: string;
+}): Promise<{ ok: boolean; id?: string; error?: string; idempotentReplay?: boolean }> {
   const fd = new FormData();
-  fd.set('action', 'player_reply');
-  fd.set('ticketId', payload.ticketId);
   fd.set('message', payload.message);
+  fd.set('idempotencyKey', payload.idempotencyKey || newSupportIdempotencyKey());
   for (const f of payload.files || []) {
     if (f && f.size > 0) fd.append('files', f);
   }
-  return postSupportMutate(fd);
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/support/tickets/${encodeURIComponent(payload.ticketId)}/messages`,
+      { method: 'POST', body: fd }
+    );
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      return {
+        ok: false,
+        error: supportErrorFromJson(res, data),
+        idempotentReplay: data.idempotentReplay === true
+      };
+    }
+    const id = typeof data.messageId === 'string' ? data.messageId : typeof data.id === 'string' ? data.id : undefined;
+    return { ok: true, id, idempotentReplay: data.idempotentReplay === true };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+export async function archiveSupportTicket(ticketId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/support/tickets/${encodeURIComponent(ticketId)}/archive`,
+      { method: 'POST' }
+    );
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) return { ok: false, error: supportErrorFromJson(res, data as Record<string, unknown>) };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+export async function reopenSupportTicket(ticketId: string): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch(
+      `${API_BASE}/support/tickets/${encodeURIComponent(ticketId)}/reopen`,
+      { method: 'POST' }
+    );
+    const data = (await res.json().catch(() => ({}))) as { error?: string };
+    if (!res.ok) return { ok: false, error: supportErrorFromJson(res, data as Record<string, unknown>) };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
 }
 
 export async function updateAdminSupportTicketStatus(

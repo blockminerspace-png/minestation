@@ -23,6 +23,17 @@ export function normalizePromoCode(raw: unknown): string | null {
   return upper;
 }
 
+const IDEMPOTENCY_KEY_RE = /^[a-zA-Z0-9_.:-]{8,128}$/;
+
+/** Chave de idempotência enviada pelo cliente (giro pago, giro por código, resgate). */
+export function parseIdempotencyKey(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim();
+  if (!IDEMPOTENCY_KEY_RE.test(s)) return null;
+  return s;
+}
+
 export function parseWonItemId(raw: unknown): string | null {
   if (raw == null) return null;
   if (typeof raw !== 'string') return null;

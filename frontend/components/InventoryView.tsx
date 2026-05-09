@@ -1,6 +1,7 @@
 
 import React from 'react';
 import { Upgrade, StoredBattery } from '../types';
+import type { InventoryStackableCategoryApi } from '../services/api';
 import { Package, Zap, Battery, Activity, Save, Hexagon } from 'lucide-react';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
 
@@ -10,6 +11,8 @@ interface InventoryViewProps {
     /** Quando definido (após GET `/api/inventory/me`), separa UI em cheias vs parciais conforme o servidor. */
     inventoryBatterySplit?: { full: StoredBattery[]; partial: StoredBattery[] } | null;
     upgrades: Upgrade[];
+    /** Quando definido (GET `/api/inventory/state`), categorias e linhas vêm do servidor — sem recalcular stock no cliente. */
+    inventoryStackableCategories?: InventoryStackableCategoryApi[] | null;
 }
 
 /** Placeholder legacy-temp: mostrar o item real se o id original existir na lista de upgrades. */
@@ -43,7 +46,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
     stock,
     storedBatteries = [],
     inventoryBatterySplit = null,
-    upgrades
+    upgrades,
+    inventoryStackableCategories = null
 }) => {
     // Filter items that we actually have in stock
     const ownedItems = (Object.entries(stock) as [string, number][])
@@ -133,14 +137,24 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                                                 {groupBats.map((battery) => {
                                                     const cap = def.powerCapacity;
                                                     const isInf = cap === -1;
-                                                    const chargePct = isInf ? 100 : (battery.currentCharge / (cap || 1)) * 100;
+                                                    const fromServer =
+                                                        battery.chargePercent != null && Number.isFinite(battery.chargePercent);
+                                                    const chargePct = fromServer
+                                                        ? Number(battery.chargePercent)
+                                                        : isInf
+                                                          ? 100
+                                                          : (battery.currentCharge / (cap || 1)) * 100;
+                                                    const refLabel =
+                                                        battery.publicRef && battery.publicRef.trim()
+                                                            ? battery.publicRef
+                                                            : battery.id.slice(0, 6);
                                                     return (
                                                         <div
                                                             key={battery.id}
                                                             className="bg-slate-50 dark:bg-slate-950/50 p-2 rounded border border-slate-100 dark:border-slate-800/50 text-xs"
                                                         >
                                                             <div className="flex justify-between text-[10px] text-slate-500 mb-1">
-                                                                <span className="font-mono text-[9px]">{battery.id.slice(0, 6)}</span>
+                                                                <span className="font-mono text-[9px]">{refLabel}</span>
                                                                 <span className="text-yellow-600 dark:text-yellow-400 font-mono">
                                                                     {isInf ? '∞' : `${chargePct.toFixed(1)}%`}
                                                                 </span>
@@ -179,7 +193,8 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
 
             {sortedCategories.length === 0 &&
             storedBatteries.length === 0 &&
-            !(inventoryBatterySplit && (inventoryBatterySplit.partial.length > 0 || inventoryBatterySplit.full.length > 0)) ? (
+            !(inventoryBatterySplit && (inventoryBatterySplit.partial.length > 0 || inventoryBatterySplit.full.length > 0)) &&
+            !(inventoryStackableCategories && inventoryStackableCategories.length > 0) ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600 gap-4">
                     <Package size={64} className="opacity-20" />
                     <p className="text-lg">Seu estoque está vazio.</p>
@@ -187,17 +202,44 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
             ) : (
                 <div className="space-y-8">
-                    {sortedCategories.map(category => (
-                        <div key={category}>
+                    {(inventoryStackableCategories != null
+                        ? inventoryStackableCategories
+                        : sortedCategories.map((category) => ({
+                              category,
+                              items: itemsByCategory[category].map((item) => ({
+                                  stockKey: item.id,
+                                  catalogItemId: item.id,
+                                  displayQuantity: item.count,
+                                  availableQuantity: item.count,
+                                  name: item.name || item.id,
+                                  description: item.description || '',
+                                  category: item.category || 'Outros',
+                                  type: item.type || 'other',
+                                  image: item.image != null ? String(item.image) : null,
+                                  icon: item.icon || '',
+                                  baseProduction: item.baseProduction || 0,
+                                  powerConsumption: item.powerConsumption || 0,
+                                  powerCapacity: item.powerCapacity || 0,
+                                  slotsCapacity: item.slotsCapacity || 0,
+                                  aiSlotsCapacity: item.aiSlotsCapacity || 0,
+                                  isNft: !!item.isNft
+                              }))
+                          }))
+                    ).map((block) => (
+                        <div key={block.category}>
                             <h3 className="text-sm font-bold text-amber-600 uppercase tracking-widest mb-3 flex items-center gap-2">
                                 <span className="w-2 h-2 rounded-full bg-amber-600"></span>
-                                {category}
+                                {block.category}
                             </h3>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                {itemsByCategory[category].map((item) => {
-                                    const hasImage = normalizePublicAssetUrl(item.image) || item.image;
-                                    const isRack = item.type === 'infrastructure';
-                                    const isMachine = item.type === 'machine';
+                                {block.items.map((row) => {
+                                    const hasImage = normalizePublicAssetUrl(row.image) || row.image;
+                                    const isRack = row.type === 'infrastructure';
+                                    const isMachine = row.type === 'machine';
+                                    const qty =
+                                        row.displayQuantity !== row.availableQuantity
+                                            ? `${row.availableQuantity}/${row.displayQuantity}`
+                                            : String(row.displayQuantity);
 
                                     const containerAspectRatio = isRack
                                         ? 'aspect-[5/6]'
@@ -206,66 +248,82 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                                             : 'aspect-square';
 
                                     return (
-                                        <div key={item.id} className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 relative overflow-hidden group hover:border-slate-400 dark:hover:border-slate-700 transition-all shadow-sm flex flex-col">
-                                            {/* NFT Badge */}
-                                            {item.isNft && (
+                                        <div
+                                            key={row.stockKey}
+                                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 relative overflow-hidden group hover:border-slate-400 dark:hover:border-slate-700 transition-all shadow-sm flex flex-col"
+                                        >
+                                            {row.isNft && (
                                                 <div className="absolute top-2 right-2 bg-orange-600 text-white text-[9px] px-1.5 py-0.5 rounded shadow-lg z-10 flex items-center gap-1">
                                                     <Hexagon size={8} /> NFT
                                                 </div>
                                             )}
 
                                             <div className="flex justify-between items-start mb-3">
-                                                <div className={`${containerAspectRatio} w-20 bg-slate-50 dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 flex items-center justify-center text-3xl shadow-inner overflow-hidden`}>
+                                                <div
+                                                    className={`${containerAspectRatio} w-20 bg-slate-50 dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 flex items-center justify-center text-3xl shadow-inner overflow-hidden`}
+                                                >
                                                     {hasImage ? (
-                                                        <img src={hasImage} className={`w-full h-full ${isRack ? 'object-contain' : 'object-cover'}`} />
-                                                    ) : item.icon}
+                                                        <img
+                                                            src={hasImage}
+                                                            className={`w-full h-full ${isRack ? 'object-contain' : 'object-cover'}`}
+                                                            alt=""
+                                                        />
+                                                    ) : (
+                                                        row.icon
+                                                    )}
                                                 </div>
                                                 <div className="flex flex-col items-end">
                                                     <span className="text-[10px] text-slate-500 uppercase">Quantidade</span>
-                                                    <span className="text-2xl font-mono font-bold text-slate-900 dark:text-white">{item.count}</span>
+                                                    <span className="text-2xl font-mono font-bold text-slate-900 dark:text-white">{qty}</span>
                                                 </div>
                                             </div>
 
                                             <div className="mb-4">
-                                                <h4 className="font-bold text-slate-800 dark:text-slate-200 truncate">{item.name}</h4>
-                                                <p className="text-xs text-slate-500 line-clamp-2 mt-1 min-h-[2.5em]">
-                                                    {item.description}
-                                                </p>
+                                                <h4 className="font-bold text-slate-800 dark:text-slate-200 truncate">{row.name}</h4>
+                                                <p className="text-xs text-slate-500 line-clamp-2 mt-1 min-h-[2.5em]">{row.description}</p>
                                             </div>
 
                                             <div className="grid grid-cols-2 gap-2 text-xs font-mono bg-slate-50 dark:bg-slate-950/50 p-2 rounded border border-slate-100 dark:border-slate-800/50 mt-auto">
-                                                {item.type === 'machine' && (
+                                                {row.type === 'machine' && (
                                                     <>
                                                         <div className="flex flex-col">
-                                                            <span className="text-slate-500 flex items-center gap-1"><Activity size={10} /> Hash</span>
-                                                            <span className="text-green-600 dark:text-green-400">+{formatProduction(item.baseProduction)} H/s</span>
+                                                            <span className="text-slate-500 flex items-center gap-1">
+                                                                <Activity size={10} /> Hash
+                                                            </span>
+                                                            <span className="text-green-600 dark:text-green-400">
+                                                                +{formatProduction(row.baseProduction)} H/s
+                                                            </span>
                                                         </div>
                                                         <div className="flex flex-col items-end">
-                                                            <span className="text-slate-500 flex items-center gap-1"><Zap size={10} /> Consumo</span>
-                                                            <span className="text-red-500 dark:text-red-400">{item.powerConsumption} W</span>
+                                                            <span className="text-slate-500 flex items-center gap-1">
+                                                                <Zap size={10} /> Consumo
+                                                            </span>
+                                                            <span className="text-red-500 dark:text-red-400">{row.powerConsumption} W</span>
                                                         </div>
                                                     </>
                                                 )}
-                                                {item.type === 'battery' && (
+                                                {row.type === 'battery' && (
                                                     <div className="col-span-2 flex justify-between">
-                                                        <span className="text-slate-500 flex items-center gap-1"><Battery size={10} /> Capacidade</span>
-                                                        <span className="text-yellow-600 dark:text-yellow-400">{item.powerCapacity} Wh</span>
+                                                        <span className="text-slate-500 flex items-center gap-1">
+                                                            <Battery size={10} /> Capacidade
+                                                        </span>
+                                                        <span className="text-yellow-600 dark:text-yellow-400">{row.powerCapacity} Wh</span>
                                                     </div>
                                                 )}
-                                                {item.type === 'infrastructure' && (
+                                                {row.type === 'infrastructure' && (
                                                     <div className="col-span-2 text-center text-slate-400 text-[10px]">
-                                                        {item.slotsCapacity} Slots • {item.aiSlotsCapacity} IA Slots
+                                                        {row.slotsCapacity} Slots • {row.aiSlotsCapacity} IA Slots
                                                     </div>
                                                 )}
-                                                {item.type === 'wiring' && (
-                                                    <div className="col-span-2 text-center text-slate-400">
-                                                        Condutor Elétrico
-                                                    </div>
+                                                {row.type === 'wiring' && (
+                                                    <div className="col-span-2 text-center text-slate-400">Condutor Elétrico</div>
                                                 )}
-                                                {item.type === 'charger' && (
+                                                {row.type === 'charger' && (
                                                     <div className="flex flex-col">
-                                                        <span className="text-slate-500 flex items-center gap-1"><Zap size={10} /> Potência</span>
-                                                        <span className="text-yellow-600 dark:text-yellow-400">{item.baseProduction || 0.5} W</span>
+                                                        <span className="text-slate-500 flex items-center gap-1">
+                                                            <Zap size={10} /> Potência
+                                                        </span>
+                                                        <span className="text-yellow-600 dark:text-yellow-400">{row.baseProduction || 0.5} W</span>
                                                     </div>
                                                 )}
                                             </div>

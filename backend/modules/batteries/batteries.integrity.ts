@@ -10,6 +10,14 @@ const PG_INSTANCE_UUID =
  * Idempotente — corre só no worker BACKGROUND (ver `server.ts`).
  */
 export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> {
+  if (String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0') {
+    console.log('[Migration] ensureStoredBatteriesIntegrity ignorado (BATTERY_WORKERS_ENABLED=0)');
+    return;
+  }
+  if (String(process.env.BATTERY_BACKGROUND_INTEGRITY_ENABLED ?? '1').trim() === '0') {
+    console.log('[Migration] ensureStoredBatteriesIntegrity ignorado (BATTERY_BACKGROUND_INTEGRITY_ENABLED=0)');
+    return;
+  }
   const client = await pool.connect();
   let fixedItem = 0;
   let clearedOrphan = 0;

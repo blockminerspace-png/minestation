@@ -7,6 +7,11 @@ import { setGlobalNetworkStats, type GlobalNetworkStatsState } from './miningGlo
 import { getStackIo } from '../lib/stack/stackIoSingleton.js';
 import { enqueueGenesisJob } from '../lib/stack/genesisBullQueue.js';
 import { logGameEvent, logAnalyticsEvent } from '../lib/mongoLogs.js';
+import {
+  REDIS_LOCK_KEYS,
+  releaseDistributedLock,
+  tryAcquireDistributedLock
+} from '../lib/redisDistributedLock.js';
 import { maybeSyncLiveUsdToMiningCoinsPostgres } from '../lib/miningLivePrices.js';
 import type { MiningUsdDbSyncResult } from '../lib/miningLivePrices.js';
 import { miningTenMinuteGridEnabled, lastCompletedTenMinuteUtcGrid } from './miningWallClockGrid.js';
@@ -80,15 +85,27 @@ function resolveDefaultIntervalMs(optsInterval?: number): number {
  * actualiza yields em BD, stats em memória, ranking + app_cache (evita segundo job em server.js).
  */
 export async function updateMiningYields(pool: Pool): Promise<void> {
+  if (String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0') {
+    return;
+  }
+  if (String(process.env.MINING_YIELD_CRON_ENABLED ?? '1').trim() === '0') {
+    return;
+  }
   if (isUpdateRunning) {
     console.log(`${LOG_PREFIX} tick ignorado (execução anterior ainda a correr)`);
+    return;
+  }
+  const distLock = await tryAcquireDistributedLock(REDIS_LOCK_KEYS.miningYieldTick, 180);
+  if (!distLock) {
+    console.log(`${LOG_PREFIX} tick ignorado (outro processo detém lock Redis — evita duplicar entre contentores)`);
     return;
   }
   isUpdateRunning = true;
   const tickStart = Date.now();
 
-  const client = await pool.connect();
+  let client: PoolClient | null = null;
   try {
+    client = await pool.connect();
     await hydrateYieldHistoryBoundaryFromDb(client);
 
     const activeRes = await client.query(`
@@ -341,12 +358,13 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
         console.warn(`${LOG_PREFIX} sync USD→BD:`, sanitizeForLog(m, 200));
       });
   } catch (e) {
-    safeRollback(client);
+    if (client) safeRollback(client);
     const msg = e instanceof Error ? e.message : String(e);
     console.error(`${LOG_PREFIX} erro:`, sanitizeForLog(msg, 200));
   } finally {
-    client.release();
+    if (client) client.release();
     isUpdateRunning = false;
+    await releaseDistributedLock(distLock);
   }
 }
 
@@ -364,6 +382,14 @@ export function startMiningYieldCron(pool: Pool, opts: StartMiningYieldCronOptio
   const role = opts.workerRole ?? process.env.WORKER_ROLE ?? 'ALL';
   if (role !== 'BACKGROUND' && role !== 'ALL') {
     console.log(`${LOG_PREFIX} não agendado (WORKER_ROLE=%s)`, sanitizeForLog(role, 32));
+    return;
+  }
+  if (String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0') {
+    console.log(`${LOG_PREFIX} não agendado (BATTERY_WORKERS_ENABLED=0)`);
+    return;
+  }
+  if (String(process.env.MINING_YIELD_SCHEDULER_ENABLED ?? '1').trim() === '0') {
+    console.log(`${LOG_PREFIX} não agendado (MINING_YIELD_SCHEDULER_ENABLED=0 — emergência / sem setInterval)`);
     return;
   }
 

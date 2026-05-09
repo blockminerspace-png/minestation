@@ -79,6 +79,33 @@ model referral_commission_ledger {
   @@map("referral_commission_ledger")
 }
 
+/** Desafio único para ligar carteira Polygon por assinatura (evita gravar endereço sem prova). */
+model profile_wallet_connect_challenges {
+  id         String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    Int
+  message    String
+  expires_at BigInt
+  used_at    BigInt?
+
+  @@index([user_id])
+  @@index([expires_at])
+  @@map("profile_wallet_connect_challenges")
+}
+
+/** Auditoria de ações do perfil (sem dados sensíveis em `meta`). */
+model profile_audit_log {
+  id          String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id     Int?
+  action      String  @db.VarChar(120)
+  route       String? @db.VarChar(200)
+  request_id  String? @db.VarChar(64)
+  meta        String?
+  created_at  BigInt
+
+  @@index([user_id, created_at])
+  @@map("profile_audit_log")
+}
+
 // --- Economia de mineração: moedas, catálogo de peças, compatibilidade de racks ---
 
 model mining_coins {
@@ -137,6 +164,7 @@ model upgrades {
   nft_contract         String?
   nft_token_id         String?
   max_global_stock     Int?
+  total_sold           Int?    @default(0)
   image                String?
   reward_wh            Float?  @default(0)
   layout               String?
@@ -158,13 +186,18 @@ model upgrade_compat_racks {
 // --- Caixas, notícias, passes de época ---
 
 model loot_boxes {
-  id          String  @id
-  name        String
-  description String
-  price       Float
-  trigger     String
-  icon        String
-  is_active   Int?    @default(1)
+  id             String  @id
+  name           String
+  description    String
+  price          Float
+  trigger        String
+  icon           String
+  is_active      Int?    @default(1)
+  /// Estoque global na loja; `null` = ilimitado.
+  stock          Int?
+  max_per_order  Int     @default(20)
+  /// Máximo de unidades desta caixa no inventário do jogador; `null` = sem limite.
+  max_per_user   Int?
 
   @@map("loot_boxes")
 }
@@ -252,6 +285,54 @@ model stock {
   @@map("stock")
 }
 
+/** Auditoria de movimentos de inventário (compra, instalação, ajuste, etc.). */
+model inventory_movements {
+  id               String  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id          Int
+  action           String  @db.VarChar(64)
+  catalog_item_id  String? @db.VarChar(200)
+  instance_id      String? @db.VarChar(200)
+  quantity_before  Int?
+  quantity_after   Int?
+  meta               String? @db.Text
+  created_at         BigInt
+
+  @@index([user_id])
+  @@map("inventory_movements")
+}
+
+model shop_carts {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id    Int    @unique
+  updated_at BigInt
+
+  @@map("shop_carts")
+}
+
+model shop_cart_lines {
+  id         String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cart_id    String @db.Uuid
+  product_id String @db.VarChar(200)
+  qty        Int
+  updated_at BigInt
+
+  @@unique([cart_id, product_id])
+  @@index([cart_id])
+  @@map("shop_cart_lines")
+}
+
+model shop_checkout_idempotency {
+  user_id          Int
+  idempotency_key  String @db.VarChar(128)
+  new_usdc         Float
+  total_cost       Float
+  lines_json       String @db.Text
+  created_at       BigInt
+
+  @@id([user_id, idempotency_key])
+  @@map("shop_checkout_idempotency")
+}
+
 model unopened_boxes {
   user_id Int
   box_id  String
@@ -259,6 +340,35 @@ model unopened_boxes {
 
   @@id([user_id, box_id])
   @@map("unopened_boxes")
+}
+
+/// Abertura de caixa (auditoria; prémios entregues na mesma transação que consome `unopened_boxes`).
+model lucky_box_openings {
+  id              String   @id @default(uuid()) @db.Uuid
+  user_id         Int
+  box_id          String
+  rewards_json    Json
+  gained_usdc     Decimal  @default(0) @db.Decimal(24, 8)
+  created_at      BigInt
+  idempotency_key String?  @db.VarChar(128)
+
+  @@index([user_id, created_at(sort: Desc)])
+  @@index([box_id])
+  @@map("lucky_box_openings")
+}
+
+/// Resposta em cache para idempotência de compra / abertura / resgate (evita duplicação em retry).
+model lucky_box_idempotency {
+  user_id         Int
+  scope           String @db.VarChar(32)
+  idempotency_key String @db.VarChar(128)
+  http_status     Int
+  body_json       String
+  created_at      BigInt
+
+  @@id([user_id, scope, idempotency_key])
+  @@index([created_at(sort: Desc)])
+  @@map("lucky_box_idempotency")
 }
 
 /// Integridade: `id` e `item_id` não podem ser vazios (CHECK na BD — migration `20260506120000_stored_batteries_nonempty_ids`).
@@ -354,6 +464,18 @@ model p2p_market_trade_history {
   @@map("p2p_market_trade_history")
 }
 
+/** Idempotência de compra P2P (evita duplo débito / dupla entrega no mesmo requestId). */
+model p2p_market_buy_idempotency {
+  buyer_id         Int
+  idempotency_key  String @db.VarChar(128)
+  http_status      Int
+  body_json        String @db.Text
+  created_at       BigInt
+
+  @@id([buyer_id, idempotency_key])
+  @@map("p2p_market_buy_idempotency")
+}
+
 model nft_items {
   contract_address String
   token_id         String
@@ -420,6 +542,16 @@ model admin_upgrades {
   grant_access_level_id String?
   is_active            Int
   created_at           BigInt
+  version              Int      @default(1)
+  slug                 String?
+  category             String   @default("PROMO_PACK")
+  original_price_usdc  Decimal? @db.Decimal(18, 6)
+  stock_remaining      Int?
+  max_per_user         Int      @default(1)
+  starts_at            BigInt?
+  ends_at              BigInt?
+  sort_order           Int      @default(0)
+  image_url            String?
 
   @@map("admin_upgrades")
 }
@@ -480,6 +612,17 @@ model admin_upgrade_purchases {
   @@map("admin_upgrade_purchases")
 }
 
+model upgrade_purchase_idempotency {
+  user_id         Int
+  scope           String @default("upgrade_purchase")
+  idempotency_key String
+  response_json   String
+  created_at      BigInt
+
+  @@id([user_id, scope, idempotency_key])
+  @@map("upgrade_purchase_idempotency")
+}
+
 model admin_upgrade_visibility {
   upgrade_id      String
   access_level_id String
@@ -533,6 +676,17 @@ model support_ticket_player_replies {
   created_at BigInt
 
   @@map("support_ticket_player_replies")
+}
+
+model support_submission_idempotency {
+  user_id         Int
+  scope           String @default("support_submit_ticket")
+  idempotency_key String
+  response_json   String
+  created_at      BigInt
+
+  @@id([user_id, scope, idempotency_key])
+  @@map("support_submission_idempotency")
 }
 
 // --- Salas de rigs (expansão de slots) ---
@@ -665,13 +819,60 @@ model withdrawal_requests {
 // --- Roleta / roda de prémios ---
 
 model wheel_prizes {
-  id      String @id
-  label   String
-  weight  Int
-  color   String
-  item_id String?
+  id        String @id
+  label     String
+  weight    Int
+  color     String
+  item_id   String?
+  is_active Int    @default(1)
+  tier      String @default("BASIC")
 
   @@map("wheel_prizes")
+}
+
+model wheel_config {
+  id                    Int      @id @default(1)
+  spin_price_usdc       Decimal  @default(0.10) @db.Decimal(18, 6)
+  currency              String   @default("USDC")
+  is_enabled            Int      @default(1)
+  min_spin_price_usdc   Decimal  @default(0.10) @db.Decimal(18, 6)
+  max_spins_per_request Int      @default(1)
+  daily_limit           Int?
+  cooldown_seconds      Int      @default(0)
+  starts_at             BigInt?
+  ends_at               BigInt?
+  updated_at            BigInt
+  metadata_json         String?
+
+  @@map("wheel_config")
+}
+
+model wheel_spins {
+  id              String   @id
+  user_id         Int
+  kind            String
+  code            String?
+  won_item_id     String
+  box_id          String?
+  charged_usdc    Decimal? @db.Decimal(18, 6)
+  status          String   @default("completed")
+  idempotency_key String?
+  created_at      BigInt
+
+  @@index([user_id, created_at(sort: Desc)])
+  @@index([user_id, idempotency_key])
+  @@map("wheel_spins")
+}
+
+model wheel_idempotency {
+  user_id         Int
+  scope           String
+  idempotency_key String
+  response_json   String
+  created_at      BigInt
+
+  @@id([user_id, scope, idempotency_key])
+  @@map("wheel_idempotency")
 }
 
 model wheel_players {
@@ -841,6 +1042,8 @@ model partner_youtube_submissions {
   reviewed_at      BigInt?
   reviewed_by      Int?
   reject_reason    String?
+  /// YYYYMMDD em UTC — 1 envio por utilizador por dia civil UTC
+  submit_utc_day   Int
 
   @@map("partner_youtube_submissions")
 }
@@ -861,4 +1064,31 @@ model partner_youtube_manual_allowlist {
   added_by Int?
 
   @@map("partner_youtube_manual_allowlist")
+}
+
+model wallet_idempotency {
+  user_id         Int
+  scope           String
+  idempotency_key String
+  response_json   String
+  created_at      BigInt
+
+  @@id([user_id, scope, idempotency_key])
+  @@map("wallet_idempotency")
+}
+
+model wallet_ledger_entries {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  user_id         Int
+  entry_type      String
+  coin_id         String?
+  sold_crypto     Decimal  @db.Decimal(38, 18)
+  gross_usdc      Decimal  @db.Decimal(38, 18)
+  fee_usdc        Decimal  @db.Decimal(38, 18)
+  net_usdc        Decimal  @db.Decimal(38, 18)
+  idempotency_key String?
+  created_at      BigInt
+
+  @@index([user_id, created_at(sort: Desc)])
+  @@map("wallet_ledger_entries")
 }

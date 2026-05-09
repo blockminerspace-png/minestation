@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect } from 'react';
 import { Sparkles, Ticket, DollarSign, Loader2 } from 'lucide-react';
 import type { Upgrade } from '../types';
 import GameView from './roleta/GameView';
-import { getPendingRoletaCode } from '../services/api';
+import { getPendingRoletaCode, getWheelState, postWheelRedeemCode, newWheelIdempotencyKey } from '../services/api';
 import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
 
 export type RoletaPageProps = {
@@ -35,6 +35,20 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
   const [redeeming, setRedeeming] = useState(false);
   const [roletaCode, setRoletaCode] = useState<string | null>(null);
   const [notice, setNotice] = useState<UiNotice | null>(null);
+  const [paidTabSpinLabel, setPaidTabSpinLabel] = useState('Giro US$0.10');
+
+  /** Preço do giro pago vindo do servidor (cabeçalho / separador). */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const s = await getWheelState();
+      if (cancelled || !s.ok) return;
+      setPaidTabSpinLabel(`Giro US$${s.data.spinPriceUsdc.toFixed(2)}`);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   /** Código pendente no servidor (resgatou mas ainda não concluiu o fluxo). */
   useEffect(() => {
@@ -69,34 +83,36 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
     if (!promoCode.trim()) return;
     setRedeeming(true);
     try {
-      const res = await fetch('/api/redeem-code', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ code: promoCode.trim() })
-      });
-      const data = await res.json();
-      if (res.ok) {
-        if (data.type === 'roleta') {
-          const c = typeof data.code === 'string' ? data.code.trim() : '';
-          setRoletaCode(c || null);
-          setPromoCode('');
-        } else {
-          setNotice({
-            variant: 'info',
-            title: 'Código de caixa',
-            message:
-              'Este código não é da roleta. Resgate-o em Caixas da Sorte — o campo «Código promocional» está no topo dessa página.'
-          });
-          setPromoCode('');
-          if (onRedeemSuccess && data.unopenedBoxes) {
-            onRedeemSuccess(data.unopenedBoxes);
-          } else if (onRedeemSuccess) {
-            onRedeemSuccess({});
-          }
+      const idem = newWheelIdempotencyKey();
+      const wrapped = await postWheelRedeemCode(promoCode.trim(), idem);
+      if (!wrapped.ok) {
+        const st = wrapped.status;
+        if (st === 409 || st === 422) {
+          const s = await getWheelState();
+          if (s.ok) setPaidTabSpinLabel(`Giro US$${s.data.spinPriceUsdc.toFixed(2)}`);
         }
+        setNotice({ variant: 'error', message: wrapped.error || 'Erro ao resgatar código' });
+        return;
+      }
+      const data = wrapped.data as Record<string, unknown>;
+      if (data.type === 'roleta') {
+        const c = typeof data.code === 'string' ? data.code.trim() : '';
+        setRoletaCode(c || null);
+        setPromoCode('');
       } else {
-        setNotice({ variant: 'error', message: data.error || 'Erro ao resgatar código' });
+        setNotice({
+          variant: 'info',
+          title: 'Código de caixa',
+          message:
+            'Este código não é da roleta. Resgate-o em Caixas da Sorte — o campo «Código promocional» está no topo dessa página.'
+        });
+        setPromoCode('');
+        const ub = data.unopenedBoxes as Record<string, number> | undefined;
+        if (onRedeemSuccess && ub) {
+          onRedeemSuccess(ub);
+        } else if (onRedeemSuccess) {
+          onRedeemSuccess({});
+        }
       }
     } catch {
       setNotice({ variant: 'error', message: 'Falha na comunicação com o servidor' });
@@ -123,8 +139,8 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
                 Roleta da sorte
               </h1>
               <p className="mt-0.5 max-w-xl text-xs text-slate-600 dark:text-slate-400 sm:text-sm">
-                Por código promocional ou giro pago com saldo USDC no jogo (US$1,00 por giro). Códigos de caixa
-                comuns resgate em Caixas da Sorte.
+                Por código promocional ou giro pago com saldo USDC no jogo (preço definido no servidor, atualmente
+                US$0,10 por giro). Códigos de caixa comuns resgate em Caixas da Sorte.
               </p>
             </div>
           </div>
@@ -161,7 +177,7 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
             }`}
           >
             <DollarSign className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
-            Giro US$1
+            {paidTabSpinLabel}
           </button>
         </div>
 

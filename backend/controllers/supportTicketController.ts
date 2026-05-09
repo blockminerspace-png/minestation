@@ -23,6 +23,9 @@ import {
 } from '../lib/supportTicketAttachments.js';
 import { sendInternalErrorSafeMessageOrPrisma } from '../utils/apiErrorResponse.js';
 import { compressUploadedMulterFiles } from '../lib/compressMediaAsset.js';
+import { rewriteSupportAttachmentsForPlayerDownload } from '../modules/support/supportAttachmentsProxy.js';
+import type { SupportAttachmentItem } from '../models/supportMutationModel.js';
+import { mapSupportSummariesToPlayerTickets } from '../modules/support/supportState.service.js';
 
 /** @deprecated import from `../lib/supportTicketAttachments.js` */
 export { SUPPORT_ALLOWED_EXT };
@@ -50,6 +53,21 @@ function uidNum(req: Request): number | null {
 
 function asJsonArray(v: unknown): unknown[] {
   return Array.isArray(v) ? v : [];
+}
+
+function asAttachmentItemsPlayer(uid: number, ticketId: string, raw: unknown): SupportAttachmentItem[] {
+  const arr = asJsonArray(raw);
+  const list: SupportAttachmentItem[] = [];
+  for (const x of arr) {
+    if (!x || typeof x !== 'object') continue;
+    const o = x as Record<string, unknown>;
+    list.push({
+      url: String(o.url ?? ''),
+      originalName: String(o.originalName ?? '').slice(0, 200),
+      mime: String(o.mime ?? '').slice(0, 120)
+    });
+  }
+  return rewriteSupportAttachmentsForPlayerDownload(uid, ticketId, list);
 }
 
 /**
@@ -112,22 +130,21 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
       return;
     }
     try {
-      const summaryRows = await listMySupportTicketSummaries(uid);
-      const tickets = summaryRows.map((r) => {
-        const createdAt = Number(r.created_at) || 0;
-        const lastAdmin = Number(r.last_admin_at) || 0;
-        const lastPlayer = Number(r.last_player_at) || 0;
-        const lastActivityAt = Math.max(createdAt, lastAdmin, lastPlayer);
-        return {
-          id: r.id,
-          subject: r.subject,
-          status: r.status,
-          createdAt,
-          adminReplyCount: r.admin_reply_count ?? 0,
-          lastActivityAt
-        };
-      });
-      res.json({ tickets });
+      const lim = Math.min(100, Math.max(1, parseInt(String(req.query.limit || '100'), 10) || 100));
+      const cursorRaw = String(req.query.cursor || '').trim();
+      const cursorBi = cursorRaw && /^\d+$/.test(cursorRaw) ? BigInt(cursorRaw) : null;
+      const summaryRows = await listMySupportTicketSummaries(uid, { limit: lim, cursorCreatedAt: cursorBi });
+      const { tickets: mapped, pagination } = mapSupportSummariesToPlayerTickets(summaryRows, lim);
+      const tickets = mapped.map((t) => ({
+        id: t.publicId,
+        subject: t.subject,
+        status: t.status,
+        createdAt: t.createdAt,
+        adminReplyCount: t.adminReplyCount,
+        lastActivityAt: t.lastActivityAt,
+        unreadStaffReply: t.unreadStaffReply
+      }));
+      res.json({ tickets, pagination });
     } catch (e) {
       console.error('[GET /api/support/my-tickets]', e);
       res.status(500).json({ error: 'Erro ao listar pedidos.' });
@@ -158,7 +175,7 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
           id: t.id,
           subject: t.subject,
           message: t.message,
-          attachments: asJsonArray(t.attachments),
+          attachments: asAttachmentItemsPlayer(uid, ticketId, t.attachments),
           status: t.status,
           createdAt: Number(t.created_at) || 0
         },
@@ -166,13 +183,13 @@ export function registerSupportTicketRoutes(app: Express, deps: SupportTicketDep
           id: r.id,
           adminUsername: r.admin_username,
           message: r.message,
-          attachments: asJsonArray(r.attachments),
+          attachments: asAttachmentItemsPlayer(uid, ticketId, r.attachments),
           createdAt: Number(r.created_at) || 0
         })),
         playerReplies: playerReplies.map((r: SupportTicketPlayerReplyDbRow) => ({
           id: r.id,
           message: r.message,
-          attachments: asJsonArray(r.attachments),
+          attachments: asAttachmentItemsPlayer(uid, ticketId, r.attachments),
           createdAt: Number(r.created_at) || 0
         }))
       });

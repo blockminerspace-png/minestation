@@ -4,6 +4,12 @@ export function partnerYoutubeUtcDayStartMs(ts: number): number {
   return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 }
 
+/** Chave YYYYMMDD em UTC (inteiro) — alinhada à coluna `submit_utc_day`. */
+export function partnerYoutubeUtcDayKeyYYYYMMDD(ts: number): number {
+  const d = new Date(Number(ts) || Date.now());
+  return d.getUTCFullYear() * 10000 + (d.getUTCMonth() + 1) * 100 + d.getUTCDate();
+}
+
 /** Extrai o ID de 11 caracteres de URLs watch / youtu.be / shorts / embed. */
 export function extractYoutubeVideoId(rawUrl: string): string {
   const u = String(rawUrl || '').trim();
@@ -50,6 +56,26 @@ export function userAccessSetHasPartnerLevel(idSet: Set<string>): boolean {
     if (PARTNER_LEVEL_IDS.has(String(x || '').toLowerCase().trim())) return true;
   }
   return false;
+}
+
+export type PartnerYoutubeVideoCursor = { sortTs: bigint; id: string };
+
+export function encodePartnerYoutubeVideoCursor(sortTs: number, id: string): string {
+  return `${sortTs}_${id}`;
+}
+
+export function parsePartnerYoutubeVideoCursor(raw: unknown): PartnerYoutubeVideoCursor | null {
+  const s = raw != null ? String(raw).trim() : '';
+  const i = s.indexOf('_');
+  if (i <= 0) return null;
+  const tsPart = s.slice(0, i);
+  const id = s.slice(i + 1);
+  if (!/^\d+$/.test(tsPart) || !id || id.length > 120 || id.length < 8) return null;
+  try {
+    return { sortTs: BigInt(tsPart), id };
+  } catch {
+    return null;
+  }
 }
 
 /** URL do canal YouTube (https, domínio YouTube). Vazio = limpar / não definido. */

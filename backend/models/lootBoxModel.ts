@@ -217,9 +217,13 @@ function isLootBoxListedAsActive(isActive: number | null | undefined): boolean {
  */
 export async function executeLootBoxOpenInTransaction(
   tx: Prisma.TransactionClient,
-  args: { userId: number; boxId: string }
-): Promise<{ rewards: LootRewardGrant[]; gainedUsdc: number; boxName: string }> {
+  args: { userId: number; boxId: string; idempotencyKey?: string | null }
+): Promise<{ rewards: LootRewardGrant[]; gainedUsdc: number; boxName: string; openingId: string }> {
   const { userId, boxId } = args;
+  const idemKey =
+    typeof args.idempotencyKey === 'string' && args.idempotencyKey.trim()
+      ? args.idempotencyKey.trim().slice(0, 128)
+      : null;
 
   const locked = await tx.$queryRaw<Array<{ qty: number }>>`
     SELECT qty FROM unopened_boxes WHERE user_id = ${userId} AND box_id = ${boxId} FOR UPDATE
@@ -308,7 +312,19 @@ export async function executeLootBoxOpenInTransaction(
     }
   }
 
-  return { rewards, gainedUsdc, boxName: boxDef.name };
+  const opening = await tx.lucky_box_openings.create({
+    data: {
+      user_id: userId,
+      box_id: boxId,
+      rewards_json: JSON.parse(JSON.stringify(rewards)) as Prisma.InputJsonValue,
+      gained_usdc: new Prisma.Decimal(String(Number.isFinite(gainedUsdc) ? gainedUsdc : 0)),
+      created_at: BigInt(Date.now()),
+      idempotency_key: idemKey
+    },
+    select: { id: true }
+  });
+
+  return { rewards, gainedUsdc, boxName: boxDef.name, openingId: opening.id };
 }
 
 /**
@@ -316,8 +332,8 @@ export async function executeLootBoxOpenInTransaction(
  */
 export async function executeLootBoxBuyInTransaction(
   tx: Prisma.TransactionClient,
-  args: { userId: number; boxId: string }
-): Promise<{ newUsdc: number; boxName: string; trigger: string; price: number }> {
+  args: { userId: number; boxId: string; qty?: number }
+): Promise<{ newUsdc: number; boxName: string; trigger: string; price: number; qtyPurchased: number }> {
   const { userId, boxId } = args;
 
   const box = await tx.loot_boxes.findUnique({ where: { id: boxId } });
@@ -335,12 +351,31 @@ export async function executeLootBoxBuyInTransaction(
     throw new LootBoxBuyError(400, 'Preço da caixa inválido ou não configurado para venda.');
   }
 
+  const maxOrderRaw = box.max_per_order ?? 20;
+  const maxOrder = Math.max(1, Math.min(500, Math.floor(Number(maxOrderRaw)) || 20));
+  let q = Math.floor(Number(args.qty));
+  if (!Number.isFinite(q) || q < 1) q = 1;
+  q = Math.min(maxOrder, q);
+  if (trigger === 'shop_once' && q !== 1) {
+    throw new LootBoxBuyError(400, 'Esta caixa de compra única só pode ser adquirida uma unidade de cada vez.');
+  }
+
   const itemCount = await tx.loot_box_items.count({ where: { box_id: boxId } });
   if (itemCount < 1) {
     throw new LootBoxBuyError(
       400,
       'Esta caixa não tem prémios configurados e não pode ser vendida. Contacte o suporte.'
     );
+  }
+
+  const ownedRow = await tx.unopened_boxes.findUnique({
+    where: { user_id_box_id: { user_id: userId, box_id: boxId } },
+    select: { qty: true }
+  });
+  const owned = ownedRow?.qty ?? 0;
+  const maxPerUser = box.max_per_user != null ? Math.floor(Number(box.max_per_user)) : null;
+  if (maxPerUser != null && Number.isFinite(maxPerUser) && maxPerUser >= 0 && owned + q > maxPerUser) {
+    throw new LootBoxBuyError(422, 'Limite por jogador para esta caixa excedido.');
   }
 
   if (trigger === 'shop_once') {
@@ -354,11 +389,13 @@ export async function executeLootBoxBuyInTransaction(
       });
     } catch (e) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
-        throw new LootBoxBuyError(400, 'Esta caixa de compra única já foi resgatada.');
+        throw new LootBoxBuyError(409, 'Esta caixa de compra única já foi resgatada.');
       }
       throw e;
     }
   }
+
+  const totalPrice = price * q;
 
   const gsPay = await tx.game_states.findUnique({
     where: { user_id: userId },
@@ -370,23 +407,45 @@ export async function executeLootBoxBuyInTransaction(
   const nowBi = BigInt(Date.now());
 
   const paid = await tx.game_states.updateMany({
-    where: { user_id: userId, usdc: { gte: price } },
+    where: { user_id: userId, usdc: { gte: totalPrice } },
     data: {
-      usdc: { decrement: price },
+      usdc: { decrement: totalPrice },
       last_updated_at: nowBi,
       server_updated_at: nowBi
     }
   });
   if (paid.count === 0) {
-    const missing = Math.max(0, Number((price - curUsdc).toFixed(6)));
-    throw new LootBoxBuyError(400, 'Saldo USDC insuficiente.', missing > 0 ? { missing } : undefined);
+    if (trigger === 'shop_once') {
+      try {
+        await tx.player_claimed_boxes.delete({
+          where: { user_id_box_id: { user_id: userId, box_id: boxId } }
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+    const missing = Math.max(0, Number((totalPrice - curUsdc).toFixed(6)));
+    throw new LootBoxBuyError(422, 'Saldo USDC insuficiente.', { missing });
   }
 
   await tx.unopened_boxes.upsert({
     where: { user_id_box_id: { user_id: userId, box_id: boxId } },
-    create: { user_id: userId, box_id: boxId, qty: 1 },
-    update: { qty: { increment: 1 } }
+    create: { user_id: userId, box_id: boxId, qty: q },
+    update: { qty: { increment: q } }
   });
+
+  if (box.stock != null) {
+    const dec = await tx.loot_boxes.updateMany({
+      where: { id: boxId, stock: { gte: q } },
+      data: { stock: { decrement: q } }
+    });
+    if (dec.count === 0) {
+      throw new LootBoxBuyError(
+        409,
+        'Stock esgotado ou alterado durante a compra. O saldo não foi debitado em duplicado — recarrega a loja.'
+      );
+    }
+  }
 
   const gs = await tx.game_states.findUnique({
     where: { user_id: userId },
@@ -397,7 +456,8 @@ export async function executeLootBoxBuyInTransaction(
     newUsdc: Number(gs?.usdc ?? 0),
     boxName: box.name,
     trigger,
-    price
+    price,
+    qtyPurchased: q
   };
 }
 

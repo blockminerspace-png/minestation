@@ -13,9 +13,12 @@ import {
 } from 'lucide-react';
 import {
   submitSupportTicket,
-  getMySupportTickets,
+  getSupportState,
   getMySupportTicketDetail,
   postPlayerSupportTicketReply,
+  archiveSupportTicket,
+  reopenSupportTicket,
+  newSupportIdempotencyKey,
   type MySupportTicketSummary,
   type MySupportTicketDetail,
   type SupportTicketAttachment,
@@ -107,6 +110,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
   const supportMutateBusyRef = useRef(false);
   const [tab, setTab] = useState<Tab>('list');
   const [list, setList] = useState<MySupportTicketSummary[]>([]);
+  const [accountDisplay, setAccountDisplay] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [detail, setDetail] = useState<MySupportTicketDetail | null>(null);
@@ -123,16 +127,34 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
   const [followFiles, setFollowFiles] = useState<File[]>([]);
   const [followSending, setFollowSending] = useState(false);
   const [followErr, setFollowErr] = useState<string | null>(null);
+  const [detailActionErr, setDetailActionErr] = useState<string | null>(null);
 
   const loadList = useCallback(async () => {
     setListLoading(true);
     try {
-      const { tickets } = await getMySupportTickets();
-      setList(tickets);
+      const st = await getSupportState({ limit: '50' });
+      if (st?.account) {
+        const hint = st.account.emailHint || st.account.username;
+        setAccountDisplay(hint || userEmail || null);
+      } else {
+        setAccountDisplay(userEmail || null);
+      }
+      const rows = st?.tickets ?? [];
+      setList(
+        rows.map((t) => ({
+          id: t.publicId,
+          subject: t.subject,
+          status: t.status,
+          createdAt: t.createdAt,
+          adminReplyCount: t.adminReplyCount,
+          lastActivityAt: t.lastActivityAt,
+          unreadStaffReply: t.unreadStaffReply
+        }))
+      );
     } finally {
       setListLoading(false);
     }
-  }, []);
+  }, [userEmail]);
 
   useEffect(() => {
     if (tab === 'list') loadList();
@@ -145,6 +167,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
     setFollowMsg('');
     setFollowFiles([]);
     setFollowErr(null);
+    setDetailActionErr(null);
     setDetailLoading(true);
     try {
       const d = await getMySupportTicketDetail(id);
@@ -182,7 +205,12 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
     supportMutateBusyRef.current = true;
     setSending(true);
     try {
-      const res = await submitSupportTicket({ subject, message, files });
+      const res = await submitSupportTicket({
+        subject,
+        message,
+        files,
+        idempotencyKey: newSupportIdempotencyKey()
+      });
       if (!res.ok) {
         setErr(res.error || 'Falha ao enviar.');
         return;
@@ -225,6 +253,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
         ticketId: detailId,
         message: followMsg,
         files: followFiles,
+        idempotencyKey: newSupportIdempotencyKey()
       });
       if (!r.ok) {
         setFollowErr(r.error || 'Não foi possível enviar.');
@@ -345,9 +374,10 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
         </div>
 
         <div className="p-4 sm:p-6">
-          {userEmail && (
+          {(accountDisplay || userEmail) && (
             <p className="text-xs text-slate-500 mb-4">
-              Conta: <span className="text-slate-300 font-mono">{userEmail}</span>
+              Conta:{' '}
+              <span className="text-slate-300 font-mono">{accountDisplay || userEmail}</span>
             </p>
           )}
 
@@ -376,6 +406,9 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
                             {t.status === 'archived' ? 'Arquivado' : 'Aberto'}
                           </span>
                           <span>{fmt(t.createdAt)}</span>
+                          {t.unreadStaffReply && (
+                            <span className="text-sky-400 font-bold">Novo da equipa</span>
+                          )}
                           {t.adminReplyCount > 0 && (
                             <span className="text-amber-600/90">{t.adminReplyCount} resposta(s) da equipa</span>
                           )}
@@ -422,11 +455,68 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
                     <div className="rounded-lg border border-slate-600 bg-slate-950/80 px-3 py-2 text-xs text-slate-400 flex items-start gap-2">
                       <Archive size={16} className="text-slate-500 shrink-0 mt-0.5" />
                       <span>
-                        Este pedido foi arquivado pela equipa. Podes ler toda a conversa abaixo, mas já não podes enviar mais
-                        mensagens aqui. Para novo assunto, usa «Novo pedido».
+                        Este pedido está arquivado. Podes ler a conversa abaixo; para enviar novas mensagens, reabre o pedido ou
+                        abre um novo em «Novo pedido».
                       </span>
                     </div>
                   )}
+
+                  {detailActionErr && (
+                    <div className="text-xs text-red-400 border border-red-900/40 rounded-lg px-3 py-2">{detailActionErr}</div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    {detail.ticket.status === 'open' && (
+                      <button
+                        type="button"
+                        disabled={detailLoading}
+                        onClick={async () => {
+                          if (!detailId || supportMutateBusyRef.current) return;
+                          setDetailActionErr(null);
+                          supportMutateBusyRef.current = true;
+                          try {
+                            const r = await archiveSupportTicket(detailId);
+                            if (!r.ok) {
+                              setDetailActionErr(r.error || 'Não foi possível arquivar.');
+                              return;
+                            }
+                            await openDetail(detailId);
+                            await loadList();
+                          } finally {
+                            supportMutateBusyRef.current = false;
+                          }
+                        }}
+                        className="text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800"
+                      >
+                        Arquivar pedido
+                      </button>
+                    )}
+                    {detail.ticket.status === 'archived' && (
+                      <button
+                        type="button"
+                        disabled={detailLoading}
+                        onClick={async () => {
+                          if (!detailId || supportMutateBusyRef.current) return;
+                          setDetailActionErr(null);
+                          supportMutateBusyRef.current = true;
+                          try {
+                            const r = await reopenSupportTicket(detailId);
+                            if (!r.ok) {
+                              setDetailActionErr(r.error || 'Não foi possível reabrir.');
+                              return;
+                            }
+                            await openDetail(detailId);
+                            await loadList();
+                          } finally {
+                            supportMutateBusyRef.current = false;
+                          }
+                        }}
+                        className="text-xs font-bold px-3 py-1.5 rounded-lg border border-amber-700/50 text-amber-200 hover:bg-amber-950/40"
+                      >
+                        Reabrir pedido
+                      </button>
+                    )}
+                  </div>
 
                   <div className="space-y-4 border-t border-slate-800 pt-4">
                     <div className="text-[10px] font-bold text-slate-500 uppercase">Conversa</div>

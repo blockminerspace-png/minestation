@@ -8,10 +8,9 @@ import {
   getSystemNews,
   getWeb3Settings,
   web3DepositFlagDisabled,
-  buyLootBox,
-  openLootBox,
+  postLuckyBoxPurchase,
+  postLuckyBoxOpen,
   discardLootBox,
-  buyUpgrades,
   impersonateUser,
   stopImpersonate,
   claimAdReward,
@@ -22,7 +21,10 @@ import {
   buyMarketListing,
   cancelMarketListing,
   claimMarketFunds,
-  sellCoin,
+  getWalletState,
+  postWalletExchangeLiquidate,
+  newWheelIdempotencyKey,
+  type WalletStatePayload,
   requestWithdrawal,
   getWithdrawalRequests,
   updateWithdrawalStatus,
@@ -43,16 +45,13 @@ import {
   setAccessLevels as apiSetAccessLevels,
   setLootBoxes as apiSetLootBoxes,
   logout as apiLogout,
-  getPlayerInventoryMe
+  getPlayerInventoryMe,
+  getPlayerInventoryState,
+  type InventoryStackableCategoryApi
 } from './services/api';
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import { appendUsdcShortfallLine } from './utils/playerMoneyMessages';
-import {
-  readWorkshopBatterySlotField,
-  workshopBatteryStorageKeyAtLayoutIndex
-} from './lib/workshopBatterySlotStorageKey';
-import { snapWorkshopBatteryWhToFullIfThreshold } from './lib/batteryChargeUi';
 import { trackSpaPageView } from './lib/analytics';
 import {
   gamePathFromView,
@@ -488,13 +487,17 @@ export default function App() {
   const pendingSaveDomainRef = useRef<'full' | 'inventory' | 'servers' | 'workshop'>('full');
   /** Evita double-click / pedidos em paralelo na oficina (mutações servidor-authoritativas). */
   const workshopMutationBusyRef = useRef(false);
-  /** Geração de pedido GET `/api/inventory/me` — descarta respostas atrasadas ao mudar de separador. */
+  /** Geração de pedido GET inventário — descarta respostas atrasadas ao mudar de separador. */
   const inventoryMeRequestGenRef = useRef(0);
   /** Baterias em armazém conforme o servidor (cheias vs parciais); `null` = ainda não hidratado nesta visita ao Estoque. */
   const [inventoryBatterySplit, setInventoryBatterySplit] = useState<{
     full: StoredBattery[];
     partial: StoredBattery[];
   } | null>(null);
+  /** Categorias de itens empilháveis vindas de `GET /api/inventory/state`; `null` = usar derivação local no `InventoryView`. */
+  const [inventoryStackableCategories, setInventoryStackableCategories] = useState<InventoryStackableCategoryApi[] | null>(
+    null
+  );
 
   useEffect(() => {
     currentViewRef.current = currentView;
@@ -503,6 +506,7 @@ export default function App() {
   useEffect(() => {
     if (currentView !== 'inventory') {
       setInventoryBatterySplit(null);
+      setInventoryStackableCategories(null);
     }
   }, [currentView]);
 
@@ -514,24 +518,42 @@ export default function App() {
 
     void (async () => {
       try {
-        const r = await getPlayerInventoryMe();
+        const r = await getPlayerInventoryState();
         if (cancelled || gen !== inventoryMeRequestGenRef.current) return;
-        if (r.ok !== true) {
-          console.warn('[inventory/me]', r.status, r.error || '');
+        if (r.ok === true) {
+          const merged = [...r.partialChargeBatteries, ...r.fullChargeBatteries];
+          setInventoryBatterySplit({
+            full: r.fullChargeBatteries,
+            partial: r.partialChargeBatteries
+          });
+          setInventoryStackableCategories(r.stackableCategories);
+          setGameState((p) => ({
+            ...p,
+            stock: { ...r.stock },
+            storedBatteries: merged
+          }));
           return;
         }
-        const merged = [...r.storedBatteriesPartial, ...r.storedBatteriesFull];
+        const m = await getPlayerInventoryMe();
+        if (cancelled || gen !== inventoryMeRequestGenRef.current) return;
+        if (m.ok !== true) {
+          console.warn('[inventory]', r.status, r.error || '', m.status, m.error || '');
+          setInventoryStackableCategories(null);
+          return;
+        }
+        const merged = [...m.storedBatteriesPartial, ...m.storedBatteriesFull];
         setInventoryBatterySplit({
-          full: r.storedBatteriesFull,
-          partial: r.storedBatteriesPartial
+          full: m.storedBatteriesFull,
+          partial: m.storedBatteriesPartial
         });
+        setInventoryStackableCategories(null);
         setGameState((p) => ({
           ...p,
-          stock: { ...r.stock },
+          stock: { ...m.stock },
           storedBatteries: merged
         }));
       } catch (e) {
-        console.error('[inventory/me]', e);
+        console.error('[inventory]', e);
       }
     })();
 
@@ -1094,162 +1116,18 @@ export default function App() {
     setProductionRate(calculateProduction(gameState.placedRacks, gameUpgrades));
   }, [gameState.placedRacks, gameUpgrades]);
 
-  // Game Loop (visual: bateria / oficina — só estado local; não faz fetch HTTP)
-  const VISUAL_TICK_MS = 2000;
+  /** Racks / oficina / baterias: fonte de verdade é o backend (`GET /api/game-state/...` com `computeProgressForUser`). Sem simulação local de carga (evita divergência BD vs UI). */
+  const BATTERY_STATE_POLL_MS = 12000;
   useEffect(() => {
     if (!user || user.isAdmin || !saveLoaded || gameUpgrades.length === 0) return;
 
-    const tickScale = VISUAL_TICK_MS / 1000;
-
-    const interval = setInterval(() => {
-      setGameState(prev => {
-        let changed = false;
-
-        // --- 1.2 RACK DEPLETION (Real-time Battery Drain) ---
-        // Battery drain remains continuous (real-time physics)
-        const nextRacks = prev.placedRacks.map(r => {
-          const catBid = resolveEquippedBatteryCatalogId(
-            r.batteryId,
-            prev.storedBatteries,
-            gameUpgrades,
-            Object.fromEntries(rackBatteryFromStockCatalogRef.current)
-          );
-          const batt = catBid
-            ? gameUpgrades.find((u) => u.id === catBid)
-            : gameUpgrades.find((u) => u.id === r.batteryId);
-          const isInf = batt && batt.powerCapacity === -1;
-          if (r.isOn && r.wiringId && r.batteryId && r.currentCharge > 0 && !isInf) {
-            let watts = 0;
-            r.slots.forEach(sid => {
-              const up = gameUpgrades.find(u => u.id === sid);
-              if (up) watts += up.powerConsumption || 0;
-            });
-            r.multiplierSlots?.forEach(sid => {
-              const mod = gameUpgrades.find(u => u.id === sid);
-              if (mod) watts += mod.powerConsumption || 0;
-            });
-
-            if (watts > 0) {
-              const depletion = (watts / 3600) * 0.1 * tickScale;
-              const newCharge = Math.max(0, r.currentCharge - depletion);
-              if (newCharge !== r.currentCharge) {
-                changed = true;
-                return { ...r, currentCharge: newCharge };
-              }
-            }
-          }
-          return r;
-        });
-
-        // --- 2. WORKSHOP ESTIMATOR ---
-        const nextWorkshop = (prev.workshopSlots || []).map(ws => {
-          if (!ws || !ws.itemId) return ws;
-          const def = gameUpgrades.find(u => u.id === ws.itemId);
-          if (!def || def.type !== 'charger') return ws;
-
-          const layout = def.layout;
-          if (!layout) return ws;
-
-          const layoutSlots = layout.slots;
-          const batteryCount = layoutSlots.filter(s => s.type === 'battery').length;
-          const wiringSlot = layout.slots.find(s => s.type === 'wiring');
-
-          if (batteryCount === 0) return ws;
-
-          const gsv = (obj: any, sid: string) => {
-            if (!obj || !sid) return null;
-            if (obj[sid] !== undefined) return obj[sid];
-            const entry = Object.entries(obj).find(([k]) => k.toLowerCase().trim() === sid.toLowerCase().trim());
-            return entry ? entry[1] : null;
-          };
-
-          if (wiringSlot && !gsv(ws.internalSlots, wiringSlot.id)) return ws;
-
-          // Calculate Base Speed (Total output)
-          let speed = (def.baseProduction || 0.5);
-
-          // Apply Wiring Transfer Bonus (Computed once for the charger)
-          if (wiringSlot) {
-            const wId = gsv(ws.internalSlots, wiringSlot.id);
-            if (wId) {
-              const wSavedId = gsv(ws.slotItemIds, wiringSlot.id);
-              let wDef = gameUpgrades.find(u => u.id === wSavedId);
-              if (!wDef) wDef = gameUpgrades.find(u => u.id === wId);
-
-              if (wDef && wDef.energyTransferRateBonus) {
-                speed = speed * (1 + wDef.energyTransferRateBonus);
-              }
-            }
-          }
-
-          let internalBuffer = ws.currentCharge ?? 0;
-          const nextSlotCharges = { ...ws.slotCharges };
-          let hasChanges = false;
-
-          for (let li = 0; li < layoutSlots.length; li++) {
-            const batSlot = layoutSlots[li];
-            if (batSlot.type !== 'battery') continue;
-            const sk = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, li);
-            if (!sk) continue;
-            const internalMap = ws.internalSlots as Record<string, unknown>;
-            const itemIdsMap = ws.slotItemIds as Record<string, unknown>;
-            const batteryIid = readWorkshopBatterySlotField(internalMap, layoutSlots, li);
-            if (!batteryIid) continue;
-
-            const catIdRaw = readWorkshopBatterySlotField(itemIdsMap, layoutSlots, li);
-            let bDef = catIdRaw ? gameUpgrades.find(u => u.id === String(catIdRaw)) : undefined;
-            if (!bDef) {
-              const bInst = prev.storedBatteries.find(b => b.id === batteryIid);
-              if (bInst) bDef = gameUpgrades.find(u => u.id === bInst.itemId);
-            }
-            if (!bDef) continue;
-
-            const maxB = bDef.powerCapacity || 100;
-            const currentBRaw = readWorkshopBatterySlotField(
-              nextSlotCharges as Record<string, unknown>,
-              layoutSlots,
-              li
-            );
-            const currentB =
-              currentBRaw !== undefined && currentBRaw !== null ? Number(currentBRaw) : 0;
-
-            if (currentB < maxB && internalBuffer > 0) {
-              // Transfer per tick (speed * 0.1 per second of sim). Scaled by VISUAL_TICK_MS.
-              const transfer = Math.min(speed * 0.1 * tickScale, internalBuffer, maxB - currentB);
-
-              if (transfer > 0) {
-                internalBuffer -= transfer;
-                nextSlotCharges[sk] = snapWorkshopBatteryWhToFullIfThreshold(currentB + transfer, maxB);
-                const leg = String(batSlot.id || '').trim();
-                if (leg && leg !== sk && Object.prototype.hasOwnProperty.call(nextSlotCharges, leg)) {
-                  delete nextSlotCharges[leg];
-                }
-                hasChanges = true;
-              }
-            }
-
-            if (internalBuffer <= 0.0001) break;
-          }
-
-          if (hasChanges) {
-            changed = true;
-            return {
-              ...ws,
-              currentCharge: internalBuffer,
-              slotCharges: nextSlotCharges
-            };
-          }
-
-          return ws;
-        });
-
-        if (!changed) return prev;
-        return { ...prev, workshopSlots: nextWorkshop, placedRacks: nextRacks };
-      });
-    }, VISUAL_TICK_MS);
-
+    const tick = () => {
+      if (document.visibilityState === 'hidden') return;
+      void handleReloadGameState();
+    };
+    const interval = setInterval(tick, BATTERY_STATE_POLL_MS);
     return () => clearInterval(interval);
-  }, [user, gameUpgrades, saveLoaded]);
+  }, [user, gameUpgrades, saveLoaded, handleReloadGameState]);
 
   // Atualizações globais (loja / economia / web3) — só com sessão; pausa em separador oculto para menos rede/CPU
   useEffect(() => {
@@ -1342,75 +1220,6 @@ export default function App() {
   }
 
   // --- ACTIONS ---
-
-  const handleBatchBuy = useCallback(async (cart: Record<string, number>, totalCost: number) => {
-    if (!user?.email) return;
-
-    const tc = Number(totalCost);
-    if (!Number.isFinite(tc) || tc <= 0) {
-      setHardwareShopNotice({
-        variant: 'error',
-        title: 'Lojinha Miner',
-        message: 'Valor da compra inválido.'
-      });
-      return;
-    }
-    let recomputed = 0;
-    for (const [id, rawQty] of Object.entries(cart)) {
-      const q = Math.floor(Number(rawQty));
-      if (!Number.isFinite(q) || q < 1) {
-        setHardwareShopNotice({
-          variant: 'error',
-          title: 'Lojinha Miner',
-          message: 'Quantidade inválida no carrinho.'
-        });
-        return;
-      }
-      const u = gameUpgrades.find((x) => x.id === id);
-      if (!u) {
-        setHardwareShopNotice({
-          variant: 'error',
-          title: 'Lojinha Miner',
-          message: 'Item desconhecido no carrinho.'
-        });
-        return;
-      }
-      recomputed += u.baseCost * q;
-    }
-    if (Math.abs(recomputed - tc) > 1e-5) {
-      setHardwareShopNotice({
-        variant: 'error',
-        title: 'Lojinha Miner',
-        message: 'O total não confere com os itens. Recarrega a página (F5) e tenta de novo.'
-      });
-      return;
-    }
-
-    if (gameState.usdc < tc) {
-      setHardwareShopNotice({
-        variant: 'error',
-        title: 'Lojinha Miner',
-        message: 'Saldo USDC insuficiente na reserva.'
-      });
-      return;
-    }
-
-    const res = await buyUpgrades(user.email, cart);
-    if (res.ok) {
-      await handleReloadGameState();
-      setHardwareShopNotice({
-        variant: 'success',
-        title: 'Lojinha Miner',
-        message: 'Compra realizada com sucesso! O teu estoque foi actualizado.'
-      });
-    } else {
-      setHardwareShopNotice({
-        variant: 'error',
-        title: 'Lojinha Miner',
-        message: res.error || 'Erro ao realizar compra.'
-      });
-    }
-  }, [user, gameState.usdc, gameUpgrades, handleReloadGameState]);
 
   const handleSuggestDeposit = useCallback(
     (amount: number) => {
@@ -1609,6 +1418,44 @@ export default function App() {
     failureReason?: string;
   }>({ pending: false });
 
+  const [walletServerSnapshot, setWalletServerSnapshot] = useState<WalletStatePayload | null>(null);
+
+  const deskCoinBalancesForExchange = useMemo(() => {
+    if (walletServerSnapshot?.ok && Array.isArray(walletServerSnapshot.minedBalances)) {
+      const acc: Record<string, number> = {};
+      for (const m of walletServerSnapshot.minedBalances) {
+        acc[m.coinId] = typeof m.minedBalance === 'number' && Number.isFinite(m.minedBalance) ? m.minedBalance : 0;
+      }
+      return acc;
+    }
+    return gameState.coinBalances || {};
+  }, [walletServerSnapshot, gameState.coinBalances]);
+
+  const deskMiningCoinsForExchange = useMemo(() => {
+    if (walletServerSnapshot?.ok && Array.isArray(walletServerSnapshot.minedBalances)) {
+      return walletServerSnapshot.minedBalances.map((m) => ({
+        id: m.coinId,
+        name: m.name,
+        usdcRate: m.usdcRate,
+        showInExchange: m.showInExchange !== false
+      }));
+    }
+    return miningCoins.map((c) => ({
+      id: c.id,
+      name: c.name,
+      usdcRate: c.usdcRate,
+      showInExchange: c.showInExchange !== false
+    }));
+  }, [walletServerSnapshot, miningCoins]);
+
+  const serverDeskSettingsForExchange = useMemo(() => {
+    if (!walletServerSnapshot?.ok) return null;
+    return {
+      minExchangeAmount: walletServerSnapshot.exchange.minUsdc,
+      exchangeFeePercent: walletServerSnapshot.exchange.feePercent
+    };
+  }, [walletServerSnapshot]);
+
   const verifyDepositWithServer = useCallback(
     async (txHash: string, network: string): Promise<{ ok: boolean; pending?: boolean; error?: string }> => {
       if (!user?.email) return { ok: false, error: 'Sessão inválida.' };
@@ -1709,25 +1556,41 @@ export default function App() {
     }
   }, [handleAddUSDC, user, web3SettingsState, verifyDepositWithServer]);
 
-  /* Custom Exchange Handler */
-  const handleSellCoin = useCallback(async (coinId: string, percentage: number) => {
-    if (!user?.email) return;
-    if (confirm(`Tem certeza que deseja vender ${(percentage * 100).toFixed(0)}% do seu saldo desta moeda?`)) {
-      const res = await sellCoin(coinId, percentage);
-      if (res.ok) {
-        setGameState(p => ({
-          ...p,
-          usdc: res.newUsdc ?? p.usdc,
-          coinBalances: { ...p.coinBalances, [coinId]: res.newCoinBalance ?? 0 }
-        }));
-        const feeMsg = res.feeUsdc && res.feeUsdc > 0 ? ` (Taxa: $${res.feeUsdc.toFixed(4)})` : '';
-        alert(`Venda realizada com sucesso! +$${res.netUsdc?.toFixed(4)} USDC${feeMsg}`);
-        requestSave();
-      } else {
-        alert(res.error || "Falha na venda.");
+  /* Desk de câmbio: POST /api/wallet/exchange/liquidate + idempotência; estado via GET /api/wallet/state */
+  const handleSellCoin = useCallback(
+    async (coinId: string, percentagePoints: 10 | 50 | 100) => {
+      if (!user?.email) return;
+      if (percentagePoints === 100) {
+        if (!confirm('Liquidar todo o saldo desta moeda para USDC?')) return;
       }
-    }
-  }, [user, requestSave]);
+      const idem = newWheelIdempotencyKey();
+      const res = await postWalletExchangeLiquidate({
+        coinId,
+        mode: 'PERCENTAGE',
+        percentage: percentagePoints,
+        idempotencyKey: idem
+      });
+      if (res.ok === false) {
+        const st = res.status;
+        if (st === 409 || st === 422) {
+          await handleReloadGameState();
+          const ws = await getWalletState();
+          if (ws?.ok) setWalletServerSnapshot(ws);
+          alert(res.error || 'Seu saldo foi atualizado, tente novamente.');
+          return;
+        }
+        alert(res.error || 'Falha na liquidação.');
+        return;
+      }
+      await handleReloadGameState();
+      const ws = await getWalletState();
+      if (ws?.ok) setWalletServerSnapshot(ws);
+      const feeMsg = res.feeUsdc && res.feeUsdc > 0 ? ` (Taxa: $${Number(res.feeUsdc).toFixed(4)})` : '';
+      alert(`Venda realizada com sucesso! +$${Number(res.netUsdc ?? 0).toFixed(4)} USDC${feeMsg}`);
+      void requestSave();
+    },
+    [user, handleReloadGameState, requestSave]
+  );
 
   const [adSelection, setAdSelection] = useState<{ wsIdx: number } | null>(null);
   useEffect(() => { (async () => { const s = await getWeb3Settings(); setWeb3SettingsState(s); })(); }, []);
@@ -1740,6 +1603,22 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, [saveLoaded, currentView]);
+
+  useEffect(() => {
+    if (!saveLoaded || currentView !== 'wallet' || !user?.email || user.isAdmin) return;
+    let cancelled = false;
+    const tick = async () => {
+      const ws = await getWalletState();
+      if (!cancelled && ws?.ok) setWalletServerSnapshot(ws);
+    };
+    void tick();
+    const id = window.setInterval(tick, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [saveLoaded, currentView, user?.email, user?.isAdmin]);
+
   const handleMintNFT = useCallback((id: string, amt: number) => { setGameState(p => ({ ...p, stock: { ...p.stock, [id]: (p.stock[id] || 0) + amt } })); requestSave(); }, [requestSave]);
   const handleBurnNFT = useCallback((id: string, amt: number) => { setGameState(p => { const cur = p.stock[id] || 0; if (cur < amt) return p; return { ...p, stock: { ...p.stock, [id]: cur - amt } }; }); requestSave(); }, [requestSave]);
 
@@ -2423,7 +2302,16 @@ export default function App() {
     if (!ok) return;
 
     // Call API
-    const res = await buyLootBox(user.email, boxId);
+    const idempotencyKey =
+      typeof crypto !== 'undefined' && 'randomUUID' in crypto
+        ? crypto.randomUUID()
+        : `lb_buy_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    const res = await postLuckyBoxPurchase({
+      boxId,
+      email: user.email,
+      quantity: 1,
+      idempotencyKey
+    });
 
     if (res.ok) {
       await handleReloadGameState();
@@ -2441,47 +2329,18 @@ export default function App() {
     }
   };
 
-  const handleOpenBox = async (boxId: string) => {
+  const handleOpenBox = async (boxId: string, opts?: { idempotencyKey?: string }) => {
     if (!user?.email) return null;
     // Não exigir definição no catálogo ativo: inventário pode ter caixas retiradas da loja.
 
-    // Call API
-    const res = await openLootBox(user.email, boxId);
+    const res = await postLuckyBoxOpen({
+      boxId,
+      email: user.email,
+      idempotencyKey: opts?.idempotencyKey
+    });
 
     if (res.ok && res.rewards) {
-      // Update local state to reflect changes (Server is authority, but we update UI optimistically/reactively)
-      // Actually, to be safe and consistent with server, we should probably fetch the latest game state.
-      // But for better UX, we can apply the changes locally based on rewards returned.
-
-      setGameState(prev => {
-        const newBoxes = { ...prev.unopenedBoxes };
-        if (newBoxes[boxId] > 0) newBoxes[boxId]--;
-        if (newBoxes[boxId] <= 0) delete newBoxes[boxId];
-
-        const newStock = { ...prev.stock };
-        const newCoinBalances = { ...(prev.coinBalances || {}) };
-
-        // Apply rewards to local state
-        res.rewards.forEach((r: any) => {
-          if (r.type === 'item') {
-            newStock[r.id] = (newStock[r.id] || 0) + r.qty;
-          } else if (r.type === 'coin') {
-            newCoinBalances[r.id] = (newCoinBalances[r.id] || 0) + r.qty;
-          }
-          // Currency updates are handled below in 'next' object construction if simple logic,
-          // but here we need to sum them up first if we want to add to prev.
-        });
-
-        const earnedUsdc = res.rewards.filter((r: any) => r.type === 'currency' && r.id === 'usdc').reduce((a: number, b: any) => a + b.qty, 0);
-
-        return {
-          ...prev,
-          unopenedBoxes: newBoxes,
-          stock: newStock,
-          coinBalances: newCoinBalances,
-          usdc: prev.usdc + earnedUsdc,
-        };
-      });
+      void handleReloadGameState();
       return { rewards: res.rewards };
     } else {
       setLuckyBoxNotice({
@@ -2914,6 +2773,7 @@ export default function App() {
                             stock={gameState.stock}
                             storedBatteries={gameState.storedBatteries}
                             inventoryBatterySplit={inventoryBatterySplit}
+                            inventoryStackableCategories={inventoryStackableCategories}
                             upgrades={gameUpgrades}
                           />
                         </Suspense>
@@ -2925,7 +2785,15 @@ export default function App() {
                     <div className="flex-1 flex flex-col p-4 animate-in fade-in slide-in-from-right-4 duration-300">
                       <div className="flex-1">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <UpgradeShop gameState={gameState} user={user} onBatchBuy={handleBatchBuy} upgrades={gameUpgrades} onSuggestDeposit={handleSuggestDeposit} isEnabled={economySettings.hardwareMarketEnabled} />
+                          <UpgradeShop
+                            gameState={gameState}
+                            user={user}
+                            upgrades={gameUpgrades}
+                            onSuggestDeposit={handleSuggestDeposit}
+                            isEnabled={economySettings.hardwareMarketEnabled}
+                            onAfterShopCheckout={handleReloadGameState}
+                            onShopNotice={setHardwareShopNotice}
+                          />
                         </Suspense>
                       </div>
                       <Footer />
@@ -2939,6 +2807,7 @@ export default function App() {
                             gameState={gameState}
                             lootBoxes={lootBoxDefs}
                             upgrades={gameUpgrades}
+                            userEmail={user?.email ?? null}
                             onBuyBox={handleBuyBox}
                             onOpenBox={handleOpenBox}
                             onDiscardBox={handleDiscardLootBox}
@@ -2980,7 +2849,12 @@ export default function App() {
                       <div className="flex-1">
                         <Suspense fallback={<LazyRouteFallback />}>
                           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6">
-                            <Exchange coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, usdcRate: c.usdcRate, showInExchange: c.showInExchange }))} onSellCoin={handleSellCoin} />
+                            <Exchange
+                              coinBalances={deskCoinBalancesForExchange}
+                              miningCoins={deskMiningCoinsForExchange}
+                              onSellCoin={handleSellCoin}
+                              serverDeskSettings={serverDeskSettingsForExchange}
+                            />
                             <WalletActions onAddUSDC={handleAddUSDC} onStartDeposit={handleStartDeposit} depositStatus={depositFlow.status} depositAmount={depositFlow.amount} depositFailureMessage={depositFlow.failureReason} onCloseDepositStatus={() => setDepositFlow({ pending: false })} onSyncQueuedDeposit={depositFlow.status === 'queued' && depositFlow.txHash && user?.email ? async () => { const net = depositFlow.network || 'polygon'; const out = await verifyDepositWithServer(depositFlow.txHash!, net); if (out.ok) setDepositFlow((f) => ({ ...f, status: 'success' })); else if (out.pending) alert('Ainda à espera de confirmação na rede.'); else alert(out.error || 'Não foi possível sincronizar.'); } : undefined} userEmail={user?.email || null} onVerifyDepositByHash={user?.email ? async (txHash, network) => verifyDepositWithServer(txHash.trim(), network) : undefined} hasWallet={!!user?.polygonWallet} coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, symbol: c.symbol, priceUSD: c.priceUSD || 0 }))} coinRates={(() => { const rates: Record<string, number> = {}; gameState.placedRacks.forEach(r => { if (!r.isOn || !r.wiringId || !r.batteryId || !r.selectedCoinId) return; let base = 0; r.slots.forEach(sid => { if (!sid) return; const up = gameUpgrades.find(u => u.id === sid); if (up) base += up.baseProduction; }); let mult = 1; r.multiplierSlots?.forEach(sid => { if (!sid) return; const mod = gameUpgrades.find(u => u.id === sid); if (mod && mod.multiplier) mult += mod.multiplier; }); const prod = base * mult; const coin = miningCoins.find(c => c.id === r.selectedCoinId); const yieldPerHash = coin ? (coin.minProportion || 0) : 0; const rate = prod * yieldPerHash; rates[r.selectedCoinId] = (rates[r.selectedCoinId] || 0) + rate; }); return rates; })()} onWithdrawCoin={handleWithdrawCoin} prefillAmount={depositPrefill} withdrawTokens={web3SettingsState?.withdrawTokens?.map(t => ({ name: t.name, contract: t.contract, minAmount: t.minAmount, minWithdrawalUsdc: t.minWithdrawalUsdc, feePercent: t.feePercent }))} minDepositUsdc={web3SettingsState?.minDepositUsdc} depositPolygonDisabled={web3SettingsState?.depositPolygonDisabled} depositBnbDisabled={web3SettingsState?.depositBnbDisabled} depositBaseDisabled={web3SettingsState?.depositBaseDisabled} />
                             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between md:col-span-2 lg:col-span-2 xl:col-span-2 transition-colors">
                               <div>

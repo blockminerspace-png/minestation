@@ -8,6 +8,12 @@ import {
   readWorkshopBatterySlotField,
   workshopBatteryStorageKeyAtLayoutIndex
 } from '../lib/workshopBatterySlotStorageKey.js';
+import {
+  REDIS_LOCK_KEYS,
+  releaseDistributedLock,
+  tryAcquireDistributedLock,
+  type LockHandle
+} from '../lib/redisDistributedLock.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -139,6 +145,17 @@ export async function computeProgressForUser(
     return { ok: false, error: 'invalid user' };
   }
 
+  if (
+    String(process.env.MINING_PROGRESS_COMPUTE_ENABLED ?? '1').trim() === '0' ||
+    String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0'
+  ) {
+    console.log(
+      `${LOG_PREFIX} user=%s compute desligado (MINING_PROGRESS_COMPUTE_ENABLED ou BATTERY_WORKERS_ENABLED=0)`,
+      userId
+    );
+    return { ok: true };
+  }
+
   const wallClock = Date.now();
   let serverNow =
     typeof nowArg === 'number' && Number.isFinite(nowArg) ? (nowArg as number) : wallClock;
@@ -150,10 +167,24 @@ export async function computeProgressForUser(
 
   const creditCap = miningCreditCapNowMs(serverNow);
 
-  activeProgressCalculations++;
-  const client = await pool.connect();
+  const lockTtlParsed = parseInt(String(process.env.MINING_PROGRESS_LOCK_TTL_SEC ?? '120').trim(), 10);
+  const lockTtlSec = Number.isFinite(lockTtlParsed) ? Math.max(30, Math.min(600, lockTtlParsed)) : 120;
+
+  let distLock: LockHandle | null = null;
   try {
-    const coinMap = await getMiningCoinsActiveMap();
+    distLock = await tryAcquireDistributedLock(REDIS_LOCK_KEYS.miningProgressUser(userId), lockTtlSec);
+    if (!distLock) {
+      console.log(
+        `${LOG_PREFIX} user=%s ignorado (lock Redis mining_progress — outro worker/pedido a processar)`,
+        userId
+      );
+      return { ok: true };
+    }
+
+    const client = await pool.connect();
+    activeProgressCalculations++;
+    try {
+      const coinMap = await getMiningCoinsActiveMap();
     const coinIds: string[] = [...coinMap.keys()];
 
     const upgradesRes = await client.query('SELECT * FROM upgrades');
@@ -422,7 +453,10 @@ export async function computeProgressForUser(
           String(readWorkshopBatterySlotField(slotItemIds, layoutSlots, layoutIdx) ?? '')
         );
         if (!batteryDef) {
-          const batRes = await client.query('SELECT item_id FROM stored_batteries WHERE id = $1', [batteryInstanceId]);
+          const batRes = await client.query(
+            'SELECT item_id FROM stored_batteries WHERE id = $1 AND user_id = $2',
+            [batteryInstanceId, userId]
+          );
           const row = batRes.rows[0] as { item_id?: unknown } | undefined;
           if (row?.item_id != null) batteryDef = upgradesMap.get(String(row.item_id));
         }
@@ -503,8 +537,8 @@ export async function computeProgressForUser(
           current_charge = data.charge,
           is_on = COALESCE(data.is_on, placed_racks.is_on)
         FROM (SELECT unnest($1::text[]) as id, unnest($2::numeric[]) as charge, unnest($3::int[]) as is_on) as data
-        WHERE placed_racks.id = data.id`,
-        [rIds, rCharges, rIsOns]
+        WHERE placed_racks.id = data.id AND placed_racks.user_id = $4`,
+        [rIds, rCharges, rIsOns, userId]
       );
     }
 
@@ -520,35 +554,49 @@ export async function computeProgressForUser(
       await client.query(
         `UPDATE stored_batteries SET current_charge = data.charge
         FROM (SELECT unnest($1::text[]) as id, unnest($2::numeric[]) as charge) as data
-        WHERE stored_batteries.id = data.id`,
-        [bIds, bCharges]
+        WHERE stored_batteries.id = data.id AND stored_batteries.user_id = $3`,
+        [bIds, bCharges, userId]
       );
     }
 
     await client.query('UPDATE game_states SET last_updated_at = $1 WHERE user_id = $2', [lastWrite, userId]);
     await client.query('COMMIT');
 
+    const idempotencyKey = `mining-progress:${userId}:${Math.floor(last)}:${Math.floor(lastWrite)}`;
     if (totalGained.size > 0) {
       console.log(
-        `${LOG_PREFIX} user=%s credited coins=%s lastWrite=%s`,
+        `${LOG_PREFIX} user=%s credited coins=%s lastWrite=%s idempotencyKey=%s lockAcquired=true`,
         userId,
         sanitizeForLog(JSON.stringify(Object.fromEntries(totalGained)), 256),
-        lastWrite
+        lastWrite,
+        sanitizeForLog(idempotencyKey, 120)
+      );
+    } else if (rackUpdates.length > 0 || workshopUpdates.length > 0 || batteryUpdates.length > 0) {
+      console.log(
+        `${LOG_PREFIX} user=%s commit racks=%s workshop=%s batteries=%s idempotencyKey=%s lockAcquired=true`,
+        userId,
+        rackUpdates.length,
+        workshopUpdates.length,
+        batteryUpdates.length,
+        sanitizeForLog(idempotencyKey, 120)
       );
     }
 
     return { ok: true, offlineMined: Object.fromEntries(totalGained) };
-  } catch (e) {
-    try {
-      await client.query('ROLLBACK');
-    } catch {
-      /* ignore */
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`${LOG_PREFIX} user=%s erro: %s`, userId, sanitizeForLog(msg, 240));
+      return { ok: false, error: sanitizeApiMessage(msg, 240) };
+    } finally {
+      client.release();
+      activeProgressCalculations--;
     }
-    const msg = e instanceof Error ? e.message : String(e);
-    console.error(`${LOG_PREFIX} user=%s erro: %s`, userId, sanitizeForLog(msg, 240));
-    return { ok: false, error: sanitizeApiMessage(msg, 240) };
   } finally {
-    client.release();
-    activeProgressCalculations--;
+    await releaseDistributedLock(distLock);
   }
 }
