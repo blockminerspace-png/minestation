@@ -273,6 +273,10 @@ model stored_batteries {
   display_name        String?
   /// URL ou caminho de imagem (cópia opcional do catálogo).
   image_url           String? @db.VarChar(2048)
+  /// Provisório: bancada oficina (`workshop_slots.slot_index`) onde a instância está montada.
+  workshop_slot_index         Int?
+  /// Provisório: chave do slot em `internal_state` (ex. battery_0).
+  workshop_component_slot_id  String?
 
   @@index([user_id])
   @@map("stored_batteries")

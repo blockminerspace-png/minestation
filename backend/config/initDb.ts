@@ -703,6 +703,14 @@ export const initDb = async () => {
     `);
 
     await client.query(`
+      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS power_capacity_wh DOUBLE PRECISION;
+      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS display_name TEXT;
+      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS image_url VARCHAR(2048);
+      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS workshop_slot_index INTEGER;
+      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS workshop_component_slot_id TEXT;
+    `);
+
+    await client.query(`
       CREATE TABLE IF NOT EXISTS ip_blacklist (
 
         ip TEXT PRIMARY KEY,

@@ -40,7 +40,7 @@ export async function loadPlayerInventorySnapshot(userId: number): Promise<Playe
       select: { item_id: true, qty: true }
     }),
     prisma.stored_batteries.findMany({
-      where: { user_id: userId },
+      where: { user_id: userId, workshop_slot_index: null },
       select: { id: true, item_id: true, current_charge: true }
     }),
     prisma.game_states.findUnique({

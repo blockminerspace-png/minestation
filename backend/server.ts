@@ -182,7 +182,8 @@ import {
   validateStoredBatteryWarehouseRemovalAllowed,
   StoredBatterySaveGuardError,
   validateWorkshopSlotsPayloadForSave,
-  enrichWorkshopSlotsSlotItemIdsFromChargingHistory
+  enrichWorkshopSlotsSlotItemIdsFromChargingHistory,
+  refreshStoredBatteriesWorkshopLinkage
 } from './dist/lib/saveGameEconomyValidate.js';
 import {
   validateLoginEmail,
@@ -4039,11 +4040,19 @@ async function resolveNftAutoArmario1OnlyRoomIds(q) {
 
 async function ensureStoredBatteriesArrayFromDb(client, uid, changes) {
   if (Array.isArray(changes.storedBatteries)) return;
-  const ext = await client.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]);
+  const ext = await client.query(
+    'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1',
+    [uid]
+  );
   changes.storedBatteries = ext.rows.map((r) => ({
     id: r.id,
     itemId: r.item_id,
-    currentCharge: Number(r.current_charge) || 0
+    currentCharge: Number(r.current_charge) || 0,
+    powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
+    displayName: r.display_name != null ? String(r.display_name) : null,
+    imageUrl: r.image_url != null ? String(r.image_url) : null,
+    workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
+    workshopComponentSlotId: r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
   }));
 }
 
@@ -4054,16 +4063,23 @@ async function returnRackBatteryToChangesOnNftSanitize(client, uid, rack, stock,
   const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(s);
   if (isUuid) {
     const br = await client.query(
-      'SELECT id, item_id, current_charge FROM stored_batteries WHERE id = $1 AND user_id = $2',
+      'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE id = $1 AND user_id = $2',
       [s, uid]
     );
     if (br.rows[0]) {
       await ensureStoredBatteriesArrayFromDb(client, uid, changes);
       if (!changes.storedBatteries.some((x) => x.id === br.rows[0].id)) {
+        const row0 = br.rows[0];
         changes.storedBatteries.push({
-          id: br.rows[0].id,
-          itemId: br.rows[0].item_id,
-          currentCharge: Number(br.rows[0].current_charge) || 0
+          id: row0.id,
+          itemId: row0.item_id,
+          currentCharge: Number(row0.current_charge) || 0,
+          powerCapacityWh: row0.power_capacity_wh != null ? Number(row0.power_capacity_wh) : null,
+          displayName: row0.display_name != null ? String(row0.display_name) : null,
+          imageUrl: row0.image_url != null ? String(row0.image_url) : null,
+          workshopSlotIndex: row0.workshop_slot_index != null ? Number(row0.workshop_slot_index) : null,
+          workshopComponentSlotId:
+            row0.workshop_component_slot_id != null ? String(row0.workshop_component_slot_id) : null
         });
       }
       return;
@@ -6219,7 +6235,15 @@ app.get('/api/load-game', async (req, res) => {
         ? Number((r as { power_capacity_wh?: number | null }).power_capacity_wh)
         : null,
       displayName: (r as { display_name?: string | null }).display_name != null ? String((r as { display_name?: string | null }).display_name) : null,
-      imageUrl: (r as { image_url?: string | null }).image_url != null ? String((r as { image_url?: string | null }).image_url) : null
+      imageUrl: (r as { image_url?: string | null }).image_url != null ? String((r as { image_url?: string | null }).image_url) : null,
+      workshopSlotIndex:
+        (r as { workshop_slot_index?: number | null }).workshop_slot_index != null
+          ? Number((r as { workshop_slot_index?: number | null }).workshop_slot_index)
+          : null,
+      workshopComponentSlotId:
+        (r as { workshop_component_slot_id?: string | null }).workshop_component_slot_id != null
+          ? String((r as { workshop_component_slot_id?: string | null }).workshop_component_slot_id)
+          : null
     }));
 
     const racks: Array<{
@@ -6930,7 +6954,10 @@ app.get('/api/game-state/:email', async (req, res) => {
       currentCharge: r.current_charge,
       powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
       displayName: r.display_name != null ? String(r.display_name) : null,
-      imageUrl: r.image_url != null ? String(r.image_url) : null
+      imageUrl: r.image_url != null ? String(r.image_url) : null,
+      workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
+      workshopComponentSlotId:
+        r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
     }));
 
     const coinBalances: Record<string, number> = {};
@@ -7041,7 +7068,9 @@ app.get('/api/game-state/:email', async (req, res) => {
             storedBatteries.push({
               id: row.id,
               itemId: row.item_id,
-              currentCharge: row.current_charge
+              currentCharge: row.current_charge,
+              workshopSlotIndex: null,
+              workshopComponentSlotId: null
             });
           }
           console.warn(
@@ -7580,9 +7609,12 @@ async function handleSaveGamePost(req, res) {
       // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores),
       // desde que cada id retirado do armazém apareça montada nas rigs ou oficina (validação acima).
       if (incomingIds.length > 0) {
-        await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, incomingIds]);
+        await client.query(
+          'DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[])) AND workshop_slot_index IS NULL',
+          [uid, incomingIds]
+        );
       } else {
-        await client.query('DELETE FROM stored_batteries WHERE user_id = $1', [uid]);
+        await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND workshop_slot_index IS NULL', [uid]);
       }
       if (changes.storedBatteries.length > 0) {
         const bIds = changes.storedBatteries.map(b => b.id);
@@ -7602,14 +7634,16 @@ async function handleSaveGamePost(req, res) {
           return im != null && String(im).trim() !== '' ? String(im).trim().slice(0, 2048) : null;
         });
         await client.query(`
-          INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url)
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[]), unnest($5::float8[]), unnest($6::text[]), unnest($7::text[])
+          INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id)
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[]), unnest($5::float8[]), unnest($6::text[]), unnest($7::text[]), NULL::int, NULL::text
           ON CONFLICT (id) DO UPDATE SET
             current_charge = EXCLUDED.current_charge,
             item_id = EXCLUDED.item_id,
             power_capacity_wh = COALESCE(EXCLUDED.power_capacity_wh, stored_batteries.power_capacity_wh),
             display_name = COALESCE(NULLIF(BTRIM(EXCLUDED.display_name), ''), stored_batteries.display_name),
-            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url)`,
+            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url),
+            workshop_slot_index = stored_batteries.workshop_slot_index,
+            workshop_component_slot_id = stored_batteries.workshop_component_slot_id`,
           [uid, bIds, bItemIds, bCharges, bPowers, bNames, bImgs]);
       }
     }
@@ -8046,6 +8080,7 @@ async function handleSaveGamePost(req, res) {
             slot_charges = EXCLUDED.slot_charges, slot_item_ids = EXCLUDED.slot_item_ids, installed_at = EXCLUDED.installed_at`,
           [wsUserIds, wsSlotIdxs, wsItemIds, wsInternalStates, wsCharges, wsSlotCharges, wsSlotItemIds, wsInstalledAts]
         );
+        await refreshStoredBatteriesWorkshopLinkage(client, uid, workshopNorm);
       }
     }
 
@@ -8067,11 +8102,17 @@ async function handleSaveGamePost(req, res) {
       stockRows.rows.forEach((r) => {
         stockObj[r.item_id] = r.qty;
       });
-      const batRows = await client.query('SELECT id, item_id, current_charge FROM stored_batteries WHERE user_id = $1', [uid]);
+      const batRows = await client.query(
+        'SELECT id, item_id, current_charge, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1',
+        [uid]
+      );
       const bats = batRows.rows.map((r) => ({
         id: r.id,
         itemId: r.item_id,
-        currentCharge: Number(r.current_charge) || 0
+        currentCharge: Number(r.current_charge) || 0,
+        workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
+        workshopComponentSlotId:
+          r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
       }));
       nftAutoSyncPayload = { placedRacks: changes.placedRacks, stock: stockObj, storedBatteries: bats };
     }

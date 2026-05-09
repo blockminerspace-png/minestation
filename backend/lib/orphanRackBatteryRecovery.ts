@@ -66,14 +66,16 @@ export async function recoverOrphanRackBatteryStorageRows(
        SELECT * FROM json_to_recordset($2::json) AS x(bid text, charge double precision)
      ),
      ins AS (
-       INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url)
+       INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id)
        SELECT c.bid,
               $1::int,
               COALESCE(dom.item_id, fb.fid),
               GREATEST(0::double precision, COALESCE(c.charge, 0)::double precision),
               u.power_capacity,
               u.name,
-              NULLIF(BTRIM(COALESCE(u.image::text, '')), '')
+              NULLIF(BTRIM(COALESCE(u.image::text, '')), ''),
+              NULL::integer,
+              NULL::text
          FROM cand c
          CROSS JOIN fb
          LEFT JOIN LATERAL (

@@ -425,6 +425,36 @@ function collectBatteryInstanceRefsFromWorkshopPayload(workshopSlots: unknown): 
   return out;
 }
 
+/** Instâncias referenciadas na oficina já persistida na BD (save "servers" sem `workshopSlots`). */
+async function collectBatteryInstanceRefsFromWorkshopDb(client: PoolClient, uid: number | string): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    const res = await client.query<{ internal_state: string | null }>(
+      'SELECT internal_state FROM workshop_slots WHERE user_id = $1',
+      [uid]
+    );
+    for (const row of res.rows || []) {
+      const raw = row.internal_state;
+      if (!raw) continue;
+      let o: unknown;
+      try {
+        o = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      } catch {
+        continue;
+      }
+      if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
+      for (const v of Object.values(o as Record<string, unknown>)) {
+        if (v == null) continue;
+        const s = String(v).trim();
+        if (s) out.add(s);
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
 function collectBatteryIdsFromPlacedRacksPayload(placedRacks: unknown): Set<string> {
   const out = new Set<string>();
   if (!Array.isArray(placedRacks)) return out;
@@ -467,6 +497,9 @@ export async function validateStoredBatteryWarehouseRemovalAllowed(
     ...collectBatteryIdsFromPlacedRacksPayload(changes.placedRacks),
     ...collectBatteryInstanceRefsFromWorkshopPayload(changes.workshopSlots)
   ]);
+  for (const id of await collectBatteryInstanceRefsFromWorkshopDb(client, uid)) {
+    referenced.add(id);
+  }
 
   const orphans = toDrop.filter((id) => !referenced.has(id));
   if (orphans.length > 0) {
@@ -837,5 +870,52 @@ export async function enrichWorkshopSlotsSlotItemIdsFromChargingHistory(
       '[enrichWorkshopSlotsSlotItemIdsFromChargingHistory]',
       e instanceof Error ? e.message : String(e)
     );
+  }
+}
+
+const WORKSHOP_LINK_INSTANCE_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Após gravar `workshop_slots`, alinha `stored_batteries`: apontadores provisórios + `current_charge`
+ * a partir do payload normalizado (mesma fonte que o JSON da oficina).
+ */
+export async function refreshStoredBatteriesWorkshopLinkage(
+  client: PoolClient,
+  userId: number,
+  workshopNorm: (WorkshopSlotClientPayload | null)[]
+): Promise<void> {
+  const uid = Math.floor(Number(userId));
+  if (!Number.isFinite(uid) || uid <= 0) return;
+
+  await client.query(
+    `UPDATE stored_batteries
+        SET workshop_slot_index = NULL,
+            workshop_component_slot_id = NULL
+      WHERE user_id = $1
+        AND workshop_slot_index IS NOT NULL`,
+    [uid]
+  );
+
+  for (let i = 0; i < workshopNorm.length; i++) {
+    const w = workshopNorm[i];
+    if (!w?.itemId || !w.internalSlots || typeof w.internalSlots !== 'object') continue;
+    const charges = w.slotCharges && typeof w.slotCharges === 'object' ? w.slotCharges : {};
+    for (const [compId, rawVal] of Object.entries(w.internalSlots)) {
+      if (rawVal == null) continue;
+      const bid = String(rawVal).trim();
+      if (!bid || !WORKSHOP_LINK_INSTANCE_UUID_RE.test(bid)) continue;
+      const chRaw = (charges as Record<string, unknown>)[compId];
+      const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
+      const currentCharge = Number.isFinite(ch) ? Math.max(0, ch) : 0;
+      await client.query(
+        `UPDATE stored_batteries
+            SET workshop_slot_index = $1,
+                workshop_component_slot_id = $2,
+                current_charge = $3
+          WHERE user_id = $4 AND id = $5`,
+        [i, String(compId).slice(0, 200), currentCharge, uid, bid]
+      );
+    }
   }
 }

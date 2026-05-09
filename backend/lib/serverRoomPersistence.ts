@@ -45,10 +45,12 @@ export async function loadUserStoredBatteries(
     powerCapacityWh?: number | null;
     displayName?: string | null;
     imageUrl?: string | null;
+    workshopSlotIndex?: number | null;
+    workshopComponentSlotId?: string | null;
   }>
 > {
   const batRes = await client.query(
-    'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url FROM stored_batteries WHERE user_id = $1',
+    'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1',
     [uid]
   );
   return batRes.rows.map(
@@ -59,13 +61,18 @@ export async function loadUserStoredBatteries(
       power_capacity_wh: number | null;
       display_name: string | null;
       image_url: string | null;
+      workshop_slot_index: number | null;
+      workshop_component_slot_id: string | null;
     }) => ({
       id: r.id,
       itemId: r.item_id,
       currentCharge: r.current_charge,
       powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
       displayName: r.display_name != null ? String(r.display_name) : null,
-      imageUrl: r.image_url != null ? String(r.image_url) : null
+      imageUrl: r.image_url != null ? String(r.image_url) : null,
+      workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
+      workshopComponentSlotId:
+        r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
     })
   );
 }
@@ -421,9 +428,12 @@ export async function persistStockStoredBatteriesPlacedRacks(
   if (storedBatteriesNorm) {
     const incomingIds = storedBatteriesNorm.map((b) => b.id);
     if (incomingIds.length > 0) {
-      await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[]))', [uid, incomingIds]);
+      await client.query(
+        'DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[])) AND workshop_slot_index IS NULL',
+        [uid, incomingIds]
+      );
     } else {
-      await client.query('DELETE FROM stored_batteries WHERE user_id = $1', [uid]);
+      await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND workshop_slot_index IS NULL', [uid]);
     }
     if (storedBatteriesNorm.length > 0) {
       const bIds = storedBatteriesNorm.map((b) => b.id);
@@ -444,14 +454,16 @@ export async function persistStockStoredBatteriesPlacedRacks(
       });
       await client.query(
         `
-          INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url)
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[]), unnest($5::float8[]), unnest($6::text[]), unnest($7::text[])
+          INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id)
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[]), unnest($5::float8[]), unnest($6::text[]), unnest($7::text[]), NULL::int, NULL::text
           ON CONFLICT (id) DO UPDATE SET
             current_charge = EXCLUDED.current_charge,
             item_id = EXCLUDED.item_id,
             power_capacity_wh = COALESCE(EXCLUDED.power_capacity_wh, stored_batteries.power_capacity_wh),
             display_name = COALESCE(NULLIF(BTRIM(EXCLUDED.display_name), ''), stored_batteries.display_name),
-            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url)`,
+            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url),
+            workshop_slot_index = stored_batteries.workshop_slot_index,
+            workshop_component_slot_id = stored_batteries.workshop_component_slot_id`,
         [uid, bIds, bItemIds, bCharges, bPowers, bNames, bImgs]
       );
     }

@@ -22,6 +22,11 @@ export type BulkRoomBatteryApplyOptions = {
   rigSort?: BatteryRigSortMode;
 };
 
+function storedBatteryInWarehouseOnly(b: StoredBattery | null | undefined): boolean {
+  if (!b) return false;
+  return b.workshopSlotIndex == null && b.workshopComponentSlotId == null;
+}
+
 /** Unidades disponíveis = caixas no `stock` + instâncias em `storedBatteries` (carga parcial ou cheia). */
 export function totalBatteryInstances(
   batteryItemId: string,
@@ -30,7 +35,9 @@ export function totalBatteryInstances(
 ): number {
   if (!batteryItemId || typeof batteryItemId !== 'string') return 0;
   const s = Math.max(0, Math.floor(Number(stock[batteryItemId]) || 0));
-  const inStorage = (storedBatteries || []).filter((b) => b && b.itemId === batteryItemId).length;
+  const inStorage = (storedBatteries || []).filter(
+    (b) => b && b.itemId === batteryItemId && storedBatteryInWarehouseOnly(b)
+  ).length;
   return s + inStorage;
 }
 

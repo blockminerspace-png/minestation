@@ -303,7 +303,10 @@ async function loadSlice(tx: Prisma.TransactionClient, userId: number): Promise<
     currentCharge: Number(r.current_charge) || 0,
     powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
     displayName: r.display_name != null ? String(r.display_name) : null,
-    imageUrl: r.image_url != null ? String(r.image_url) : null
+    imageUrl: r.image_url != null ? String(r.image_url) : null,
+    workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
+    workshopComponentSlotId:
+      r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
   }));
   return {
     workshopSlots: buildWorkshopSlotsFromRows(userId, wsRows),
@@ -329,6 +332,7 @@ async function recoverBatteryFromSlot(
   const isFull = isInf || (cap > 0 && chargeWh >= cap * 0.999);
 
   if (isFull) {
+    await tx.stored_batteries.deleteMany({ where: { id: instanceId, user_id: userId } });
     const row = await tx.stock.findUnique({
       where: { user_id_item_id: { user_id: userId, item_id: catalogId } }
     });
@@ -353,7 +357,9 @@ async function recoverBatteryFromSlot(
         current_charge: ch,
         power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : null,
         display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : null,
-        image_url: img
+        image_url: img,
+        workshop_slot_index: null,
+        workshop_component_slot_id: null
       },
       update: {
         user_id: userId,
@@ -361,7 +367,9 @@ async function recoverBatteryFromSlot(
         current_charge: ch,
         power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : undefined,
         display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : undefined,
-        image_url: img ?? undefined
+        image_url: img ?? undefined,
+        workshop_slot_index: null,
+        workshop_component_slot_id: null
       }
     });
   }
@@ -612,7 +620,14 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             if (String(sb.item_id) !== catalogItemId) {
               throw new WorkshopMutationError('A bateria escolhida não corresponde ao tipo pedido.', 409);
             }
-            await tx.stored_batteries.delete({ where: { id: sbid } });
+            const wsi = sb.workshop_slot_index;
+            const wsc = sb.workshop_component_slot_id != null ? String(sb.workshop_component_slot_id) : '';
+            if (wsi != null && wsc !== '') {
+              const sameSlot = wsi === slotIndex && wsc === String(componentSlotId);
+              if (!sameSlot) {
+                throw new WorkshopMutationError('Esta bateria já está montada num carregador. Retira-a primeiro.', 409);
+              }
+            }
             finalInstanceId = sbid;
             actualItemId = String(sb.item_id);
             initCharge = Number(sb.current_charge) || 0;
@@ -636,6 +651,35 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
           const maxCap = partDef.power_capacity != null ? Number(partDef.power_capacity) : 100;
           if (Number.isFinite(maxCap) && maxCap > 0 && initCharge > maxCap) {
             initCharge = maxCap;
+          }
+
+          if (sbid) {
+            await tx.stored_batteries.update({
+              where: { id: sbid },
+              data: {
+                workshop_slot_index: slotIndex,
+                workshop_component_slot_id: componentSlotId,
+                current_charge: initCharge
+              }
+            });
+          } else {
+            const imgNew =
+              partDef.image != null && String(partDef.image).trim() !== ''
+                ? String(partDef.image).trim().slice(0, 2048)
+                : null;
+            await tx.stored_batteries.create({
+              data: {
+                id: finalInstanceId,
+                user_id: userId,
+                item_id: actualItemId,
+                current_charge: initCharge,
+                power_capacity_wh: partDef.power_capacity != null ? Number(partDef.power_capacity) : null,
+                display_name: partDef.name != null ? String(partDef.name).slice(0, 500) : null,
+                image_url: imgNew,
+                workshop_slot_index: slotIndex,
+                workshop_component_slot_id: componentSlotId
+              }
+            });
           }
 
           internal = { ...internal, [componentSlotId]: finalInstanceId };
@@ -715,6 +759,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
           const isInf = cap === -1;
           const isFull = isInf || (cap > 0 && charge >= cap * 0.999);
           if (isFull) {
+            await tx.stored_batteries.deleteMany({ where: { id: val, user_id: userId } });
             const row = await tx.stock.findUnique({
               where: { user_id_item_id: { user_id: userId, item_id: originalItemId } }
             });
@@ -740,7 +785,9 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
                 current_charge: ch,
                 power_capacity_wh: upg.power_capacity != null ? Number(upg.power_capacity) : null,
                 display_name: upg.name != null ? String(upg.name).slice(0, 500) : null,
-                image_url: imgW
+                image_url: imgW,
+                workshop_slot_index: null,
+                workshop_component_slot_id: null
               },
               update: {
                 user_id: userId,
@@ -748,7 +795,9 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
                 current_charge: ch,
                 power_capacity_wh: upg.power_capacity != null ? Number(upg.power_capacity) : undefined,
                 display_name: upg.name != null ? String(upg.name).slice(0, 500) : undefined,
-                image_url: imgW ?? undefined
+                image_url: imgW ?? undefined,
+                workshop_slot_index: null,
+                workshop_component_slot_id: null
               }
             });
           }

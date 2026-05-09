@@ -594,6 +594,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                     {/* Filtrar baterias que não estão cheias */}
                                     <div className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-slate-100 dark:bg-slate-800 p-2 rounded">Baterias aguardando carga</div>
                                     {storedBatteries.filter(b => {
+                                        if (b.workshopSlotIndex != null || b.workshopComponentSlotId != null) return false;
                                         const def =
                                             upgrades.find((u) => u.id === b.itemId) ??
                                             orphanCatalogUpgrade(String(b.itemId || b.id), 'battery');
@@ -609,6 +610,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                         </div>
                                     ) : (
                                         storedBatteries.filter(b => {
+                                            if (b.workshopSlotIndex != null || b.workshopComponentSlotId != null) return false;
                                             const def =
                                                 upgrades.find((u) => u.id === b.itemId) ??
                                                 orphanCatalogUpgrade(String(b.itemId || b.id), 'battery');

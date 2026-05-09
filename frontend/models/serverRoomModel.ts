@@ -370,6 +370,7 @@ export function listStoredBatteriesForSelection(
   const workshopIds = new Set(fromWorkshop.map((b) => String(b.id).trim()));
 
   const filtered = storedBatteries.filter((sb) => {
+    if (sb.workshopSlotIndex != null || sb.workshopComponentSlotId != null) return false;
     const sid = String(sb.id).trim();
     if (workshopIds.has(sid)) return false;
     if (mountedIds.has(sid)) return false;
