@@ -113,6 +113,12 @@ export interface PlacedRack {
   wiringId: string | null; // Slot for wiring
   /** Instância (`stored_batteries.id`); não usar id de catálogo de `upgrades`. */
   batteryId: string | null;
+  /** Snapshot BD: id de catálogo (`upgrades.id`) da bateria montada — energia/UI sem depender só do armazém. */
+  batteryCatalogItemId?: string | null;
+  /** Capacidade máxima em Wh (igual `Upgrade.powerCapacity`); -1 = ilimitada. */
+  batteryPowerCapacityWh?: number | null;
+  batteryDisplayName?: string | null;
+  batteryImageUrl?: string | null;
 
   // AI System
   multiplierSlots: (string | null)[]; // Slots for AI optimizers
@@ -138,6 +144,10 @@ export interface StoredBattery {
   id: string; // Instance ID
   itemId: string; // Type ID (e.g. battery_aa)
   currentCharge: number;
+  /** Wh máximo na instância (cópia do catálogo na persistência). */
+  powerCapacityWh?: number | null;
+  displayName?: string | null;
+  imageUrl?: string | null;
 }
 
 export interface MarketListing {

@@ -29,6 +29,8 @@ frontend/.env
 # Database backups (sensitive data)
 backups/
 *.sql
+# Prisma migrations must be versioned
+!backend/prisma/migrations/**/*.sql
 *.rar
 *.zip
 

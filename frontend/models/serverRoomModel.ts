@@ -21,6 +21,13 @@ export function resolvePlacedRackBatteryCatalogId(
   const bid = rack.batteryId != null ? String(rack.batteryId).trim() : '';
   if (!bid) return null;
 
+  const snapCat =
+    rack.batteryCatalogItemId != null ? String(rack.batteryCatalogItemId).trim() : '';
+  if (snapCat && upgrades?.length) {
+    const okSnap = upgrades.some((u) => u.id === snapCat && u.type === 'battery');
+    if (okSnap) return snapCat;
+  }
+
   const hintedRaw = batteryInstanceCatalogHints?.[bid];
   const hinted = hintedRaw != null ? String(hintedRaw).trim() : '';
   if (hinted && upgrades?.length) {

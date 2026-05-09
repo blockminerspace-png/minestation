@@ -121,6 +121,15 @@ import {
   loadUpgradesWithCompat,
   persistStockStoredBatteriesPlacedRacks
 } from './dist/lib/serverRoomPersistence.js';
+import {
+  buildRackBatteryPersistSnapshot,
+  collectMountedBatteryInstanceIdsFromPlacedRacks,
+  fetchBatteryUpgradeRowsByIds,
+  isRackBatteryInstanceUuid,
+  loadStoredBatteryRowsForIds,
+  type PrevPlacedRackBattRow,
+  type StoredBatteryRowSnap
+} from './dist/lib/batteryPersistHelpers.js';
 import { mergeSaveGameSlicePayload } from './dist/lib/gameSaveSliceMerge.js';
 import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
@@ -6205,7 +6214,12 @@ app.get('/api/load-game', async (req, res) => {
     const storedBatteries = batRows.map((r) => ({
       id: r.id,
       itemId: r.item_id,
-      currentCharge: r.current_charge
+      currentCharge: r.current_charge,
+      powerCapacityWh: (r as { power_capacity_wh?: number | null }).power_capacity_wh != null
+        ? Number((r as { power_capacity_wh?: number | null }).power_capacity_wh)
+        : null,
+      displayName: (r as { display_name?: string | null }).display_name != null ? String((r as { display_name?: string | null }).display_name) : null,
+      imageUrl: (r as { image_url?: string | null }).image_url != null ? String((r as { image_url?: string | null }).image_url) : null
     }));
 
     const racks: Array<{
@@ -6220,6 +6234,10 @@ app.get('/api/load-game', async (req, res) => {
       selectedCoinId: string | null;
       roomId: string;
       slotIndex: number;
+      batteryCatalogItemId?: string | null;
+      batteryPowerCapacityWh?: number | null;
+      batteryDisplayName?: string | null;
+      batteryImageUrl?: string | null;
     }> = [];
     const rackIds = rackRows.map((r) => r.id);
     if (rackIds.length > 0) {
@@ -6255,7 +6273,14 @@ app.get('/api/load-game', async (req, res) => {
           isOn: !!r.is_on,
           selectedCoinId: r.selected_coin_id,
           roomId: normalizePlacedRackRoomId(r.room_id),
-          slotIndex: r.slot_index || 0
+          slotIndex: r.slot_index || 0,
+          batteryCatalogItemId: (r as { battery_catalog_item_id?: string | null }).battery_catalog_item_id ?? null,
+          batteryPowerCapacityWh:
+            (r as { battery_power_capacity_wh?: number | null }).battery_power_capacity_wh != null
+              ? Number((r as { battery_power_capacity_wh?: number | null }).battery_power_capacity_wh)
+              : null,
+          batteryDisplayName: (r as { battery_display_name?: string | null }).battery_display_name ?? null,
+          batteryImageUrl: (r as { battery_image_url?: string | null }).battery_image_url ?? null
         });
       }
     }
@@ -6902,7 +6927,10 @@ app.get('/api/game-state/:email', async (req, res) => {
     const storedBatteries = storedBatRows.map((r) => ({
       id: r.id,
       itemId: r.item_id,
-      currentCharge: r.current_charge
+      currentCharge: r.current_charge,
+      powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
+      displayName: r.display_name != null ? String(r.display_name) : null,
+      imageUrl: r.image_url != null ? String(r.image_url) : null
     }));
 
     const coinBalances: Record<string, number> = {};
@@ -6946,6 +6974,10 @@ app.get('/api/game-state/:email', async (req, res) => {
       selectedCoinId: string | null;
       roomId: string;
       slotIndex: number;
+      batteryCatalogItemId?: string | null;
+      batteryPowerCapacityWh?: number | null;
+      batteryDisplayName?: string | null;
+      batteryImageUrl?: string | null;
     }> = [];
     if (rackRows.length > 0) {
       const rackIds = rackRows.map((r) => r.id);
@@ -6985,6 +7017,13 @@ app.get('/api/game-state/:email', async (req, res) => {
           currentCharge: r.current_charge,
           isOn: !!r.is_on,
           selectedCoinId: r.selected_coin_id,
+          batteryCatalogItemId: (r as { battery_catalog_item_id?: string | null }).battery_catalog_item_id ?? null,
+          batteryPowerCapacityWh:
+            (r as { battery_power_capacity_wh?: number | null }).battery_power_capacity_wh != null
+              ? Number((r as { battery_power_capacity_wh?: number | null }).battery_power_capacity_wh)
+              : null,
+          batteryDisplayName: (r as { battery_display_name?: string | null }).battery_display_name ?? null,
+          batteryImageUrl: (r as { battery_image_url?: string | null }).battery_image_url ?? null,
           roomId: normalizePlacedRackRoomId(r.room_id),
           slotIndex: r.slot_index || 0
         });
@@ -7503,6 +7542,15 @@ async function handleSaveGamePost(req, res) {
       }
     }
 
+    /** Antes de apagar linhas do armazém, captura `item_id`/snapshots das instâncias ainda montadas na rig. */
+    let preMountBatterySnapSave = new Map<string, StoredBatteryRowSnap>();
+    if (Array.isArray(changes.placedRacks) && changes.placedRacks.length > 0) {
+      const mountedIdsSave = collectMountedBatteryInstanceIdsFromPlacedRacks(changes.placedRacks);
+      if (mountedIdsSave.length > 0) {
+        preMountBatterySnapSave = await loadStoredBatteryRowsForIds(client, uid, mountedIdsSave);
+      }
+    }
+
     if (changes.storedBatteries) {
       if (!Array.isArray(changes.storedBatteries)) {
         throw new HttpControlledError(400, {
@@ -7540,11 +7588,29 @@ async function handleSaveGamePost(req, res) {
         const bIds = changes.storedBatteries.map(b => b.id);
         const bItemIds = changes.storedBatteries.map(b => b.itemId);
         const bCharges = changes.storedBatteries.map(b => b.currentCharge || 0);
+        const upStoredSave = await fetchBatteryUpgradeRowsByIds(client, bItemIds);
+        const bPowers = bItemIds.map((cid) => {
+          const u = upStoredSave.get(String(cid));
+          return u?.power_capacity != null && Number.isFinite(Number(u.power_capacity)) ? Number(u.power_capacity) : null;
+        });
+        const bNames = bItemIds.map((cid) => {
+          const n = upStoredSave.get(String(cid))?.name;
+          return n != null && String(n).trim() !== '' ? String(n).trim().slice(0, 500) : null;
+        });
+        const bImgs = bItemIds.map((cid) => {
+          const im = upStoredSave.get(String(cid))?.image;
+          return im != null && String(im).trim() !== '' ? String(im).trim().slice(0, 2048) : null;
+        });
         await client.query(`
-          INSERT INTO stored_batteries (id, user_id, item_id, current_charge) 
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[])
-          ON CONFLICT (id) DO UPDATE SET current_charge = EXCLUDED.current_charge, item_id = EXCLUDED.item_id`,
-          [uid, bIds, bItemIds, bCharges]);
+          INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url)
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[]), unnest($5::float8[]), unnest($6::text[]), unnest($7::text[])
+          ON CONFLICT (id) DO UPDATE SET
+            current_charge = EXCLUDED.current_charge,
+            item_id = EXCLUDED.item_id,
+            power_capacity_wh = COALESCE(EXCLUDED.power_capacity_wh, stored_batteries.power_capacity_wh),
+            display_name = COALESCE(NULLIF(BTRIM(EXCLUDED.display_name), ''), stored_batteries.display_name),
+            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url)`,
+          [uid, bIds, bItemIds, bCharges, bPowers, bNames, bImgs]);
       }
     }
 
@@ -7552,7 +7618,8 @@ async function handleSaveGamePost(req, res) {
       const ts = new Date().toISOString();
       const prevRacksRes = await client.query(
         `SELECT id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id,
-                COALESCE(NULLIF(BTRIM(room_id::text), ''), 'room_initial') AS room_id, slot_index
+                COALESCE(NULLIF(BTRIM(room_id::text), ''), 'room_initial') AS room_id, slot_index,
+                battery_catalog_item_id, battery_power_capacity_wh, battery_display_name, battery_image_url
          FROM placed_racks WHERE user_id = $1`,
         [uid]
       );
@@ -7650,6 +7717,25 @@ async function handleSaveGamePost(req, res) {
       }
 
       if (changes.placedRacks.length > 0) {
+        const catalogIdsForUpgradesSave = new Set<string>();
+        for (const r of changes.placedRacks) {
+          const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+          if (!bid) continue;
+          const prow = prevMap.get(r.id) as Record<string, unknown> | undefined;
+          let cat: string | null = null;
+          if (isRackBatteryInstanceUuid(bid)) {
+            const inst = preMountBatterySnapSave.get(bid);
+            cat = inst?.item_id != null ? String(inst.item_id).trim() : null;
+            if (!cat && prow && String(prow.battery_id || '') === bid) {
+              cat = prow.battery_catalog_item_id != null ? String(prow.battery_catalog_item_id).trim() : null;
+            }
+          } else {
+            cat = bid;
+          }
+          if (cat) catalogIdsForUpgradesSave.add(cat);
+        }
+        const upgradeByCatalogSave = await fetchBatteryUpgradeRowsByIds(client, [...catalogIdsForUpgradesSave]);
+
         const rIds = changes.placedRacks.map(r => r.id);
         const rItems = changes.placedRacks.map(r => r.itemId);
         const rWirings = changes.placedRacks.map(r => r.wiringId || null);
@@ -7660,14 +7746,62 @@ async function handleSaveGamePost(req, res) {
         const rRooms = changes.placedRacks.map((r) => normalizePlacedRackRoomId(r.roomId));
         const rSlotIdxs = changes.placedRacks.map(r => r.slotIndex || 0);
 
+        const rBatCats: (string | null)[] = [];
+        const rBatPows: (number | null)[] = [];
+        const rBatNames: (string | null)[] = [];
+        const rBatImgs: (string | null)[] = [];
+        for (const r of changes.placedRacks) {
+          const prow = prevMap.get(r.id) as Record<string, unknown> | undefined;
+          const prevBatt: PrevPlacedRackBattRow | null = prow
+            ? {
+                battery_id: prow.battery_id != null ? String(prow.battery_id) : null,
+                battery_catalog_item_id: prow.battery_catalog_item_id != null ? String(prow.battery_catalog_item_id) : null,
+                battery_power_capacity_wh:
+                  prow.battery_power_capacity_wh != null ? Number(prow.battery_power_capacity_wh) : null,
+                battery_display_name: prow.battery_display_name != null ? String(prow.battery_display_name) : null,
+                battery_image_url: prow.battery_image_url != null ? String(prow.battery_image_url) : null
+              }
+            : null;
+          const snap = buildRackBatteryPersistSnapshot(r.batteryId, preMountBatterySnapSave, upgradeByCatalogSave, prevBatt);
+          rBatCats.push(snap.catalogItemId);
+          rBatPows.push(snap.powerWh);
+          rBatNames.push(
+            snap.displayName != null && snap.displayName.trim() !== '' ? snap.displayName.trim().slice(0, 500) : null
+          );
+          rBatImgs.push(snap.imageUrl != null && snap.imageUrl.trim() !== '' ? snap.imageUrl.trim().slice(0, 2048) : null);
+        }
+
         await client.query(`
-          INSERT INTO placed_racks (id, user_id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id, room_id, slot_index)
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), unnest($6::numeric[]), unnest($7::int[]), unnest($8::text[]), unnest($9::text[]), unnest($10::int[])
+          INSERT INTO placed_racks (
+            id, user_id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id, room_id, slot_index,
+            battery_catalog_item_id, battery_power_capacity_wh, battery_display_name, battery_image_url
+          )
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), unnest($6::numeric[]), unnest($7::int[]), unnest($8::text[]), unnest($9::text[]), unnest($10::int[]),
+                 unnest($11::text[]), unnest($12::float8[]), unnest($13::text[]), unnest($14::text[])
           ON CONFLICT (id) DO UPDATE SET
             item_id = EXCLUDED.item_id, wiring_id = EXCLUDED.wiring_id, battery_id = EXCLUDED.battery_id,
             current_charge = EXCLUDED.current_charge, is_on = EXCLUDED.is_on, selected_coin_id = EXCLUDED.selected_coin_id,
-            room_id = EXCLUDED.room_id, slot_index = EXCLUDED.slot_index`,
-          [uid, rIds, rItems, rWirings, rBatteries, rCharges, rOns, rCoins, rRooms, rSlotIdxs]);
+            room_id = EXCLUDED.room_id, slot_index = EXCLUDED.slot_index,
+            battery_catalog_item_id = EXCLUDED.battery_catalog_item_id,
+            battery_power_capacity_wh = EXCLUDED.battery_power_capacity_wh,
+            battery_display_name = EXCLUDED.battery_display_name,
+            battery_image_url = EXCLUDED.battery_image_url`,
+          [
+            uid,
+            rIds,
+            rItems,
+            rWirings,
+            rBatteries,
+            rCharges,
+            rOns,
+            rCoins,
+            rRooms,
+            rSlotIdxs,
+            rBatCats,
+            rBatPows,
+            rBatNames,
+            rBatImgs
+          ]);
 
         // Bulk Delete existing slots for updated racks
         await client.query('DELETE FROM rack_slots WHERE rack_id = ANY($1)', [rIds]);

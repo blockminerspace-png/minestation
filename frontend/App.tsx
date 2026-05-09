@@ -126,7 +126,16 @@ function resolveEquippedBatteryCatalogId(
 const calculateProduction = (placedRacks: PlacedRack[], upgradesList: Upgrade[]) => {
   let total = 0;
   placedRacks.forEach(rack => {
-    const battery = upgradesList.find(u => u.id === rack.batteryId);
+    const catBid =
+      rack.batteryCatalogItemId != null && String(rack.batteryCatalogItemId).trim() !== ''
+        ? String(rack.batteryCatalogItemId).trim()
+        : rack.batteryId != null
+          ? String(rack.batteryId).trim()
+          : '';
+    const battery =
+      (catBid && upgradesList.find((u) => u.id === catBid && u.type === 'battery')) ||
+      (rack.batteryId && upgradesList.find((u) => u.id === rack.batteryId)) ||
+      undefined;
     const isInfinite = battery && battery.powerCapacity == -1;
     if (rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0)) {
       let rackBaseProd = 0;
@@ -1737,7 +1746,14 @@ export default function App() {
           if (isFull) {
             ns[catId] = (ns[catId] || 0) + 1;
           } else {
-            nb.push({ id: crypto.randomUUID(), itemId: catId, currentCharge: r.currentCharge });
+            nb.push({
+              id: crypto.randomUUID(),
+              itemId: catId,
+              currentCharge: r.currentCharge,
+              powerCapacityWh: upg?.powerCapacity ?? null,
+              displayName: upg?.name ?? null,
+              imageUrl: upg?.image ?? null
+            });
           }
         }
       }
@@ -1793,7 +1809,15 @@ export default function App() {
             if (isFull) {
               ns[catOld] = (ns[catOld] || 0) + 1;
             } else {
-              nb.push({ id: crypto.randomUUID(), itemId: catOld, currentCharge: oldCharge });
+              const upOld = gameUpgrades.find((u) => u.id === catOld && u.type === 'battery');
+            nb.push({
+              id: crypto.randomUUID(),
+              itemId: catOld,
+              currentCharge: oldCharge,
+              powerCapacityWh: upOld?.powerCapacity ?? null,
+              displayName: upOld?.name ?? null,
+              imageUrl: upOld?.image ?? null
+            });
             }
           }
         } else {
@@ -1812,6 +1836,12 @@ export default function App() {
           rackBatteryFromStockCatalogRef.current.set(sbid, String(s.itemId).trim());
           nb = nb.filter((b) => b.id !== sbid);
           r.batteryId = sbid;
+          const catW = String(s.itemId).trim();
+          const upW = gameUpgrades.find((u) => u.id === catW && u.type === 'battery');
+          r.batteryCatalogItemId = catW;
+          r.batteryPowerCapacityWh = upW?.powerCapacity ?? null;
+          r.batteryDisplayName = upW?.name ?? null;
+          r.batteryImageUrl = upW?.image ?? null;
         } else {
           if ((ns[iid] || 0) < 1) return p;
           ns[iid]--;
@@ -1821,6 +1851,11 @@ export default function App() {
               ? crypto.randomUUID()
               : `sb_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
           rackBatteryFromStockCatalogRef.current.set(r.batteryId, iid);
+          const upS = gameUpgrades.find((u) => u.id === iid && u.type === 'battery');
+          r.batteryCatalogItemId = iid;
+          r.batteryPowerCapacityWh = upS?.powerCapacity ?? null;
+          r.batteryDisplayName = upS?.name ?? null;
+          r.batteryImageUrl = upS?.image ?? null;
         }
         r.currentCharge = initCharge;
         r.isOn = true;
@@ -1848,9 +1883,22 @@ export default function App() {
         if (isFull) {
           ns[catId] = (ns[catId] || 0) + 1;
         } else {
-          nb.push({ id: crypto.randomUUID(), itemId: catId, currentCharge: r.currentCharge });
+          nb.push({
+            id: crypto.randomUUID(),
+            itemId: catId,
+            currentCharge: r.currentCharge,
+            powerCapacityWh: upg?.powerCapacity ?? null,
+            displayName: upg?.name ?? null,
+            imageUrl: upg?.image ?? null
+          });
         }
-        r.batteryId = null; r.currentCharge = 0; r.isOn = false;
+        r.batteryId = null;
+        r.batteryCatalogItemId = undefined;
+        r.batteryPowerCapacityWh = undefined;
+        r.batteryDisplayName = undefined;
+        r.batteryImageUrl = undefined;
+        r.currentCharge = 0;
+        r.isOn = false;
       }
       else if (type === 'wiring') { ns[id] = (ns[id] || 0) + 1; r.wiringId = null; }
       else if (type === 'multiplier' && idx !== undefined) { ns[id] = (ns[id] || 0) + 1; r.multiplierSlots = [...r.multiplierSlots]; r.multiplierSlots[idx] = null; }

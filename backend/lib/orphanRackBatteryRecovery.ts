@@ -66,11 +66,14 @@ export async function recoverOrphanRackBatteryStorageRows(
        SELECT * FROM json_to_recordset($2::json) AS x(bid text, charge double precision)
      ),
      ins AS (
-       INSERT INTO stored_batteries (id, user_id, item_id, current_charge)
+       INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url)
        SELECT c.bid,
               $1::int,
               COALESCE(dom.item_id, fb.fid),
-              GREATEST(0::double precision, COALESCE(c.charge, 0)::double precision)
+              GREATEST(0::double precision, COALESCE(c.charge, 0)::double precision),
+              u.power_capacity,
+              u.name,
+              NULLIF(BTRIM(COALESCE(u.image::text, '')), '')
          FROM cand c
          CROSS JOIN fb
          LEFT JOIN LATERAL (
@@ -84,6 +87,8 @@ export async function recoverOrphanRackBatteryStorageRows(
             ORDER BY COUNT(*) DESC, length(btrim(sb2.item_id::text)) ASC
             LIMIT 1
          ) dom ON true
+         LEFT JOIN upgrades u ON u.id = COALESCE(dom.item_id, fb.fid)
+          AND (lower(COALESCE(u.type, '')) = 'battery' OR lower(COALESCE(u.category, '')) = 'battery')
         WHERE (SELECT fid FROM fb) IS NOT NULL
           AND c.bid ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
           AND NOT EXISTS (

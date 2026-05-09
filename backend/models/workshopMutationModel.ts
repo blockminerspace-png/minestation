@@ -199,12 +199,14 @@ type UpgradeLite = {
   type: string | null;
   category: string | null;
   power_capacity: number | null;
+  name: string;
+  image: string | null;
 };
 
 async function loadUpgrade(tx: Prisma.TransactionClient, id: string): Promise<UpgradeLite | null> {
   const u = await tx.upgrades.findUnique({
     where: { id },
-    select: { id: true, type: true, category: true, power_capacity: true }
+    select: { id: true, type: true, category: true, power_capacity: true, name: true, image: true }
   });
   return u;
 }
@@ -298,7 +300,10 @@ async function loadSlice(tx: Prisma.TransactionClient, userId: number): Promise<
   const storedBatteries = batRows.map((r) => ({
     id: r.id,
     itemId: r.item_id,
-    currentCharge: Number(r.current_charge) || 0
+    currentCharge: Number(r.current_charge) || 0,
+    powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
+    displayName: r.display_name != null ? String(r.display_name) : null,
+    imageUrl: r.image_url != null ? String(r.image_url) : null
   }));
   return {
     workshopSlots: buildWorkshopSlotsFromRows(userId, wsRows),
@@ -335,10 +340,29 @@ async function recoverBatteryFromSlot(
     });
   } else {
     const ch = Math.max(0, chargeWh);
+    const img =
+      batDef?.image != null && String(batDef.image).trim() !== ''
+        ? String(batDef.image).trim().slice(0, 2048)
+        : null;
     await tx.stored_batteries.upsert({
       where: { id: instanceId },
-      create: { id: instanceId, user_id: userId, item_id: catalogId, current_charge: ch },
-      update: { user_id: userId, item_id: catalogId, current_charge: ch }
+      create: {
+        id: instanceId,
+        user_id: userId,
+        item_id: catalogId,
+        current_charge: ch,
+        power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : null,
+        display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : null,
+        image_url: img
+      },
+      update: {
+        user_id: userId,
+        item_id: catalogId,
+        current_charge: ch,
+        power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : undefined,
+        display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : undefined,
+        image_url: img ?? undefined
+      }
     });
   }
 
@@ -703,10 +727,29 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
           } else {
             const instId = INSTANCE_UUID_RE.test(val) ? val : crypto.randomUUID();
             const ch = Math.max(0, charge);
+            const imgW =
+              upg.image != null && String(upg.image).trim() !== ''
+                ? String(upg.image).trim().slice(0, 2048)
+                : null;
             await tx.stored_batteries.upsert({
               where: { id: instId },
-              create: { id: instId, user_id: userId, item_id: originalItemId, current_charge: ch },
-              update: { user_id: userId, item_id: originalItemId, current_charge: ch }
+              create: {
+                id: instId,
+                user_id: userId,
+                item_id: originalItemId,
+                current_charge: ch,
+                power_capacity_wh: upg.power_capacity != null ? Number(upg.power_capacity) : null,
+                display_name: upg.name != null ? String(upg.name).slice(0, 500) : null,
+                image_url: imgW
+              },
+              update: {
+                user_id: userId,
+                item_id: originalItemId,
+                current_charge: ch,
+                power_capacity_wh: upg.power_capacity != null ? Number(upg.power_capacity) : undefined,
+                display_name: upg.name != null ? String(upg.name).slice(0, 500) : undefined,
+                image_url: imgW ?? undefined
+              }
             });
           }
         } else if (upg) {

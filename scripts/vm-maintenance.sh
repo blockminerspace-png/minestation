@@ -91,6 +91,9 @@ else
   echo "[vm-maintenance] deploy omitido (VM_DEPLOY=0)"
 fi
 
+echo "[vm-maintenance] Prisma: migrate deploy (aplica SQL em prisma/migrations na BD)"
+remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -lc 'cd /app/backend && npx prisma migrate deploy'"
+
 echo "[vm-maintenance] SQL: integridade stored_batteries / placed_racks"
 if [[ ! -f "$ROOT/backend/scripts/ensure_stored_batteries_integrity.sql" ]]; then
   echo "Falta $ROOT/backend/scripts/ensure_stored_batteries_integrity.sql" >&2

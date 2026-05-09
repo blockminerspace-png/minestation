@@ -263,10 +263,16 @@ model unopened_boxes {
 
 /// Integridade: `id` e `item_id` não podem ser vazios (CHECK na BD — migration `20260506120000_stored_batteries_nonempty_ids`).
 model stored_batteries {
-  id             String @id
-  user_id        Int
-  item_id        String
-  current_charge Float
+  id                  String  @id
+  user_id             Int
+  item_id             String
+  current_charge      Float
+  /// Capacidade máxima em Wh (igual a `upgrades.power_capacity`); -1 = ilimitada.
+  power_capacity_wh   Float?
+  /// Nome mostrado (cópia do catálogo na criação / reparo).
+  display_name        String?
+  /// URL ou caminho de imagem (cópia opcional do catálogo).
+  image_url           String? @db.VarChar(2048)
 
   @@index([user_id])
   @@map("stored_batteries")
@@ -283,6 +289,12 @@ model placed_racks {
   selected_coin_id String?
   room_id          String?
   slot_index       Int?    @default(0)
+  /// Id de catálogo (`upgrades.id`) da bateria montada (UUID em `battery_id`).
+  battery_catalog_item_id   String?
+  /// Cópia de `power_capacity` em Wh no momento da montagem (sobrevive se o armazém não tiver linha).
+  battery_power_capacity_wh Float?
+  battery_display_name      String?
+  battery_image_url         String? @db.VarChar(2048)
 
   @@map("placed_racks")
 }
