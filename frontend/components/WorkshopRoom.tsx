@@ -724,15 +724,29 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                             {detailContext.type === 'battery' && (detailContext.instanceId || detailContext.chargePercent !== undefined) && (
                                 <div className="space-y-2">
                                     {(() => {
-                                        const sb = detailContext.instanceId
-                                            ? storedBatteries.find((b) => b.id === detailContext.instanceId)
-                                            : undefined;
-                                        const detailPct =
-                                            detailContext.chargePercent !== undefined
-                                                ? detailContext.chargePercent
-                                                : sb
-                                                  ? storedBatteryChargePercent(sb, detailContext.item)
-                                                  : 0;
+                                        const wsLive = slots[detailContext.wsIdx];
+                                        const cap = detailContext.item.powerCapacity ?? 100;
+                                        let detailPct: number;
+                                        if (wsLive && detailContext.slotId) {
+                                            const wh = Number(getSlotVal(wsLive.slotCharges, detailContext.slotId)) || 0;
+                                            if (cap === -1) {
+                                                detailPct = 100;
+                                            } else if (cap > 0) {
+                                                detailPct = Math.min(100, (wh / cap) * 100);
+                                            } else {
+                                                detailPct = 0;
+                                            }
+                                        } else {
+                                            const sb = detailContext.instanceId
+                                                ? storedBatteries.find((b) => b.id === detailContext.instanceId)
+                                                : undefined;
+                                            detailPct =
+                                                detailContext.chargePercent !== undefined
+                                                    ? detailContext.chargePercent
+                                                    : sb
+                                                      ? storedBatteryChargePercent(sb, detailContext.item)
+                                                      : 0;
+                                        }
                                         return (
                                             <>
                                                 <div className="flex justify-between text-xs font-bold text-slate-500 uppercase tracking-tighter">

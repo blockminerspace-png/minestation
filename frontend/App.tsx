@@ -570,12 +570,16 @@ export default function App() {
 
   const applyWorkshopServerSlice = useCallback(
     (r: { workshopSlots: unknown[]; stock: Record<string, number>; storedBatteries: StoredBattery[] }) => {
-      setGameState((p) => ({
-        ...p,
-        workshopSlots: r.workshopSlots as GameState['workshopSlots'],
-        stock: { ...r.stock },
-        storedBatteries: [...r.storedBatteries]
-      }));
+      setGameState((p) => {
+        const next = {
+          ...p,
+          workshopSlots: r.workshopSlots as GameState['workshopSlots'],
+          stock: { ...r.stock },
+          storedBatteries: [...r.storedBatteries]
+        };
+        gameStateRef.current = next;
+        return next;
+      });
     },
     []
   );

@@ -86,6 +86,51 @@ function parseSlotItemIds(raw: string | null | undefined): Record<string, string
   return out;
 }
 
+/** Carga Wh num mapa `slot_charges` com chave exacta ou só diferença de capitalização. */
+function getWorkshopSlotChargeWh(slotCharges: Record<string, number>, componentSlotId: string): number {
+  if (Object.prototype.hasOwnProperty.call(slotCharges, componentSlotId)) {
+    const n = Number(slotCharges[componentSlotId]);
+    return Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+  const want = componentSlotId.toLowerCase().trim();
+  const hit = Object.entries(slotCharges).find(([k]) => k.toLowerCase().trim() === want);
+  if (!hit) return 0;
+  const n = Number(hit[1]);
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/**
+ * Alinha `stored_batteries` com o JSON gravado nesta bancada: carga = `slot_charges` por slot.
+ * Evita que a remoção de uma bateria deixe a outra com `current_charge` desactualizado (UI/modal a ler armazém).
+ */
+async function syncStoredBatteriesWithWorkshopSlotRow(
+  tx: Prisma.TransactionClient,
+  userId: number,
+  slotIndex: number
+): Promise<void> {
+  const row = await tx.workshop_slots.findUnique({
+    where: { user_id_slot_index: { user_id: userId, slot_index: slotIndex } }
+  });
+  if (!row?.item_id) return;
+  const internal = parseJsonObject(row.internal_state);
+  const slotCharges = parseSlotCharges(row.slot_charges);
+  for (const [compIdRaw, rawVal] of Object.entries(internal)) {
+    if (rawVal == null) continue;
+    const bid = String(rawVal).trim();
+    if (!bid || !INSTANCE_UUID_RE.test(bid)) continue;
+    const compId = String(compIdRaw).slice(0, 200);
+    const wh = getWorkshopSlotChargeWh(slotCharges, compIdRaw);
+    await tx.stored_batteries.updateMany({
+      where: { user_id: userId, id: bid },
+      data: {
+        workshop_slot_index: slotIndex,
+        workshop_component_slot_id: compId,
+        current_charge: wh
+      }
+    });
+  }
+}
+
 function assertItemId(id: unknown, label: string): string {
   const s = id != null ? String(id).trim() : '';
   if (!s || !SAVE_GAME_ITEM_ID_RE.test(s)) {
@@ -577,7 +622,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
           const oldUpg = await loadUpgrade(tx, oldItemId);
           const oldIsBattery = isBatteryUpgrade(oldUpg) || INSTANCE_UUID_RE.test(oldInstanceId);
           if (oldIsBattery && oldUpg) {
-            const oldCharge = slotCharges[componentSlotId] ?? 0;
+            const oldCharge = getWorkshopSlotChargeWh(slotCharges, componentSlotId);
             await recoverBatteryFromSlot(
               tx,
               userId,
@@ -722,6 +767,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             slot_item_ids: stringifyJson(slotItemIds as unknown as Record<string, unknown>)
           }
         });
+        await syncStoredBatteriesWithWorkshopSlotRow(tx, userId, slotIndex);
       } else if (action === 'unequip_component') {
         const componentSlotId = assertComponentSlotId(body.componentSlotId);
         const wsRow = await tx.workshop_slots.findUnique({
@@ -744,7 +790,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
         const upg = await loadUpgrade(tx, originalItemId);
         const isBattery = isBatteryUpgrade(upg) || INSTANCE_UUID_RE.test(val);
         if (isBattery && upg) {
-          const charge = slotCharges[componentSlotId] ?? 0;
+          const charge = getWorkshopSlotChargeWh(slotCharges, componentSlotId);
           await logCharging(tx, email, {
             action: 'removed_to_stock',
             workshop_slot_index: slotIndex,
@@ -817,6 +863,7 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             slot_item_ids: stringifyJson(slotItemIds as unknown as Record<string, unknown>)
           }
         });
+        await syncStoredBatteriesWithWorkshopSlotRow(tx, userId, slotIndex);
       }
 
       const serverUpdatedAt = await bumpServerUpdatedAt(tx, userId);
