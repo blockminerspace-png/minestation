@@ -11,7 +11,7 @@
 #   PG_DATABASE          — default: minestation
 #   APP_SERVICE          — serviço compose da API Node — default: app
 #   VM_DEPLOY=0          — só corre SQL + scripts Node, sem git pull / compose build
-#   SSH_PASSWORD         — opcional: palavra-passe SSH (só no teu .env local); requer `sshpass` no PATH
+#   SSH_PASSWORD         — opcional: palavra-passe SSH (só no teu .env local); usa `sshpass` se existir, senão `python3` + pexpect
 #
 # Uso: bash scripts/vm-maintenance.sh
 set -euo pipefail
@@ -52,6 +52,9 @@ remote() {
       -o PreferredAuthentications=password,keyboard-interactive \
       -o PubkeyAuthentication=no \
       "$SSH_USER@$SSH_HOST" "$@"
+  elif [[ -n "${SSH_PASSWORD:-}" ]] && [[ -f "$ROOT/scripts/ssh_pexpect.py" ]]; then
+    SSH_HOST="$SSH_HOST" SSH_USER="$SSH_USER" SSH_PORT="$SSH_PORT" SSH_PASSWORD="$SSH_PASSWORD" \
+      python3 "$ROOT/scripts/ssh_pexpect.py" "$@"
   else
     ssh "${SSH_BASE[@]}" "$SSH_USER@$SSH_HOST" "$@"
   fi
@@ -77,8 +80,8 @@ if [[ -z "${PG_CONTAINER}" ]]; then
 fi
 
 echo "[vm-maintenance] Alvo: ${SSH_USER}@${SSH_HOST}:${SSH_PORT} | repo remoto: ${REMOTE_REPO_DIR} | PG: ${PG_CONTAINER}/${PG_DATABASE}"
-if [[ -n "${SSH_PASSWORD:-}" ]] && ! command -v sshpass >/dev/null 2>&1; then
-  echo "Aviso: SSH_PASSWORD definido mas sshpass não está instalado (ex.: sudo apt install sshpass)." >&2
+if [[ -n "${SSH_PASSWORD:-}" ]] && ! command -v sshpass >/dev/null 2>&1 && [[ ! -f "$ROOT/scripts/ssh_pexpect.py" ]]; then
+  echo "Aviso: SSH_PASSWORD definido mas não há sshpass nem scripts/ssh_pexpect.py." >&2
 fi
 
 if [[ "$VM_DEPLOY" == "1" ]]; then
