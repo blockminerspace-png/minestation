@@ -31,7 +31,64 @@ import {
 import { getMyRigRooms, purchaseRoomSlot } from '../services/api';
 import type { BulkRoomBatteryRunOptions } from '../controllers/roomBatteryController';
 import { MiningCoinSelect } from './MiningCoinSelect';
-import { Server, XCircle, Zap, Power, Plus, Cog, X, Box, Save, Activity, Calculator, Coins, Battery } from 'lucide-react';
+import {
+    Server,
+    XCircle,
+    Zap,
+    Power,
+    Plus,
+    Cog,
+    X,
+    Box,
+    Save,
+    Activity,
+    Calculator,
+    Coins,
+    Battery,
+    LayoutGrid,
+    ChevronLeft,
+    ChevronRight
+} from 'lucide-react';
+
+type RoomActionIcon = React.ComponentType<{ className?: string; size?: number; 'aria-hidden'?: boolean }>;
+
+function RoomActionCard({
+    icon: Icon,
+    title,
+    subtitle,
+    children
+}: {
+    icon: RoomActionIcon;
+    title: string;
+    subtitle?: string;
+    children: React.ReactNode;
+}) {
+    return (
+        <div className="group relative flex min-h-[220px] flex-col overflow-hidden rounded-2xl border border-amber-500/25 bg-gradient-to-br from-white via-slate-50 to-slate-100 p-4 shadow-lg shadow-amber-900/10 dark:from-slate-900/95 dark:via-slate-950 dark:to-slate-950 dark:border-amber-600/25 dark:shadow-black/50">
+            <div
+                className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100"
+                style={{
+                    background:
+                        'radial-gradient(120% 80% at 100% 0%, rgba(245, 158, 11, 0.08) 0%, transparent 55%)'
+                }}
+            />
+            <div className="relative flex min-h-0 flex-1 flex-col">
+                <div className="mb-3 flex items-start gap-3">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/35 bg-amber-500/12 text-amber-700 dark:border-amber-400/30 dark:bg-amber-500/15 dark:text-amber-300">
+                        <Icon className="h-5 w-5 shrink-0" aria-hidden />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                        <h4 className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-800 dark:text-amber-100/95">{title}</h4>
+                        {subtitle ? (
+                            <p className="mt-1 text-[11px] leading-snug text-slate-600 dark:text-slate-400">{subtitle}</p>
+                        ) : null}
+                    </div>
+                </div>
+                <div className="flex min-h-0 flex-1 flex-col justify-end gap-2">{children}</div>
+            </div>
+        </div>
+    );
+}
 
 function sameRigRoom(a: string | null | undefined, b: string | null | undefined): boolean {
     return normalizePlacedRackRoomId(a) === normalizePlacedRackRoomId(b);
@@ -188,6 +245,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     const [roomBulkBatterySelect, setRoomBulkBatterySelect] = useState('');
     const [roomBulkBatterySmartFill, setRoomBulkBatterySmartFill] = useState(false);
     const [roomBulkBatteryRigSort, setRoomBulkBatteryRigSort] = useState<'slot_asc' | 'hashrate_desc'>('slot_asc');
+    const [coinApplyBusy, setCoinApplyBusy] = useState(false);
     const [slotPurchaseModal, setSlotPurchaseModal] = useState<RigRoom | null>(null);
     const [slotPurchaseQty, setSlotPurchaseQty] = useState(1);
 
@@ -442,6 +500,18 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
         setRoomBulkBatteryRigSort('slot_asc');
     };
 
+    const handleApplyRoomCoin = async () => {
+        if (!currentRoom || !onSetRoomRacksCoin || coinApplyBusy || currentRoomRacks.length === 0) return;
+        setCoinApplyBusy(true);
+        try {
+            await onSetRoomRacksCoin(currentRoom.id, bulkRoomCoinId);
+        } finally {
+            setCoinApplyBusy(false);
+        }
+    };
+
+    const showQuickControlRow = Boolean(onSetRoomRacksCoin || onSetRoomRacksBattery || userEmail);
+
     return (
         <div className="flex flex-col gap-6 relative">
             <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-4">
@@ -469,59 +539,134 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                 </div>
             </div>
 
-            {currentRoom && onSetRoomRacksCoin && currentRoomRacks.length > 0 && (
-                <div className="flex flex-col sm:flex-row sm:flex-wrap sm:items-end gap-2 p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50">
-                    <div className="flex-1 min-w-[200px]">
-                        <label className="text-[10px] uppercase font-bold text-slate-500 block mb-1">Moeda para todas as rigs desta sala</label>
-                        <MiningCoinSelect
-                            value={bulkRoomCoinId}
-                            onChange={setBulkRoomCoinId}
-                            coins={miningCoins || []}
-                            noneLabel="Nenhuma (desliga rigs sem moeda)"
-                            buttonClassName="rounded p-2"
-                        />
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => onSetRoomRacksCoin(currentRoom.id, bulkRoomCoinId)}
-                        className="shrink-0 px-4 py-2 rounded-md text-sm font-bold uppercase tracking-wide bg-amber-600 text-white hover:bg-amber-500 border border-amber-500/50 transition-colors"
+            {showQuickControlRow && (
+                <div className="grid grid-cols-1 gap-4 lg:grid-cols-3 lg:items-stretch">
+                    <RoomActionCard
+                        icon={Coins}
+                        title="Moeda da sala"
+                        subtitle="Uma moeda para todas as rigs desta sala. «Nenhuma» desliga a produção nas rigs sem moeda."
                     >
-                        Aplicar a todas ({currentRoomRacks.length})
-                    </button>
-                </div>
-            )}
+                        {!onSetRoomRacksCoin ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Indisponível nesta sessão.</p>
+                        ) : !currentRoom ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">A carregar dados da sala…</p>
+                        ) : currentRoomRacks.length === 0 ? (
+                            <p className="text-xs text-amber-700/90 dark:text-amber-300/90">
+                                Instala pelo menos uma rig nesta sala para aplicar moeda em massa.
+                            </p>
+                        ) : (
+                            <>
+                                <MiningCoinSelect
+                                    value={bulkRoomCoinId}
+                                    onChange={setBulkRoomCoinId}
+                                    coins={miningCoins || []}
+                                    noneLabel="Nenhuma (desliga rigs sem moeda)"
+                                    buttonClassName="rounded-lg px-2 py-2 text-sm"
+                                    disabled={coinApplyBusy}
+                                />
+                                <button
+                                    type="button"
+                                    disabled={coinApplyBusy}
+                                    onClick={() => void handleApplyRoomCoin()}
+                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-amber-500/50 bg-amber-600 px-4 py-2.5 text-xs font-bold uppercase tracking-wide text-white shadow-md shadow-amber-900/20 transition hover:bg-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                >
+                                    {coinApplyBusy ? 'A aplicar…' : `Aplicar a todas (${currentRoomRacks.length})`}
+                                </button>
+                            </>
+                        )}
+                    </RoomActionCard>
 
-            {currentRoom && onSetRoomRacksBattery && currentRoomRacks.length > 0 && (
-                <div className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-900/50 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0 flex-1">
-                        <label className="mb-0.5 block text-[10px] font-bold uppercase tracking-wide text-slate-500">
-                            Bateria nas rigs desta sala
-                        </label>
-                        <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Painel: só lista baterias com unidades no estoque (x0 não aparecem). Preenchimento inteligente usa também o armazém.
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        onClick={() => openRoomBulkBatteryModal(currentRoom)}
-                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-yellow-600/50 bg-yellow-700 px-5 py-2.5 text-sm font-bold uppercase tracking-wide text-white transition hover:bg-yellow-600"
+                    <RoomActionCard
+                        icon={Battery}
+                        title="Baterias da sala"
+                        subtitle="Lista só baterias com stock. Preenchimento inteligente usa também o armazém."
                     >
-                        <Battery size={18} aria-hidden />
-                        Configurar baterias
-                    </button>
-                </div>
-            )}
+                        {!onSetRoomRacksBattery ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Indisponível nesta sessão.</p>
+                        ) : !currentRoom ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">A carregar dados da sala…</p>
+                        ) : currentRoomRacks.length === 0 ? (
+                            <p className="text-xs text-amber-700/90 dark:text-amber-300/90">
+                                Instala pelo menos uma rig nesta sala para configurar baterias em massa.
+                            </p>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={() => openRoomBulkBatteryModal(currentRoom)}
+                                className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-yellow-600/55 bg-gradient-to-r from-yellow-700 to-amber-700 px-4 py-3 text-xs font-bold uppercase tracking-wide text-white shadow-lg shadow-yellow-900/25 transition hover:from-yellow-600 hover:to-amber-600"
+                            >
+                                <Battery size={18} aria-hidden />
+                                Configurar baterias
+                            </button>
+                        )}
+                    </RoomActionCard>
 
-            {
-                userEmail && (
-                    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-3">
-                        <div className="flex justify-between items-center mb-2">
-                            <div className="text-xs text-slate-500 dark:text-slate-400">Salas de Mineração</div>
-                            <div className="flex items-center gap-2">
-                                <button onClick={() => setRoomIndex(i => Math.max(0, i - 1))} className="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:text-white">Anterior</button>
-                                <div className="text-[10px] text-slate-400">{myRooms.length > 0 ? `${roomIndex + 1} / ${myRooms.length}` : '0 / 0'}</div>
-                                <button onClick={() => setRoomIndex(i => Math.min(Math.max(0, myRooms.length - 1), i + 1))} className="text-xs px-2 py-1 rounded border border-slate-700 text-slate-300 hover:text-white">Próxima</button>
+                    <RoomActionCard
+                        icon={LayoutGrid}
+                        title="Mudar de sala"
+                        subtitle="Escolhe outra sala de mineração. A vista abaixo mostra slots, compras e atalhos por sala."
+                    >
+                        {!userEmail ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Inicia sessão para ver e gerir várias salas.</p>
+                        ) : roomsLoading ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">A carregar salas…</p>
+                        ) : myRooms.length === 0 ? (
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Nenhuma sala configurada.</p>
+                        ) : (
+                            <div className="flex flex-col gap-3">
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        aria-label="Sala anterior"
+                                        disabled={roomIndex <= 0}
+                                        onClick={() => setRoomIndex((i) => Math.max(0, i - 1))}
+                                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 transition hover:border-amber-500/50 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-amber-500/40 dark:hover:text-amber-300"
+                                    >
+                                        <ChevronLeft className="h-5 w-5" aria-hidden />
+                                    </button>
+                                    <select
+                                        aria-label="Selecionar sala de mineração"
+                                        className="min-w-0 flex-1 truncate rounded-lg border border-slate-300 bg-white px-2 py-2 text-xs font-semibold text-slate-800 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100"
+                                        value={String(Math.min(roomIndex, Math.max(0, myRooms.length - 1)))}
+                                        onChange={(e) => setRoomIndex(Number(e.target.value))}
+                                    >
+                                        {myRooms.map((room, idx) => (
+                                            <option key={room.id} value={String(idx)}>
+                                                {room.name}
+                                            </option>
+                                        ))}
+                                    </select>
+                                    <button
+                                        type="button"
+                                        aria-label="Sala seguinte"
+                                        disabled={roomIndex >= myRooms.length - 1}
+                                        onClick={() => setRoomIndex((i) => Math.min(myRooms.length - 1, i + 1))}
+                                        className="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-700 transition hover:border-amber-500/50 hover:text-amber-700 disabled:cursor-not-allowed disabled:opacity-40 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:border-amber-500/40 dark:hover:text-amber-300"
+                                    >
+                                        <ChevronRight className="h-5 w-5" aria-hidden />
+                                    </button>
+                                </div>
+                                <p className="text-center text-[10px] font-mono text-slate-500 dark:text-slate-400">
+                                    Sala {roomIndex + 1} de {myRooms.length}
+                                    {currentRoom ? (
+                                        <>
+                                            {' '}
+                                            · {placedRacks.filter((r) => sameRigRoom(r.roomId, currentRoom.id)).length} rig
+                                            {placedRacks.filter((r) => sameRigRoom(r.roomId, currentRoom.id)).length === 1 ? '' : 's'}
+                                        </>
+                                    ) : null}
+                                </p>
                             </div>
+                        )}
+                    </RoomActionCard>
+                </div>
+            )}
+
+            {userEmail && (
+                    <div className="rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900/80">
+                        <div className="mb-3 border-b border-slate-200 pb-2 dark:border-slate-700/80">
+                            <div className="text-xs font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">Visão geral das salas</div>
+                            <p className="mt-0.5 text-[10px] text-slate-500 dark:text-slate-400">Slots, compra de espaço e atalhos por sala.</p>
                         </div>
                         {roomsLoading ? (
                             <div className="text-xs text-slate-500">Carregando...</div>
@@ -587,8 +732,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                         )}
                     </div>
-                )
-            }
+            )}
 
             {slotPurchaseModal && slotPurchasePreview && (
                 <div
