@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# Certificado Let's Encrypt para genesisdao.tech (+ www). Serviços: app_nginx, app_certbot (docker-compose.yml).
-# Na VM: cd app_production && bash init-ssl.sh
+# Emite certificado Let's Encrypt só para dev.genesisdao.tech (vhost HTTPS dedicado no nginx).
+# Na VM: cd app_production && bash init-ssl-dev-genesisdao.sh
+# Requisitos: DNS dev.genesisdao.tech → IP da VM; portas 80/443 abertas; HTTP-01 acessível (Cloudflare “laranja” OK).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-DOMAIN="genesisdao.tech"
+DOMAIN="dev.genesisdao.tech"
 EMAIL="${SSL_EMAIL:-blockminer.space@gmail.com}"
 
-echo "### Iniciando solicitação de certificado SSL para $DOMAIN..."
+echo "### SSL para $DOMAIN (certificado separado de genesisdao.tech)..."
 
 if [[ ! -e "certbot/conf/live/$DOMAIN" ]]; then
-  echo "### Criando certificados temporários..."
+  echo "### Certificados temporários (nginx arranca antes do LE)..."
   mkdir -p "certbot/conf/live/$DOMAIN"
   openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
     -keyout "certbot/conf/live/$DOMAIN/privkey.pem" \
@@ -18,18 +19,19 @@ if [[ ! -e "certbot/conf/live/$DOMAIN" ]]; then
     -subj "/CN=$DOMAIN"
 fi
 
-echo "### Subindo Nginx..."
+echo "### Garantir Nginx a correr (porta 80 para desafio ACME)..."
 docker compose up -d app_nginx
 
-echo "### Removendo certificados temporários / slot antigo..."
+echo "### Remover dummy / renovação antiga (se existir) antes do certonly..."
 docker compose run --rm --entrypoint sh app_certbot -c \
   "rm -rf /etc/letsencrypt/live/$DOMAIN /etc/letsencrypt/archive/$DOMAIN /etc/letsencrypt/renewal/$DOMAIN.conf" || true
 
-echo "### Solicitando certificado real para $DOMAIN..."
+echo "### Certbot certonly (webroot)..."
 docker compose run --rm --entrypoint sh app_certbot -c \
   "certbot certonly --webroot -w /var/www/certbot \
     --email $EMAIL --agree-tos --no-eff-email \
-    -d $DOMAIN -d www.$DOMAIN"
+    -d $DOMAIN"
 
-echo "### Recarregando Nginx..."
+echo "### Recarregar Nginx..."
 docker compose exec app_nginx nginx -s reload
+echo "### Concluído: /etc/letsencrypt/live/$DOMAIN/ (no volume certbot/conf)."

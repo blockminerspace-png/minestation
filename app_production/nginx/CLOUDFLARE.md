@@ -51,3 +51,15 @@ Manter `ufw default deny incoming`, permitir só `80/tcp`, `443/tcp` e SSH a par
 ## Origem em desenvolvimento
 
 Não uses `cloudflare-allow.inc` no `server` que serve `localhost` sem Cloudflare — bloqueia o teu browser. Reserva esta include para o vhost de produção atrás do proxy.
+
+## Erro 526 (Invalid SSL certificate)
+
+Com modo SSL na Cloudflare **Full (strict)** (recomendado), a origem tem de apresentar um certificado **válido** cujo **CN/SAN** coincida com o hostname que o visitante pediu (ex.: `dev.genesisdao.tech` não pode usar só o certificado de `genesisdao.tech`).
+
+Neste repositório:
+
+- **`genesisdao.tech`** / `www` → ficheiros em `/etc/letsencrypt/live/genesisdao.tech/` (script `app_production/init-ssl.sh`).
+- **`dev.genesisdao.tech`** → certificado **à parte** em `/etc/letsencrypt/live/dev.genesisdao.tech/`; na VM, após o DNS apontar para o servidor: `cd app_production && bash init-ssl-dev-genesisdao.sh`.
+- **`minestation.tech`** → `/etc/letsencrypt/live/minestation.tech/` (emitir com certbot de forma análoga, se ainda não existir).
+
+Variável opcional: `SSL_EMAIL` para o e-mail do Let's Encrypt em todos os scripts.
