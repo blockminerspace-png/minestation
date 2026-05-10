@@ -10,6 +10,7 @@ import {
   sanitizeStoredBatteriesForSavePayload,
   StoredBatterySaveGuardError
 } from './saveGameEconomyValidate.js';
+import { deleteWarehouseStoredBatteriesExceptKeepIds } from './storedBatteriesWarehouseDelete.js';
 import {
   buildRackBatteryPersistSnapshot,
   collectMountedBatteryInstanceIdsFromPlacedRacks,
@@ -382,14 +383,7 @@ export async function persistStockStoredBatteriesPlacedRacks(
 
   if (storedBatteriesNorm) {
     const incomingIds = storedBatteriesNorm.map((b) => b.id);
-    if (incomingIds.length > 0) {
-      await client.query(
-        'DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[])) AND workshop_slot_index IS NULL',
-        [uid, incomingIds]
-      );
-    } else {
-      await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND workshop_slot_index IS NULL', [uid]);
-    }
+    await deleteWarehouseStoredBatteriesExceptKeepIds(client, Number(uid), incomingIds);
     if (storedBatteriesNorm.length > 0) {
       const bIds = storedBatteriesNorm.map((b) => b.id);
       const bItemIds = storedBatteriesNorm.map((b) => b.itemId);

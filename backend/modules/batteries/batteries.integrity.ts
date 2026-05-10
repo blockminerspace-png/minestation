@@ -18,6 +18,12 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
     console.log('[Migration] ensureStoredBatteriesIntegrity ignorado (BATTERY_BACKGROUND_INTEGRITY_ENABLED=0)');
     return;
   }
+  if (String(process.env.BATTERY_INTEGRITY_MUTATIONS_ENABLED ?? '1').trim() === '0') {
+    console.log(
+      '[Migration] ensureStoredBatteriesIntegrity mutações desligadas (BATTERY_INTEGRITY_MUTATIONS_ENABLED=0 — só diagnóstico / emergência)'
+    );
+    return;
+  }
   const client = await pool.connect();
   let fixedItem = 0;
   let clearedOrphan = 0;

@@ -72,6 +72,9 @@ services:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD:-postgres}@db:5432/minestation
       REDIS_URL: redis://redis:6379
       MONGODB_URI: mongodb://mongo:27017/genesis_logs
+      # Multi-container: exige Redis NX lock para ticks de mineração/bateria (ver `miningProgressComputer`).
+      MINING_PROGRESS_REQUIRE_REDIS_LOCK: "1"
+      # Emergência: `BATTERY_WORKERS_ENABLED=0` ou `SCHEDULER_ENABLED=0` no `.env` desliga jobs sem derrubar HTTP.
     env_file:
       - path: .env
         required: false

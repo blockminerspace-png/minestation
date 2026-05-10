@@ -422,6 +422,27 @@ function collectBatteryInstanceRefsFromWorkshopPayload(workshopSlots: unknown): 
   return out;
 }
 
+/** UUIDs / ids de `placed_racks.battery_id` já persistidos na BD (fonte de verdade antes do merge do payload). */
+export async function collectBatteryIdsFromPlacedRacksDb(
+  client: PoolClient,
+  uid: number | string
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  try {
+    const res = await client.query<{ battery_id: string | null }>(
+      `SELECT battery_id FROM placed_racks WHERE user_id = $1 AND battery_id IS NOT NULL AND btrim(battery_id::text) <> ''`,
+      [uid]
+    );
+    for (const row of res.rows || []) {
+      const s = String(row.battery_id ?? '').trim();
+      if (s) out.add(s);
+    }
+  } catch {
+    /* ignore */
+  }
+  return out;
+}
+
 /** Instâncias referenciadas na oficina já persistida na BD (save "servers" sem `workshopSlots`). */
 async function collectBatteryInstanceRefsFromWorkshopDb(client: PoolClient, uid: number | string): Promise<Set<string>> {
   const out = new Set<string>();
@@ -495,6 +516,9 @@ export async function validateStoredBatteryWarehouseRemovalAllowed(
     ...collectBatteryInstanceRefsFromWorkshopPayload(changes.workshopSlots)
   ]);
   for (const id of await collectBatteryInstanceRefsFromWorkshopDb(client, uid)) {
+    referenced.add(id);
+  }
+  for (const id of await collectBatteryIdsFromPlacedRacksDb(client, uid)) {
     referenced.add(id);
   }
 

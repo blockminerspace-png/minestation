@@ -1,7 +1,9 @@
 /**
  * Fonte de verdade do inventário (stock + baterias em armazém, fora de oficina/rack).
  */
+import type { Pool } from 'pg';
 import { prisma } from '../../config/prisma.js';
+import { computeProgressForUser } from '../../cron/miningProgressComputer.js';
 import {
   isStoredBatteryFullyCharged,
   resolveBatteryNominalCapacityWh,
@@ -172,8 +174,8 @@ function batteryDtoFromRow(
 /**
  * Snapshot legado usado por `GET /api/inventory/me` (contrato estável).
  */
-export async function loadPlayerInventorySnapshot(userId: number): Promise<PlayerInventorySnapshot> {
-  const state = await buildInventoryStateV1(userId);
+export async function loadPlayerInventorySnapshot(pool: Pool, userId: number): Promise<PlayerInventorySnapshot> {
+  const state = await buildInventoryStateV1(pool, userId);
   return {
     stock: state.stock,
     storedBatteriesFull: state.fullChargeBatteries.map((x) => ({
@@ -192,15 +194,45 @@ export async function loadPlayerInventorySnapshot(userId: number): Promise<Playe
 
 /**
  * Estado consolidado para `GET /api/inventory/state`.
+ * Aplica o mesmo tick de mineração/carga que `GET /api/game-state` (BD como fonte de verdade).
  */
-export async function buildInventoryStateV1(userId: number): Promise<InventoryStateV1Dto> {
+export async function buildInventoryStateV1(pool: Pool, userId: number): Promise<InventoryStateV1Dto> {
+  const progressRes = await computeProgressForUser(pool, userId, Date.now());
+  if (!progressRes.ok) {
+    console.warn(
+      '[inventory/state] computeProgressForUser falhou uid=%s — snapshot pode estar ligeiramente atrás neste pedido',
+      userId
+    );
+  }
+
+  const rackBattRows = await prisma.placed_racks.findMany({
+    where: { user_id: userId },
+    select: { battery_id: true }
+  });
+  const mountedBatteryIds = [
+    ...new Set(
+      rackBattRows
+        .map((r) => (r.battery_id != null ? String(r.battery_id).trim() : ''))
+        .filter((id) => id.length > 0)
+    )
+  ];
+
+  const batteryWhere =
+    mountedBatteryIds.length > 0
+      ? {
+          user_id: userId,
+          workshop_slot_index: null,
+          NOT: { id: { in: mountedBatteryIds } }
+        }
+      : { user_id: userId, workshop_slot_index: null };
+
   const [stockRows, batRows, gs] = await Promise.all([
     prisma.stock.findMany({
       where: { user_id: userId },
       select: { item_id: true, qty: true }
     }),
     prisma.stored_batteries.findMany({
-      where: { user_id: userId, workshop_slot_index: null },
+      where: batteryWhere,
       select: {
         id: true,
         item_id: true,
@@ -273,6 +305,7 @@ export async function buildInventoryStateV1(userId: number): Promise<InventorySt
   return {
     version: 1,
     serverUpdatedAt,
+    stateVersion: serverUpdatedAt,
     stock,
     partialChargeBatteries,
     fullChargeBatteries,

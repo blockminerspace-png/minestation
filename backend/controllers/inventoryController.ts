@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from 'express';
+import type { Pool } from 'pg';
 import { rateLimit } from 'express-rate-limit';
 import { prisma } from '../config/prisma.js';
 import { loadPlayerInventorySnapshot } from '../services/inventorySnapshotService.js';
@@ -14,6 +15,7 @@ const inventoryMeLimiter = rateLimit({
 
 export type InventoryControllerDeps = {
   authenticateToken: (req: Request, res: Response, next: () => void) => void;
+  pool: Pool;
 };
 
 /**
@@ -22,7 +24,7 @@ export type InventoryControllerDeps = {
  * O `userId` vem sempre da sessão verificada; parâmetros de URL/query são ignorados para o dono do recurso.
  */
 export function registerInventoryRoutes(app: Express, deps: InventoryControllerDeps): void {
-  const { authenticateToken } = deps;
+  const { authenticateToken, pool } = deps;
 
   app.get('/api/inventory/me', inventoryMeLimiter, authenticateToken, async (req: Request, res: Response) => {
     const uid = req.userId;
@@ -46,7 +48,7 @@ export function registerInventoryRoutes(app: Express, deps: InventoryControllerD
         return res.status(403).json({ error: 'Conta bloqueada.', code: 'FORBIDDEN' });
       }
 
-      const snap = await loadPlayerInventorySnapshot(userId);
+      const snap = await loadPlayerInventorySnapshot(pool, userId);
       console.info('[inventory/me]', {
         userId,
         nFull: snap.storedBatteriesFull.length,

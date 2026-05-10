@@ -88,6 +88,9 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
   if (String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0') {
     return;
   }
+  if (String(process.env.SCHEDULER_ENABLED ?? '1').trim() === '0') {
+    return;
+  }
   if (String(process.env.MINING_YIELD_CRON_ENABLED ?? '1').trim() === '0') {
     return;
   }
@@ -388,8 +391,13 @@ export function startMiningYieldCron(pool: Pool, opts: StartMiningYieldCronOptio
     console.log(`${LOG_PREFIX} não agendado (BATTERY_WORKERS_ENABLED=0)`);
     return;
   }
-  if (String(process.env.MINING_YIELD_SCHEDULER_ENABLED ?? '1').trim() === '0') {
-    console.log(`${LOG_PREFIX} não agendado (MINING_YIELD_SCHEDULER_ENABLED=0 — emergência / sem setInterval)`);
+  if (
+    String(process.env.SCHEDULER_ENABLED ?? '1').trim() === '0' ||
+    String(process.env.MINING_YIELD_SCHEDULER_ENABLED ?? '1').trim() === '0'
+  ) {
+    console.log(
+      `${LOG_PREFIX} não agendado (SCHEDULER_ENABLED=0 ou MINING_YIELD_SCHEDULER_ENABLED=0 — emergência / sem setInterval)`
+    );
     return;
   }
 

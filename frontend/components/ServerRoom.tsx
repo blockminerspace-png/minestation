@@ -123,8 +123,14 @@ interface ServerRoomProps {
     onRemoveRack: (id: string) => void;
     onEquipMiner: (rackId: string, slotIndex: number, minerId: string) => void;
     onUnequipMiner: (rackId: string, slotIndex: number) => void;
-    onEquipAux: (rackId: string, itemId: string, type: 'battery' | 'wiring' | 'multiplier', storedBatteryId?: string, slotIndex?: number) => void;
-    onUnequipAux: (rackId: string, type: 'battery' | 'wiring' | 'multiplier', slotIndex?: number) => void;
+    onEquipAux: (
+      rackId: string,
+      itemId: string,
+      type: 'battery' | 'wiring' | 'multiplier',
+      storedBatteryId?: string,
+      slotIndex?: number
+    ) => void | Promise<void>;
+    onUnequipAux: (rackId: string, type: 'battery' | 'wiring' | 'multiplier', slotIndex?: number) => void | Promise<void>;
     onTogglePower: (rackId: string) => void;
     onRecharge: (rackId: string) => void;
     upgrades: Upgrade[];

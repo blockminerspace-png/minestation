@@ -145,6 +145,12 @@ import {
   type StoredBatteryRowSnap
 } from './dist/modules/batteries/batteries.repository.js';
 import { mergeSaveGameSlicePayload } from './dist/lib/gameSaveSliceMerge.js';
+import {
+  applyLegacySaveGameFullBarrier,
+  legacyCriticalKeysInChanges,
+  neutralizeLegacySaveGameSlicePayload
+} from './dist/lib/legacySaveGamePlayerPolicy.js';
+import { registerServersRackAuxIntentRoutes } from './dist/modules/servers/servers.rackAuxIntent.controller.js';
 import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
@@ -205,6 +211,7 @@ import {
   refreshStoredBatteriesWorkshopLinkage,
   type WorkshopSlotClientPayload
 } from './dist/lib/saveGameEconomyValidate.js';
+import { deleteWarehouseStoredBatteriesExceptKeepIds } from './dist/lib/storedBatteriesWarehouseDelete.js';
 import {
   validateLoginEmail,
   validateLoginFieldsPresent,
@@ -1673,8 +1680,8 @@ registerProfilePlayerRoutes(app, {
   referralClaimSensitiveLimiter
 });
 registerWorkshopMutationRoutes(app, { authenticateToken });
-registerInventoryRoutes(app, { authenticateToken });
-registerInventoryModuleRoutes(app, { authenticateToken });
+registerInventoryRoutes(app, { authenticateToken, pool: db });
+registerInventoryModuleRoutes(app, { authenticateToken, pool: db });
 registerShopModuleRoutes(app, { pool: db, authenticateToken });
 registerPlayerCalculatorRoutes(app, { authenticateToken });
 registerImageAssetRoutes(app, {
@@ -7216,6 +7223,33 @@ async function handleSaveGamePost(req, res) {
       storedBatteries: Array<{ id: string; itemId: string; currentCharge: number }>;
     } | null = null;
 
+    if (effectiveAdminOverride) {
+      const crit = legacyCriticalKeysInChanges(changes as Record<string, unknown>);
+      if (crit.length > 0) {
+        console.log(
+          JSON.stringify({
+            event: 'admin_legacy_savegame_apply',
+            actorUserId: req.userId,
+            targetUserId: uid,
+            fields: crit,
+            route: String(req.originalUrl || '').slice(0, 400),
+            ts: new Date().toISOString()
+          })
+        );
+      }
+    }
+
+    const changesObj =
+      changes && typeof changes === 'object' && !Array.isArray(changes) ? (changes as Record<string, unknown>) : {};
+    const legacyBarrier = applyLegacySaveGameFullBarrier(req, changesObj, Number(uid), effectiveAdminOverride);
+    if (legacyBarrier.mode === 'reject') {
+      return res.status(legacyBarrier.status).json({
+        error: legacyBarrier.message,
+        code: legacyBarrier.code,
+        fields: legacyBarrier.fields
+      });
+    }
+
     await prisma.$transaction(
       async (tx) => {
         const client = prismaTxToPoolLikeClient(tx);
@@ -7249,6 +7283,14 @@ async function handleSaveGamePost(req, res) {
             throw new HttpControlledError(400, { error: 'Domínio workshop: envie workshopSlots.' });
           }
           await mergeSaveGameSlicePayload(client, Number(uid), saveDomain, changes as Record<string, unknown>);
+          await neutralizeLegacySaveGameSlicePayload(
+            client,
+            Number(uid),
+            saveDomain,
+            changes as Record<string, unknown>,
+            req,
+            Number(uid)
+          );
         }
 
         // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
@@ -7422,16 +7464,15 @@ async function handleSaveGamePost(req, res) {
       if (!batRm.ok) {
         throw new StoredBatterySaveGuardError(batRm.error);
       }
+      if (!effectiveAdminOverride && changes.stock && changes.placedRacks && changes.storedBatteries) {
+        console.warn('[legacy_savegame_critical_apply]', {
+          userId: uid,
+          note: 'payload inclui stock+racks+baterias; DELETE de armazém protegido contra rigs na BD'
+        });
+      }
       // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores),
       // desde que cada id retirado do armazém apareça montada nas rigs ou oficina (validação acima).
-      if (incomingIds.length > 0) {
-        await client.query(
-          'DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[])) AND workshop_slot_index IS NULL',
-          [uid, incomingIds]
-        );
-      } else {
-        await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND workshop_slot_index IS NULL', [uid]);
-      }
+      await deleteWarehouseStoredBatteriesExceptKeepIds(client, Number(uid), incomingIds);
       if (changes.storedBatteries.length > 0) {
         const bIds = changes.storedBatteries.map(b => b.id);
         const bItemIds = changes.storedBatteries.map(b => b.itemId);
@@ -9475,6 +9516,14 @@ const startServer = async () => {
 
   registerBatteriesServerRoomRoutes(app, {
     db,
+    appendGameActivityLog,
+    validatePlacedRacksForSave,
+    sanitizePlacedRacksNftAutoRoom
+  });
+
+  registerServersRackAuxIntentRoutes(app, {
+    pool: db,
+    prisma,
     appendGameActivityLog,
     validatePlacedRacksForSave,
     sanitizePlacedRacksNftAutoRoom

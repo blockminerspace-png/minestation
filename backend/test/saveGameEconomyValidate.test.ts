@@ -235,4 +235,26 @@ describe('saveGameEconomyValidate', () => {
       expect(r.error).toMatch(/F5/);
     }
   });
+
+  it('validateStoredBatteryWarehouseRemovalAllowed usa battery_id em placed_racks na BD', async () => {
+    const mountedOnDb = 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee';
+    let n = 0;
+    const client = {
+      query: vi.fn().mockImplementation(() => {
+        n += 1;
+        if (n === 1) return Promise.resolve({ rows: [{ id: mountedOnDb }] });
+        if (n === 2) return Promise.resolve({ rows: [] });
+        if (n === 3) return Promise.resolve({ rows: [{ battery_id: mountedOnDb }] });
+        return Promise.resolve({ rows: [] });
+      })
+    };
+    const r = await validateStoredBatteryWarehouseRemovalAllowed(
+      client as never,
+      1,
+      [],
+      { placedRacks: [], workshopSlots: [] },
+      false
+    );
+    expect(r).toEqual({ ok: true });
+  });
 });

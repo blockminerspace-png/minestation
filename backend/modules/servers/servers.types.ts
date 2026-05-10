@@ -46,6 +46,8 @@ export type ServersAuthoritativeStateDto = {
   version: 1;
   usdc: number;
   serverUpdatedAt: number;
+  /** Igual a `serverUpdatedAt` — controlo de versão para mutações idempotentes / optimistic lock. */
+  stateVersion: number;
   stock: Record<string, number>;
   storedBatteries: ServersStateStoredBatteryDto[];
   placedRacks: ServersStatePlacedRackDto[];

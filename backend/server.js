@@ -82,6 +82,8 @@ import { registerServersModuleRoutes } from './dist/modules/servers/servers.cont
 import { loadUserPlacedRacksWithSlots, persistStockStoredBatteriesPlacedRacks } from './dist/lib/serverRoomPersistence.js';
 import { buildRackBatteryPersistSnapshot, collectMountedBatteryInstanceIdsFromPlacedRacks, fetchBatteryUpgradeRowsByIds, isRackBatteryInstanceUuid, loadStoredBatteryRowsForIds } from './dist/modules/batteries/batteries.repository.js';
 import { mergeSaveGameSlicePayload } from './dist/lib/gameSaveSliceMerge.js';
+import { applyLegacySaveGameFullBarrier, legacyCriticalKeysInChanges, neutralizeLegacySaveGameSlicePayload } from './dist/lib/legacySaveGamePlayerPolicy.js';
+import { registerServersRackAuxIntentRoutes } from './dist/modules/servers/servers.rackAuxIntent.controller.js';
 import * as backupModel from './dist/models/backupModel.js';
 import { getPgRestoreSpawnOptions } from './dist/config/database.js';
 import { getPgRestorePath } from './dist/config/pgRestore.js';
@@ -106,9 +108,14 @@ import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnap
 import { ActivityThrottleMaps, resolveActivityThrottleConfig } from './dist/lib/activityThrottle.js';
 import { mountImageStaticMiddleware, registerImageAssetRoutes, runImageRootStartupOrganizeIfEnabled } from './dist/controllers/imageAssetController.js';
 import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, sanitizeStoredBatteriesForSavePayload, validateStoredBatteryWarehouseRemovalAllowed, StoredBatterySaveGuardError, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory, refreshStoredBatteriesWorkshopLinkage } from './dist/lib/saveGameEconomyValidate.js';
-import { validateLoginEmail, validateLoginFieldsPresent, validateLoginPassword, validateSignupPassword, validateSignupUsername, validateOptionalPolygonWallet, validateOptionalAccessLevelId, validateOptionalReferralCodeInput, validateAccessLevelIdsArray, EMAIL_ADDRESS_MAX_LENGTH, SIGNUP_EMAIL_MAX_TOTAL } from './dist/models/registrationValidation.js';
+import { deleteWarehouseStoredBatteriesExceptKeepIds } from './dist/lib/storedBatteriesWarehouseDelete.js';
+import { validateLoginEmail, validateLoginFieldsPresent, validateLoginPassword, validateSignupPassword, validateSignupUsername, validateOptionalPolygonWallet, validateOptionalAccessLevelId, validateOptionalReferralCodeInput, validateAccessLevelIdsArray, getConflictingUserIdByUsername, EMAIL_ADDRESS_MAX_LENGTH, SIGNUP_EMAIL_MAX_TOTAL } from './dist/models/registrationValidation.js';
+import { isReservedProfileUsername } from './dist/models/profileUsernameReserved.js';
+import { registerProfilePlayerRoutes } from './dist/modules/profile/profilePlayer.controller.js';
+import { bindProfileReferralCode } from './dist/modules/profile/profileReferralBind.service.js';
+import { removeProfileWallet } from './dist/modules/profile/profileWallet.service.js';
 import { getUserIdByEmail, EmailPolicyError, IpLimitError } from './dist/models/userModel.js';
-import { findUserByEmail, insertSession, recordLoginIp, ensureUserReferralCode, updateUserPasswordHash, listUserAccessLevelIds, findUserById, findSessionRow, findActiveSessionUserId, findSessionUserIdIgnoringExpiry, deleteSessionBySessionId, updateUserPolygonAndAccess, clearUserPolygonWallet } from './dist/models/authModel.js';
+import { findUserByEmail, insertSession, recordLoginIp, ensureUserReferralCode, updateUserPasswordHash, listUserAccessLevelIds, findUserById, findSessionRow, findActiveSessionUserId, findSessionUserIdIgnoringExpiry, deleteSessionBySessionId, updateUserPolygonAndAccess } from './dist/models/authModel.js';
 import { executeUserPutCoreTransaction } from './dist/models/userPutCoreTransaction.js';
 // Global Error Handlers to prevent silent crashes
 process.on('unhandledRejection', (reason, promise) => {
@@ -1347,7 +1354,7 @@ app.get('/api/me/profile-bundle', authenticateToken, async (req, res) => {
         sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
-/** Desliga a carteira Polygon do perfil (persiste `polygon_wallet = null`). */
+/** @deprecated Preferir `DELETE /api/profile/wallet` (mesma regra de palavra-passe). */
 app.delete('/api/me/polygon-wallet', authenticateToken, async (req, res) => {
     if (!req.userId)
         return res.status(401).json({ error: 'Não autenticado' });
@@ -1356,10 +1363,18 @@ app.delete('/api/me/polygon-wallet', authenticateToken, async (req, res) => {
         return res.status(400).json({ error: 'Sessão inválida.' });
     }
     try {
-        await clearUserPolygonWallet(uid);
+        const body = req.body && typeof req.body === 'object' ? req.body : {};
+        await removeProfileWallet({
+            userId: uid,
+            currentPassword: body.currentPassword,
+            requestId: null,
+            route: 'DELETE /api/me/polygon-wallet'
+        });
         res.json({ ok: true });
     }
     catch (e) {
+        if (respondIfHttpControlledError(res, e))
+            return;
         sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
 });
@@ -1487,9 +1502,15 @@ registerPartnersPlayerRoutes(app, {
     authenticateToken,
     appendGameActivityLog
 });
+registerProfilePlayerRoutes(app, {
+    authenticateToken,
+    getClientIp,
+    revokeJwtRefreshForUser,
+    referralClaimSensitiveLimiter
+});
 registerWorkshopMutationRoutes(app, { authenticateToken });
-registerInventoryRoutes(app, { authenticateToken });
-registerInventoryModuleRoutes(app, { authenticateToken });
+registerInventoryRoutes(app, { authenticateToken, pool: db });
+registerInventoryModuleRoutes(app, { authenticateToken, pool: db });
 registerShopModuleRoutes(app, { pool: db, authenticateToken });
 registerPlayerCalculatorRoutes(app, { authenticateToken });
 registerImageAssetRoutes(app, {
@@ -5240,45 +5261,20 @@ app.post('/api/referrals/claim-code', referralClaimSensitiveLimiter, async (req,
     if (code == null || (typeof code === 'string' && !code.trim())) {
         return res.status(400).json({ error: 'Parâmetros inválidos' });
     }
-    const codeCheck = validateOptionalReferralCodeInput(code);
-    if (!codeCheck.ok)
-        return res.status(400).json({ error: codeCheck.error });
-    if (!codeCheck.code)
-        return res.status(400).json({ error: 'Parâmetros inválidos' });
-    const codeNormalized = codeCheck.code;
-    const client = await db.connect();
     try {
-        const uid = req.userId;
-        const currentRes = await client.query('SELECT username, referred_by FROM users WHERE id = $1', [uid]);
-        const current = currentRes.rows[0];
-        if (!current)
-            return res.status(400).json({ error: 'Usuário não encontrado' });
-        if (current.referred_by)
-            return res.status(400).json({ error: 'Código já vinculado' });
-        const referrerRes = await client.query('SELECT id FROM users WHERE referral_code = $1', [codeNormalized]);
-        const referrer = referrerRes.rows[0];
-        if (!referrer)
-            return res.status(400).json({ error: 'Código inválido' });
-        if (referrer.id === uid)
-            return res.status(400).json({ error: 'Você não pode usar seu próprio código' });
-        await client.query('BEGIN');
-        await client.query('UPDATE users SET referred_by = $1 WHERE id = $2', [codeNormalized, uid]);
-        await client.query(`INSERT INTO referrals (user_id, referred_username)
-       SELECT $1, $2
-       WHERE NOT EXISTS (
-         SELECT 1 FROM referrals r WHERE r.user_id = $1 AND r.referred_username = $2
-       )`, [referrer.id, current.username]);
-        await client.query('COMMIT');
+        await bindProfileReferralCode({
+            userId: Number(req.userId),
+            codeRaw: code,
+            clientIp: getClientIp(req),
+            requestId: null,
+            route: '/api/referrals/claim-code'
+        });
         res.json({ ok: true });
     }
     catch (e) {
-        if (client)
-            await client.query('ROLLBACK');
+        if (respondIfHttpControlledError(res, e))
+            return;
         sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        if (client)
-            client.release();
     }
 });
 app.post('/api/referrals/claim-reward', referralClaimSensitiveLimiter, async (req, res) => {
@@ -5681,8 +5677,14 @@ app.post('/api/session', async (req, res) => {
         }
         if (!uid)
             return res.status(401).json({ error: 'No session', code: 'AUTH_REQUIRED' });
-        const { polygonWallet } = req.body || {};
-        await updateUserPolygonAndAccess(uid, polygonWallet);
+        const body = req.body || {};
+        if (body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'polygonWallet')) {
+            return res.status(422).json({
+                error: 'A carteira Polygon só pode ser ligada pelo perfil com assinatura (POST /api/profile/wallet/connect/challenge e /verify).',
+                code: 'POLYGON_USE_PROFILE'
+            });
+        }
+        await updateUserPolygonAndAccess(uid, undefined);
         res.json({ ok: true });
     }
     catch (e) {
@@ -5938,7 +5940,14 @@ app.put('/api/user', async (req, res) => {
             }
             uid = await getUserIdByEmail(normalizedEmail, getClientIp(req));
         }
+        const editingSelf = req.userId != null && Number(uid) === Number(req.userId);
         const hasPassword = typeof u.password === 'string' && u.password.trim().length > 0;
+        if (editingSelf && hasPassword) {
+            return res.status(422).json({
+                error: 'Utilize POST /api/profile/password/change para alterar a palavra-passe.',
+                code: 'PASSWORD_USE_PROFILE'
+            });
+        }
         if (req.userId) {
             const actRes = await db.query('SELECT COALESCE(is_admin,0) AS is_admin, COALESCE(is_super_admin,0) AS is_super_admin, email FROM users WHERE id = $1', [req.userId]);
             const actorIsAdmin = !!actRes.rows[0]?.is_admin;
@@ -5995,7 +6004,24 @@ app.put('/api/user', async (req, res) => {
             usernameForUpdate = userVu.username;
         }
         else if (typeof u.username === 'string' && u.username.trim() !== '') {
-            usernameForUpdate = u.username.trim();
+            const userVu = validateSignupUsername(u.username);
+            if (!userVu.ok) {
+                return res.status(400).json({ error: userVu.error });
+            }
+            usernameForUpdate = userVu.username;
+            const clash = await getConflictingUserIdByUsername(userVu.username, uid);
+            if (clash != null) {
+                return res.status(409).json({
+                    error: 'Este nome de utilizador já está em uso.',
+                    code: 'DUPLICATE'
+                });
+            }
+            if (editingSelf && isReservedProfileUsername(userVu.username)) {
+                return res.status(422).json({
+                    error: 'Este nome de utilizador é reservado ou não é permitido.',
+                    code: 'USERNAME_RESERVED'
+                });
+            }
         }
         if (hasPassword) {
             const pv = validateSignupPassword(u.password, true);
@@ -6004,6 +6030,12 @@ app.put('/api/user', async (req, res) => {
             }
         }
         const polygonWalletInBody = u && typeof u === 'object' && Object.prototype.hasOwnProperty.call(u, 'polygonWallet');
+        if (editingSelf && polygonWalletInBody) {
+            return res.status(422).json({
+                error: 'Utilize o fluxo seguro do perfil (desafio + assinatura) para ligar a carteira Polygon: POST /api/profile/wallet/connect/challenge e /verify.',
+                code: 'POLYGON_USE_PROFILE'
+            });
+        }
         let polygonForUpdate = undefined;
         if (polygonWalletInBody) {
             const pwc = validateOptionalPolygonWallet(u.polygonWallet);
@@ -6016,7 +6048,13 @@ app.put('/api/user', async (req, res) => {
         if (!refVal.ok) {
             return res.status(400).json({ error: refVal.error });
         }
-        const referredByForUpdate = refVal.code;
+        let referredByForUpdate = refVal.code;
+        if (editingSelf && referredByForUpdate) {
+            return res.status(422).json({
+                error: 'Utilize POST /api/profile/referral/bind para vincular o código de indicação.',
+                code: 'REFERRAL_USE_PROFILE'
+            });
+        }
         let accessLevelIdsValidated = null;
         if (allowAccessLevelFromBody && Array.isArray(u.accessLevelIds)) {
             const av = validateAccessLevelIdsArray(u.accessLevelIds);
@@ -6808,6 +6846,28 @@ async function handleSaveGamePost(req, res) {
         let finalServerUpdatedAt = Date.now();
         let nftAutoSanitized = false;
         let nftAutoSyncPayload = null;
+        if (effectiveAdminOverride) {
+            const crit = legacyCriticalKeysInChanges(changes);
+            if (crit.length > 0) {
+                console.log(JSON.stringify({
+                    event: 'admin_legacy_savegame_apply',
+                    actorUserId: req.userId,
+                    targetUserId: uid,
+                    fields: crit,
+                    route: String(req.originalUrl || '').slice(0, 400),
+                    ts: new Date().toISOString()
+                }));
+            }
+        }
+        const changesObj = changes && typeof changes === 'object' && !Array.isArray(changes) ? changes : {};
+        const legacyBarrier = applyLegacySaveGameFullBarrier(req, changesObj, Number(uid), effectiveAdminOverride);
+        if (legacyBarrier.mode === 'reject') {
+            return res.status(legacyBarrier.status).json({
+                error: legacyBarrier.message,
+                code: legacyBarrier.code,
+                fields: legacyBarrier.fields
+            });
+        }
         await prisma.$transaction(async (tx) => {
             const client = prismaTxToPoolLikeClient(tx);
             await client.query("SET LOCAL statement_timeout = '20s'");
@@ -6837,6 +6897,7 @@ async function handleSaveGamePost(req, res) {
                     throw new HttpControlledError(400, { error: 'Domínio workshop: envie workshopSlots.' });
                 }
                 await mergeSaveGameSlicePayload(client, Number(uid), saveDomain, changes);
+                await neutralizeLegacySaveGameSlicePayload(client, Number(uid), saveDomain, changes, req, Number(uid));
             }
             // Re-read revision *inside* the transaction so stock-affecting APIs (ex.: cancelar
             // listagem P2P) cannot be overwritten by a save whose optimistic check ran before
@@ -6978,14 +7039,15 @@ async function handleSaveGamePost(req, res) {
                 if (!batRm.ok) {
                     throw new StoredBatterySaveGuardError(batRm.error);
                 }
+                if (!effectiveAdminOverride && changes.stock && changes.placedRacks && changes.storedBatteries) {
+                    console.warn('[legacy_savegame_critical_apply]', {
+                        userId: uid,
+                        note: 'payload inclui stock+racks+baterias; DELETE de armazém protegido contra rigs na BD'
+                    });
+                }
                 // Nota: [] é válido quando todas as instâncias sairam do armazém (rigs/carregadores),
                 // desde que cada id retirado do armazém apareça montada nas rigs ou oficina (validação acima).
-                if (incomingIds.length > 0) {
-                    await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND NOT (id = ANY($2::text[])) AND workshop_slot_index IS NULL', [uid, incomingIds]);
-                }
-                else {
-                    await client.query('DELETE FROM stored_batteries WHERE user_id = $1 AND workshop_slot_index IS NULL', [uid]);
-                }
+                await deleteWarehouseStoredBatteriesExceptKeepIds(client, Number(uid), incomingIds);
                 if (changes.storedBatteries.length > 0) {
                     const bIds = changes.storedBatteries.map(b => b.id);
                     const bItemIds = changes.storedBatteries.map(b => b.itemId);
@@ -8871,6 +8933,20 @@ const startServer = async () => {
             await ensureUserLevels(); // Restore levels (Moved from top-level)
             await ensureStockItemIdsSane();
             await ensureStoredBatteriesIntegrity(db);
+            try {
+                await db.query(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_placed_racks_battery_instance_uuid_unique
+          ON placed_racks (battery_id)
+          WHERE battery_id IS NOT NULL
+            AND btrim(battery_id::text) <> ''
+            AND battery_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+        `);
+                console.log('[DB] idx_placed_racks_battery_instance_uuid_unique verificado/criado.');
+            }
+            catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                console.warn('[DB] idx_placed_racks_battery_instance_uuid_unique não aplicado (duplicados ou permissão):', msg);
+            }
             async function ensureShowInExchangeColumn() {
                 try {
                     const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name='mining_coins' AND column_name='show_in_exchange'");
@@ -8898,6 +8974,13 @@ const startServer = async () => {
     }
     registerBatteriesServerRoomRoutes(app, {
         db,
+        appendGameActivityLog,
+        validatePlacedRacksForSave,
+        sanitizePlacedRacksNftAutoRoom
+    });
+    registerServersRackAuxIntentRoutes(app, {
+        pool: db,
+        prisma,
         appendGameActivityLog,
         validatePlacedRacksForSave,
         sanitizePlacedRacksNftAutoRoom

@@ -50,6 +50,15 @@ function parseArgs(argv) {
 
 async function main() {
   const { apply, auditUserId } = parseArgs(process.argv.slice(2));
+  if (
+    apply &&
+    ['1', 'true', 'yes'].includes(String(process.env.BATTERY_RECONCILIATION_DRY_RUN ?? '').trim().toLowerCase())
+  ) {
+    console.error(
+      '[battery_repair] BATTERY_RECONCILIATION_DRY_RUN=1 bloqueia --apply. Desative a variável ou use só dry-run / npm run battery:repair:dry.'
+    );
+    process.exit(2);
+  }
   if (!apply) {
     console.log(
       '[battery_repair] DRY-RUN: nenhuma escrita. Correr antes: `npm run battery:diagnostic`.\n' +

@@ -50,6 +50,8 @@ export type PlayerInventorySnapshot = {
 export type InventoryStateV1Dto = {
   version: 1;
   serverUpdatedAt: number;
+  /** Igual a `serverUpdatedAt` — controlo de versão para mutações futuras. */
+  stateVersion: number;
   stock: Record<string, number>;
   partialChargeBatteries: InventoryBatteryInstanceDto[];
   fullChargeBatteries: InventoryBatteryInstanceDto[];

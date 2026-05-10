@@ -86,6 +86,22 @@ async function main() {
     `);
     console.log(badRack.rowCount ? badRack.rows : '(nenhum)');
 
+    section('stored_batteries: UUID montado na rig E com workshop_slot_index (estado inválido)');
+    const wsRig = await pool.query(
+      `
+      SELECT sb.id, sb.user_id, sb.workshop_slot_index, sb.workshop_component_slot_id
+        FROM stored_batteries sb
+       INNER JOIN placed_racks pr
+          ON pr.user_id = sb.user_id
+         AND btrim(pr.battery_id::text) = btrim(sb.id::text)
+         AND pr.battery_id::text ~* $1
+       WHERE sb.workshop_slot_index IS NOT NULL
+       LIMIT 100
+    `,
+      [UUID_INST]
+    );
+    console.log(wsRig.rowCount ? wsRig.rows : '(nenhum)');
+
     section('Resumo contagens');
     const c = await pool.query(`
       SELECT

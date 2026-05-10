@@ -944,6 +944,8 @@ export type ServersStatePayload = {
   version: 1;
   usdc: number;
   serverUpdatedAt: number;
+  /** Igual a `serverUpdatedAt` — controlo de versão para mutações autoritativas. */
+  stateVersion?: number;
   stock: Record<string, number>;
   storedBatteries: StoredBattery[];
   placedRacks: PlacedRack[];
@@ -959,11 +961,15 @@ export async function getServersState(): Promise<ServersStatePayload | null> {
     if (!res.ok) return null;
     const j = (await res.json()) as Partial<ServersStatePayload>;
     if (j.version !== 1 || !Array.isArray(j.rigRooms)) return null;
+    const serverUpdatedAt =
+      typeof j.serverUpdatedAt === 'number' && Number.isFinite(j.serverUpdatedAt) ? j.serverUpdatedAt : 0;
+    const stateVersion =
+      typeof j.stateVersion === 'number' && Number.isFinite(j.stateVersion) ? j.stateVersion : serverUpdatedAt;
     return {
       version: 1,
       usdc: typeof j.usdc === 'number' && Number.isFinite(j.usdc) ? j.usdc : 0,
-      serverUpdatedAt:
-        typeof j.serverUpdatedAt === 'number' && Number.isFinite(j.serverUpdatedAt) ? j.serverUpdatedAt : 0,
+      serverUpdatedAt,
+      stateVersion,
       stock: j.stock && typeof j.stock === 'object' && !Array.isArray(j.stock) ? (j.stock as Record<string, number>) : {},
       storedBatteries: Array.isArray(j.storedBatteries) ? (j.storedBatteries as StoredBattery[]) : [],
       placedRacks: Array.isArray(j.placedRacks) ? (j.placedRacks as PlacedRack[]) : [],
@@ -976,6 +982,104 @@ export async function getServersState(): Promise<ServersStatePayload | null> {
     };
   } catch {
     return null;
+  }
+}
+
+export type ServersRackAuxIntentOk = {
+  ok: true;
+  serverUpdatedAt: number;
+  stateVersion: number;
+  stock: Record<string, number>;
+  storedBatteries: StoredBattery[];
+  placedRacks: PlacedRack[];
+};
+
+/** Equipar auxiliar na rig (bateria / cablagem / multiplicador) — mutação autoritativa. */
+export async function postServersRackAuxEquip(
+  rackId: string,
+  body: {
+    kind: 'battery' | 'wiring' | 'multiplier';
+    storedBatteryId?: string;
+    catalogItemId?: string;
+    multiplierSlotIndex?: number;
+  }
+): Promise<
+  | ServersRackAuxIntentOk
+  | { ok: false; status: number; error: string; code?: string; forceReload?: boolean }
+> {
+  const idem = newServerIntentIdempotencyKey();
+  const clientStateVersion = getGlobalLastLoadTime();
+  try {
+    const res = await apiFetch(`${base}/servers/racks/${encodeURIComponent(rackId)}/aux/equip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, idempotencyKey: idem, clientStateVersion })
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof raw.error === 'string' ? raw.error : 'Pedido falhou.';
+      const code = typeof raw.code === 'string' ? raw.code : undefined;
+      const forceReload = raw.forceReload === true;
+      return { ok: false, status: res.status, error: err, code, forceReload };
+    }
+    if (raw.ok !== true) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const su = Number(raw.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
+    return {
+      ok: true,
+      serverUpdatedAt: Number.isFinite(su) ? su : 0,
+      stateVersion: Number(raw.stateVersion) || su || 0,
+      stock:
+        raw.stock && typeof raw.stock === 'object' && !Array.isArray(raw.stock)
+          ? (raw.stock as Record<string, number>)
+          : {},
+      storedBatteries: Array.isArray(raw.storedBatteries) ? (raw.storedBatteries as StoredBattery[]) : [],
+      placedRacks: Array.isArray(raw.placedRacks) ? (raw.placedRacks as PlacedRack[]) : []
+    };
+  } catch {
+    return { ok: false, status: 0, error: 'Erro de rede.' };
+  }
+}
+
+/** Desequipar auxiliar na rig. */
+export async function postServersRackAuxUnequip(
+  rackId: string,
+  body: { kind: 'battery' | 'wiring' | 'multiplier'; multiplierSlotIndex?: number }
+): Promise<
+  | ServersRackAuxIntentOk
+  | { ok: false; status: number; error: string; code?: string; forceReload?: boolean }
+> {
+  const idem = newServerIntentIdempotencyKey();
+  const clientStateVersion = getGlobalLastLoadTime();
+  try {
+    const res = await apiFetch(`${base}/servers/racks/${encodeURIComponent(rackId)}/aux/unequip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...body, idempotencyKey: idem, clientStateVersion })
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof raw.error === 'string' ? raw.error : 'Pedido falhou.';
+      const code = typeof raw.code === 'string' ? raw.code : undefined;
+      const forceReload = raw.forceReload === true;
+      return { ok: false, status: res.status, error: err, code, forceReload };
+    }
+    if (raw.ok !== true) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const su = Number(raw.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
+    return {
+      ok: true,
+      serverUpdatedAt: Number.isFinite(su) ? su : 0,
+      stateVersion: Number(raw.stateVersion) || su || 0,
+      stock:
+        raw.stock && typeof raw.stock === 'object' && !Array.isArray(raw.stock)
+          ? (raw.stock as Record<string, number>)
+          : {},
+      storedBatteries: Array.isArray(raw.storedBatteries) ? (raw.storedBatteries as StoredBattery[]) : [],
+      placedRacks: Array.isArray(raw.placedRacks) ? (raw.placedRacks as PlacedRack[]) : []
+    };
+  } catch {
+    return { ok: false, status: 0, error: 'Erro de rede.' };
   }
 }
 
@@ -1346,6 +1450,7 @@ export type PlayerInventoryStateOk = {
   ok: true;
   version: 1;
   serverUpdatedAt: number;
+  stateVersion: number;
   stock: Record<string, number>;
   partialChargeBatteries: StoredBattery[];
   fullChargeBatteries: StoredBattery[];
@@ -1486,11 +1591,14 @@ export async function getPlayerInventoryState(): Promise<
     }
     const su = Number(body.serverUpdatedAt);
     const serverUpdatedAt = Number.isFinite(su) ? su : 0;
+    const sv = Number(body.stateVersion);
+    const stateVersion = Number.isFinite(sv) ? sv : serverUpdatedAt;
     if (serverUpdatedAt > 0) globalLastLoadTime = serverUpdatedAt;
     return {
       ok: true,
       version: 1,
       serverUpdatedAt,
+      stateVersion,
       stock,
       partialChargeBatteries: partial,
       fullChargeBatteries: full,
@@ -2875,6 +2983,22 @@ let globalLastLoadTime = 0;
 /** Revisão do servidor usada em saves e mutações autoritárias (ex.: oficina). */
 export function getGlobalLastLoadTime(): number {
   return globalLastLoadTime;
+}
+
+export function setGlobalLastLoadTime(ms: number): void {
+  if (Number.isFinite(ms) && ms > 0) globalLastLoadTime = ms;
+}
+
+/** Chave idempotência para mutações de intenção na área Servidores (8–128 chars seguros). */
+export function newServerIntentIdempotencyKey(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID();
+    }
+  } catch {
+    /* ignore */
+  }
+  return `srv_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
 }
 
 export type WorkshopMutateAction = 'equip_bench' | 'unequip_bench' | 'equip_component' | 'unequip_component';

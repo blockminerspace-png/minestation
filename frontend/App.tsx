@@ -37,6 +37,8 @@ import {
   getPublicBootstrapLite,
   performWorkshopInstantRecharge,
   saveGameState as apiSaveGameState,
+  postServersRackAuxEquip,
+  postServersRackAuxUnequip,
   postServerRoomBulkBatteries,
   postServerRoomRoomCoins,
   postWorkshopMutate,
@@ -47,7 +49,8 @@ import {
   logout as apiLogout,
   getPlayerInventoryMe,
   getPlayerInventoryState,
-  type InventoryStackableCategoryApi
+  type InventoryStackableCategoryApi,
+  type ServersRackAuxIntentOk
 } from './services/api';
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
@@ -353,6 +356,7 @@ export default function App() {
   const gameStateRef = useRef(gameState);
   /** UUID na rig (bateria tirada do stock) → id de catálogo até existir linha em `stored_batteries` após save/reload. */
   const rackBatteryFromStockCatalogRef = useRef<Map<string, string>>(new Map());
+  const rackAuxIntentBusyRef = useRef(false);
 
   /** Sincroniza hints UUID→catálogo com `stored_batteries` (GET/recuperação) e remove chaves órfãs. */
   useEffect(() => {
@@ -663,17 +667,8 @@ export default function App() {
     return () => clearTimeout(timeout);
   }, [saveTrigger, user, saveLoaded, runPlayerSaveWithRetries]);
 
-  // Save on Before Unload
-  useEffect(() => {
-    const handleBeforeUnload = () => {
-      const saveKey = user?.email?.trim() || (user?.id != null ? String(user.id) : '');
-      if (saveKey && !user.isAdmin && saveLoaded) {
-        apiSaveGameState(saveKey, gameStateRef.current, { keepalive: true });
-      }
-    };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
-  }, [user, saveLoaded]);
+  // Removido save completo em `beforeunload`: enviar o jogo inteiro ao fechar o separador era
+  // payload legado perigoso (race com outra aba / estado velho). Estado real vem do backend no próximo load.
   const getAllowedPages = (): string[] => {
     const userLvls = user?.accessLevelIds || (user?.accessLevelId ? [user.accessLevelId] : []);
     let pages: string[];
@@ -1587,9 +1582,8 @@ export default function App() {
       if (ws?.ok) setWalletServerSnapshot(ws);
       const feeMsg = res.feeUsdc && res.feeUsdc > 0 ? ` (Taxa: $${Number(res.feeUsdc).toFixed(4)})` : '';
       alert(`Venda realizada com sucesso! +$${Number(res.netUsdc ?? 0).toFixed(4)} USDC${feeMsg}`);
-      void requestSave();
     },
-    [user, handleReloadGameState, requestSave]
+    [user, handleReloadGameState]
   );
 
   const [adSelection, setAdSelection] = useState<{ wsIdx: number } | null>(null);
@@ -1707,132 +1701,101 @@ export default function App() {
     requestSave();
   }, [requestSave]);
 
-  const handleEquipAux = useCallback((rid: string, iid: string, type: string, sbid?: string, idx?: number) => {
-    setGameState(p => {
-      const ri = p.placedRacks.findIndex(r => r.id === rid); if (ri === -1) return p;
-      const ur = [...p.placedRacks]; const r = { ...ur[ri] }; let ns = { ...p.stock }; let nb = [...p.storedBatteries]; let initCharge = 0;
-
-      // --- [FIX] Recover old item if slot is occupied ---
-      let oldItemId: string | null = null;
-      let oldCharge = 0;
-      if (type === 'battery' && r.batteryId) {
-        oldItemId = r.batteryId;
-        oldCharge = r.currentCharge;
-      } else if (type === 'wiring' && r.wiringId) {
-        oldItemId = r.wiringId;
-      } else if (type === 'multiplier' && idx !== undefined && r.multiplierSlots[idx]) {
-        oldItemId = r.multiplierSlots[idx];
-      }
-
-      if (oldItemId) {
-        const hintSnapOld = Object.fromEntries(rackBatteryFromStockCatalogRef.current);
-        rackBatteryFromStockCatalogRef.current.delete(String(oldItemId));
+  const handleEquipAux = useCallback(
+    async (rid: string, iid: string, type: string, sbid?: string, idx?: number) => {
+      if (!user?.email || rackAuxIntentBusyRef.current) return;
+      rackAuxIntentBusyRef.current = true;
+      const applyServer = (out: ServersRackAuxIntentOk) => {
+        setGameState((p) => ({
+          ...p,
+          stock: out.stock,
+          storedBatteries: out.storedBatteries,
+          placedRacks: out.placedRacks
+        }));
+        for (const r of out.placedRacks) {
+          const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+          const cat = r.batteryCatalogItemId != null ? String(r.batteryCatalogItemId).trim() : '';
+          if (bid && cat) rackBatteryFromStockCatalogRef.current.set(bid, cat);
+        }
+      };
+      try {
         if (type === 'battery') {
-          const catOld = resolveEquippedBatteryCatalogId(oldItemId, nb, gameUpgrades, hintSnapOld);
-          if (catOld) {
-            const upg = gameUpgrades.find((u) => u.id === catOld && u.type === 'battery');
-            const capacity = upg?.powerCapacity || 100;
-            const isFull = oldCharge >= (capacity * 0.999);
-            if (isFull) {
-              ns[catOld] = (ns[catOld] || 0) + 1;
-            } else {
-              const upOld = gameUpgrades.find((u) => u.id === catOld && u.type === 'battery');
-            nb.push({
-              id: crypto.randomUUID(),
-              itemId: catOld,
-              currentCharge: oldCharge,
-              powerCapacityWh: upOld?.powerCapacity ?? null,
-              displayName: upOld?.name ?? null,
-              imageUrl: upOld?.image ?? null
-            });
-            }
-          }
-        } else {
-          ns[oldItemId] = (ns[oldItemId] || 0) + 1;
-        }
-      }
-      // ------------------------------------------------
-
-      if (type === 'battery') {
-        // Armazém: `sbid` é o UUID em `stored_batteries`; a rig tem de referenciar essa instância (não o id de catálogo `iid`),
-        // senão o guard de save vê a instância removida do armazém sem aparecer em `batteryId` e falha / “tira” a bateria.
-        if (sbid) {
-          const s = nb.find((b) => b.id === sbid);
-          if (!s) return p;
-          initCharge = s.currentCharge;
-          rackBatteryFromStockCatalogRef.current.set(sbid, String(s.itemId).trim());
-          nb = nb.filter((b) => b.id !== sbid);
-          r.batteryId = sbid;
-          const catW = String(s.itemId).trim();
-          const upW = gameUpgrades.find((u) => u.id === catW && u.type === 'battery');
-          r.batteryCatalogItemId = catW;
-          r.batteryPowerCapacityWh = upW?.powerCapacity ?? null;
-          r.batteryDisplayName = upW?.name ?? null;
-          r.batteryImageUrl = upW?.image ?? null;
-        } else {
-          if ((ns[iid] || 0) < 1) return p;
-          ns[iid]--;
-          initCharge = gameUpgrades.find((u) => u.id === iid)?.powerCapacity || 0;
-          r.batteryId =
-            typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-              ? crypto.randomUUID()
-              : `sb_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
-          rackBatteryFromStockCatalogRef.current.set(r.batteryId, iid);
-          const upS = gameUpgrades.find((u) => u.id === iid && u.type === 'battery');
-          r.batteryCatalogItemId = iid;
-          r.batteryPowerCapacityWh = upS?.powerCapacity ?? null;
-          r.batteryDisplayName = upS?.name ?? null;
-          r.batteryImageUrl = upS?.image ?? null;
-        }
-        r.currentCharge = initCharge;
-        r.isOn = true;
-      } else if (type === 'wiring') { if ((ns[iid] || 0) < 1) return p; ns[iid]--; r.wiringId = iid; }
-      else if (type === 'multiplier' && idx !== undefined) { if ((ns[iid] || 0) < 1) return p; ns[iid]--; r.multiplierSlots = [...r.multiplierSlots]; r.multiplierSlots[idx] = iid; }
-      ur[ri] = r; return { ...p, stock: ns, storedBatteries: nb, placedRacks: ur };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
-
-  const handleUnequipAux = useCallback((rid: string, type: string, idx?: number) => {
-    setGameState(p => {
-      const ri = p.placedRacks.findIndex(r => r.id === rid); if (ri === -1) return p;
-      const ur = [...p.placedRacks]; const r = { ...ur[ri] }; let id: string | null = null;
-      if (type === 'battery') id = r.batteryId; else if (type === 'wiring') id = r.wiringId; else if (type === 'multiplier' && idx !== undefined) id = r.multiplierSlots[idx];
-      if (!id) return p; let ns = { ...p.stock }; let nb = [...p.storedBatteries];
-      if (type === 'battery') {
-        const hintSnap = Object.fromEntries(rackBatteryFromStockCatalogRef.current);
-        const catId = resolveEquippedBatteryCatalogId(id, p.storedBatteries, gameUpgrades, hintSnap);
-        if (!catId) return p;
-        rackBatteryFromStockCatalogRef.current.delete(id);
-        const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
-        const capacity = upg?.powerCapacity || 100;
-        const isFull = r.currentCharge >= (capacity * 0.999);
-        if (isFull) {
-          ns[catId] = (ns[catId] || 0) + 1;
-        } else {
-          nb.push({
-            id: crypto.randomUUID(),
-            itemId: catId,
-            currentCharge: r.currentCharge,
-            powerCapacityWh: upg?.powerCapacity ?? null,
-            displayName: upg?.name ?? null,
-            imageUrl: upg?.image ?? null
+          const out = await postServersRackAuxEquip(rid, {
+            kind: 'battery',
+            ...(sbid ? { storedBatteryId: sbid } : { catalogItemId: iid })
           });
+          if (out.ok !== true) {
+            if (out.status === 409 || out.forceReload) setGameStateReloadNonce((n) => n + 1);
+            alert(out.error);
+            return;
+          }
+          applyServer(out);
+        } else if (type === 'wiring') {
+          const out = await postServersRackAuxEquip(rid, { kind: 'wiring', catalogItemId: iid });
+          if (out.ok !== true) {
+            if (out.status === 409 || out.forceReload) setGameStateReloadNonce((n) => n + 1);
+            alert(out.error);
+            return;
+          }
+          applyServer(out);
+        } else if (type === 'multiplier' && idx !== undefined) {
+          const out = await postServersRackAuxEquip(rid, {
+            kind: 'multiplier',
+            catalogItemId: iid,
+            multiplierSlotIndex: idx
+          });
+          if (out.ok !== true) {
+            if (out.status === 409 || out.forceReload) setGameStateReloadNonce((n) => n + 1);
+            alert(out.error);
+            return;
+          }
+          applyServer(out);
         }
-        r.batteryId = null;
-        r.batteryCatalogItemId = undefined;
-        r.batteryPowerCapacityWh = undefined;
-        r.batteryDisplayName = undefined;
-        r.batteryImageUrl = undefined;
-        r.currentCharge = 0;
-        r.isOn = false;
+      } finally {
+        rackAuxIntentBusyRef.current = false;
       }
-      else if (type === 'wiring') { ns[id] = (ns[id] || 0) + 1; r.wiringId = null; }
-      else if (type === 'multiplier' && idx !== undefined) { ns[id] = (ns[id] || 0) + 1; r.multiplierSlots = [...r.multiplierSlots]; r.multiplierSlots[idx] = null; }
-      ur[ri] = r; return { ...p, stock: ns, storedBatteries: nb, placedRacks: ur };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
+    },
+    [user?.email, setGameStateReloadNonce]
+  );
+
+  const handleUnequipAux = useCallback(
+    async (rid: string, type: string, idx?: number) => {
+      if (!user?.email || rackAuxIntentBusyRef.current) return;
+      rackAuxIntentBusyRef.current = true;
+      const applyServer = (out: ServersRackAuxIntentOk) => {
+        setGameState((p) => ({
+          ...p,
+          stock: out.stock,
+          storedBatteries: out.storedBatteries,
+          placedRacks: out.placedRacks
+        }));
+        for (const r of out.placedRacks) {
+          const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+          const cat = r.batteryCatalogItemId != null ? String(r.batteryCatalogItemId).trim() : '';
+          if (bid && cat) rackBatteryFromStockCatalogRef.current.set(bid, cat);
+        }
+      };
+      try {
+        if (type === 'multiplier' && idx === undefined) return;
+        const body =
+          type === 'multiplier'
+            ? ({ kind: 'multiplier' as const, multiplierSlotIndex: idx ?? 0 } as const)
+            : type === 'wiring'
+              ? ({ kind: 'wiring' as const } as const)
+              : ({ kind: 'battery' as const } as const);
+        const out = await postServersRackAuxUnequip(rid, body);
+        if (out.ok !== true) {
+          if (out.status === 409 || out.forceReload) setGameStateReloadNonce((n) => n + 1);
+          alert(out.error);
+          return;
+        }
+        applyServer(out);
+      } finally {
+        rackAuxIntentBusyRef.current = false;
+      }
+    },
+    [user?.email, setGameStateReloadNonce]
+  );
 
   const handleTogglePower = useCallback((rid: string) => {
     setGameState(p => {

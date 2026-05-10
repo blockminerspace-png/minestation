@@ -4,6 +4,7 @@
  */
 import type { PrismaClient } from '@prisma/client';
 import type { Pool } from 'pg';
+import { computeProgressForUser } from '../../cron/miningProgressComputer.js';
 import { SAVE_GAME_ITEM_ID_RE } from '../../lib/saveGameEconomyValidate.js';
 import { enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from '../../lib/saveGameEconomyValidate.js';
 import { loadMyRigRoomsForUser } from '../../lib/meUpgradeShopBundlePayload.js';
@@ -98,6 +99,14 @@ export async function buildServersAuthoritativeStateDto(
   uid: number,
   userEmail: string
 ): Promise<ServersAuthoritativeStateDto> {
+  const progressRes = await computeProgressForUser(pool, uid, Date.now());
+  if (!progressRes.ok) {
+    console.warn(
+      '[servers/state] computeProgressForUser falhou uid=%s — snapshot pode estar ligeiramente atrás neste pedido',
+      uid
+    );
+  }
+
   const [
     gsRow,
     stockRows,
@@ -219,11 +228,13 @@ export async function buildServersAuthoritativeStateDto(
   }
 
   const serverUpdatedAtNum = Number(gs.server_updated_at ?? 0);
+  const serverUpdatedAt = Number.isFinite(serverUpdatedAtNum) ? serverUpdatedAtNum : 0;
 
   return {
     version: 1,
     usdc: gs.usdc,
-    serverUpdatedAt: Number.isFinite(serverUpdatedAtNum) ? serverUpdatedAtNum : 0,
+    serverUpdatedAt,
+    stateVersion: serverUpdatedAt,
     stock,
     storedBatteries,
     placedRacks,

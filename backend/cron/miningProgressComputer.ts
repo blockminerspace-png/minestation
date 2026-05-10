@@ -17,6 +17,20 @@ import {
 
 const LOG_PREFIX = '[MiningProgress]';
 
+let miningProgressLedgerSchemaWarned = false;
+
+function miningProgressDistributedLockEffective(): boolean {
+  return (
+    String(process.env.REDIS_URL || '').trim().length > 0 &&
+    String(process.env.GENESIS_REDIS_LOCKS_ENABLED ?? '1').trim() !== '0'
+  );
+}
+
+function envFlagTrue(raw: string | undefined): boolean {
+  const t = String(raw ?? '').trim().toLowerCase();
+  return t === '1' || t === 'true' || t === 'yes';
+}
+
 /** Alinhado à retenção de `mining_yield_history` — também limita quanto tempo pode ser creditado de uma vez (anti-farm / anti-manipulação de relógio). */
 const MAX_EARNING_WINDOW_MS = 72 * 3600 * 1000;
 const YIELD_HISTORY_LOOKBACK_MS = 73 * 3600 * 1000;
@@ -151,6 +165,14 @@ export async function computeProgressForUser(
   ) {
     console.log(
       `${LOG_PREFIX} user=%s compute desligado (MINING_PROGRESS_COMPUTE_ENABLED ou BATTERY_WORKERS_ENABLED=0)`,
+      userId
+    );
+    return { ok: true };
+  }
+
+  if (envFlagTrue(process.env.MINING_PROGRESS_REQUIRE_REDIS_LOCK) && !miningProgressDistributedLockEffective()) {
+    console.warn(
+      `${LOG_PREFIX} user=%s ignorado (MINING_PROGRESS_REQUIRE_REDIS_LOCK sem Redis/locks efectivos — evita corrida multi-processo)`,
       userId
     );
     return { ok: true };
@@ -516,6 +538,38 @@ export async function computeProgressForUser(
       return { ok: true };
     }
 
+    const idempotencyKey = `mp:${userId}:${Math.floor(last)}:${Math.floor(lastWrite)}`.slice(0, 190);
+    if (String(process.env.MINING_PROGRESS_LEDGER_ENABLED ?? '1').trim() !== '0') {
+      try {
+        const led = await client.query(
+          `INSERT INTO mining_progress_commit_ledger (user_id, idempotency_key) VALUES ($1, $2)
+           ON CONFLICT (user_id, idempotency_key) DO NOTHING RETURNING id`,
+          [userId, idempotencyKey]
+        );
+        if ((led.rowCount ?? 0) === 0) {
+          await client.query('ROLLBACK');
+          console.log(
+            `${LOG_PREFIX} user=%s idempotência ledger duplicada — skip key=%s lockAcquired=true`,
+            userId,
+            sanitizeForLog(idempotencyKey, 120)
+          );
+          return { ok: true };
+        }
+      } catch (e: unknown) {
+        const code = e && typeof e === 'object' && 'code' in e ? String((e as { code?: string }).code) : '';
+        if (code === '42P01') {
+          if (!miningProgressLedgerSchemaWarned) {
+            miningProgressLedgerSchemaWarned = true;
+            console.warn(
+              `${LOG_PREFIX} tabela mining_progress_commit_ledger ausente (42P01) — aplicar migrate; idempotência por ledger desactivada neste arranque`
+            );
+          }
+        } else {
+          throw e;
+        }
+      }
+    }
+
     if (totalGained.size > 0) {
       const cIds = Array.from(totalGained.keys());
       const cAmts = Array.from(totalGained.values());
@@ -554,7 +608,16 @@ export async function computeProgressForUser(
       await client.query(
         `UPDATE stored_batteries SET current_charge = data.charge
         FROM (SELECT unnest($1::text[]) as id, unnest($2::numeric[]) as charge) as data
-        WHERE stored_batteries.id = data.id AND stored_batteries.user_id = $3`,
+        WHERE stored_batteries.id = data.id
+          AND stored_batteries.user_id = $3
+          AND NOT EXISTS (
+            SELECT 1 FROM placed_racks pr
+             WHERE pr.user_id = $3
+               AND pr.battery_id IS NOT NULL
+               AND btrim(pr.battery_id::text) <> ''
+               AND btrim(pr.battery_id::text) = btrim(stored_batteries.id::text)
+               AND pr.battery_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
+          )`,
         [bIds, bCharges, userId]
       );
     }
@@ -562,7 +625,6 @@ export async function computeProgressForUser(
     await client.query('UPDATE game_states SET last_updated_at = $1 WHERE user_id = $2', [lastWrite, userId]);
     await client.query('COMMIT');
 
-    const idempotencyKey = `mining-progress:${userId}:${Math.floor(last)}:${Math.floor(lastWrite)}`;
     if (totalGained.size > 0) {
       console.log(
         `${LOG_PREFIX} user=%s credited coins=%s lastWrite=%s idempotencyKey=%s lockAcquired=true`,

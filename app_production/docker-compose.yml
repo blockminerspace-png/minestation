@@ -57,6 +57,7 @@ services:
       REDIS_URL: redis://redis_app:6379
       MONGODB_URI: mongodb://mongodb_app:27017/genesis_logs
       PORT: 3000
+      MINING_PROGRESS_REQUIRE_REDIS_LOCK: "1"
     env_file:
       - .env
     volumes:

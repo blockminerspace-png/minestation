@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from 'express';
+import type { Pool } from 'pg';
 import { rateLimit } from 'express-rate-limit';
 import { prisma } from '../../config/prisma.js';
 import { buildInventoryStateV1 } from './inventory.snapshot.service.js';
@@ -14,6 +15,7 @@ const inventoryStateLimiter = rateLimit({
 
 export type InventoryModuleDeps = {
   authenticateToken: (req: Request, res: Response, next: () => void) => void;
+  pool: Pool;
 };
 
 /**
@@ -21,7 +23,7 @@ export type InventoryModuleDeps = {
  * `GET /api/inventory/me` permanece em `inventoryController.ts` (compat).
  */
 export function registerInventoryModuleRoutes(app: Express, deps: InventoryModuleDeps): void {
-  const { authenticateToken } = deps;
+  const { authenticateToken, pool } = deps;
 
   app.get('/api/inventory/state', inventoryStateLimiter, authenticateToken, async (req: Request, res: Response) => {
     const uid = req.userId;
@@ -45,7 +47,7 @@ export function registerInventoryModuleRoutes(app: Express, deps: InventoryModul
         return res.status(403).json({ error: 'Conta bloqueada.', code: 'FORBIDDEN' });
       }
 
-      const dto = await buildInventoryStateV1(userId);
+      const dto = await buildInventoryStateV1(pool, userId);
       return res.status(200).json(dto);
     } catch (e) {
       return sendInternalErrorSafeMessageOrPrisma(
