@@ -90,51 +90,53 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
         setIsResizingCanvas(true);
     };
 
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
+    /**
+     * Upload via `multipart/form-data` em `/api/admin/upload-image` (sem
+     * inflar via base64). Lê as dimensões do ficheiro localmente para ajustar
+     * `canvasWidth`/`canvasHeight` antes de enviar.
+     */
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const input = e.target;
+        const file = input.files?.[0];
         if (!file) return;
-        if (!['image/png', 'image/gif', 'image/jpeg'].includes(file.type)) {
-            alert('Apenas PNG, GIF ou JPEG são permitidos.');
+        const okMime = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+        if (!okMime.includes(file.type)) {
+            alert('Formato de imagem inválido. Usa PNG, JPG, WEBP ou GIF.');
+            input.value = '';
             return;
         }
-
-        const reader = new FileReader();
-        reader.onload = async () => {
-            const dataUrl = reader.result as string;
-
-            // Detect image dimensions
+        const dims = await new Promise<{ w: number; h: number } | null>((resolve) => {
+            const objUrl = URL.createObjectURL(file);
             const img = new Image();
-            img.onload = async () => {
-                const width = img.width;
-                const height = img.height;
-
-                try {
-                    const body: Record<string, string> = { dataUrl, originalName: file.name };
-                    if (imageUploadFolder) body.assetFolder = imageUploadFolder;
-                    const res = await fetch('/api/upload-image', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(body)
-                    });
-                    const payload = await res.json();
-                    if (payload && payload.path) {
-                        setTempImage(payload.path);
-                        // Update layout dimensions automatically
-                        setLayout(prev => ({
-                            ...prev,
-                            canvasWidth: width,
-                            canvasHeight: height
-                        }));
-                    } else {
-                        alert('Falha ao enviar imagem.');
-                    }
-                } catch (err) {
-                    alert('Erro no upload da imagem.');
+            img.onload = () => { resolve({ w: img.width, h: img.height }); URL.revokeObjectURL(objUrl); };
+            img.onerror = () => { resolve(null); URL.revokeObjectURL(objUrl); };
+            img.src = objUrl;
+        });
+        const fd = new FormData();
+        fd.append('image', file, file.name);
+        if (imageUploadFolder) fd.append('assetFolder', imageUploadFolder);
+        try {
+            const res = await fetch('/api/admin/upload-image', {
+                method: 'POST',
+                credentials: 'include',
+                body: fd
+            });
+            let payload: { ok?: boolean; path?: string; url?: string; error?: string } | null = null;
+            try { payload = await res.json(); } catch { /* sem JSON */ }
+            const url = payload?.path || payload?.url;
+            if (res.ok && payload?.ok && url) {
+                setTempImage(url);
+                if (dims) {
+                    setLayout(prev => ({ ...prev, canvasWidth: dims.w, canvasHeight: dims.h }));
                 }
-            };
-            img.src = dataUrl;
-        };
-        reader.readAsDataURL(file);
+            } else {
+                alert(payload?.error || `Falha ao enviar imagem (HTTP ${res.status}).`);
+            }
+        } catch {
+            alert('Falha de rede ao enviar imagem. Verifica a ligação e tenta novamente.');
+        } finally {
+            input.value = '';
+        }
     };
 
     const handleMouseMove = (e: React.MouseEvent) => {

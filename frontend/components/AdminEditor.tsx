@@ -26,35 +26,46 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
         sellInHardwareMarket: true, sellInBlackMarket: true, isActive: true
     });
 
-    const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
+    const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+    /**
+     * Upload via `multipart/form-data` em `/api/admin/upload-image` — evita o
+     * tecto de 5 MB do body parser JSON e mostra erros reais do backend.
+     */
+    const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const input = e.target;
+        const file = input.files?.[0];
         if (!file) return;
-        if (!['image/png', 'image/gif', 'image/jpeg'].includes(file.type)) {
-            alert('Apenas PNG ou GIF são permitidos.');
+        const okMime = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+        if (!okMime.includes(file.type)) {
+            alert('Formato de imagem inválido. Usa PNG, JPG, WEBP ou GIF.');
+            input.value = '';
             return;
         }
-        const reader = new FileReader();
-        reader.onload = async () => {
-            const dataUrl = reader.result as string;
-            try {
-                const body: Record<string, string> = { dataUrl, originalName: file.name };
-                if (imageUploadFolder) body.assetFolder = imageUploadFolder;
-                const res = await fetch('/api/upload-image', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(body)
-                });
-                const payload = await res.json();
-                if (payload && payload.path) {
-                    setItemForm(prev => ({ ...prev, image: payload.path }));
-                } else {
-                    alert('Falha ao enviar imagem.');
-                }
-            } catch (err) {
-                alert('Erro no upload da imagem.');
+        const fd = new FormData();
+        fd.append('image', file, file.name);
+        if (imageUploadFolder) fd.append('assetFolder', imageUploadFolder);
+        setIsUploadingImage(true);
+        try {
+            const res = await fetch('/api/admin/upload-image', {
+                method: 'POST',
+                credentials: 'include',
+                body: fd
+            });
+            let payload: { ok?: boolean; path?: string; url?: string; error?: string } | null = null;
+            try { payload = await res.json(); } catch { /* sem JSON */ }
+            const url = payload?.path || payload?.url;
+            if (res.ok && payload?.ok && url) {
+                setItemForm(prev => ({ ...prev, image: url }));
+            } else {
+                alert(payload?.error || `Falha ao enviar imagem (HTTP ${res.status}).`);
             }
-        };
-        reader.readAsDataURL(file);
+        } catch {
+            alert('Falha de rede ao enviar imagem. Verifica a ligação e tenta novamente.');
+        } finally {
+            setIsUploadingImage(false);
+            input.value = '';
+        }
     };
 
     const handleNewItem = () => {
@@ -173,13 +184,20 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                                     </select>
                                     <input
                                         type="file"
-                                        accept="image/png,image/gif,image/jpeg"
+                                        accept="image/png,image/jpeg,image/webp,image/gif"
                                         onChange={handleImageUpload}
-                                        className="text-xs text-white"
+                                        disabled={isUploadingImage}
+                                        className="text-xs text-white disabled:opacity-50"
                                     />
+                                    {isUploadingImage && (
+                                        <span className="text-xs font-bold uppercase tracking-wide text-amber-400">
+                                            Enviando…
+                                        </span>
+                                    )}
                                     <button
                                         onClick={() => setItemForm(prev => ({ ...prev, image: '' }))}
-                                        className="bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-2 rounded font-bold"
+                                        disabled={isUploadingImage}
+                                        className="bg-slate-700 hover:bg-slate-600 text-white text-xs px-3 py-2 rounded font-bold disabled:opacity-50"
                                     >
                                         Remover imagem
                                     </button>

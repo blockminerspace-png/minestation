@@ -16,6 +16,18 @@ import {
   sanitizeOriginalNameBase
 } from '../models/imageAssetModel.js';
 
+/** Extensões + mimetypes aceites no upload admin (multipart). */
+const ADMIN_UPLOAD_ALLOWED_EXT = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif']);
+const ADMIN_UPLOAD_ALLOWED_MIME = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/jpg',
+  'image/webp',
+  'image/gif'
+]);
+/** Limite generoso para arte de itens (multipart, sem inflar via base64). */
+const ADMIN_UPLOAD_MAX_BYTES = 15 * 1024 * 1024;
+
 export type ImageAssetControllerDeps = {
   isAdmin: RequestHandler;
   imgDir: string;
@@ -84,9 +96,48 @@ function createAdminAdMulter(uploadsDir: string): ReturnType<typeof multer> {
   });
 }
 
+/**
+ * Multer dedicado ao upload admin de imagens de itens. Recebe `multipart/form-data`
+ * directamente em disco — sem passar por base64 / JSON — para escapar ao limite
+ * global de `express.json({ limit: '5mb' })` que estava a derrubar uploads >3.6 MB.
+ *
+ * Aceita também o campo de texto `assetFolder` (subpasta canónica).
+ */
+function createAdminImageMulter(uploadsDir: string): ReturnType<typeof multer> {
+  const storage = multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      try {
+        fs.mkdirSync(uploadsDir, { recursive: true });
+      } catch {
+        /* idempotente */
+      }
+      cb(null, uploadsDir);
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || '.png';
+      const safeBase = sanitizeOriginalNameBase(file.originalname);
+      cb(null, buildStoredUploadFilename(safeBase, ext));
+    }
+  });
+  return multer({
+    storage,
+    limits: { fileSize: ADMIN_UPLOAD_MAX_BYTES, files: 1 },
+    fileFilter: (_req, file, cb) => {
+      const ext = path.extname(file.originalname || '').toLowerCase();
+      const mime = String(file.mimetype || '').toLowerCase();
+      if (ADMIN_UPLOAD_ALLOWED_EXT.has(ext) && ADMIN_UPLOAD_ALLOWED_MIME.has(mime)) {
+        cb(null, true);
+      } else {
+        cb(new Error('Formato de imagem inválido. Usa PNG, JPG, WEBP ou GIF.'));
+      }
+    }
+  });
+}
+
 export function registerImageAssetRoutes(app: Express, deps: ImageAssetControllerDeps): void {
   const { isAdmin, imgDir, uploadsDir } = deps;
   const uploadAd = createAdminAdMulter(uploadsDir);
+  const uploadAdminImage = createAdminImageMulter(uploadsDir);
 
   app.post('/api/upload-image', async (req: Request, res: Response) => {
     if (!req.userId) {
@@ -149,6 +200,75 @@ export function registerImageAssetRoutes(app: Express, deps: ImageAssetControlle
       /* best-effort */
     }
     return res.json({ path: publicPath });
+  });
+
+  /**
+   * Upload admin de imagens de itens / arte (Mercado de Hardware, Editor, etc.).
+   *
+   * Endpoint multipart (não JSON) para evitar o tecto de 5 MB do body parser e
+   * para nunca usar 500 genérico em erros de validação.
+   *
+   *   Request:  multipart/form-data  field `image`  + opcional `assetFolder`
+   *   Sucesso:  { ok: true, path: '/img/<sub>/<file>', url: same }
+   *   Erros:    400 (mime/extensão inválida ou ficheiro em falta)
+   *             401 (sem sessão), 403 (não-admin)
+   *             413 (ficheiro maior que ADMIN_UPLOAD_MAX_BYTES)
+   *             500 (erro IO real ao gravar)
+   */
+  app.post('/api/admin/upload-image', isAdmin, (req: Request, res: Response) => {
+    uploadAdminImage.single('image')(req, res, async (err: unknown) => {
+      const uidLog = req.userId != null ? String(req.userId) : 'anon';
+      if (err) {
+        const e = err as { code?: string; message?: string };
+        if (e?.code === 'LIMIT_FILE_SIZE') {
+          console.warn('[AdminImageUpload] payload too large', { uid: uidLog });
+          return res.status(413).json({ ok: false, error: 'Imagem muito grande (máx. 15 MB).' });
+        }
+        console.warn('[AdminImageUpload] multer error', { uid: uidLog, msg: e?.message });
+        return res
+          .status(400)
+          .json({ ok: false, error: e?.message || 'Formato de imagem inválido.' });
+      }
+      if (!req.file) {
+        return res.status(400).json({ ok: false, error: 'Nenhum ficheiro enviado.' });
+      }
+      const rawFolder = typeof req.body?.assetFolder === 'string' ? req.body.assetFolder : '';
+      const targetSubfolder =
+        rawFolder && IMG_ADMIN_TARGET_SUBFOLDER_SET.has(rawFolder) ? rawFolder : '';
+      const tmpAbs = req.file.path;
+      const filename = req.file.filename;
+      let finalAbs = tmpAbs;
+      let publicPath = `/img/${filename}`;
+      if (targetSubfolder) {
+        try {
+          const destDir = path.join(imgDir, targetSubfolder);
+          fs.mkdirSync(destDir, { recursive: true });
+          const destAbs = path.join(destDir, filename);
+          fs.renameSync(tmpAbs, destAbs);
+          finalAbs = destAbs;
+          publicPath = `/img/${targetSubfolder}/${filename}`;
+        } catch (moveErr) {
+          console.error('[AdminImageUpload] move to subfolder failed', {
+            uid: uidLog,
+            targetSubfolder,
+            err: moveErr instanceof Error ? moveErr.message : String(moveErr)
+          });
+          /** Mantém em uploads/ — preferimos entregar a imagem do que falhar. */
+        }
+      }
+      try {
+        await compressMediaFileInPlace(finalAbs);
+      } catch {
+        /* best-effort */
+      }
+      console.log('[AdminImageUpload] ok', {
+        uid: uidLog,
+        size: req.file.size,
+        mime: req.file.mimetype,
+        path: publicPath
+      });
+      return res.json({ ok: true, path: publicPath, url: publicPath });
+    });
   });
 
   app.post('/api/admin/upload-ad', isAdmin, (req: Request, res: Response) => {
