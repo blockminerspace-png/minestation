@@ -1,4 +1,5 @@
 import type { Express, Request, Response } from 'express';
+import crypto from 'node:crypto';
 import { rateLimit } from 'express-rate-limit';
 import { prisma } from '../config/prisma.js';
 import {
@@ -15,6 +16,12 @@ const workshopMutateLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Demasiadas alterações na oficina. Aguarda um minuto.' }
 });
+
+function fallbackWorkshopIdempotencyKey(raw: unknown): string {
+  const s = typeof raw === 'string' ? raw.trim().slice(0, 128) : '';
+  if (/^[a-zA-Z0-9_.:-]{8,128}$/.test(s)) return s;
+  return `ws_${crypto.randomUUID()}`;
+}
 
 function parseMutateBody(raw: unknown): WorkshopMutateBody | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -34,9 +41,11 @@ function parseMutateBody(raw: unknown): WorkshopMutateBody | null {
     o.componentSlotId !== undefined && o.componentSlotId !== null ? String(o.componentSlotId) : undefined;
   const storedBatteryId =
     o.storedBatteryId !== undefined && o.storedBatteryId !== null ? String(o.storedBatteryId) : undefined;
-  const exp = o.expectedServerUpdatedAt;
+  const exp = o.clientStateVersion !== undefined && o.clientStateVersion !== null ? o.clientStateVersion : o.expectedServerUpdatedAt;
   const expectedServerUpdatedAt =
     exp === undefined || exp === null ? undefined : Number(exp);
+  const idemRaw = o.idempotencyKey;
+  const idempotencyKey = fallbackWorkshopIdempotencyKey(idemRaw);
   const liRaw = o.componentSlotLayoutIndex;
   const componentSlotLayoutIndex =
     liRaw === undefined || liRaw === null
@@ -52,7 +61,9 @@ function parseMutateBody(raw: unknown): WorkshopMutateBody | null {
     componentSlotId,
     storedBatteryId,
     componentSlotLayoutIndex: Number.isFinite(componentSlotLayoutIndex) ? componentSlotLayoutIndex : undefined,
-    expectedServerUpdatedAt: Number.isFinite(expectedServerUpdatedAt) ? expectedServerUpdatedAt : undefined
+    expectedServerUpdatedAt: Number.isFinite(expectedServerUpdatedAt) ? expectedServerUpdatedAt : undefined,
+    clientStateVersion: Number.isFinite(expectedServerUpdatedAt) ? expectedServerUpdatedAt : undefined,
+    idempotencyKey
   };
 }
 
@@ -77,7 +88,6 @@ export function registerWorkshopMutationRoutes(app: Express, deps: WorkshopMutat
     if (!body) {
       return res.status(400).json({ error: 'Corpo do pedido inválido.' });
     }
-
     try {
       const u = await prisma.users.findUnique({
         where: { id: userId },
@@ -96,6 +106,8 @@ export function registerWorkshopMutationRoutes(app: Express, deps: WorkshopMutat
       if (e instanceof WorkshopMutationError) {
         const payload: Record<string, unknown> = { error: e.message };
         if (e.forceReload) payload.forceReload = true;
+        if (e.statusCode === 409 && e.message.includes('idempotência')) payload.code = 'IDEMPOTENCY_PAYLOAD_MISMATCH';
+        else if (e.statusCode === 409) payload.code = 'STATE_VERSION_CONFLICT';
         return res.status(e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 400).json(payload);
       }
       console.error('[workshop/mutate]', e instanceof Error ? e.message : String(e));

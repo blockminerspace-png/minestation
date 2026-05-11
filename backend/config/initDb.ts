@@ -945,10 +945,10 @@ export const initDb = async () => {
 
       CREATE TABLE IF NOT EXISTS wheel_config (
         id INTEGER PRIMARY KEY DEFAULT 1,
-        spin_price_usdc DECIMAL(18,6) NOT NULL DEFAULT 0.10,
+        spin_price_usdc DECIMAL(18,6) NOT NULL DEFAULT 1,
         currency TEXT NOT NULL DEFAULT 'USDC',
         is_enabled INTEGER NOT NULL DEFAULT 1,
-        min_spin_price_usdc DECIMAL(18,6) NOT NULL DEFAULT 0.10,
+        min_spin_price_usdc DECIMAL(18,6) NOT NULL DEFAULT 1,
         max_spins_per_request INTEGER NOT NULL DEFAULT 1,
         daily_limit INTEGER,
         cooldown_seconds INTEGER NOT NULL DEFAULT 0,
@@ -962,7 +962,7 @@ export const initDb = async () => {
         id, spin_price_usdc, currency, is_enabled, min_spin_price_usdc,
         max_spins_per_request, daily_limit, cooldown_seconds, starts_at, ends_at, updated_at, metadata_json
       )
-      SELECT 1, 0.10, 'USDC', 1, 0.10, 1, NULL, 0, NULL, NULL,
+      SELECT 1, 1, 'USDC', 1, 1, 1, NULL, 0, NULL, NULL,
         (FLOOR(EXTRACT(EPOCH FROM NOW()) * 1000))::BIGINT, NULL
       WHERE NOT EXISTS (SELECT 1 FROM wheel_config WHERE id = 1);
 

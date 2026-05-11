@@ -58,6 +58,12 @@ services:
       MONGODB_URI: mongodb://mongodb_app:27017/genesis_logs
       PORT: 3000
       MINING_PROGRESS_REQUIRE_REDIS_LOCK: "1"
+      # Deploy/restart não deve limpar item válido de jogador. Reparos destrutivos ficam manuais via script.
+      BATTERY_INTEGRITY_MUTATIONS_ENABLED: "0"
+      # WORKER_ROLE: API | BACKGROUND | SCHEDULER (evitar ALL em produção)
+      # BATTERY_WORKERS_ENABLED, BATTERY_BACKGROUND_INTEGRITY_ENABLED, BATTERY_INTEGRITY_MUTATIONS_ENABLED
+      # SCHEDULER_ENABLED — jobs pesados no worker/scheduler, não no web
+      # LEGACY_SAVEGAME_PLAYER_POLICY=strip|reject — reject só após QA; ORPHAN_RACK_BATTERY_AUTO_RECOVER=0 em produção.
     env_file:
       - .env
     volumes:

@@ -11,6 +11,17 @@ export function isRackBatteryInstanceUuid(batteryId: string | null | undefined):
   return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId ?? '').trim());
 }
 
+function isBatteryUpgrade(upgrade: Upgrade | undefined | null): upgrade is Upgrade {
+  if (!upgrade) return false;
+  return upgrade.type === 'battery' || String(upgrade.category || '').toLowerCase() === 'battery';
+}
+
+export function isKnownInfiniteBatteryItem(itemId: unknown): boolean {
+  const id = itemId == null ? '' : String(itemId).trim().toLowerCase();
+  if (!id) return false;
+  return id === 'battery_protostar' || id === 'battery_estelar' || id === 'battery_stellar' || id.includes('protostar') || id.includes('estelar') || id.includes('stellar');
+}
+
 function normalizedStoredChargeWh(sb: StoredBattery): number {
   const q = sb.currentCharge;
   if (typeof q === 'number' && Number.isFinite(q)) return q;
@@ -82,14 +93,14 @@ export function resolvePlacedRackBatteryCatalogId(
   const snapCat =
     rack.batteryCatalogItemId != null ? String(rack.batteryCatalogItemId).trim() : '';
   if (snapCat && upgrades?.length) {
-    const okSnap = upgrades.some((u) => u.id === snapCat && u.type === 'battery');
+    const okSnap = upgrades.some((u) => u.id === snapCat && isBatteryUpgrade(u));
     if (okSnap) return snapCat;
   }
 
   const hintedRaw = batteryInstanceCatalogHints?.[bid];
   const hinted = hintedRaw != null ? String(hintedRaw).trim() : '';
   if (hinted && upgrades?.length) {
-    const ok = upgrades.some((u) => u.id === hinted && u.type === 'battery');
+    const ok = upgrades.some((u) => u.id === hinted && isBatteryUpgrade(u));
     if (ok) return hinted;
   }
 
@@ -98,10 +109,10 @@ export function resolvePlacedRackBatteryCatalogId(
 
   if (upgrades && upgrades.length > 0) {
     if (catFromRow) {
-      const fromCat = upgrades.find((u) => u.id === catFromRow && u.type === 'battery');
+      const fromCat = upgrades.find((u) => u.id === catFromRow && isBatteryUpgrade(u));
       if (fromCat) return catFromRow;
     }
-    const direct = upgrades.find((u) => u.id === bid && u.type === 'battery');
+    const direct = upgrades.find((u) => u.id === bid && isBatteryUpgrade(u));
     if (direct) return bid;
     return null;
   }
@@ -151,7 +162,7 @@ export function estimateRackBatteryRuntimeSeconds(
   const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
   if (!catalogId) return null;
   const battery = upgrades.find((u) => u.id === catalogId);
-  if (!battery || battery.powerCapacity === -1) return null;
+  if (!battery || battery.powerCapacity === -1 || rack.batteryPowerCapacityWh === -1 || rack.currentCharge === -1 || isKnownInfiniteBatteryItem(catalogId)) return null;
   const watts = calculateRackConsumptionWatts(rack, upgrades);
   if (watts <= 0) return null;
   const wh = Math.max(0, Number(rack.currentCharge) || 0);
@@ -198,7 +209,7 @@ export function getRackBatteryRuntimeShortLabel(
   const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
   const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
   if (!battery) return '—';
-  if (battery.powerCapacity === -1) return '∞';
+  if (battery.powerCapacity === -1 || rack.batteryPowerCapacityWh === -1 || rack.currentCharge === -1 || isKnownInfiniteBatteryItem(catalogId)) return '∞';
   const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries, batteryInstanceCatalogHints);
   if (sec == null) return '—';
   return `~${formatBatteryRuntimeShortPt(sec)}`;
@@ -217,7 +228,7 @@ export function getRackBatteryRuntimeHint(
   if (!battery) {
     return 'Referência de bateria inválida (sincronize com F5 ou re-equipe a bateria).';
   }
-  if (battery.powerCapacity === -1) return 'Bateria ilimitada.';
+  if (battery.powerCapacity === -1 || rack.batteryPowerCapacityWh === -1 || rack.currentCharge === -1 || isKnownInfiniteBatteryItem(catalogId)) return 'Bateria ilimitada.';
   const watts = calculateRackConsumptionWatts(rack, upgrades);
   if (watts <= 0) return 'Sem consumo (0 W): a carga não desce com o equipamento atual.';
   const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries, batteryInstanceCatalogHints);
@@ -236,9 +247,13 @@ export function calculatePlacedRacksProductionHashrate(
   racks.forEach((rack) => {
     const cat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
     const battery = cat ? upgrades.find((u) => u.id === cat) : null;
-    const isInfinite = battery && battery.powerCapacity === -1;
+    const isInfinite =
+      rack.currentCharge === -1 ||
+      rack.batteryPowerCapacityWh === -1 ||
+      isKnownInfiniteBatteryItem(cat) ||
+      (battery && battery.powerCapacity === -1);
     const isOperational =
-      rack.isOn && rack.wiringId && Boolean(battery) && (isInfinite || rack.currentCharge > 0);
+      rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
 
     if (isOperational) {
       const baseProd = rack.slots.reduce((acc, sid) => {

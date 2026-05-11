@@ -3,7 +3,12 @@ import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
 import { miningCreditCapNowMs } from './miningWallClockGrid.js';
-import { resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
+import {
+  CANONICAL_1000WH_BATTERY_ID,
+  isKnownInfiniteBatteryCatalogId,
+  normalizeKnown1000WhBatteryCatalogId,
+  resolvePlacedRackBatteryCatalogId
+} from '../modules/batteries/batteries.catalog.js';
 import {
   readWorkshopBatterySlotField,
   workshopBatteryStorageKeyAtLayoutIndex
@@ -14,6 +19,11 @@ import {
   tryAcquireDistributedLock,
   type LockHandle
 } from '../lib/redisDistributedLock.js';
+import {
+  isWorkshopBatteryChargeFull,
+  snapWorkshopBatteryChargeWh
+} from '../lib/workshopBatteryCharge.js';
+import { miningRuntimeStats } from './miningRuntimeStats.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -159,12 +169,9 @@ export async function computeProgressForUser(
     return { ok: false, error: 'invalid user' };
   }
 
-  if (
-    String(process.env.MINING_PROGRESS_COMPUTE_ENABLED ?? '1').trim() === '0' ||
-    String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0'
-  ) {
+  if (String(process.env.MINING_PROGRESS_COMPUTE_ENABLED ?? '1').trim() === '0') {
     console.log(
-      `${LOG_PREFIX} user=%s compute desligado (MINING_PROGRESS_COMPUTE_ENABLED ou BATTERY_WORKERS_ENABLED=0)`,
+      `${LOG_PREFIX} user=%s compute desligado (MINING_PROGRESS_COMPUTE_ENABLED=0)`,
       userId
     );
     return { ok: true };
@@ -208,6 +215,26 @@ export async function computeProgressForUser(
     try {
       const coinMap = await getMiningCoinsActiveMap();
     const coinIds: string[] = [...coinMap.keys()];
+    const coinEconomyRes =
+      coinIds.length > 0
+        ? await client.query(
+            'SELECT id, block_reward, block_time, network_hashrate FROM mining_coins WHERE id = ANY($1) AND is_active = 1',
+            [coinIds]
+          )
+        : { rows: [] };
+    const fallbackYieldPerHashByCoin = new Map<string, number>();
+    for (const coin of coinEconomyRes.rows as Array<Record<string, unknown>>) {
+      const coinId = String(coin.id ?? '').trim();
+      if (!coinId) continue;
+      const blockReward = parseFiniteNumberLenient(coin.block_reward, `coin.${coinId}.block_reward`);
+      const blockTime = parseFiniteNumberLenient(coin.block_time, `coin.${coinId}.block_time`);
+      const configuredNetworkHash = parseFiniteNumberLenient(coin.network_hashrate, `coin.${coinId}.network_hashrate`);
+      const liveNetworkHash = Number(miningRuntimeStats.globalNetworkHashrates.get(coinId) || 0);
+      const effectiveHashrate = Math.max(liveNetworkHash, configuredNetworkHash > 0 ? configuredNetworkHash : 1);
+      const rewardPerSec = blockTime > 0 ? blockReward / blockTime : 0;
+      const fallbackRate = effectiveHashrate > 0 ? rewardPerSec / effectiveHashrate : 0;
+      fallbackYieldPerHashByCoin.set(coinId, Number.isFinite(fallbackRate) && fallbackRate > 0 ? fallbackRate : 0);
+    }
 
     const upgradesRes = await client.query('SELECT * FROM upgrades');
     const upgradesMap = new Map<string, Record<string, unknown>>();
@@ -277,7 +304,7 @@ export async function computeProgressForUser(
       const t = String(u.type ?? '').toLowerCase();
       const c = String(u.category ?? '').toLowerCase();
       if (t === 'battery' || c === 'battery') {
-        if (id === 'small_battery') {
+        if (id === CANONICAL_1000WH_BATTERY_ID) {
           firstBatteryCatalogId = id;
           break;
         }
@@ -290,7 +317,7 @@ export async function computeProgressForUser(
     for (const sb of storedBattRes.rows as Array<{ id?: unknown; item_id?: unknown }>) {
       const iid = String(sb.id ?? '').trim();
       if (!iid) continue;
-      const rawItem = String(sb.item_id ?? '').trim();
+      const rawItem = normalizeKnown1000WhBatteryCatalogId(sb.item_id);
       const def = rawItem ? upgradesMap.get(rawItem) : undefined;
       const isBatt =
         def &&
@@ -333,12 +360,21 @@ export async function computeProgressForUser(
         const rid = String(r.id);
         const slots = slotsMap.get(rid) || [];
         const multiplierSlots = multiMap.get(rid) || [];
-        const battKey = resolvePlacedRackBatteryCatalogId(r.battery_id, storedBattCatalogByInstanceId);
+        const battKey = resolvePlacedRackBatteryCatalogId(
+          r.battery_id,
+          storedBattCatalogByInstanceId,
+          r.battery_catalog_item_id
+        );
         const battDef = battKey ? upgradesMap.get(String(battKey)) : null;
         const powerCap = battDef ? parseFiniteNumberLenient(battDef.power_capacity, 'rack.batt_cap') : NaN;
-        const isInfinite = battDef && powerCap === -1;
-
+        const snapPowerCap = parseFiniteNumberLenient(r.battery_power_capacity_wh, 'rack.batt_snap_cap');
         const charge = parseFiniteNumberLenient(r.current_charge, 'rack.charge');
+        const isInfinite =
+          powerCap === -1 ||
+          snapPowerCap === -1 ||
+          charge === -1 ||
+          isKnownInfiniteBatteryCatalogId(battKey);
+
         const isOn = Number(r.is_on) === 1;
         if (!isInfinite && (!isOn || !r.wiring_id || !r.battery_id || charge <= 0)) continue;
         if (isInfinite && (!isOn || !r.wiring_id || !r.battery_id)) continue;
@@ -393,12 +429,15 @@ export async function computeProgressForUser(
               });
               const rackTotalProd = rackBaseProd * multiplierFactor;
 
-              const integratedYield = calculateIntegratedYield(
+              const historyYield = calculateIntegratedYield(
                 selectedCoinId,
                 last,
                 last + timeAvailMs,
                 yieldHistoryMap.get(selectedCoinId)
               );
+              const fallbackYield =
+                (fallbackYieldPerHashByCoin.get(selectedCoinId) || 0) * (timeAvailMs / 1000);
+              const integratedYield = historyYield > 0 ? historyYield : fallbackYield;
               const gained = rackTotalProd * integratedYield;
               if (Number.isFinite(gained) && gained > 0) {
                 totalGained.set(selectedCoinId, (totalGained.get(selectedCoinId) || 0) + gained);
@@ -471,30 +510,66 @@ export async function computeProgressForUser(
         const batteryInstanceId = readWorkshopBatterySlotField(internalSlots, layoutSlots, layoutIdx);
         if (!batteryInstanceId) continue;
 
-        let batteryDef = upgradesMap.get(
-          String(readWorkshopBatterySlotField(slotItemIds, layoutSlots, layoutIdx) ?? '')
-        );
-        if (!batteryDef) {
+        let batteryDef = upgradesMap.get(String(readWorkshopBatterySlotField(slotItemIds, layoutSlots, layoutIdx) ?? ''));
+        let storedBatteryChargeWh: number | null = null;
+        let storedBatteryCapacityWh: number | null = null;
+        {
           const batRes = await client.query(
-            'SELECT item_id FROM stored_batteries WHERE id = $1 AND user_id = $2',
+            'SELECT item_id, current_charge, power_capacity_wh FROM stored_batteries WHERE id = $1 AND user_id = $2',
             [batteryInstanceId, userId]
           );
-          const row = batRes.rows[0] as { item_id?: unknown } | undefined;
-          if (row?.item_id != null) batteryDef = upgradesMap.get(String(row.item_id));
+          const row = batRes.rows[0] as { item_id?: unknown; current_charge?: unknown; power_capacity_wh?: unknown } | undefined;
+          if (!batteryDef && row?.item_id != null) batteryDef = upgradesMap.get(String(row.item_id));
+          if (row) {
+            const rowCharge = parseFiniteNumberLenient(row.current_charge, 'bat.stored_wh');
+            if (Number.isFinite(rowCharge)) storedBatteryChargeWh = rowCharge;
+            const rowCap = parseFiniteNumberLenient(row.power_capacity_wh, 'bat.stored_cap_wh');
+            if (Number.isFinite(rowCap) && rowCap !== 0) storedBatteryCapacityWh = rowCap;
+          }
         }
         if (!batteryDef) continue;
 
-        const maxBatteryWh = parseFiniteNumberLenient(batteryDef.power_capacity, 'bat.max_wh') || 0;
-        let batteryWh = parseFiniteNumberLenient(
+        const catalogCapacityWh = parseFiniteNumberLenient(batteryDef.power_capacity, 'bat.max_wh') || 0;
+        const maxBatteryWh = catalogCapacityWh !== 0 ? catalogCapacityWh : storedBatteryCapacityWh || 0;
+        const slotChargeWh = parseFiniteNumberLenient(
           readWorkshopBatterySlotField(slotCharges, layoutSlots, layoutIdx),
           'bat.wh'
         );
+        let batteryWh = Math.max(
+          Number.isFinite(slotChargeWh) ? slotChargeWh : 0,
+          storedBatteryChargeWh != null && Number.isFinite(storedBatteryChargeWh) ? storedBatteryChargeWh : 0
+        );
 
-        if (batteryWh < maxBatteryWh && internalWh > 0) {
+        if (maxBatteryWh === -1) {
+          if (slotCharges[storageKey] !== -1) {
+            slotCharges[storageKey] = -1;
+            if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
+              delete slotCharges[legacyId];
+            }
+            batteryUpdates.push({ id: String(batteryInstanceId), charge: -1 });
+            anyUpdate = true;
+          }
+          continue;
+        }
+
+        if (!(maxBatteryWh > 0)) continue;
+
+        const snappedBeforeTransfer = snapWorkshopBatteryChargeWh(batteryWh, maxBatteryWh);
+        if (snappedBeforeTransfer !== batteryWh) {
+          batteryWh = snappedBeforeTransfer;
+          slotCharges[storageKey] = batteryWh;
+          if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
+            delete slotCharges[legacyId];
+          }
+          batteryUpdates.push({ id: String(batteryInstanceId), charge: batteryWh });
+          anyUpdate = true;
+        }
+
+        if (!isWorkshopBatteryChargeFull(batteryWh, maxBatteryWh) && batteryWh < maxBatteryWh && internalWh > 0) {
           const actualTransferWh = Math.min(speedWhPerSec * dtSec, internalWh, maxBatteryWh - batteryWh);
 
           if (actualTransferWh > 0) {
-            batteryWh += actualTransferWh;
+            batteryWh = snapWorkshopBatteryChargeWh(batteryWh + actualTransferWh, maxBatteryWh);
             internalWh -= actualTransferWh;
             slotCharges[storageKey] = batteryWh;
             if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
@@ -541,6 +616,7 @@ export async function computeProgressForUser(
     const idempotencyKey = `mp:${userId}:${Math.floor(last)}:${Math.floor(lastWrite)}`.slice(0, 190);
     if (String(process.env.MINING_PROGRESS_LEDGER_ENABLED ?? '1').trim() !== '0') {
       try {
+        await client.query('SAVEPOINT mining_progress_ledger_sp');
         const led = await client.query(
           `INSERT INTO mining_progress_commit_ledger (user_id, idempotency_key) VALUES ($1, $2)
            ON CONFLICT (user_id, idempotency_key) DO NOTHING RETURNING id`,
@@ -555,9 +631,12 @@ export async function computeProgressForUser(
           );
           return { ok: true };
         }
+        await client.query('RELEASE SAVEPOINT mining_progress_ledger_sp');
       } catch (e: unknown) {
         const code = e && typeof e === 'object' && 'code' in e ? String((e as { code?: string }).code) : '';
         if (code === '42P01') {
+          await client.query('ROLLBACK TO SAVEPOINT mining_progress_ledger_sp');
+          await client.query('RELEASE SAVEPOINT mining_progress_ledger_sp');
           if (!miningProgressLedgerSchemaWarned) {
             miningProgressLedgerSchemaWarned = true;
             console.warn(

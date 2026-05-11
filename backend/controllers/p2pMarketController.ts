@@ -10,7 +10,7 @@ import { prismaSqlTx } from '../lib/sqlTransaction.js';
 import { runReferralCommissionOnTx } from '../models/referralCommissionModel.js';
 import {
   computeP2PBandReferenceUsd,
-  getBlackMarketPriceBandPercent,
+  getBlackMarketPriceBandPercentInTx,
   isP2PMarketEnabled,
   MARKET_LISTING_TTL_MS,
   MARKET_RESERVE_MS,
@@ -67,6 +67,15 @@ function parseRequestedBuyQty(raw: unknown): number | null {
 }
 
 const txOpts = { timeout: 60_000, maxWait: 10_000 } as const;
+/** Compra P2P: mais tempo (locks + comissão + idempotência na mesma tx). */
+const txOptsMarketBuy = { timeout: 90_000, maxWait: 15_000 } as const;
+
+function isLikelyDbLockOrContention(err: unknown): boolean {
+  const s = err instanceof Error ? `${err.message}\n${String((err as { code?: unknown }).code ?? '')}` : String(err);
+  return /lock timeout|canceling statement due to lock timeout|deadlock detected|55P03|40P01|could not obtain lock|Timed out during the execution of the transaction/i.test(
+    s
+  );
+}
 
 export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void {
   const { emitMarketWs } = deps;
@@ -248,7 +257,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
             }
           }
           const ref = computeP2PBandReferenceUsd(baseCost, bookFallbackAsk);
-          const band = await getBlackMarketPriceBandPercent();
+          const band = await getBlackMarketPriceBandPercentInTx(tx);
           const minF = 1 - band / 100;
           const maxF = 1 + band / 100;
           if (ref > 0) {
@@ -510,6 +519,8 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
     try {
       const out = await prisma.$transaction(
         async (tx) => {
+          /** Evita espera indefinida em `FOR UPDATE` (origem comum de 504 no proxy). Unidade: ms. */
+          await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = 45000`);
           const listingRows = await tx.$queryRawUnsafe(
             `SELECT l.*, (COALESCE(NULLIF(l.qty, 0), 1))::int AS qty_effective
              FROM player_listings l WHERE l.id = $1 FOR UPDATE`,
@@ -546,9 +557,27 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
             throw new P2pUserError(400, { error: 'Anúncio reservado por outro operador.' });
           }
           const sellerId = Number(listing.user_id);
-          const ids = [buyerId, sellerId].sort((a, b) => a - b);
-          await tx.$queryRawUnsafe('SELECT * FROM game_states WHERE user_id = $1 FOR UPDATE', ids[0]);
-          await tx.$queryRawUnsafe('SELECT * FROM game_states WHERE user_id = $1 FOR UPDATE', ids[1]);
+          /** Incluir referrer na ordem de locks evita deadlock com `runReferralCommissionOnTx` (UPDATE em `game_states` de terceiro). */
+          let referrerUserId: number | null = null;
+          const refProbe = await tx.$queryRawUnsafe(
+            `SELECT r.user_id AS referrer_id
+             FROM referrals r
+             WHERE r.referred_username = (SELECT username FROM users WHERE id = $1 LIMIT 1)
+             LIMIT 1`,
+            buyerId
+          );
+          const refArr = Array.isArray(refProbe) ? refProbe : [];
+          const refRaw = (refArr[0] as { referrer_id?: unknown } | undefined)?.referrer_id;
+          const refN = refRaw != null ? Number(refRaw) : NaN;
+          if (Number.isFinite(refN) && refN > 0 && refN !== buyerId) {
+            referrerUserId = refN;
+          }
+          const lockUserIds = [...new Set([buyerId, sellerId, ...(referrerUserId != null ? [referrerUserId] : [])])].sort(
+            (a, b) => a - b
+          );
+          for (const uid of lockUserIds) {
+            await tx.$queryRawUnsafe('SELECT * FROM game_states WHERE user_id = $1 FOR UPDATE', uid);
+          }
           const buyerRowArr = await tx.$queryRawUnsafe(
             'SELECT usdc FROM game_states WHERE user_id = $1',
             buyerId
@@ -589,7 +618,7 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
             const bcBand = parseUsdFromDb((uba[0] as { base_cost?: unknown } | undefined)?.base_cost);
             const refBuy = computeP2PBandReferenceUsd(bcBand, null);
             if (refBuy > 0) {
-              const bandBuy = await getBlackMarketPriceBandPercent();
+              const bandBuy = await getBlackMarketPriceBandPercentInTx(tx);
               const loB = refBuy * (1 - bandBuy / 100);
               const hiB = refBuy * (1 + bandBuy / 100);
               if (unitPrice < loB - 1e-9 || unitPrice > hiB + 1e-9) {
@@ -706,9 +735,27 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
             sellerReceive,
             taxAmount
           );
+          const responseBody = {
+            ok: true,
+            message: 'Compra realizada. Retire o item no cofre (P2P).',
+            purchasedQty: buyQty,
+            totalUsdc: totalPrice,
+            unitPrice: unitPrice
+          };
+          if (idemKey.length > 0) {
+            await tx.p2p_market_buy_idempotency.create({
+              data: {
+                buyer_id: buyerId,
+                idempotency_key: idemKey,
+                http_status: 200,
+                body_json: JSON.stringify(responseBody),
+                created_at: BigInt(now)
+              }
+            });
+          }
           return { buyQty, totalPrice, unitPrice, sellerId, itemId, listingId };
         },
-        txOpts
+        txOptsMarketBuy
       );
       emitMarketWs({ type: 'market', event: 'listing_sold', listingId });
       logUserAction(buyerId, 'p2p_listing_buy', {
@@ -726,25 +773,17 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
         totalUsdc: out.totalPrice,
         unitPrice: out.unitPrice
       };
-      if (idemKey.length > 0) {
-        try {
-          await prisma.p2p_market_buy_idempotency.create({
-            data: {
-              buyer_id: buyerId,
-              idempotency_key: idemKey,
-              http_status: 200,
-              body_json: JSON.stringify(responseBody),
-              created_at: BigInt(Date.now())
-            }
-          });
-        } catch {
-          /* duplicate idempotency insert — safe to ignore */
-        }
-      }
       res.json(responseBody);
     } catch (e: unknown) {
       if (e instanceof P2pUserError) {
         res.status(e.status).json(e.body);
+        return;
+      }
+      if (isLikelyDbLockOrContention(e)) {
+        res.status(503).json({
+          error:
+            'Mercado ocupado (outra operação em curso). Aguarda uns segundos e tenta de novo — o teu USDC só é debitado se a compra concluir.'
+        });
         return;
       }
       res.status(400).json({ error: e instanceof Error ? e.message : 'Erro na compra.' });

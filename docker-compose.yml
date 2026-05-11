@@ -18,6 +18,9 @@ services:
     container_name: app-postgres
     image: postgres:16-alpine
     restart: unless-stopped
+    ports:
+      # Host: permite `npx prisma migrate deploy` / scripts com `DATABASE_URL=...@localhost:5432/...`
+      - "127.0.0.1:5432:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -74,7 +77,22 @@ services:
       MONGODB_URI: mongodb://mongo:27017/genesis_logs
       # Multi-container: exige Redis NX lock para ticks de mineração/bateria (ver `miningProgressComputer`).
       MINING_PROGRESS_REQUIRE_REDIS_LOCK: "1"
+      # Deploy/restart não deve limpar item válido de jogador. Reparos destrutivos ficam manuais via script.
+      BATTERY_INTEGRITY_MUTATIONS_ENABLED: "0"
       # Emergência: `BATTERY_WORKERS_ENABLED=0` ou `SCHEDULER_ENABLED=0` no `.env` desliga jobs sem derrubar HTTP.
+      #
+      # Baterias / save legado / workers (sobrepor no `.env` por ambiente):
+      #   WORKER_ROLE — API vs BACKGROUND vs ALL (evitar ALL implícito em produção se houver worker dedicado).
+      #   BATTERY_WORKERS_ENABLED — 0 desliga jobs de bateria no processo.
+      #   BATTERY_BACKGROUND_INTEGRITY_ENABLED — 0 desliga `ensureStoredBatteriesIntegrity` no worker.
+      #   BATTERY_INTEGRITY_MUTATIONS_ENABLED — 0 = só relatório read-only na integridade; 1 = aplica UPDATEs de reparo.
+      #   SCHEDULER_ENABLED — 0 desliga cron pesado no contentor web.
+      #   LEGACY_SAVEGAME_PLAYER_POLICY — strip durante migração UI; reject em staging após QA (duas abas + diagnóstico).
+      #   ORPHAN_RACK_BATTERY_AUTO_RECOVER — 0 (defeito) sem GET/save recriar bateria; 1 só em recuperação controlada.
+      #   REDIS_URL — obrigatório para locks de mineração quando MINING_PROGRESS_REQUIRE_REDIS_LOCK=1.
+      #
+      # Sugestão migração: LEGACY_SAVEGAME_PLAYER_POLICY=strip, BATTERY_INTEGRITY_MUTATIONS_ENABLED=0, ORPHAN_RACK_BATTERY_AUTO_RECOVER=0.
+      # Staging pós-migração UI: LEGACY_SAVEGAME_PLAYER_POLICY=reject.
     env_file:
       - path: .env
         required: false

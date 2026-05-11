@@ -43,9 +43,10 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
   const [configRetryKey, setConfigRetryKey] = useState(0);
   const [notice, setNotice] = useState<UiNotice | null>(null);
   const afterNoticeClose = useRef<(() => void) | null>(null);
-  const [spinPriceUsdc, setSpinPriceUsdc] = useState(0.1);
+  const [spinPriceUsdc, setSpinPriceUsdc] = useState(1);
   const [legacyPaidWonItemId, setLegacyPaidWonItemId] = useState<string | null>(null);
-  const [paidAlreadyDelivered, setPaidAlreadyDelivered] = useState(false);
+  /** Prémio já na conta: fluxo atómico (`POST /api/wheel/spin` devolve `boxId`) — não chamar `paid-claim`. */
+  const [paidPrizeOnServer, setPaidPrizeOnServer] = useState(false);
   const [paidSpinBusy, setPaidSpinBusy] = useState(false);
   const paidSpinIdemRef = useRef<string | null>(null);
 
@@ -69,7 +70,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
     setConfigError(null);
     setItems([]);
     setLegacyPaidWonItemId(null);
-    setPaidAlreadyDelivered(false);
+    setPaidPrizeOnServer(false);
     void (async () => {
       const st = await getWheelState();
       if (cancelled) return;
@@ -78,7 +79,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
         setConfigLoading(false);
         return;
       }
-      setSpinPriceUsdc(st.data.spinPriceUsdc > 0 ? st.data.spinPriceUsdc : 0.1);
+      setSpinPriceUsdc(st.data.spinPriceUsdc > 0 ? st.data.spinPriceUsdc : 1);
       setLegacyPaidWonItemId(st.data.legacyPaidPending?.wonItemId ?? null);
       const list = st.data.prizes;
       if (Array.isArray(list) && list.length > 0) {
@@ -162,7 +163,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       setTargetWinner(w);
       setShowResult(true);
       setIsSpinning(false);
-      setPaidAlreadyDelivered(false);
+      setPaidPrizeOnServer(false);
     }
   }, [paidSpin, items, legacyPaidWonItemId]);
 
@@ -203,8 +204,9 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       }
       void onPaidBalanceRefresh?.();
       paidSpinIdemRef.current = null;
-      setPaidAlreadyDelivered(true);
       setLegacyPaidWonItemId(null);
+      /** Giro atómico: o prémio (caixa) é creditado na mesma transação que o spin — não existe `paid-claim` após OK. */
+      setPaidPrizeOnServer(true);
       selected =
         items.find((i) => (i.itemId && i.itemId === res.wonItemId) || i.id === res.wonItemId) || null;
       if (!selected) {
@@ -258,7 +260,6 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
 
   const handleClaim = async () => {
     if ((!redeemCode && !paidSpin) || !targetWinner || claiming) return;
-    if (paidSpin && paidAlreadyDelivered) return;
     setClaiming(true);
     try {
       const wonItemId = String(targetWinner.itemId || targetWinner.id || '').trim();
@@ -268,20 +269,34 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
         return;
       }
       if (paidSpin) {
-        const res = await claimWheelPaid(wonItemId);
-        if (res.ok) {
+        if (paidPrizeOnServer) {
+          setNotice({
+            variant: 'success',
+            title: 'Prémio na conta',
+            message: `O prémio já foi adicionado às tuas caixas: ${targetWinner.label}`
+          });
           afterNoticeClose.current = () => {
             setShowResult(false);
             setTargetWinner(null);
+            setPaidPrizeOnServer(false);
             void onRedeemComplete?.();
           };
-          setNotice({
-            variant: 'success',
-            title: 'Prémio resgatado',
-            message: `Parabéns! Você resgatou: ${targetWinner.label}`
-          });
         } else {
-          setNotice({ variant: 'error', message: res.error || 'Erro ao resgatar' });
+          const res = await claimWheelPaid(wonItemId);
+          if (res.ok) {
+            afterNoticeClose.current = () => {
+              setShowResult(false);
+              setTargetWinner(null);
+              void onRedeemComplete?.();
+            };
+            setNotice({
+              variant: 'success',
+              title: 'Prémio resgatado',
+              message: `Parabéns! Você resgatou: ${targetWinner.label}`
+            });
+          } else {
+            setNotice({ variant: 'error', message: res.error || 'Erro ao resgatar' });
+          }
         }
       } else {
         const res = await fetch('/api/roleta/claim', {
@@ -433,16 +448,16 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
             {redeemCode || paidSpin ? (
               <button
                 type="button"
-                onClick={paidSpin && paidAlreadyDelivered ? () => {
+                onClick={paidSpin && paidPrizeOnServer ? () => {
                   setShowResult(false);
                   setTargetWinner(null);
-                  setPaidAlreadyDelivered(false);
+                  setPaidPrizeOnServer(false);
                   void onRedeemComplete?.();
                 } : handleClaim}
                 disabled={claiming}
                 className="w-full rounded-xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-50 sm:py-3.5 sm:text-sm"
               >
-                {paidSpin && paidAlreadyDelivered
+                {paidSpin && paidPrizeOnServer
                   ? 'OK'
                   : claiming
                     ? 'A resgatar…'

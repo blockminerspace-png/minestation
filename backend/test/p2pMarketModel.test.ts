@@ -7,6 +7,7 @@ const prismaMock = vi.hoisted(() => ({
 
 vi.mock('../config/prisma.js', () => ({ prisma: prismaMock }));
 
+import type { Prisma } from '@prisma/client';
 import {
   timestampMsFromDb,
   parseUsdFromDb,
@@ -15,6 +16,7 @@ import {
   MARKET_RESERVE_MS,
   MARKET_LISTING_TTL_MS,
   getBlackMarketPriceBandPercent,
+  getBlackMarketPriceBandPercentInTx,
   isP2PMarketEnabled
 } from '../models/p2pMarketModel.js';
 
@@ -96,6 +98,15 @@ describe('p2pMarketModel', () => {
     prismaMock.settings.findUnique.mockRejectedValue(new Error('down'));
     const n = await getBlackMarketPriceBandPercent();
     expect(n).toBe(20);
+  });
+
+  it('getBlackMarketPriceBandPercentInTx usa o mesmo cliente de transação', async () => {
+    prismaMock.economy_settings.findUnique.mockResolvedValue({
+      black_market_price_band_percent: 12
+    } as never);
+    const n = await getBlackMarketPriceBandPercentInTx(prismaMock as unknown as Prisma.TransactionClient);
+    expect(n).toBe(12);
+    expect(prismaMock.economy_settings.findUnique).toHaveBeenCalled();
   });
 
   it('isP2PMarketEnabled usa economy_settings quando existe linha', async () => {

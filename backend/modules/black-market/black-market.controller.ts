@@ -108,4 +108,10 @@ export function registerBlackMarketModuleRoutes(app: Application, deps: BlackMar
       return sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/black-market/history', e, 'Erro ao ler histórico.');
     }
   });
+
+  /**
+   * Compra de listing (`POST /api/black-market/listings/:id/buy`) — pendência de produto:
+   * o módulo actual só expõe leitura (state/listings/escrow/history). Idempotência de compra
+   * fica para quando existir rota transaccional dedicada (sem comportamento inventado aqui).
+   */
 }

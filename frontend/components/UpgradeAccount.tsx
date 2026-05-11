@@ -11,7 +11,7 @@ import {
   type UpgradesStatePackage,
   type UpgradesStatePayload
 } from '../services/api';
-import { appendUsdcShortfallLine } from '../utils/playerMoneyMessages';
+import { appendUsdcShortfallLine, looksLikeInsufficientUsdcMessage } from '../utils/playerMoneyMessages';
 
 interface UpgradeAccountProps {
   user: User;
@@ -346,7 +346,9 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
                           : busy
                             ? 'A PROCESSAR…'
                             : !offer.isPurchasable
-                              ? 'INDISPONÍVEL'
+                              ? looksLikeInsufficientUsdcMessage(offer.unpurchasableReason || '')
+                                ? 'SALDO INSUFICIENTE'
+                                : 'INDISPONÍVEL'
                               : 'ADQUIRIR E UPGRADAR'}
                       </span>
                       {offer.isPurchasable && !owned && (

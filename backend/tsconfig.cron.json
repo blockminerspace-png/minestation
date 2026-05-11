@@ -15,6 +15,7 @@
     "modules/batteries/batteries.catalog.ts",
     "lib/miningLivePrices.d.ts",
     "lib/safeText.ts",
+    "lib/workshopBatteryCharge.ts",
     "lib/stack/**/*.ts",
     "lib/genesisStack/init.ts",
     "lib/mongoLogs.ts",

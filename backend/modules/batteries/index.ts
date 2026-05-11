@@ -45,7 +45,13 @@ export {
   type StoredBatteryRowSnap,
   type UpgradeBattSnap
 } from './batteries.repository.js';
-export { ensureStoredBatteriesIntegrity } from './batteries.integrity.js';
+export {
+  buildBatteryIntegrityRepairPlan,
+  ensureStoredBatteriesIntegrity,
+  reportBatteryIntegrityReadonly,
+  type BatteryIntegrityRepairPlanAction
+} from './batteries.integrity.js';
+export { syncStoredBatterySemanticsForUser } from './batterySemanticSync.js';
 export { recoverOrphanRackBatteryStorageRows, type RecoveredStoredBatteryRow } from './batteries.recovery.js';
 export {
   ensureStoredBatteriesArrayFromDb,

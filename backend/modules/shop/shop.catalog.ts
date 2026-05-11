@@ -15,7 +15,14 @@ export async function loadHardwareShopProducts(isAdminUser: boolean): Promise<Sh
             { type: { not: 'legacy-temp' } }
           ]
         }
-      : { is_active: 1 }
+      : {
+          AND: [
+            { NOT: { id: { startsWith: 'temp_legacy_' } } },
+            { category: { not: 'legacy-temp' } },
+            { type: { not: 'legacy-temp' } },
+            { OR: [{ is_active: null }, { is_active: { not: 0 } }] }
+          ]
+        }
   });
   const compatRows = await prisma.upgrade_compat_racks.findMany();
   const compatMap = compatRows.reduce<Record<string, string[]>>((acc, r) => {
@@ -51,11 +58,12 @@ export async function loadHardwareShopProducts(isAdminUser: boolean): Promise<Sh
 }
 
 export function filterProductsForMinerShop(products: ShopProductDto[]): ShopProductDto[] {
-  return products.filter((u) => {
+  const base = products.filter((u) => {
     if (u.status === 'legacy' || u.status === 'exclusive') return false;
-    if (!u.sellInHardwareMarket) return false;
     if (u.isNft) return false;
     if (!u.isActive) return false;
     return true;
   });
+  const explicitHardware = base.filter((u) => u.sellInHardwareMarket);
+  return explicitHardware.length > 0 ? explicitHardware : base;
 }

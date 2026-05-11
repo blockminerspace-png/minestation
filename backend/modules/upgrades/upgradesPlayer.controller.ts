@@ -118,7 +118,11 @@ export function registerUpgradesPlayerRoutes(app: Express, deps: UpgradesPlayerD
       return res.json(out);
     } catch (e) {
       if (e instanceof RoletaAppError) {
-        return res.status(e.statusCode).json({ error: e.message });
+        const idemMismatch =
+          e.statusCode === 409 && String(e.message || '').toLowerCase().includes('idempotência');
+        return res
+          .status(e.statusCode)
+          .json({ error: e.message, ...(idemMismatch ? { code: 'IDEMPOTENCY_PAYLOAD_MISMATCH' } : {}) });
       }
       console.error('[upgrades/purchase]', e);
       sendInternalErrorSafeMessageOrPrisma(res, 'POST /api/upgrades/purchase', e, 'Erro interno.');

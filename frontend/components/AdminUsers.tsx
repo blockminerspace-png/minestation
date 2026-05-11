@@ -4,7 +4,7 @@ import { getAdminUpgrades, createAdminUpgrade, deleteAdminUpgrade, getLootBoxes,
 import { AdminRanking } from './AdminRanking';
 import { User, AccessLevel, GameState, Upgrade, ReferralModel, SeasonPass } from '../types';
 import { Users, Search, Edit, X, PlusCircle, Save, Package, Server, Trash2, Trophy, Gift, Cog, LogIn, ArrowUp, ArrowDown, CheckSquare, Square, Loader2, Shield, History } from 'lucide-react';
-import { getGameState, toggleUserBlocked, updateUser, saveGameState, getMiningCoins, deleteUser, getSession, impersonateUser, bulkDeleteUsers, bulkGiftUsers, updateAdminPermissions, getUsers, getAdminUserActivity } from '../services/api';
+import { getGameState, toggleUserBlocked, updateUser, saveGameState, saveGameStateAdminOverride, getMiningCoins, deleteUser, getSession, impersonateUser, bulkDeleteUsers, bulkGiftUsers, updateAdminPermissions, getUsers, getAdminUserActivity } from '../services/api';
 import { formatUserActivityMeta, ACTIVITY_LOG_FILTER_GROUPS, filterUserActivityLogs } from '../utils/adminUserActivityLog';
 import { validateAuthUsernameFormat } from '../utils/usernameValidation';
 import { AUTH_USERNAME_MAX } from '../constants/authLimits';
@@ -626,11 +626,22 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
 
     const handleSaveGameData = async () => {
         if (!selectedUser || !selectedUserSave) return;
-        const res = await saveGameState(selectedUser.email, selectedUserSave, { adminOverride: true });
+        const uid = selectedUserDbId(selectedUser);
+        if (uid == null) {
+            alert('ID do utilizador em falta — não é possível gravar.');
+            return;
+        }
+        const res = await saveGameStateAdminOverride(uid, selectedUserSave, { reason: 'admin_users_panel' });
         if (res.ok) {
             alert("Dados do jogo salvos com sucesso!");
         } else {
-            alert("Erro ao salvar: " + (res.error || (res.forceReload ? "Conflito de dados (Server restart required?)" : "Erro desconhecido")));
+            const err = res.error || (res.forceReload ? "Conflito de dados (Server restart required?)" : "Erro desconhecido");
+            const code = typeof res.code === "string" && res.code.trim() ? res.code.trim() : "";
+            const hintGeneric =
+                err === "Erro ao guardar." || err.startsWith("Erro interno.")
+                    ? "\n\nEm produção o motivo só aparece nos logs do contentor da app (ex.: docker compose logs app --tail 200 | grep -i SaveGame)."
+                    : "";
+            alert(`Erro ao salvar: ${err}${code ? ` [${code}]` : ""}${hintGeneric}`);
         }
     };
 

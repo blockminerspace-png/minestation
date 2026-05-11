@@ -110,6 +110,105 @@ async function main() {
     `);
     console.log(c.rows[0]);
 
+    const colRes = await pool.query(`
+      SELECT 1 FROM information_schema.columns
+       WHERE table_schema = 'public' AND table_name = 'stored_batteries' AND column_name = 'status'
+       LIMIT 1
+    `);
+    if (colRes.rowCount) {
+      section('stored_batteries: totais por status');
+      const bySt = await pool.query(`
+        SELECT COALESCE(nullif(btrim(status::text), ''), '(null)') AS status, COUNT(*)::int AS n
+          FROM stored_batteries GROUP BY 1 ORDER BY n DESC
+      `);
+      console.log(bySt.rows);
+
+      section('stored_batteries: totais por location');
+      const byLoc = await pool.query(`
+        SELECT COALESCE(nullif(btrim(location::text), ''), '(null)') AS location, COUNT(*)::int AS n
+          FROM stored_batteries GROUP BY 1 ORDER BY n DESC
+      `);
+      console.log(byLoc.rows);
+
+      section('stored_batteries: CHARGING sem oficina (workshop_slot_index nulo)');
+      const chNoWs = await pool.query(`
+        SELECT id::text, user_id, status, location, workshop_slot_index FROM stored_batteries
+         WHERE status = 'CHARGING' AND workshop_slot_index IS NULL
+         LIMIT 50
+      `);
+      console.log(chNoWs.rowCount ? chNoWs.rows : '(nenhum)');
+
+      section('stored_batteries: version ou updated_at nulos');
+      const nullVer = await pool.query(`
+        SELECT id::text, user_id, version, updated_at FROM stored_batteries
+         WHERE version IS NULL OR updated_at IS NULL
+         LIMIT 50
+      `);
+      console.log(nullVer.rowCount ? nullVer.rows : '(nenhum)');
+
+      section('stored_batteries + placed_racks: instância em rig mas status/location não EQUIPPED/RACK');
+      const invOnRack = await pool.query(
+        `
+        SELECT sb.id::text, sb.user_id, sb.status, sb.location, pr.id::text AS rack_id
+          FROM stored_batteries sb
+         INNER JOIN placed_racks pr
+            ON pr.user_id = sb.user_id
+           AND btrim(pr.battery_id::text) = btrim(sb.id::text)
+           AND pr.battery_id::text ~* $1
+         WHERE sb.status IS DISTINCT FROM 'EQUIPPED'
+            OR sb.location IS DISTINCT FROM 'RACK'
+         LIMIT 50
+      `,
+        [UUID_INST]
+      );
+      console.log(invOnRack.rowCount ? invOnRack.rows : '(nenhum)');
+
+      section('stored_batteries: status/location vs placed_racks (semântico)');
+      const sem = await pool.query(`
+        SELECT sb.id::text, sb.user_id, sb.status, sb.location, sb.rack_id::text, pr.id::text AS pr_rack
+          FROM stored_batteries sb
+          INNER JOIN placed_racks pr
+            ON pr.user_id = sb.user_id AND btrim(pr.battery_id::text) = btrim(sb.id::text)
+         WHERE sb.status IS NOT NULL AND sb.status <> 'EQUIPPED'
+         LIMIT 50
+      `);
+      console.log(sem.rowCount ? sem.rows : '(nenhum)');
+
+      section('stored_batteries: EQUIPPED sem rack_id quando colunas existem');
+      const eqNoRack = await pool.query(`
+        SELECT id::text, user_id, status, rack_id::text FROM stored_batteries
+         WHERE status = 'EQUIPPED' AND (rack_id IS NULL OR btrim(rack_id::text) = '')
+         LIMIT 50
+      `);
+      console.log(eqNoRack.rowCount ? eqNoRack.rows : '(nenhum)');
+
+      section('stored_batteries: INVENTORY com rack_id preenchido');
+      const invRack = await pool.query(`
+        SELECT id::text, user_id, status, rack_id::text FROM stored_batteries
+         WHERE status = 'INVENTORY' AND rack_id IS NOT NULL AND btrim(rack_id::text) <> ''
+         LIMIT 50
+      `);
+      console.log(invRack.rowCount ? invRack.rows : '(nenhum)');
+
+      const idemTab = await pool.query(`
+        SELECT 1 FROM information_schema.tables
+         WHERE table_schema = 'public' AND table_name = 'game_servers_intent_idempotency' LIMIT 1
+      `);
+      if (idemTab.rowCount) {
+        section('game_servers_intent_idempotency: últimas linhas (scope, user_id, prefixo key)');
+        const idem = await pool.query(`
+          SELECT user_id, left(scope, 40) AS scope, left(idempotency_key, 24) AS idem_prefix, http_status, created_at
+            FROM game_servers_intent_idempotency
+           ORDER BY created_at DESC NULLS LAST
+           LIMIT 15
+        `);
+        console.log(idem.rowCount ? idem.rows : '(vazio)');
+      }
+    } else {
+      section('stored_batteries semântico');
+      console.log('(coluna status inexistente — correr migrations Prisma mais recentes)');
+    }
+
     console.log('\n[Fim] Apenas leitura — nada foi alterado.');
   } finally {
     await pool.end();

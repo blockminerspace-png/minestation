@@ -1,5 +1,5 @@
 import { prisma } from '../config/db.js';
-import { resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
+import { isKnownInfiniteBatteryCatalogId, resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 type CoinLite = { id: string; name: string; symbol: string };
 
@@ -95,10 +95,20 @@ export async function getPublicMiningRankingPayload(): Promise<{
     const coinId = rack.selected_coin_id;
     if (!coinsMap.has(coinId)) continue;
 
-    const battKey = resolvePlacedRackBatteryCatalogId(rack.battery_id, storedBattCatalogByInstanceId);
+    const battKey = resolvePlacedRackBatteryCatalogId(
+      rack.battery_id,
+      storedBattCatalogByInstanceId,
+      rack.battery_catalog_item_id
+    );
     const battDef = battKey ? upgradesMap.get(battKey) : undefined;
-    const isInfinite = battDef && battDef.power_capacity === -1;
-    if (!isInfinite && rack.current_charge <= 0) continue;
+    const charge = Number(rack.current_charge);
+    const snapPowerCap = Number(rack.battery_power_capacity_wh);
+    const isInfinite =
+      charge === -1 ||
+      snapPowerCap === -1 ||
+      (battDef && Number(battDef.power_capacity) === -1) ||
+      isKnownInfiniteBatteryCatalogId(battKey);
+    if (!isInfinite && charge <= 0) continue;
 
     const slots = slotsByRack.get(rack.id) || [];
     let rackBaseProd = 0;
@@ -219,10 +229,20 @@ export async function getAdminMiningRankingPayload(): Promise<{
   for (const rack of racks) {
     if (!rack.selected_coin_id || !coinsMap.has(rack.selected_coin_id)) continue;
 
-    const battKey = resolvePlacedRackBatteryCatalogId(rack.battery_id, storedBattCatalogByInstanceIdAdmin);
+    const battKey = resolvePlacedRackBatteryCatalogId(
+      rack.battery_id,
+      storedBattCatalogByInstanceIdAdmin,
+      rack.battery_catalog_item_id
+    );
     const battDef = battKey ? upgradesMap.get(battKey) : undefined;
-    const isInfinite = battDef && battDef.power_capacity === -1;
-    if (!isInfinite && rack.current_charge <= 0) continue;
+    const charge = Number(rack.current_charge);
+    const snapPowerCap = Number(rack.battery_power_capacity_wh);
+    const isInfinite =
+      charge === -1 ||
+      snapPowerCap === -1 ||
+      (battDef && Number(battDef.power_capacity) === -1) ||
+      isKnownInfiniteBatteryCatalogId(battKey);
+    if (!isInfinite && charge <= 0) continue;
 
     const slots = slotsByRack.get(rack.id) || [];
     let rackBaseProd = 0;

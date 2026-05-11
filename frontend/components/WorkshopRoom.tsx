@@ -26,7 +26,7 @@ interface WorkshopRoomProps {
     onEquip: (index: number, itemId: string) => void;
     onUnequip: (index: number) => void;
     onEquipComponent: (wsIdx: number, slotId: string, layoutSlotIndex: number, iid: string, sbid?: string) => void;
-    onUnequipComponent: (wsIdx: number, slotId: string, layoutSlotIndex: number) => void;
+    onUnequipComponent: (wsIdx: number, slotId: string, layoutSlotIndex: number, batteryInstanceId?: string) => void;
     onInstantRecharge: (wsIdx: number) => void;
     onRewardedAd: (wsIdx: number) => void;
     onDailyBoost: (wsIdx: number) => void;
@@ -743,6 +743,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                         const def =
                                             upgrades.find((u) => u.id === b.itemId) ??
                                             orphanCatalogUpgrade(String(b.itemId || b.id), 'battery');
+                                        if (def?.powerCapacity === -1) return false;
                                         if (b.currentCharge >= (def?.powerCapacity || 100)) return false;
                                         const currentWS = slots[selectingComponent.wsIdx];
                                         if (currentWS && def?.compatibleRacks && def.compatibleRacks.length > 0) {
@@ -759,6 +760,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                             const def =
                                                 upgrades.find((u) => u.id === b.itemId) ??
                                                 orphanCatalogUpgrade(String(b.itemId || b.id), 'battery');
+                                            if (def?.powerCapacity === -1) return false;
                                             if (b.currentCharge >= (def?.powerCapacity || 100)) return false;
                                             const currentWS = slots[selectingComponent.wsIdx];
                                             if (currentWS && def?.compatibleRacks && def.compatibleRacks.length > 0) {
@@ -959,7 +961,12 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                             </button>
                             <button
                                 onClick={() => {
-                                    onUnequipComponent(detailContext.wsIdx, detailContext.slotId, detailContext.layoutSlotIndex);
+                                    onUnequipComponent(
+                                        detailContext.wsIdx,
+                                        detailContext.slotId,
+                                        detailContext.layoutSlotIndex,
+                                        detailContext.type === 'battery' ? detailContext.instanceId : undefined
+                                    );
                                     setDetailContext(null);
                                 }}
                                 className="flex-1 bg-red-600 hover:bg-red-500 text-white text-sm font-bold py-2 px-4 rounded-lg shadow-lg shadow-red-500/20 active:scale-95 transition-all flex items-center justify-center gap-2"

@@ -16,6 +16,9 @@ export type { RoletaDbTx } from './roletaDbTypes.js';
 /** Piso absoluto do preço do giro pago (USDC), independentemente da config em BD. */
 export const WHEEL_ABSOLUTE_MIN_SPIN_PRICE_USDC = new Prisma.Decimal('0.10');
 
+/** Preço por defeito quando a linha `wheel_config` é criada em runtime (não confundir com o piso absoluto). */
+export const WHEEL_DEFAULT_SPIN_PRICE_USDC = new Prisma.Decimal('1');
+
 export type WheelPrizeRow = {
   id: string;
   label: string;
@@ -187,8 +190,53 @@ export type RoletaClaimResult = {
 };
 
 /**
+ * Garante pelo menos uma linha válida em `loot_box_items` para uma caixa de prémio da roleta
+ * (`trigger = 'roleta_reward'`, `description = reward_for_<itemId>`).
+ * Idempotente: se já existir linha apontando para `wonItemId`, não duplica; se existirem linhas
+ * apontando para outro item, mantém-nas e adiciona a correcta apenas se em falta.
+ * Razão: caixas antigas podem ter sido criadas sem itens (versão antiga) ou ter ficado órfãs após
+ * limpeza administrativa — sem isto, `executeLootBoxOpenInTransaction` rejeita com 500.
+ */
+export async function ensureRoletaRewardBoxItem(
+  tx: RoletaDbTx,
+  boxId: string,
+  wonItemId: string
+): Promise<void> {
+  const existing = await tx.loot_box_items.findFirst({
+    where: { box_id: boxId, item_id: wonItemId, item_type: 'item' },
+    select: { id: true, probability: true, min_qty: true, max_qty: true }
+  });
+  if (existing) {
+    const probOk = Number(existing.probability) > 0;
+    const minOk = Number(existing.min_qty) >= 1;
+    const maxOk = Number(existing.max_qty) >= Number(existing.min_qty || 1);
+    if (probOk && minOk && maxOk) return;
+    await tx.loot_box_items.update({
+      where: { id: existing.id },
+      data: {
+        probability: probOk ? Number(existing.probability) : 100,
+        min_qty: minOk ? Number(existing.min_qty) : 1,
+        max_qty: maxOk ? Number(existing.max_qty) : Math.max(1, Number(existing.min_qty) || 1)
+      }
+    });
+    return;
+  }
+  await tx.loot_box_items.create({
+    data: {
+      box_id: boxId,
+      item_type: 'item',
+      item_id: wonItemId,
+      min_qty: 1,
+      max_qty: 1,
+      probability: 100
+    }
+  });
+}
+
+/**
  * Cria ou reutiliza caixa `roleta_reward` e incrementa `unopened_boxes` (mesma lógica do resgate por código).
  * Não altera `promo_code_redemptions`.
+ * Reutilização sempre passa por `ensureRoletaRewardBoxItem` para reparar caixas antigas órfãs.
  */
 export async function grantWheelPrizeUnopenedBox(
   tx: RoletaDbTx,
@@ -222,18 +270,10 @@ export async function grantWheelPrizeUnopenedBox(
         icon: '🎁'
       }
     });
-
-    await tx.loot_box_items.create({
-      data: {
-        box_id: prizeBoxId,
-        item_type: 'item',
-        item_id: wonItemId,
-        min_qty: 1,
-        max_qty: 1,
-        probability: 100
-      }
-    });
   }
+
+  /** Mesma chamada para caixa nova e reutilizada: protege contra registos antigos sem `loot_box_items`. */
+  await ensureRoletaRewardBoxItem(tx, prizeBoxId, wonItemId);
 
   const boxRow = await tx.loot_boxes.findUnique({
     where: { id: prizeBoxId },
@@ -262,10 +302,10 @@ async function loadWheelConfigRow(tx: RoletaDbTx, nowMs: bigint) {
     await tx.wheel_config.create({
       data: {
         id: 1,
-        spin_price_usdc: WHEEL_ABSOLUTE_MIN_SPIN_PRICE_USDC,
+        spin_price_usdc: WHEEL_DEFAULT_SPIN_PRICE_USDC,
         currency: 'USDC',
         is_enabled: 1,
-        min_spin_price_usdc: WHEEL_ABSOLUTE_MIN_SPIN_PRICE_USDC,
+        min_spin_price_usdc: WHEEL_DEFAULT_SPIN_PRICE_USDC,
         max_spins_per_request: 1,
         daily_limit: null,
         cooldown_seconds: 0,

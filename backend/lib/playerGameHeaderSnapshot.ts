@@ -1,4 +1,5 @@
 import { prisma } from '../config/prisma.js';
+import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 function num(v: unknown, def = 0): number {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
@@ -101,6 +102,8 @@ export async function computePlayerGameHeaderSnapshot(userId: number): Promise<P
       is_on: true,
       wiring_id: true,
       battery_id: true,
+      battery_catalog_item_id: true,
+      battery_power_capacity_wh: true,
       current_charge: true,
       selected_coin_id: true
     }
@@ -144,11 +147,20 @@ export async function computePlayerGameHeaderSnapshot(userId: number): Promise<P
     const isOn = Number(r.is_on) === 1;
     const wiringId = r.wiring_id ? String(r.wiring_id).trim() : '';
     const batteryId = r.battery_id ? String(r.battery_id).trim() : '';
+    const batteryCatalogId =
+      r.battery_catalog_item_id != null && String(r.battery_catalog_item_id).trim() !== ''
+        ? normalizeKnown1000WhBatteryCatalogId(r.battery_catalog_item_id)
+        : normalizeKnown1000WhBatteryCatalogId(batteryId);
     const charge = num(r.current_charge);
+    const snapPowerCap = num(r.battery_power_capacity_wh, Number.NaN);
     const selectedCoinId = r.selected_coin_id ? String(r.selected_coin_id).trim() : '';
 
-    const batt = batteryId ? upgrades.get(batteryId) : undefined;
-    const isInfinite = batt != null && batt.cap === -1;
+    const batt = batteryCatalogId ? upgrades.get(batteryCatalogId) : undefined;
+    const isInfinite =
+      charge === -1 ||
+      snapPowerCap === -1 ||
+      isKnownInfiniteBatteryCatalogId(batteryCatalogId) ||
+      (batt != null && batt.cap === -1);
     if (!isOn || !wiringId || !batteryId || (!isInfinite && charge <= 0)) continue;
     if (!selectedCoinId) continue;
 

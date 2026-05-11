@@ -26,6 +26,7 @@ import {
   listInfrastructureInStock,
   listItemsForSelection,
   listStoredBatteriesForSelection,
+  isKnownInfiniteBatteryItem,
   type ServerRoomSelectionContext
 } from '../models/serverRoomModel';
 import { runValidatedItemSelection } from '../controllers/serverRoomController';
@@ -1055,12 +1056,16 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         batteryCatalogHints
                     );
                     const battery = batteryCatalogId ? upgrades.find((u) => u.id === batteryCatalogId) : null;
-                    const isInfinite = battery && battery.powerCapacity === -1;
+                    const isInfinite =
+                        rack.currentCharge === -1 ||
+                        rack.batteryPowerCapacityWh === -1 ||
+                        isKnownInfiniteBatteryItem(batteryCatalogId) ||
+                        (battery && battery.powerCapacity === -1);
                     const chargePercent = battery && battery.powerCapacity && !isInfinite
                         ? (rack.currentCharge / battery.powerCapacity) * 100
                         : (isInfinite ? 100 : 0);
 
-                    const isOperational = rack.isOn && rack.wiringId && Boolean(battery) && (isInfinite || rack.currentCharge > 0);
+                    const isOperational = rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
                     const batteryRuntimeShort = getRackBatteryRuntimeShortLabel(
                         rack,
                         upgrades,
@@ -1128,7 +1133,12 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
                                                 <div className="absolute inset-0 z-10 p-2">
                                                     {layoutToUse.slots.map((slot, i) => {
-                                                        const idx = parseInt(slot.id.split('_')[1]);
+                                                        const rawIdx = parseInt(String(slot.id || '').split('_')[1], 10);
+                                                        const idx = Number.isFinite(rawIdx)
+                                                            ? rawIdx
+                                                            : layoutToUse.slots
+                                                                .slice(0, i + 1)
+                                                                .filter((s) => s.type === slot.type).length - 1;
                                                         const slotContent = slot.type === 'machine' ? rack.slots[idx] :
                                                             slot.type === 'multiplier' ? rack.multiplierSlots[idx] :
                                                                 slot.type === 'wiring' ? rack.wiringId :
@@ -1445,7 +1455,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                 const def = upgrades.find(u => u.id === stored.itemId);
                                                 if (!def) return null;
                                                 const defImg = normalizePublicAssetUrl(def.image);
-                                                const isInfiniteStored = def.powerCapacity === -1;
+                                                const isInfiniteStored = def.powerCapacity === -1 || isKnownInfiniteBatteryItem(def.id);
                                                 const capWh =
                                                     stored.powerCapacityWh != null &&
                                                     Number.isFinite(stored.powerCapacityWh) &&
@@ -1611,8 +1621,12 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                         if (up && up.multiplier) mult += up.multiplier;
                                     });
                                     const totalPower = baseProd * mult;
-                                    const battCap = battery?.powerCapacity || 1;
-                                    const isInfiniteConf = battCap === -1;
+                                    const battCap = battery?.powerCapacity || rack.batteryPowerCapacityWh || 1;
+                                    const isInfiniteConf =
+                                        rack.currentCharge === -1 ||
+                                        rack.batteryPowerCapacityWh === -1 ||
+                                        isKnownInfiniteBatteryItem(battCat) ||
+                                        battCap === -1;
                                     const chargePercent = isInfiniteConf ? 100 : (battery && battery.powerCapacity ? Math.min(100, Math.max(0, (rack.currentCharge / battery.powerCapacity) * 100)) : 0);
 
                                     return (

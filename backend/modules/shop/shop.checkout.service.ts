@@ -5,6 +5,8 @@
 import type { Pool } from 'pg';
 import { getSettingValue } from '../../lib/settingsPrisma.js';
 import { appendGameActivityLogMongo } from '../../lib/mongoLogs.js';
+import { stableIntentFingerprint } from '../../lib/gameIntentIdempotencyPrisma.js';
+import { walletAdvisoryLockKey64 } from '../wallet/walletLocks.js';
 
 const ID_RE = /^[a-zA-Z0-9_.-]{1,160}$/;
 const MAX_LINE_QTY = 50000;
@@ -21,9 +23,20 @@ export type HardwareCheckoutFail = {
   status: number;
   error: string;
   missing?: number;
+  code?: string;
 };
 
 export type HardwareCheckoutResult = HardwareCheckoutOk | HardwareCheckoutFail;
+
+/** Fingerprint estável do carrinho (servidor) para `shop_checkout_idempotency.request_fingerprint`. */
+export function shopCheckoutCartFingerprint(cart: Record<string, number>): string {
+  const parts: Record<string, unknown> = { op: 'shop_checkout' };
+  for (const id of Object.keys(cart).sort()) {
+    const q = Math.floor(Number(cart[id]) || 0);
+    parts[`line:${id}`] = q;
+  }
+  return stableIntentFingerprint(parts);
+}
 
 function validateCartShape(cart: unknown): Record<string, number> | null {
   if (!cart || typeof cart !== 'object' || Array.isArray(cart)) return null;
@@ -60,31 +73,70 @@ export async function runHardwareCheckoutTransaction(
 
   const idemRaw = opts?.idempotencyKey != null ? String(opts.idempotencyKey).trim() : '';
   const idemKey = idemRaw.length > 128 ? idemRaw.slice(0, 128) : idemRaw;
-  if (idemKey.length > 0) {
-    const prev = await pool.query(
-      `SELECT new_usdc, total_cost FROM shop_checkout_idempotency WHERE user_id = $1 AND idempotency_key = $2`,
-      [userId, idemKey]
-    );
-    if (prev.rowCount && prev.rows[0]) {
-      return {
-        ok: true,
-        newUsdc: Number(prev.rows[0].new_usdc),
-        totalCost: Number(prev.rows[0].total_cost),
-        cached: true
-      };
-    }
-  }
-
-  const hwVal = await getSettingValue('hardware_market_enabled');
-  if (hwVal != null && hwVal !== '1') {
-    return { ok: false, status: 403, error: 'Mercado de hardware pausado.' };
-  }
 
   const client = await pool.connect();
+  let idemFingerprint: string | null = null;
+
   try {
     await client.query('BEGIN');
 
+    if (idemKey.length > 0) {
+      const lockKey = walletAdvisoryLockKey64(userId, 'shop_checkout', idemKey);
+      await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [lockKey]);
+
+      const idemRes = await client.query<{
+        new_usdc: unknown;
+        total_cost: unknown;
+        request_fingerprint: string | null;
+      }>(
+        `SELECT new_usdc, total_cost, request_fingerprint FROM shop_checkout_idempotency
+         WHERE user_id = $1 AND idempotency_key = $2 FOR UPDATE`,
+        [userId, idemKey]
+      );
+      const idRow = idemRes.rows[0];
+      if (idRow) {
+        const cartEmpty = Object.keys(cart).length === 0;
+        const curFp = shopCheckoutCartFingerprint(cart);
+        const stFp = String(idRow.request_fingerprint ?? '').trim();
+        if (!cartEmpty && stFp && curFp !== stFp) {
+          await client.query('ROLLBACK');
+          console.warn(
+            JSON.stringify({
+              event: 'shop_checkout_idempotency_mismatch',
+              userId,
+              idempotencyKeyLen: idemKey.length
+            })
+          );
+          return {
+            ok: false,
+            status: 409,
+            error: 'Mesma chave de idempotência com pedido diferente.',
+            code: 'IDEMPOTENCY_PAYLOAD_MISMATCH'
+          };
+        }
+        await client.query('ROLLBACK');
+        return {
+          ok: true,
+          newUsdc: Number(idRow.new_usdc),
+          totalCost: Number(idRow.total_cost),
+          cached: true
+        };
+      }
+      idemFingerprint = shopCheckoutCartFingerprint(cart);
+    }
+
+    const hwVal = await getSettingValue('hardware_market_enabled');
+    if (hwVal != null && hwVal !== '1') {
+      await client.query('ROLLBACK');
+      return { ok: false, status: 403, error: 'Mercado de hardware pausado.' };
+    }
+
     const upgradeIds = Object.keys(cart).sort();
+    if (upgradeIds.length === 0) {
+      await client.query('ROLLBACK');
+      return { ok: false, status: 400, error: 'Carrinho vazio ou inválido.' };
+    }
+
     const upgradesRes = await client.query(
       `SELECT id, base_cost, name, sell_in_hardware_market, status, max_global_stock, total_sold,
               COALESCE(is_active, 1) AS ia, COALESCE(is_nft, 0) AS is_nft
@@ -95,6 +147,21 @@ export async function runHardwareCheckoutTransaction(
       await client.query('ROLLBACK');
       return { ok: false, status: 400, error: 'Um ou mais itens do carrinho não existem.' };
     }
+
+    const explicitHardwareRes = await client.query(
+      `
+      SELECT COUNT(*)::int AS n
+        FROM upgrades
+       WHERE COALESCE(is_active, 1) <> 0
+         AND COALESCE(is_nft, 0) <> 1
+         AND COALESCE(sell_in_hardware_market, 1) <> 0
+         AND status NOT IN ('legacy', 'exclusive')
+         AND id NOT LIKE 'temp_legacy\\_%' ESCAPE '\\'
+         AND COALESCE(category, '') <> 'legacy-temp'
+         AND COALESCE(type, '') <> 'legacy-temp'
+      `
+    );
+    const hasExplicitHardwareProducts = Number(explicitHardwareRes.rows[0]?.n || 0) > 0;
 
     let totalCost = 0;
     const itemsToBuy: Array<{ id: string; qty: number; name: string }> = [];
@@ -111,7 +178,7 @@ export async function runHardwareCheckoutTransaction(
         await client.query('ROLLBACK');
         return { ok: false, status: 400, error: `Item indisponível: ${u.name}` };
       }
-      if (u.sell_in_hardware_market === 0) {
+      if (hasExplicitHardwareProducts && u.sell_in_hardware_market === 0) {
         await client.query('ROLLBACK');
         return { ok: false, status: 400, error: `Item não disponível para venda: ${u.name}` };
       }
@@ -195,6 +262,16 @@ export async function runHardwareCheckoutTransaction(
       await client.query('UPDATE shop_carts SET updated_at = $1 WHERE id = $2::uuid', [BigInt(now), clearCartId]);
     }
 
+    if (idemKey.length > 0) {
+      const fpToStore = idemFingerprint ?? shopCheckoutCartFingerprint(cart);
+      await client.query(
+        `INSERT INTO shop_checkout_idempotency (user_id, idempotency_key, new_usdc, total_cost, lines_json, created_at, request_fingerprint)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (user_id, idempotency_key) DO NOTHING`,
+        [userId, idemKey, newUsdc, totalCost, JSON.stringify(itemsToBuy), BigInt(now), fpToStore]
+      );
+    }
+
     await client.query('COMMIT');
 
     const unameRes = await pool.query('SELECT username FROM users WHERE id = $1', [userId]);
@@ -214,19 +291,6 @@ export async function runHardwareCheckoutTransaction(
       lines: itemsToBuy.map((i) => ({ id: i.id, qty: i.qty, name: i.name })),
       source: opts?.clearCartId ? 'shop_checkout' : 'upgrades_buy'
     });
-
-    if (idemKey.length > 0) {
-      try {
-        await pool.query(
-          `INSERT INTO shop_checkout_idempotency (user_id, idempotency_key, new_usdc, total_cost, lines_json, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (user_id, idempotency_key) DO NOTHING`,
-          [userId, idemKey, newUsdc, totalCost, JSON.stringify(itemsToBuy), BigInt(now)]
-        );
-      } catch (eId) {
-        console.warn('[shop/checkout] idempotency insert skipped:', eId instanceof Error ? eId.message : String(eId));
-      }
-    }
 
     return { ok: true, newUsdc, totalCost };
   } catch (e) {

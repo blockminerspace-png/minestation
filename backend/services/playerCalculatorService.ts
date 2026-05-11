@@ -117,6 +117,8 @@ export async function loadPlayerCalculatorSnapshot(
         item_id: true,
         wiring_id: true,
         battery_id: true,
+        battery_catalog_item_id: true,
+        battery_power_capacity_wh: true,
         current_charge: true,
         is_on: true,
         selected_coin_id: true,
@@ -182,6 +184,7 @@ export async function loadPlayerCalculatorSnapshot(
     if (r.item_id) upgradeIds.add(String(r.item_id));
     if (r.wiring_id) upgradeIds.add(String(r.wiring_id));
     if (r.battery_id) upgradeIds.add(String(r.battery_id));
+    if (r.battery_catalog_item_id) upgradeIds.add(String(r.battery_catalog_item_id));
   }
   for (const s of slotRows) {
     if (s.machine_item_id) upgradeIds.add(String(s.machine_item_id));
@@ -219,6 +222,8 @@ export async function loadPlayerCalculatorSnapshot(
     roomId: r.room_id != null ? String(r.room_id) : null,
     wiringId: r.wiring_id != null ? String(r.wiring_id) : null,
     batteryId: r.battery_id != null ? String(r.battery_id) : null,
+    batteryCatalogItemId: r.battery_catalog_item_id != null ? String(r.battery_catalog_item_id) : null,
+    batteryPowerCapacityWh: r.battery_power_capacity_wh != null ? Number(r.battery_power_capacity_wh) : null,
     currentCharge: Number(r.current_charge) || 0,
     isOn: Number(r.is_on) !== 0,
     selectedCoinId: r.selected_coin_id != null ? String(r.selected_coin_id) : null,

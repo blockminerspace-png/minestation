@@ -1,5 +1,5 @@
 import type { Pool, PoolClient } from 'pg';
-import { resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
+import { isKnownInfiniteBatteryCatalogId, resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeForLog } from '../lib/safeText.js';
 import { miningRuntimeStats } from './miningRuntimeStats.js';
@@ -58,6 +58,8 @@ type RackRow = {
   id: string;
   user_id: number;
   battery_id: string;
+  battery_catalog_item_id?: string | null;
+  battery_power_capacity_wh?: unknown;
   current_charge: unknown;
   username: unknown;
 };
@@ -85,9 +87,6 @@ function resolveDefaultIntervalMs(optsInterval?: number): number {
  * actualiza yields em BD, stats em memória, ranking + app_cache (evita segundo job em server.js).
  */
 export async function updateMiningYields(pool: Pool): Promise<void> {
-  if (String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0') {
-    return;
-  }
   if (String(process.env.SCHEDULER_ENABLED ?? '1').trim() === '0') {
     return;
   }
@@ -112,7 +111,7 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
     await hydrateYieldHistoryBoundaryFromDb(client);
 
     const activeRes = await client.query(`
-      SELECT pr.selected_coin_id, pr.id, pr.user_id, pr.battery_id, pr.current_charge, u.username
+      SELECT pr.selected_coin_id, pr.id, pr.user_id, pr.battery_id, pr.battery_catalog_item_id, pr.battery_power_capacity_wh, pr.current_charge, u.username
       FROM placed_racks pr
       JOIN users u ON pr.user_id = u.id
       JOIN mining_coins mc ON pr.selected_coin_id = mc.id
@@ -167,11 +166,20 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
         const cid = String(rack.selected_coin_id);
         if (!cid) continue;
 
-        const battKey = resolvePlacedRackBatteryCatalogId(rack.battery_id, storedBattCatalogByInstanceId);
+        const battKey = resolvePlacedRackBatteryCatalogId(
+          rack.battery_id,
+          storedBattCatalogByInstanceId,
+          rack.battery_catalog_item_id
+        );
         const batt = battKey ? upsMap.get(String(battKey)) : undefined;
         const powerCap = batt ? parseFiniteNumberLenient(batt.power_capacity, 'rack.battery_power_cap') : 0;
-        const isInfinite = powerCap === -1;
+        const snapPowerCap = parseFiniteNumberLenient(rack.battery_power_capacity_wh, 'rack.battery_snap_power_cap');
         const charge = parseFiniteNumberLenient(rack.current_charge, 'rack.charge');
+        const isInfinite =
+          powerCap === -1 ||
+          snapPowerCap === -1 ||
+          charge === -1 ||
+          isKnownInfiniteBatteryCatalogId(battKey);
         if (!isInfinite && charge <= 0) continue;
 
         let base = 0;
@@ -385,10 +393,6 @@ export function startMiningYieldCron(pool: Pool, opts: StartMiningYieldCronOptio
   const role = opts.workerRole ?? process.env.WORKER_ROLE ?? 'ALL';
   if (role !== 'BACKGROUND' && role !== 'ALL') {
     console.log(`${LOG_PREFIX} não agendado (WORKER_ROLE=%s)`, sanitizeForLog(role, 32));
-    return;
-  }
-  if (String(process.env.BATTERY_WORKERS_ENABLED ?? '1').trim() === '0') {
-    console.log(`${LOG_PREFIX} não agendado (BATTERY_WORKERS_ENABLED=0)`);
     return;
   }
   if (

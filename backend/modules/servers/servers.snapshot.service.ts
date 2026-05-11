@@ -10,7 +10,9 @@ import { enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from '../../lib/sav
 import { loadMyRigRoomsForUser } from '../../lib/meUpgradeShopBundlePayload.js';
 import { loadMiningCoinsForBootstrap, loadUpgradesForBootstrap } from '../../lib/publicBootstrapPayload.js';
 import { normalizePlacedRackRoomId } from '../batteries/batteries.validation.js';
-import { recoverOrphanRackBatteryStorageRows } from '../batteries/batteries.recovery.js';
+import { isRackBatteryInstanceUuid } from '../batteries/batteries.repository.js';
+import { normalizeKnown1000WhBatteryCatalogId } from '../batteries/batteries.catalog.js';
+import { normalizeBatteryStatus } from '../batteries/batteryInvariant.service.js';
 import type {
   ServersAuthoritativeStateDto,
   ServersStatePlacedRackDto,
@@ -81,7 +83,8 @@ export function mapPrismaRacksToPlacedRackDtos(
       currentCharge: r.current_charge,
       isOn: !!r.is_on,
       selectedCoinId: r.selected_coin_id,
-      batteryCatalogItemId: r.battery_catalog_item_id ?? null,
+      batteryCatalogItemId:
+        r.battery_catalog_item_id != null ? normalizeKnown1000WhBatteryCatalogId(r.battery_catalog_item_id) : null,
       batteryPowerCapacityWh:
         r.battery_power_capacity_wh != null ? Number(r.battery_power_capacity_wh) : null,
       batteryDisplayName: r.battery_display_name ?? null,
@@ -93,11 +96,73 @@ export function mapPrismaRacksToPlacedRackDtos(
   return placedRacks;
 }
 
+export type ServersStateRequestContext = {
+  requestId?: string | null;
+};
+
+function safeRequestId(ctx: ServersStateRequestContext | undefined): string | null {
+  const r = ctx?.requestId;
+  if (r == null || typeof r !== 'string') return null;
+  const t = r.trim().slice(0, 120);
+  return t || null;
+}
+
+/**
+ * Detecta órfãos / duplicados / status incompatível com `placed_racks` (sem mutar dados).
+ */
+export function logServerStateBatteryConsistency(
+  userId: number,
+  placedRacks: Array<{ id: string; batteryId?: string | null }>,
+  storedById: Map<string, { id: string; status: string | null }>,
+  ctx?: ServersStateRequestContext
+): void {
+  const rid = safeRequestId(ctx);
+  const base = (ev: string, extra: Record<string, unknown>) => {
+    console.warn(JSON.stringify({ event: ev, userId, ...extra, ...(rid ? { requestId: rid } : {}) }));
+  };
+
+  const racksPerBattery = new Map<string, string[]>();
+  for (const r of placedRacks) {
+    const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+    if (!bid || !isRackBatteryInstanceUuid(bid)) continue;
+    const arr = racksPerBattery.get(bid) || [];
+    arr.push(String(r.id));
+    racksPerBattery.set(bid, arr);
+  }
+  for (const [batteryId, rackIds] of racksPerBattery) {
+    if (rackIds.length > 1) {
+      base('server_state_battery_duplicate', {
+        batteryId: batteryId.slice(0, 12),
+        rackCount: rackIds.length
+      });
+    }
+  }
+
+  for (const r of placedRacks) {
+    const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+    if (!bid || !isRackBatteryInstanceUuid(bid)) continue;
+    const sb = storedById.get(bid);
+    if (!sb) {
+      base('server_state_battery_orphan', { rackId: String(r.id), batteryId: bid.slice(0, 12) });
+      continue;
+    }
+    const st = normalizeBatteryStatus(sb.status);
+    if (st === 'CHARGING' || st === 'INVENTORY') {
+      base('server_state_battery_status_mismatch', {
+        rackId: String(r.id),
+        batteryId: bid.slice(0, 12),
+        storedStatus: st
+      });
+    }
+  }
+}
+
 export async function buildServersAuthoritativeStateDto(
   prisma: PrismaClient,
   pool: Pool,
   uid: number,
-  userEmail: string
+  userEmail: string,
+  ctx?: ServersStateRequestContext
 ): Promise<ServersAuthoritativeStateDto> {
   const progressRes = await computeProgressForUser(pool, uid, Date.now());
   if (!progressRes.ok) {
@@ -119,7 +184,20 @@ export async function buildServersAuthoritativeStateDto(
   ] = await Promise.all([
     prisma.game_states.findUnique({ where: { user_id: uid } }),
     prisma.stock.findMany({ where: { user_id: uid } }),
-    prisma.stored_batteries.findMany({ where: { user_id: uid } }),
+    prisma.stored_batteries.findMany({
+      where: { user_id: uid },
+      select: {
+        id: true,
+        item_id: true,
+        current_charge: true,
+        power_capacity_wh: true,
+        display_name: true,
+        image_url: true,
+        workshop_slot_index: true,
+        workshop_component_slot_id: true,
+        status: true
+      }
+    }),
     prisma.placed_racks.findMany({ where: { user_id: uid } }),
     prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
     loadMyRigRoomsForUser(uid),
@@ -137,12 +215,18 @@ export async function buildServersAuthoritativeStateDto(
   const stock: Record<string, number> = {};
   stockRows.forEach((r) => {
     if (!isValidSaveGameItemId(r.item_id)) return;
-    stock[r.item_id] = r.qty;
+    const itemId = normalizeKnown1000WhBatteryCatalogId(r.item_id);
+    stock[itemId] = (stock[itemId] || 0) + (Number(r.qty) || 0);
   });
+
+  const storedById = new Map<string, { id: string; status: string | null }>();
+  for (const r of storedBatRows) {
+    storedById.set(String(r.id), { id: String(r.id), status: r.status != null ? String(r.status) : null });
+  }
 
   const storedBatteries: ServersStateStoredBatteryDto[] = storedBatRows.map((r) => ({
     id: r.id,
-    itemId: r.item_id,
+    itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
     currentCharge: r.current_charge,
     powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
     displayName: r.display_name != null ? String(r.display_name) : null,
@@ -168,36 +252,7 @@ export async function buildServersAuthoritativeStateDto(
     placedRacks = mapPrismaRacksToPlacedRackDtos(rackRows, slotsList, multipliersList);
   }
 
-  if (placedRacks.length > 0) {
-    try {
-      const recovered = await recoverOrphanRackBatteryStorageRows(pool, uid, placedRacks);
-      if (recovered.length > 0) {
-        const seen = new Set(storedBatteries.map((b) => b.id));
-        for (const row of recovered) {
-          if (seen.has(row.id)) continue;
-          seen.add(row.id);
-          storedBatteries.push({
-            id: row.id,
-            itemId: row.item_id,
-            currentCharge: row.current_charge,
-            powerCapacityWh: null,
-            displayName: null,
-            imageUrl: null,
-            workshopSlotIndex: null,
-            workshopComponentSlotId: null
-          });
-        }
-        console.warn(
-          `[servers/state] Recuperada(s) ${recovered.length} instância(s) de bateria em armazém (UUID sem linha) uid=${uid}`
-        );
-      }
-    } catch (eRec) {
-      console.error(
-        `[servers/state] Falha ao recuperar baterias órfãs uid=${uid}:`,
-        eRec instanceof Error ? eRec.message : String(eRec)
-      );
-    }
-  }
+  logServerStateBatteryConsistency(uid, placedRacks, storedById, ctx);
 
   const workshopSlots: (ServersAuthoritativeStateDto['workshopSlots'][number])[] = [
     null,

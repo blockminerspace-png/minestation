@@ -13,6 +13,8 @@ import { runPromoCodeRedeemInTransaction, type GrantAdminUpgradeRewardsFn } from
 import { RoletaAppError, normalizePromoCode } from '../../validation/roletaValidation.js';
 import { buildLuckyBoxesStateV1, getLuckyBoxOpeningForUser } from './lucky-boxes.state.service.js';
 import {
+  luckyBoxOpenRequestFingerprint,
+  luckyBoxPurchaseRequestFingerprint,
   normalizeLuckyBoxIdempotencyKey,
   readLuckyBoxIdempotency,
   writeLuckyBoxIdempotency
@@ -43,6 +45,19 @@ function uidNum(req: Request): number | null {
   if (v == null) return null;
   const n = typeof v === 'number' ? v : parseInt(String(v), 10);
   return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Mongo de auditoria não pode bloquear a resposta HTTP (insert pode pendurar-se sem timeout). */
+function fireAndForgetGameActivityLog(
+  append: LuckyBoxesModuleDeps['appendGameActivityLog'],
+  userId: number,
+  action: string,
+  meta: Record<string, unknown>
+): void {
+  void append(null, userId, action, meta).catch((e: unknown) => {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn(`[lucky-boxes] appendGameActivityLog falhou (${action}):`, msg);
+  });
 }
 
 function mapHistoryRow(
@@ -176,10 +191,24 @@ export function registerLuckyBoxesModuleRoutes(app: Application, deps: LuckyBoxe
     if (userId == null) return res.status(401).json({ error: 'Não autenticado.' });
     const boxId = bodyLootBoxId(req.body);
     if (!boxId) return res.status(400).json({ error: 'Caixa inválida.' });
+    const bodyQty = req.body as { qty?: unknown; quantity?: unknown };
+    const qtyRaw = bodyQty.quantity ?? bodyQty.qty;
+    const qtyParsed =
+      typeof qtyRaw === 'number' ? qtyRaw : typeof qtyRaw === 'string' ? parseInt(qtyRaw, 10) : NaN;
+    const qty = Number.isFinite(qtyParsed) && qtyParsed >= 1 ? Math.floor(qtyParsed) : undefined;
+    const purchaseFp = luckyBoxPurchaseRequestFingerprint(boxId, qty);
     const idem = normalizeLuckyBoxIdempotencyKey((req.body as { idempotencyKey?: unknown }).idempotencyKey);
     if (idem) {
       const cached = await readLuckyBoxIdempotency(userId, 'purchase', idem);
       if (cached != null && cached.http_status >= 200 && cached.http_status < 300) {
+        const storedFp = String(cached.request_fingerprint ?? '').trim();
+        if (storedFp && storedFp !== purchaseFp) {
+          console.warn(JSON.stringify({ event: 'lucky_box_purchase_idem_mismatch', userId }));
+          return res.status(409).json({
+            error: 'Mesma chave de idempotência com pedido diferente.',
+            code: 'IDEMPOTENCY_PAYLOAD_MISMATCH'
+          });
+        }
         try {
           return res.status(cached.http_status).json(JSON.parse(cached.body_json) as object);
         } catch {
@@ -187,11 +216,6 @@ export function registerLuckyBoxesModuleRoutes(app: Application, deps: LuckyBoxe
         }
       }
     }
-    const body = req.body as { qty?: unknown; quantity?: unknown };
-    const qtyRaw = body.quantity ?? body.qty;
-    const qtyParsed =
-      typeof qtyRaw === 'number' ? qtyRaw : typeof qtyRaw === 'string' ? parseInt(qtyRaw, 10) : NaN;
-    const qty = Number.isFinite(qtyParsed) && qtyParsed >= 1 ? Math.floor(qtyParsed) : undefined;
     try {
       const emailGate = await assertEmailMatchesSession(
         prisma,
@@ -205,16 +229,15 @@ export function registerLuckyBoxesModuleRoutes(app: Application, deps: LuckyBoxe
         { timeout: 60_000, maxWait: 10_000 }
       );
 
-      await appendGameActivityLog(null, userId, 'lucky_box_purchase', {
+      const payload = { ok: true, newUsdc, qtyPurchased, version: 1 as const };
+      if (idem) await writeLuckyBoxIdempotency(userId, 'purchase', idem, 200, payload, purchaseFp);
+      fireAndForgetGameActivityLog(appendGameActivityLog, userId, 'lucky_box_purchase', {
         boxId,
         boxName,
         qtyPurchased,
         unitPriceUsdc: price,
         trigger
       });
-
-      const payload = { ok: true, newUsdc, qtyPurchased, version: 1 as const };
-      if (idem) await writeLuckyBoxIdempotency(userId, 'purchase', idem, 200, payload);
       return res.status(200).json(payload);
     } catch (err: unknown) {
       if (err instanceof LootBoxBuyError) {
@@ -231,10 +254,19 @@ export function registerLuckyBoxesModuleRoutes(app: Application, deps: LuckyBoxe
     if (userId == null) return res.status(401).json({ error: 'Não autenticado.' });
     const boxId = bodyLootBoxId(req.body);
     if (!boxId) return res.status(400).json({ error: 'Caixa inválida.' });
+    const openFp = luckyBoxOpenRequestFingerprint(boxId);
     const idem = normalizeLuckyBoxIdempotencyKey((req.body as { idempotencyKey?: unknown }).idempotencyKey);
     if (idem) {
       const cached = await readLuckyBoxIdempotency(userId, 'open', idem);
       if (cached != null && cached.http_status >= 200 && cached.http_status < 300) {
+        const storedFp = String(cached.request_fingerprint ?? '').trim();
+        if (storedFp && storedFp !== openFp) {
+          console.warn(JSON.stringify({ event: 'lucky_box_open_idem_mismatch', userId }));
+          return res.status(409).json({
+            error: 'Mesma chave de idempotência com pedido diferente.',
+            code: 'IDEMPOTENCY_PAYLOAD_MISMATCH'
+          });
+        }
         try {
           return res.status(cached.http_status).json(JSON.parse(cached.body_json) as object);
         } catch {
@@ -251,20 +283,24 @@ export function registerLuckyBoxesModuleRoutes(app: Application, deps: LuckyBoxe
       if (!emailGate.ok) return res.status(emailGate.status).json({ error: emailGate.error });
 
       const { rewards, gainedUsdc, boxName, openingId } = await prisma.$transaction(
-        (tx) => executeLootBoxOpenInTransaction(tx, { userId, boxId, idempotencyKey: idem }),
+        (tx) =>
+          executeLootBoxOpenInTransaction(tx, {
+            userId,
+            boxId,
+            idempotencyKey: idem,
+            idempotencyFingerprint: openFp
+          }),
         { timeout: 60_000, maxWait: 10_000 }
       );
 
-      await appendGameActivityLog(null, userId, 'lucky_box_open', {
+      const payload = { ok: true, rewards, openingId, version: 1 as const };
+      fireAndForgetGameActivityLog(appendGameActivityLog, userId, 'lucky_box_open', {
         boxId,
         boxName,
         openingId,
         rewardCount: rewards.length,
         gainedUsdc
       });
-
-      const payload = { ok: true, rewards, openingId, version: 1 as const };
-      if (idem) await writeLuckyBoxIdempotency(userId, 'open', idem, 200, payload);
       return res.status(200).json(payload);
     } catch (err: unknown) {
       if (err instanceof LootBoxOpenError) {
@@ -305,32 +341,24 @@ export function registerLuckyBoxesModuleRoutes(app: Application, deps: LuckyBoxe
       );
 
       if (outcome.kind === 'roleta_reentry') {
-        await appendGameActivityLog(null, userId, 'promo_redeem_roleta_reentry', {
+        const payload = { ok: true, type: 'roleta' as const, code: outcome.code, version: 1 as const };
+        if (idem) await writeLuckyBoxIdempotency(userId, 'promo_redeem', idem, 200, payload);
+        fireAndForgetGameActivityLog(appendGameActivityLog, userId, 'promo_redeem_roleta_reentry', {
           code: outcome.code,
           serverAtMs: serverNowMs
         });
-        const payload = { ok: true, type: 'roleta' as const, code: outcome.code, version: 1 as const };
-        if (idem) await writeLuckyBoxIdempotency(userId, 'promo_redeem', idem, 200, payload);
         return res.json(payload);
       }
 
       if (outcome.kind === 'roleta_new') {
-        await appendGameActivityLog(null, userId, 'promo_redeem_roleta', {
+        const payload = { ok: true, type: 'roleta' as const, code: outcome.code, version: 1 as const };
+        if (idem) await writeLuckyBoxIdempotency(userId, 'promo_redeem', idem, 200, payload);
+        fireAndForgetGameActivityLog(appendGameActivityLog, userId, 'promo_redeem_roleta', {
           code: outcome.code,
           redeemedAtMs: outcome.serverNowMs
         });
-        const payload = { ok: true, type: 'roleta' as const, code: outcome.code, version: 1 as const };
-        if (idem) await writeLuckyBoxIdempotency(userId, 'promo_redeem', idem, 200, payload);
         return res.json(payload);
       }
-
-      await appendGameActivityLog(null, userId, 'promo_redeem', {
-        code: normalizedCode,
-        lootBoxId: outcome.lootBoxId,
-        upgradeId: outcome.upgradeId,
-        adminUpgradeId: outcome.adminUpgradeId,
-        redeemedAtMs: serverNowMs
-      });
 
       const payload = {
         ok: true,
@@ -343,6 +371,13 @@ export function registerLuckyBoxesModuleRoutes(app: Application, deps: LuckyBoxe
         version: 1 as const
       };
       if (idem) await writeLuckyBoxIdempotency(userId, 'promo_redeem', idem, 200, payload);
+      fireAndForgetGameActivityLog(appendGameActivityLog, userId, 'promo_redeem', {
+        code: normalizedCode,
+        lootBoxId: outcome.lootBoxId,
+        upgradeId: outcome.upgradeId,
+        adminUpgradeId: outcome.adminUpgradeId,
+        redeemedAtMs: serverNowMs
+      });
       return res.json(payload);
     } catch (e) {
       if (e instanceof RoletaAppError) {

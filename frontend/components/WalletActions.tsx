@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { web3DepositFlagDisabled } from '../services/api';
 import { CreditCard, Upload, Download, HardDrive, Coins, TrendingUp, Shield, Clock } from 'lucide-react';
+import { findWithdrawTokenCfg, isWithdrawTokenUsable } from '../utils/withdrawTokenMatch';
 
 interface WalletActionsProps {
   onAddUSDC: (amount: number, network?: string) => void;
@@ -10,7 +11,7 @@ interface WalletActionsProps {
   miningCoins: { id: string; name: string; symbol: string; priceUSD: number }[];
   coinRates?: Record<string, number>;
   onWithdrawCoin: (coinId: string, amount: number) => void;
-  withdrawTokens?: Array<{ name: string; contract: string; minAmount?: number; minWithdrawalUsdc?: number; feePercent?: number }>;
+  withdrawTokens?: Array<{ name?: string; symbol?: string; coinId?: string; contract?: string; minAmount?: number; minWithdrawalUsdc?: number; feePercent?: number; disabled?: boolean }>;
 
   prefillAmount?: number;
   depositStatus?: 'awaiting' | 'success' | 'queued' | 'cancelled' | 'failed';
@@ -130,12 +131,8 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
     const val = parseFloat(String(coinAmount).replace(/\s/g, '').replace(',', '.'));
     const bal = (coinBalances[selectedCoinId] || 0);
     const coin = miningCoins.find(c => c.id === selectedCoinId);
-    const matching = (withdrawTokens || []).find(t => {
-      const isNameMatch = t.name === (coin?.name || '');
-      const isNative = ['POL', 'POLYGON', 'BNB', 'ETH', 'WETH'].includes(t.name?.toUpperCase() || '');
-      const hasValidContract = /^0x[a-fA-F0-9]{40}$/.test(t.contract || '');
-      return isNameMatch && (isNative || hasValidContract);
-    });
+    const cfg = findWithdrawTokenCfg(withdrawTokens, coin);
+    const matching = cfg && isWithdrawTokenUsable(cfg) ? cfg : null;
     const enabled = hasWallet && !!matching;
 
     let minW = matching?.minAmount ?? 0;
@@ -404,7 +401,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
           <div className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none">
             {(() => {
               const c = miningCoins.find(x => x.id === selectedCoinId);
-              const m = (withdrawTokens || []).find(t => t.name === (c?.name || ''));
+              const m = findWithdrawTokenCfg(withdrawTokens, c);
               if (m?.feePercent && parseFloat(coinAmount) > 0) {
                 return <span className="text-[9px] font-bold text-red-500 bg-red-100 dark:bg-red-900/30 px-1 rounded">-{m.feePercent}%</span>;
               }
@@ -414,7 +411,7 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
         </div>
         {(() => {
           const c = miningCoins.find(x => x.id === selectedCoinId);
-          const m = (withdrawTokens || []).find(t => t.name === (c?.name || ''));
+          const m = findWithdrawTokenCfg(withdrawTokens, c);
           let minW = m?.minAmount ?? 0;
           if (m?.minWithdrawalUsdc && c && c.priceUSD > 0) minW = m.minWithdrawalUsdc / c.priceUSD;
 
@@ -469,17 +466,11 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
               parseFloat(coinAmount) > (coinBalances[selectedCoinId] || 0) ||
               parseFloat(coinAmount) < ((() => {
                 const c = miningCoins.find(x => x.id === selectedCoinId);
-                const m = (withdrawTokens || []).find(t => t.name === (c?.name || ''));
+                const m = findWithdrawTokenCfg(withdrawTokens, c);
                 if (m?.minWithdrawalUsdc && c && c.priceUSD > 0) return m.minWithdrawalUsdc / c.priceUSD;
                 return m?.minAmount ?? 0;
               })()) ||
-              !(withdrawTokens || []).find(t => {
-                const c = miningCoins.find(x => x.id === selectedCoinId);
-                const isNameMatch = t.name === (c?.name || '');
-                const isNative = ['POL', 'POLYGON', 'BNB', 'ETH', 'WETH'].includes(t.name?.toUpperCase() || '');
-                const hasValidContract = /^0x[a-fA-F0-9]{40}$/.test(t.contract || '');
-                return isNameMatch && (isNative || hasValidContract);
-              })
+              !isWithdrawTokenUsable(findWithdrawTokenCfg(withdrawTokens, miningCoins.find(x => x.id === selectedCoinId)))
             }
             className="bg-amber-100 dark:bg-amber-900/30 hover:bg-amber-200 dark:hover:bg-amber-900/50 border border-amber-300 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-xs font-bold px-4 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed h-9"
           >
@@ -487,15 +478,9 @@ export const WalletActions: React.FC<WalletActionsProps> = ({
           </button>
 
         </div>
-        {!(withdrawTokens || []).find(t => {
-          const c = miningCoins.find(x => x.id === selectedCoinId);
-          const isNameMatch = t.name === (c?.name || '');
-          const isNative = ['POL', 'POLYGON', 'BNB', 'ETH', 'WETH'].includes(t.name?.toUpperCase() || '');
-          const hasValidContract = /^0x[a-fA-F0-9]{40}$/.test(t.contract || '');
-          return isNameMatch && (isNative || hasValidContract);
-        }) && (
-            <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Levantamento indisponível para este par.</p>
-          )}
+        {!isWithdrawTokenUsable(findWithdrawTokenCfg(withdrawTokens, miningCoins.find(x => x.id === selectedCoinId))) && (
+          <p className="text-[10px] text-red-600 dark:text-red-400 mt-1">Levantamento indisponível para este par.</p>
+        )}
         <p className="text-[10px] text-slate-500 dark:text-slate-600 mt-2 italic flex items-center gap-1">
           <HardDrive size={10} /> O valor sai do saldo minerado do ativo selecionado.
         </p>

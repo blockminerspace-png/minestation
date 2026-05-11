@@ -61,28 +61,79 @@ async function main() {
   }
   if (!apply) {
     console.log(
-      '[battery_repair] DRY-RUN: nenhuma escrita. Correr antes: `npm run battery:diagnostic`.\n' +
-        'Para aplicar reparação (ensureStoredBatteriesIntegrity na BD):\n' +
+      '[battery_repair] DRY-RUN: nenhuma escrita na BD. Relatório de leitura (reportBatteryIntegrityReadonly).\n' +
+        'Correr antes: `npm run battery:diagnostic`. Para aplicar mutações de integridade:\n' +
         '  npm run build:ts && node scripts/battery_repair_dryrun.mjs --apply [--audit-user-id=UID]\n' +
         `BATTERY_RECONCILIATION_DRY_RUN=${process.env.BATTERY_RECONCILIATION_DRY_RUN ?? '(unset)'} — diagnóstico seguro; --apply obrigatório para escrever.`
     );
+    const { reportBatteryIntegrityReadonly } = await import('../dist/modules/batteries/batteries.integrity.js');
+    const pool = new Pool(buildPoolConfig());
+    const c = await pool.connect();
+    try {
+      const rep = await reportBatteryIntegrityReadonly(c);
+      console.log(JSON.stringify(rep, null, 2));
+    } catch (e) {
+      console.error('[battery_repair] Falha no relatório read-only:', e);
+      process.exit(1);
+    } finally {
+      c.release();
+      await pool.end();
+    }
     process.exit(0);
   }
 
-  const { ensureStoredBatteriesIntegrity } = await import('../dist/modules/batteries/batteries.integrity.js');
+  const { ensureStoredBatteriesIntegrity, buildBatteryIntegrityRepairPlan } = await import(
+    '../dist/modules/batteries/batteries.integrity.js'
+  );
   const pool = new Pool(buildPoolConfig());
   try {
+    const pc = await pool.connect();
+    let plan;
+    try {
+      plan = await buildBatteryIntegrityRepairPlan(pc);
+    } finally {
+      pc.release();
+    }
+    console.log('[battery_repair] PLANO DE AÇÕES (--apply) — revisão antes de mutações:');
+    for (const a of plan.actions) {
+      console.log(`  • [${a.id}] ${a.description}`);
+      console.log(`      ~${a.estimatedRows} linha(s) afetadas (estimativa SELECT-only)`);
+    }
+    console.log('[battery_repair] Resumo diagnóstico:', JSON.stringify(plan.summary));
+    console.warn(
+      JSON.stringify({
+        event: 'battery_repair_apply_start',
+        at: new Date().toISOString(),
+        actions: plan.actions.map((x) => ({ id: x.id, estimatedRows: x.estimatedRows }))
+      })
+    );
     await ensureStoredBatteriesIntegrity(pool);
+    const pc2 = await pool.connect();
+    let repAfter;
+    try {
+      const { reportBatteryIntegrityReadonly } = await import('../dist/modules/batteries/batteries.integrity.js');
+      repAfter = await reportBatteryIntegrityReadonly(pc2);
+    } finally {
+      pc2.release();
+    }
+    console.warn(
+      JSON.stringify({
+        event: 'battery_repair_apply_audit',
+        at: new Date().toISOString(),
+        summaryBefore: plan.summary,
+        summaryAfter: repAfter
+      })
+    );
     if (auditUserId != null) {
       const meta = JSON.stringify({
-        reason: 'battery_reconciliation',
+        reason: 'battery_semantic_migration_repair',
         script: 'battery_repair_dryrun.mjs',
         at: new Date().toISOString()
       }).slice(0, 4000);
       await pool.query(
         `INSERT INTO inventory_movements (user_id, action, catalog_item_id, instance_id, quantity_before, quantity_after, meta, created_at)
          VALUES ($1, $2, NULL, NULL, NULL, NULL, $3, $4::bigint)`,
-        [auditUserId, 'battery_reconciliation', meta, String(Date.now())]
+        [auditUserId, 'battery_semantic_migration_repair', meta, String(Date.now())]
       );
       console.log('[battery_repair] inventory_movements gravado para user_id=%s', auditUserId);
     } else {

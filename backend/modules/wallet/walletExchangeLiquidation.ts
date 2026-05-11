@@ -1,6 +1,31 @@
 import type { PoolClient } from 'pg';
+import { stableIntentFingerprint } from '../../lib/gameIntentIdempotencyPrisma.js';
 import { RoletaAppError } from '../../validation/roletaValidation.js';
 import { walletAdvisoryLockKey64 } from './walletLocks.js';
+
+/** Fingerprint estável do pedido de liquidação (câmbio) para `wallet_idempotency.request_fingerprint`. */
+export function walletExchangeLiquidateRequestFingerprint(input: {
+  coinId: string;
+  fractionMode: 'desk_shortcuts' | 'legacy';
+  deskPercentagePoints?: number | null;
+  legacyFraction?: number | null;
+}): string {
+  const coinId = String(input.coinId || '').trim();
+  if (input.fractionMode === 'desk_shortcuts') {
+    return stableIntentFingerprint({
+      op: 'wallet_exchange_liquidate',
+      coinId,
+      fractionMode: input.fractionMode,
+      deskPercentagePoints: input.deskPercentagePoints ?? null
+    });
+  }
+  return stableIntentFingerprint({
+    op: 'wallet_exchange_liquidate',
+    coinId,
+    fractionMode: input.fractionMode,
+    legacyFraction: input.legacyFraction ?? null
+  });
+}
 
 export type ExchangeLiquidationOk = {
   ok: true;
@@ -44,9 +69,22 @@ export async function runExchangeLiquidation(
     idempotencyKey: string | null;
     idempotencyScope: string;
     serverNowMs: number;
+    /** Obrigatório quando `idempotencyKey` está definido — comparação em replay (409 se diferir). */
+    requestFingerprint?: string | null;
   }
 ): Promise<ExchangeLiquidationOk> {
-  const { userId, coinId, fraction, fractionMode, minUsdc, feePercent, idempotencyKey, idempotencyScope, serverNowMs } =
+  const {
+    userId,
+    coinId,
+    fraction,
+    fractionMode,
+    minUsdc,
+    feePercent,
+    idempotencyKey,
+    idempotencyScope,
+    serverNowMs,
+    requestFingerprint
+  } =
     args;
   assertFractionAllowed(fraction, fractionMode);
 
@@ -56,8 +94,8 @@ export async function runExchangeLiquidation(
       const lockKey = walletAdvisoryLockKey64(userId, idempotencyScope, idempotencyKey);
       await client.query('SELECT pg_advisory_xact_lock($1::bigint)', [lockKey]);
 
-      const prev = await client.query<{ response_json: string }>(
-        `SELECT response_json FROM wallet_idempotency
+      const prev = await client.query<{ response_json: string; request_fingerprint: string | null }>(
+        `SELECT response_json, request_fingerprint::text AS request_fingerprint FROM wallet_idempotency
          WHERE user_id = $1 AND scope = $2 AND idempotency_key = $3`,
         [userId, idempotencyScope, idempotencyKey]
       );
@@ -66,10 +104,29 @@ export async function runExchangeLiquidation(
         try {
           const parsed = JSON.parse(row0.response_json) as ExchangeLiquidationOk;
           if (parsed && parsed.ok === true) {
+            const storedFp = String(row0.request_fingerprint ?? '').trim();
+            const reqFp = String(requestFingerprint ?? '').trim();
+            if (storedFp && reqFp && storedFp !== reqFp) {
+              console.warn(
+                JSON.stringify({
+                  event: 'wallet_exchange_liquidate_idem_mismatch',
+                  userId
+                })
+              );
+              await client.query('ROLLBACK');
+              throw new RoletaAppError('Mesma chave de idempotência com pedido diferente.', 409);
+            }
+            console.warn(
+              JSON.stringify({
+                event: 'wallet_exchange_liquidate_idem_replay',
+                userId
+              })
+            );
             await client.query('COMMIT');
             return { ...parsed, idempotentReplay: true };
           }
-        } catch {
+        } catch (replayErr) {
+          if (replayErr instanceof RoletaAppError) throw replayErr;
           /* continuar */
         }
       }
@@ -183,9 +240,18 @@ export async function runExchangeLiquidation(
 
     if (idempotencyKey) {
       await client.query(
-        `INSERT INTO wallet_idempotency (user_id, scope, idempotency_key, response_json, created_at)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [userId, idempotencyScope, idempotencyKey, JSON.stringify(out), nowBig]
+        `INSERT INTO wallet_idempotency (user_id, scope, idempotency_key, response_json, request_fingerprint, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [
+          userId,
+          idempotencyScope,
+          idempotencyKey,
+          JSON.stringify(out),
+          requestFingerprint != null && String(requestFingerprint).trim() !== ''
+            ? String(requestFingerprint).trim().slice(0, 64)
+            : null,
+          nowBig
+        ]
       );
     }
 

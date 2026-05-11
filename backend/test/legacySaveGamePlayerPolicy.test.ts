@@ -17,12 +17,31 @@ describe('legacySaveGamePlayerPolicy', () => {
     expect(keys).toContain('placedRacks');
   });
 
+  it('legacyCriticalKeysInChanges detecta batteryId/rackId no topo', () => {
+    const keys = legacyCriticalKeysInChanges({
+      lastLoadTime: 1,
+      batteryId: 'uuid-here',
+      rackId: 'rack-1'
+    });
+    expect(keys).toContain('batteryId');
+    expect(keys).toContain('rackId');
+  });
+
   it('applyLegacySaveGameFullBarrier em modo strip remove stock', () => {
     process.env.LEGACY_SAVEGAME_PLAYER_POLICY = 'strip';
     const changes = { stock: { x: 1 }, lastLoadTime: 99 };
     const r = applyLegacySaveGameFullBarrier({ headers: {}, originalUrl: '/api/save-game' }, changes, 1, false);
     expect(r.mode).toBe('allow');
     expect(changes.stock).toBeUndefined();
+  });
+
+  it('applyLegacySaveGameFullBarrier em modo reject devolve erro sem persistir stock', () => {
+    process.env.LEGACY_SAVEGAME_PLAYER_POLICY = 'reject';
+    const changes = { stock: { x: 1 }, lastLoadTime: 99 };
+    const r = applyLegacySaveGameFullBarrier({ headers: {}, originalUrl: '/api/save-game' }, changes, 1, false);
+    expect(r.mode).toBe('reject');
+    expect(r.code).toBe('LEGACY_SAVEGAME_CRITICAL_REJECTED');
+    expect(changes.stock).toEqual({ x: 1 });
   });
 
   it('neutralizeLegacySaveGameSlicePayload inventory remove stock do cliente', async () => {

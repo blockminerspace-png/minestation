@@ -3,6 +3,7 @@
  * sem depender só de joins frágeis após a instância sair do armazém.
  */
 import type { PoolClient } from 'pg';
+import { normalizeKnown1000WhBatteryCatalogId } from './batteries.catalog.js';
 
 export const RACK_BATTERY_INSTANCE_UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -33,7 +34,10 @@ export async function loadStoredBatteryRowsForIds(
   );
   const m = new Map<string, StoredBatteryRowSnap>();
   for (const row of res.rows as StoredBatteryRowSnap[]) {
-    m.set(String(row.id), row);
+    m.set(String(row.id), {
+      ...row,
+      item_id: normalizeKnown1000WhBatteryCatalogId(row.item_id)
+    });
   }
   return m;
 }
@@ -64,7 +68,9 @@ export async function fetchBatteryUpgradeRowsByIds(
   client: Pick<PoolClient, 'query'>,
   catalogIds: string[]
 ): Promise<Map<string, UpgradeBattSnap>> {
-  const uniq = [...new Set(catalogIds.map((x) => String(x).trim()).filter(Boolean))];
+  const uniq = [
+    ...new Set(catalogIds.map((x) => normalizeKnown1000WhBatteryCatalogId(x)).filter(Boolean))
+  ];
   if (uniq.length === 0) return new Map();
   const res = await client.query(
     `SELECT id, power_capacity, name, image FROM upgrades
@@ -118,19 +124,24 @@ export function buildRackBatteryPersistSnapshot(
   let catalogId: string | null = null;
   if (isRackBatteryInstanceUuid(bid)) {
     const inst = instanceSnapshot.get(bid);
-    catalogId = inst?.item_id != null ? String(inst.item_id).trim() : null;
+    catalogId = inst?.item_id != null ? normalizeKnown1000WhBatteryCatalogId(inst.item_id) : null;
     if (!catalogId && prevRow && String(prevRow.battery_id || '') === bid) {
       catalogId =
-        prevRow.battery_catalog_item_id != null ? String(prevRow.battery_catalog_item_id).trim() : null;
+        prevRow.battery_catalog_item_id != null
+          ? normalizeKnown1000WhBatteryCatalogId(prevRow.battery_catalog_item_id)
+          : null;
     }
   } else {
-    catalogId = bid;
+    catalogId = normalizeKnown1000WhBatteryCatalogId(bid);
   }
 
   if (!catalogId) {
     if (prevRow && String(prevRow.battery_id || '') === bid) {
       return {
-        catalogItemId: prevRow.battery_catalog_item_id ?? null,
+        catalogItemId:
+          prevRow.battery_catalog_item_id != null
+            ? normalizeKnown1000WhBatteryCatalogId(prevRow.battery_catalog_item_id)
+            : null,
         powerWh: prevRow.battery_power_capacity_wh ?? null,
         displayName: prevRow.battery_display_name ?? null,
         imageUrl: prevRow.battery_image_url ?? null
@@ -188,7 +199,7 @@ export async function loadUserStoredBatteries(
       workshop_component_slot_id: string | null;
     }) => ({
       id: r.id,
-      itemId: r.item_id,
+      itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
       currentCharge: r.current_charge,
       powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
       displayName: r.display_name != null ? String(r.display_name) : null,

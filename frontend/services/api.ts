@@ -994,6 +994,26 @@ export type ServersRackAuxIntentOk = {
   placedRacks: PlacedRack[];
 };
 
+function parseServersRackAuxIntentOk(raw: Record<string, unknown>): ServersRackAuxIntentOk | null {
+  const hasState =
+    raw.stock && typeof raw.stock === 'object' && !Array.isArray(raw.stock) &&
+    Array.isArray(raw.storedBatteries) &&
+    Array.isArray(raw.placedRacks);
+  if (raw.ok !== true && !hasState) return null;
+  const su = Number(raw.serverUpdatedAt);
+  return {
+    ok: true,
+    serverUpdatedAt: Number.isFinite(su) ? su : 0,
+    stateVersion: Number(raw.stateVersion) || su || 0,
+    stock:
+      raw.stock && typeof raw.stock === 'object' && !Array.isArray(raw.stock)
+        ? (raw.stock as Record<string, number>)
+        : {},
+    storedBatteries: Array.isArray(raw.storedBatteries) ? (raw.storedBatteries as StoredBattery[]) : [],
+    placedRacks: Array.isArray(raw.placedRacks) ? (raw.placedRacks as PlacedRack[]) : []
+  };
+}
+
 /** Equipar auxiliar na rig (bateria / cablagem / multiplicador) — mutação autoritativa. */
 export async function postServersRackAuxEquip(
   rackId: string,
@@ -1022,20 +1042,144 @@ export async function postServersRackAuxEquip(
       const forceReload = raw.forceReload === true;
       return { ok: false, status: res.status, error: err, code, forceReload };
     }
-    if (raw.ok !== true) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const parsed = parseServersRackAuxIntentOk(raw);
+    if (!parsed) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
     const su = Number(raw.serverUpdatedAt);
     if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
-    return {
-      ok: true,
-      serverUpdatedAt: Number.isFinite(su) ? su : 0,
-      stateVersion: Number(raw.stateVersion) || su || 0,
-      stock:
-        raw.stock && typeof raw.stock === 'object' && !Array.isArray(raw.stock)
-          ? (raw.stock as Record<string, number>)
-          : {},
-      storedBatteries: Array.isArray(raw.storedBatteries) ? (raw.storedBatteries as StoredBattery[]) : [],
-      placedRacks: Array.isArray(raw.placedRacks) ? (raw.placedRacks as PlacedRack[]) : []
-    };
+    return parsed;
+  } catch {
+    return { ok: false, status: 0, error: 'Erro de rede.' };
+  }
+}
+
+/** Colocar nova rig a partir do stock (mutação autoritativa; substitui save legado neste fluxo). */
+export async function postServersPlaceRack(body: {
+  catalogItemId: string;
+  roomId: string;
+  slotIndex: number;
+  idempotencyKey: string;
+  clientStateVersion: number;
+}): Promise<
+  | ServersRackAuxIntentOk
+  | { ok: false; status: number; error: string; code?: string; forceReload?: boolean }
+> {
+  try {
+    const res = await apiFetch(`${base}/servers/racks/place`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof raw.error === 'string' ? raw.error : 'Pedido falhou.';
+      const code = typeof raw.code === 'string' ? raw.code : undefined;
+      const forceReload = raw.forceReload === true;
+      return { ok: false, status: res.status, error: err, code, forceReload };
+    }
+    const parsed = parseServersRackAuxIntentOk(raw);
+    if (!parsed) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const su = Number(raw.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
+    return parsed;
+  } catch {
+    return { ok: false, status: 0, error: 'Erro de rede.' };
+  }
+}
+
+/** Desmontar rig a partir do servidor, devolvendo componentes válidos ao estoque. */
+export async function postServersRemoveRack(
+  rackId: string
+): Promise<
+  | ServersRackAuxIntentOk
+  | { ok: false; status: number; error: string; code?: string; forceReload?: boolean }
+> {
+  const idem = newServerIntentIdempotencyKey();
+  const clientStateVersion = getGlobalLastLoadTime();
+  try {
+    const res = await apiFetch(`${base}/servers/racks/${encodeURIComponent(rackId)}/remove`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ idempotencyKey: idem, clientStateVersion })
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof raw.error === 'string' ? raw.error : 'Pedido falhou.';
+      const code = typeof raw.code === 'string' ? raw.code : undefined;
+      const forceReload = raw.forceReload === true;
+      return { ok: false, status: res.status, error: err, code, forceReload };
+    }
+    const parsed = parseServersRackAuxIntentOk(raw);
+    if (!parsed) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const su = Number(raw.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
+    return parsed;
+  } catch {
+    return { ok: false, status: 0, error: 'Erro de rede.' };
+  }
+}
+
+/** Equipar GPU/minerador em slot da rig via servidor. */
+export async function postServersRackMinerEquip(
+  rackId: string,
+  slotIndex: number,
+  catalogItemId: string
+): Promise<
+  | ServersRackAuxIntentOk
+  | { ok: false; status: number; error: string; code?: string; forceReload?: boolean }
+> {
+  const idem = newServerIntentIdempotencyKey();
+  const clientStateVersion = getGlobalLastLoadTime();
+  try {
+    const res = await apiFetch(`${base}/servers/racks/${encodeURIComponent(rackId)}/miners/equip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slotIndex, catalogItemId, idempotencyKey: idem, clientStateVersion })
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof raw.error === 'string' ? raw.error : 'Pedido falhou.';
+      const code = typeof raw.code === 'string' ? raw.code : undefined;
+      const forceReload = raw.forceReload === true;
+      return { ok: false, status: res.status, error: err, code, forceReload };
+    }
+    const parsed = parseServersRackAuxIntentOk(raw);
+    if (!parsed) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const su = Number(raw.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
+    return parsed;
+  } catch {
+    return { ok: false, status: 0, error: 'Erro de rede.' };
+  }
+}
+
+/** Remover GPU/minerador de slot da rig via servidor. */
+export async function postServersRackMinerUnequip(
+  rackId: string,
+  slotIndex: number
+): Promise<
+  | ServersRackAuxIntentOk
+  | { ok: false; status: number; error: string; code?: string; forceReload?: boolean }
+> {
+  const idem = newServerIntentIdempotencyKey();
+  const clientStateVersion = getGlobalLastLoadTime();
+  try {
+    const res = await apiFetch(`${base}/servers/racks/${encodeURIComponent(rackId)}/miners/unequip`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slotIndex, idempotencyKey: idem, clientStateVersion })
+    });
+    const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof raw.error === 'string' ? raw.error : 'Pedido falhou.';
+      const code = typeof raw.code === 'string' ? raw.code : undefined;
+      const forceReload = raw.forceReload === true;
+      return { ok: false, status: res.status, error: err, code, forceReload };
+    }
+    const parsed = parseServersRackAuxIntentOk(raw);
+    if (!parsed) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const su = Number(raw.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
+    return parsed;
   } catch {
     return { ok: false, status: 0, error: 'Erro de rede.' };
   }
@@ -1064,20 +1208,11 @@ export async function postServersRackAuxUnequip(
       const forceReload = raw.forceReload === true;
       return { ok: false, status: res.status, error: err, code, forceReload };
     }
-    if (raw.ok !== true) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
+    const parsed = parseServersRackAuxIntentOk(raw);
+    if (!parsed) return { ok: false, status: res.status, error: 'Resposta inválida do servidor.' };
     const su = Number(raw.serverUpdatedAt);
     if (Number.isFinite(su) && su > 0) setGlobalLastLoadTime(su);
-    return {
-      ok: true,
-      serverUpdatedAt: Number.isFinite(su) ? su : 0,
-      stateVersion: Number(raw.stateVersion) || su || 0,
-      stock:
-        raw.stock && typeof raw.stock === 'object' && !Array.isArray(raw.stock)
-          ? (raw.stock as Record<string, number>)
-          : {},
-      storedBatteries: Array.isArray(raw.storedBatteries) ? (raw.storedBatteries as StoredBattery[]) : [],
-      placedRacks: Array.isArray(raw.placedRacks) ? (raw.placedRacks as PlacedRack[]) : []
-    };
+    return parsed;
   } catch {
     return { ok: false, status: 0, error: 'Erro de rede.' };
   }
@@ -1718,7 +1853,6 @@ export function parseShopStateV1Body(body: Record<string, unknown>): ShopStateV1
   if (!cartRaw || typeof cartRaw !== 'object' || Array.isArray(cartRaw)) return null;
   const co = cartRaw as Record<string, unknown>;
   const cartId = typeof co.cartId === 'string' ? co.cartId.trim() : '';
-  if (!cartId) return null;
   const linesRaw = co.lines;
   const lines: ShopCartLineApi[] = [];
   if (Array.isArray(linesRaw)) {
@@ -1871,7 +2005,7 @@ export type ShopCheckoutApiResult =
       orderId?: string;
       shop?: ShopStateV1Ok;
     }
-  | { ok: false; status: number; error?: string; missing?: number };
+  | { ok: false; status: number; error?: string; missing?: number; code?: string };
 
 export async function postShopCheckout(idempotencyKey?: string | null): Promise<ShopCheckoutApiResult> {
   try {
@@ -1894,7 +2028,8 @@ export async function postShopCheckout(idempotencyKey?: string | null): Promise<
         ok: false,
         status,
         error: typeof body.error === 'string' ? body.error : `Erro HTTP ${status}`,
-        missing: body.missing != null ? Number(body.missing) : undefined
+        missing: body.missing != null ? Number(body.missing) : undefined,
+        code: typeof body.code === 'string' ? body.code : undefined
       };
     }
     const newUsdc = Number(body.newUsdc);
@@ -2325,11 +2460,16 @@ export type BuyMarketListingResult = {
   unitPrice?: number;
 };
 
+/** Alinhar com nginx `proxy_read_timeout` 300s em /api/market/ (evitar abort aos 100s com servidor lento). */
+const MARKET_BUY_FETCH_MS = 300_000;
+
 export async function buyMarketListing(
   listingId: string,
   qty?: number,
   opts?: { idempotencyKey?: string }
 ): Promise<BuyMarketListingResult> {
+  const controller = new AbortController();
+  const kill = setTimeout(() => controller.abort(), MARKET_BUY_FETCH_MS);
   try {
     const body: Record<string, unknown> = { listingId };
     if (qty != null) {
@@ -2341,13 +2481,42 @@ export async function buyMarketListing(
     }
     const ik = opts?.idempotencyKey?.trim();
     if (ik) body.idempotencyKey = ik.slice(0, 128);
-    const res = await apiFetch(`${base}/market/buy`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    const res = await apiFetch(`${base}/market/buy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: controller.signal
+    });
     if (!res.ok) {
-      try { return await res.json(); } catch { return { ok: false, error: 'Purchase failed' }; }
+      if (res.status === 524 || res.status === 504) {
+        return {
+          ok: false,
+          error:
+            'Timeout (Cloudflare ou servidor). No painel Cloudflare aumenta o tempo máximo da origem para a API; na VPS confirma nginx com proxy_read_timeout alto em /api/market/. Recarrega e verifica o saldo antes de repetir.'
+        };
+      }
+      try {
+        return await res.json();
+      } catch {
+        return { ok: false, error: `Erro HTTP ${res.status}` };
+      }
     }
-    try { return await res.json(); } catch { return { ok: true }; }
-  } catch {
+    try {
+      return await res.json();
+    } catch {
+      return { ok: true };
+    }
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      return {
+        ok: false,
+        error:
+          'Pedido cancelado após vários minutos sem resposta do servidor. Se o saldo mudou, a compra pode ter concluído na mesma — recarrega antes de tentar outra vez. Se repetir, verifica Cloudflare/nginx e carga na base de dados.'
+      };
+    }
     return { ok: false, error: 'Network error' };
+  } finally {
+    clearTimeout(kill);
   }
 }
 
@@ -2674,7 +2843,7 @@ export async function getWheelState(): Promise<
       return { ok: false, error: err, status: res.status };
     }
     const j = raw as Record<string, unknown>;
-    const spinPriceUsdc = typeof j.spinPriceUsdc === 'number' ? j.spinPriceUsdc : Number(j.spinPriceUsdc) || 0.1;
+    const spinPriceUsdc = typeof j.spinPriceUsdc === 'number' ? j.spinPriceUsdc : Number(j.spinPriceUsdc) || 1;
     const usdcBalance = typeof j.usdcBalance === 'number' ? j.usdcBalance : Number(j.usdcBalance) || 0;
     const leg = j.legacyPaidPending as { wonItemId?: string } | null | undefined;
     const legacyPaidPending =
@@ -3003,49 +3172,148 @@ export function newServerIntentIdempotencyKey(): string {
 
 export type WorkshopMutateAction = 'equip_bench' | 'unequip_bench' | 'equip_component' | 'unequip_component';
 
-/** Oficina: mutação autoritária no servidor (stock, armazém, workshop_slots, histórico). */
+/** Chave idempotência para mutações de intenção na Oficina (8–128 chars seguros). */
+export function newWorkshopIntentIdempotencyKey(): string {
+  return newServerIntentIdempotencyKey();
+}
+
+export type WorkshopIntentOk = {
+  ok: true;
+  serverUpdatedAt: number;
+  stateVersion?: number;
+  workshopSlots: unknown[];
+  stock: Record<string, number>;
+  storedBatteries: StoredBattery[];
+  idempotentReplay?: boolean;
+};
+
+export type WorkshopIntentErr = {
+  ok: false;
+  error: string;
+  status?: number;
+  code?: string;
+  forceReload?: boolean;
+};
+
+export type WorkshopIntentResult = WorkshopIntentOk | WorkshopIntentErr;
+
+async function postWorkshopIntent(path: string, body: Record<string, unknown>): Promise<WorkshopIntentResult> {
+  try {
+    const res = await apiFetch(`${base}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
+      const code = typeof data.code === 'string' ? data.code : undefined;
+      return {
+        ok: false as const,
+        error: err,
+        status: res.status,
+        code,
+        forceReload: data.forceReload === true
+      };
+    }
+    const su = Number(data.serverUpdatedAt);
+    if (Number.isFinite(su) && su > 0) globalLastLoadTime = su;
+    const sv = Number(data.stateVersion);
+    return {
+      ok: true as const,
+      serverUpdatedAt: su,
+      stateVersion: Number.isFinite(sv) ? sv : undefined,
+      workshopSlots: Array.isArray(data.workshopSlots) ? data.workshopSlots : [],
+      stock: (data.stock as Record<string, number>) || {},
+      storedBatteries: Array.isArray(data.storedBatteries) ? (data.storedBatteries as StoredBattery[]) : [],
+      idempotentReplay: data.idempotentReplay === true
+    };
+  } catch {
+    return { ok: false as const, error: 'Network error' };
+  }
+}
+
+/** Instalar estrutura na bancada `slotIndex` (stock → workshop_slots). */
+export async function postWorkshopSlotEquip(payload: {
+  slotIndex: number;
+  itemId: string;
+  idempotencyKey: string;
+  clientStateVersion?: number;
+}): Promise<WorkshopIntentResult> {
+  const { slotIndex, itemId, idempotencyKey, clientStateVersion } = payload;
+  return postWorkshopIntent(`/workshop/slots/${slotIndex}/equip`, {
+    itemId,
+    idempotencyKey,
+    clientStateVersion
+  });
+}
+
+/** Remover estrutura da bancada (devolve ao stock quando permitido). */
+export async function postWorkshopSlotUnequip(payload: {
+  slotIndex: number;
+  idempotencyKey: string;
+  clientStateVersion?: number;
+}): Promise<WorkshopIntentResult> {
+  const { slotIndex, idempotencyKey, clientStateVersion } = payload;
+  return postWorkshopIntent(`/workshop/slots/${slotIndex}/unequip`, { idempotencyKey, clientStateVersion });
+}
+
+/** Montar bateria/peça no carregador (armazém ou stock → slot interno). */
+export async function postWorkshopBatteryChargeStart(payload: {
+  batteryId: string;
+  benchSlotIndex: number;
+  componentSlotId: string;
+  componentSlotLayoutIndex?: number;
+  idempotencyKey: string;
+  clientStateVersion?: number;
+}): Promise<WorkshopIntentResult> {
+  const bid = encodeURIComponent(String(payload.batteryId || '').trim());
+  const b: Record<string, unknown> = {
+    benchSlotIndex: payload.benchSlotIndex,
+    componentSlotId: payload.componentSlotId,
+    idempotencyKey: payload.idempotencyKey
+  };
+  if (payload.clientStateVersion != null) b.clientStateVersion = payload.clientStateVersion;
+  if (payload.componentSlotLayoutIndex != null) b.componentSlotLayoutIndex = payload.componentSlotLayoutIndex;
+  return postWorkshopIntent(`/workshop/batteries/${bid}/charge/start`, b);
+}
+
+/** Retirar bateria/peça do carregador. */
+export async function postWorkshopBatteryChargeStop(payload: {
+  batteryId: string;
+  benchSlotIndex: number;
+  componentSlotId: string;
+  componentSlotLayoutIndex?: number;
+  idempotencyKey: string;
+  clientStateVersion?: number;
+}): Promise<WorkshopIntentResult> {
+  const bid = encodeURIComponent(String(payload.batteryId || '').trim());
+  const b: Record<string, unknown> = {
+    benchSlotIndex: payload.benchSlotIndex,
+    componentSlotId: payload.componentSlotId,
+    idempotencyKey: payload.idempotencyKey
+  };
+  if (payload.clientStateVersion != null) b.clientStateVersion = payload.clientStateVersion;
+  if (payload.componentSlotLayoutIndex != null) b.componentSlotLayoutIndex = payload.componentSlotLayoutIndex;
+  return postWorkshopIntent(`/workshop/batteries/${bid}/charge/stop`, b);
+}
+
+/**
+ * Oficina: mutação legada `POST /api/workshop/mutate` (preferir rotas granulares acima).
+ * Requer `idempotencyKey` no payload.
+ */
 export async function postWorkshopMutate(payload: {
   action: WorkshopMutateAction;
   slotIndex: number;
   itemId?: string;
   componentSlotId?: string;
-  /** Índice em `layout.slots` do carregador — necessário quando há ids de bateria duplicados */
   componentSlotLayoutIndex?: number;
   storedBatteryId?: string;
   expectedServerUpdatedAt?: number;
-}): Promise<
-  | {
-      ok: true;
-      serverUpdatedAt: number;
-      workshopSlots: unknown[];
-      stock: Record<string, number>;
-      storedBatteries: StoredBattery[];
-    }
-  | { ok: false; error: string; forceReload?: boolean }
-> {
-  try {
-    const res = await apiFetch(`${base}/workshop/mutate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) {
-      const err = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-      return { ok: false as const, error: err, forceReload: !!data.forceReload };
-    }
-    const su = Number(data.serverUpdatedAt);
-    if (Number.isFinite(su) && su > 0) globalLastLoadTime = su;
-    return {
-      ok: true as const,
-      serverUpdatedAt: su,
-      workshopSlots: Array.isArray(data.workshopSlots) ? data.workshopSlots : [],
-      stock: (data.stock as Record<string, number>) || {},
-      storedBatteries: Array.isArray(data.storedBatteries) ? (data.storedBatteries as StoredBattery[]) : []
-    };
-  } catch {
-    return { ok: false as const, error: 'Network error' };
-  }
+  clientStateVersion?: number;
+  idempotencyKey: string;
+}): Promise<WorkshopIntentResult> {
+  return postWorkshopIntent('/workshop/mutate', { ...payload });
 }
 
 // fetchGameState removida em favor de getGameState unificada
@@ -3056,18 +3324,22 @@ export async function postServerRoomBulkBatteries(payload: {
   batteryUpgradeId?: string;
   smartFill?: boolean;
   rigSort?: string;
+  idempotencyKey: string;
+  clientStateVersion?: number;
 }): Promise<
   | {
       ok: true;
       serverUpdatedAt: number;
+      stateVersion: number;
       stock: Record<string, number>;
       storedBatteries: StoredBattery[];
       placedRacks: PlacedRack[];
       appliedRigs: number;
       compatibleRigs: number;
       smartFill?: boolean;
+      idempotentReplay?: boolean;
     }
-  | { ok: false; error: string }
+  | { ok: false; error: string; status?: number; code?: string; forceReload?: boolean }
 > {
   try {
     const res = await apiFetch(`${base}/server-room/bulk-batteries`, {
@@ -3078,20 +3350,78 @@ export async function postServerRoomBulkBatteries(payload: {
     const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) {
       const err = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-      return { ok: false, error: err };
+      const code = typeof data.code === 'string' ? data.code : undefined;
+      const forceReload = data.forceReload === true;
+      return { ok: false, error: err, status: res.status, code, forceReload };
     }
     const su = Number(data.serverUpdatedAt);
     if (Number.isFinite(su) && su > 0) globalLastLoadTime = su;
     return {
       ok: true,
       serverUpdatedAt: su,
+      stateVersion: Number(data.stateVersion) || su || 0,
       stock: (data.stock as Record<string, number>) || {},
       storedBatteries: Array.isArray(data.storedBatteries) ? (data.storedBatteries as StoredBattery[]) : [],
       placedRacks: Array.isArray(data.placedRacks) ? (data.placedRacks as PlacedRack[]) : [],
       appliedRigs: Math.max(0, Math.floor(Number(data.appliedRigs) || 0)),
       compatibleRigs: Math.max(0, Math.floor(Number(data.compatibleRigs) || 0)),
-      smartFill: !!data.smartFill
+      smartFill: !!data.smartFill,
+      idempotentReplay: data.idempotentReplay === true
     };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+/** Gravação de estado completo como admin (rota dedicada; não usar `saveGameState` com adminOverride). */
+export async function saveGameStateAdminOverride(
+  targetUserId: number,
+  state: Partial<GameState>,
+  options?: { reason?: string; keepalive?: boolean }
+): Promise<{
+  ok: boolean;
+  forceReload?: boolean;
+  error?: string;
+  code?: string;
+  fields?: unknown;
+  serverUpdatedAt?: number;
+  nftAutoSanitized?: boolean;
+  placedRacks?: PlacedRack[];
+  stock?: Record<string, number>;
+  storedBatteries?: StoredBattery[];
+}> {
+  const payload: Record<string, unknown> = {
+    changes: { ...state, lastLoadTime: globalLastLoadTime }
+  };
+  if (options?.reason) payload.reason = options.reason;
+  const url = `${base}/admin/users/${encodeURIComponent(String(targetUserId))}/save-game-override`;
+  try {
+    const body = JSON.stringify(payload);
+    const useKeepalive = !!options?.keepalive && body.length < SAVE_GAME_KEEPALIVE_MAX_BYTES;
+    const res = await apiFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      ...(useKeepalive ? { keepalive: true as const } : {})
+    });
+    if (!res.ok) {
+      try {
+        const errBody = await res.json();
+        return { ok: false, ...(errBody as object) };
+      } catch {
+        return { ok: false, error: `HTTP ${res.status}` };
+      }
+    }
+    try {
+      const data = await res.json();
+      if (data && data.serverUpdatedAt) {
+        globalLastLoadTime = data.serverUpdatedAt;
+      }
+      return data;
+    } catch {
+      console.warn('[saveGameStateAdminOverride] Resposta não-JSON após HTTP OK.');
+      return { ok: false, error: 'Resposta inválida ao guardar. Recarregue (F5).' };
+    }
   } catch {
     return { ok: false, error: 'Network error' };
   }
@@ -3682,11 +4012,16 @@ export async function postLuckyBoxPurchase(body: {
   }
 }
 
+/** Alinhar com nginx 300s em /api/lucky-boxes/ */
+const LUCKY_BOX_OPEN_FETCH_MS = 300_000;
+
 export async function postLuckyBoxOpen(body: {
   boxId: string;
   email?: string;
   idempotencyKey?: string;
 }): Promise<{ ok: boolean; rewards?: unknown[]; openingId?: string; error?: string }> {
+  const controller = new AbortController();
+  const kill = setTimeout(() => controller.abort(), LUCKY_BOX_OPEN_FETCH_MS);
   try {
     const payload: Record<string, unknown> = { boxId: body.boxId };
     if (body.email) payload.email = body.email;
@@ -3694,7 +4029,8 @@ export async function postLuckyBoxOpen(body: {
     const res = await apiFetch(`${base}/lucky-boxes/open`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      signal: controller.signal
     });
     const data = (await res.json().catch(() => ({}))) as {
       ok?: boolean;
@@ -3702,10 +4038,28 @@ export async function postLuckyBoxOpen(body: {
       openingId?: string;
       error?: string;
     };
-    if (!res.ok) return { ok: false, error: data.error || `Erro HTTP ${res.status}` };
+    if (!res.ok) {
+      if (res.status === 524 || res.status === 504) {
+        return {
+          ok: false,
+          error:
+            'Timeout (Cloudflare ou servidor) ao abrir a caixa. Na Cloudflare aumenta o tempo da origem; no nginx mantém proxy_read_timeout alto em /api/lucky-boxes/. Recarrega e verifica o inventário antes de repetir.'
+        };
+      }
+      return { ok: false, error: data.error || `Erro HTTP ${res.status}` };
+    }
     return { ok: !!data.ok, rewards: data.rewards, openingId: data.openingId };
-  } catch {
+  } catch (e: unknown) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      return {
+        ok: false,
+        error:
+          'Sem resposta do servidor após vários minutos ao abrir a caixa. Recarrega e verifica o inventário — a abertura pode ter ficado registada (idempotência). Se repetir, verifica timeouts Cloudflare/nginx e a base de dados.'
+      };
+    }
     return { ok: false, error: 'Network error' };
+  } finally {
+    clearTimeout(kill);
   }
 }
 
@@ -4190,16 +4544,44 @@ export async function bulkUpdateCoinBalance(coinId: string, amount: number): Pro
   }
 }
 
-export async function requestWithdrawal(coinId: string, amount: number, walletAddress: string): Promise<{ ok: boolean; requestId?: string; message?: string; error?: string }> {
+export async function requestWithdrawal(
+  coinId: string,
+  amount: number,
+  walletAddress: string,
+  idempotencyKey: string
+): Promise<{
+  ok: boolean;
+  requestId?: string;
+  message?: string;
+  error?: string;
+  code?: string;
+  idempotentReplay?: boolean;
+  status?: number;
+}> {
   try {
     const res = await apiFetch(`${base}/withdraw`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ coinId, amount, walletAddress })
+      body: JSON.stringify({ coinId, amount, walletAddress, idempotencyKey })
     });
-    return await res.json();
+    let body: { ok?: boolean; requestId?: string; message?: string; error?: string; code?: string; idempotentReplay?: boolean } = {};
+    try {
+      body = await res.json();
+    } catch {
+      /** Resposta sem JSON (HTML do reverse-proxy, fallback genérico). */
+      body = { ok: false, error: res.ok ? undefined : 'Resposta inesperada do servidor.' };
+    }
+    return {
+      ok: !!body.ok,
+      requestId: body.requestId,
+      message: body.message,
+      error: body.error,
+      code: body.code,
+      idempotentReplay: body.idempotentReplay,
+      status: res.status
+    };
   } catch {
-    return { ok: false, error: 'Erro de rede' };
+    return { ok: false, error: 'Erro de rede. Verifica a conexão.' };
   }
 }
 

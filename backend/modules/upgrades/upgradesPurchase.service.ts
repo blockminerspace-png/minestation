@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
+import { stableIntentFingerprint } from '../../lib/gameIntentIdempotencyPrisma.js';
 import { grantAdminUpgradeRewardsInTx } from '../../models/adminUpgradeGrantModel.js';
 import { RoletaAppError } from '../../validation/roletaValidation.js';
 import { parseUpgradePackageId, usdcDecimalFromRow } from './upgrades.catalog.js';
@@ -17,6 +18,18 @@ export type UpgradePurchaseOk = {
 
 function buildIdemPayload(ok: UpgradePurchaseOk): string {
   return JSON.stringify(ok);
+}
+
+/** Fingerprint do pedido (pacote + versão opcional declarada pelo cliente). */
+export function upgradePurchaseRequestFingerprint(
+  packageId: string,
+  clientPackageVersion: number | null | undefined
+): string {
+  return stableIntentFingerprint({
+    op: 'upgrade_package_purchase',
+    packageId: String(packageId || '').trim(),
+    clientPackageVersion: clientPackageVersion != null && Number.isFinite(clientPackageVersion) ? clientPackageVersion : null
+  });
 }
 
 /**
@@ -52,6 +65,11 @@ export async function runUpgradePackagePurchase(args: {
           }
         });
         if (existing?.response_json) {
+          const curFp = upgradePurchaseRequestFingerprint(pkgId, args.clientPackageVersion);
+          const stFp = String(existing.request_fingerprint ?? '').trim();
+          if (stFp && curFp !== stFp) {
+            throw new RoletaAppError('Mesma chave de idempotência com pedido diferente.', 409);
+          }
           try {
             const parsed = JSON.parse(existing.response_json) as UpgradePurchaseOk;
             if (parsed && parsed.ok === true && typeof parsed.newUsdc === 'number') {
@@ -186,6 +204,7 @@ export async function runUpgradePackagePurchase(args: {
       };
 
       if (idemKey) {
+        const idemFp = upgradePurchaseRequestFingerprint(pkgId, args.clientPackageVersion);
         try {
           await tx.upgrade_purchase_idempotency.create({
             data: {
@@ -193,7 +212,8 @@ export async function runUpgradePackagePurchase(args: {
               scope: IDEM_SCOPE,
               idempotency_key: idemKey,
               response_json: buildIdemPayload(out),
-              created_at: nowBi
+              created_at: nowBi,
+              request_fingerprint: idemFp
             }
           });
         } catch (e: unknown) {
@@ -209,6 +229,10 @@ export async function runUpgradePackagePurchase(args: {
               }
             });
             if (again?.response_json) {
+              const stFp2 = String(again.request_fingerprint ?? '').trim();
+              if (stFp2 && stFp2 !== idemFp) {
+                throw new RoletaAppError('Mesma chave de idempotência com pedido diferente.', 409);
+              }
               const parsed = JSON.parse(again.response_json) as UpgradePurchaseOk;
               return { ...parsed, idempotentReplay: true };
             }

@@ -211,7 +211,7 @@ export function registerShopModuleRoutes(app: Application, deps: ShopModuleDeps)
         : '';
     try {
       const lines = await listShopCartLines(userId);
-      if (lines.length === 0) {
+      if (lines.length === 0 && idem.length === 0) {
         return res.status(422).json({ error: 'Carrinho vazio.' });
       }
       const cart: Record<string, number> = {};
@@ -231,9 +231,12 @@ export function registerShopModuleRoutes(app: Application, deps: ShopModuleDeps)
         await appendGameActivityLogMongo(userId, 'shop_checkout_denied', {
           status: out.status,
           error: out.error,
-          idempotencyKey: idem.length > 0 ? idem : undefined
+          idempotencyKey: idem.length > 0 ? idem : undefined,
+          code: out.code
         });
-        return res.status(out.status).json({ error: out.error, missing: out.missing });
+        return res
+          .status(out.status)
+          .json({ error: out.error, missing: out.missing, ...(out.code ? { code: out.code } : {}) });
       }
       await appendGameActivityLogMongo(userId, 'shop_checkout_ok', {
         newUsdc: out.newUsdc,

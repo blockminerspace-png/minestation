@@ -11,9 +11,11 @@ export type LegacySaveGameBarrierResult =
   | { mode: 'allow' }
   | { mode: 'reject'; status: 409 | 422; message: string; code: string; fields: string[] };
 
-const POLICY = String(process.env.LEGACY_SAVEGAME_PLAYER_POLICY || 'strip')
-  .trim()
-  .toLowerCase();
+function readLegacySaveGamePlayerPolicy(): string {
+  return String(process.env.LEGACY_SAVEGAME_PLAYER_POLICY || 'strip')
+    .trim()
+    .toLowerCase();
+}
 
 /** Chaves de topo em `changes` que nunca devem ser persistidas por jogador normal (save completo). */
 const CRITICAL_TOP_KEYS = new Set([
@@ -30,7 +32,12 @@ const CRITICAL_TOP_KEYS = new Set([
   'balances',
   'production',
   'hashRate',
-  'minedBalances'
+  'minedBalances',
+  /** Campos frequentes em payloads legados de rig/bateria que não podem ser escritos pelo cliente. */
+  'batteryId',
+  'rackId',
+  'slotId',
+  'currentCharge'
 ]);
 
 /** Dentro de `changes.gameState` (quando objeto) — mesma política. */
@@ -45,7 +52,11 @@ const CRITICAL_GAMESTATE_KEYS = new Set([
   'stock',
   'storedBatteries',
   'placedRacks',
-  'workshopSlots'
+  'workshopSlots',
+  'batteryId',
+  'rackId',
+  'slotId',
+  'currentCharge'
 ]);
 
 export type LegacySaveLogPayload = {
@@ -155,7 +166,7 @@ export function applyLegacySaveGameFullBarrier(
     timestamp: new Date().toISOString()
   };
 
-  if (POLICY === 'reject') {
+  if (readLegacySaveGamePlayerPolicy() === 'reject') {
     logLegacySaveStructured({ ...base, event: 'legacy_savegame_critical_rejected' });
     return {
       mode: 'reject',

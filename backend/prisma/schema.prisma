@@ -61,6 +61,7 @@ model referrals {
   user_id            Int
   referred_username  String
 
+  @@index([referred_username], map: "referrals_referred_username_idx")
   @@map("referrals")
 }
 
@@ -334,12 +335,13 @@ model shop_cart_lines {
 }
 
 model shop_checkout_idempotency {
-  user_id          Int
-  idempotency_key  String @db.VarChar(128)
-  new_usdc         Float
-  total_cost       Float
-  lines_json       String @db.Text
-  created_at       BigInt
+  user_id             Int
+  idempotency_key     String  @db.VarChar(128)
+  new_usdc            Float
+  total_cost          Float
+  lines_json          String  @db.Text
+  created_at          BigInt
+  request_fingerprint String? @db.VarChar(64)
 
   @@id([user_id, idempotency_key])
   @@map("shop_checkout_idempotency")
@@ -371,12 +373,13 @@ model lucky_box_openings {
 
 /// Resposta em cache para idempotência de compra / abertura / resgate (evita duplicação em retry).
 model lucky_box_idempotency {
-  user_id         Int
-  scope           String @db.VarChar(32)
-  idempotency_key String @db.VarChar(128)
-  http_status     Int
-  body_json       String
-  created_at      BigInt
+  user_id               Int
+  scope                 String  @db.VarChar(32)
+  idempotency_key       String  @db.VarChar(128)
+  http_status           Int
+  body_json             String
+  created_at            BigInt
+  request_fingerprint   String? @db.VarChar(64)
 
   @@id([user_id, scope, idempotency_key])
   @@index([created_at(sort: Desc)])
@@ -399,6 +402,15 @@ model stored_batteries {
   workshop_slot_index         Int?
   /// Provisório: chave do slot em `internal_state` (ex. battery_0).
   workshop_component_slot_id  String?
+  /// Estado semântico da instância (migração Fase 3).
+  status      String?
+  location    String?
+  rack_id     String?
+  slot_id     Int?
+  room_id     String?
+  version     Int       @default(0)
+  last_moved_at DateTime? @db.Timestamptz(6)
+  updated_at    DateTime? @default(now()) @db.Timestamptz(6)
 
   @@index([user_id])
   @@map("stored_batteries")
@@ -625,11 +637,12 @@ model admin_upgrade_purchases {
 }
 
 model upgrade_purchase_idempotency {
-  user_id         Int
-  scope           String @default("upgrade_purchase")
-  idempotency_key String
-  response_json   String
-  created_at      BigInt
+  user_id               Int
+  scope                 String  @default("upgrade_purchase")
+  idempotency_key       String
+  response_json         String
+  created_at            BigInt
+  request_fingerprint   String? @db.VarChar(64)
 
   @@id([user_id, scope, idempotency_key])
   @@map("upgrade_purchase_idempotency")
@@ -844,10 +857,10 @@ model wheel_prizes {
 
 model wheel_config {
   id                    Int      @id @default(1)
-  spin_price_usdc       Decimal  @default(0.10) @db.Decimal(18, 6)
+  spin_price_usdc       Decimal  @default(1) @db.Decimal(18, 6)
   currency              String   @default("USDC")
   is_enabled            Int      @default(1)
-  min_spin_price_usdc   Decimal  @default(0.10) @db.Decimal(18, 6)
+  min_spin_price_usdc   Decimal  @default(1) @db.Decimal(18, 6)
   max_spins_per_request Int      @default(1)
   daily_limit           Int?
   cooldown_seconds      Int      @default(0)
@@ -1079,11 +1092,12 @@ model partner_youtube_manual_allowlist {
 }
 
 model wallet_idempotency {
-  user_id         Int
-  scope           String
-  idempotency_key String
-  response_json   String
-  created_at      BigInt
+  user_id             Int
+  scope               String
+  idempotency_key     String
+  response_json       String
+  created_at          BigInt
+  request_fingerprint String? @db.VarChar(64)
 
   @@id([user_id, scope, idempotency_key])
   @@map("wallet_idempotency")

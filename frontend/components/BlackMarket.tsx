@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { GameState, MarketListing, Upgrade, P2PMarketTradeHistoryEntry } from '../types';
 import { Skull, DollarSign, PlusCircle, Package, Tag, Trash2, ArrowRight, Lock, ShieldCheck, History, Search } from 'lucide-react';
+import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
+import { handleImageError } from '../utils/imageFallback';
 
 const P2P_TYPE_OPTIONS: { value: '' | Upgrade['type']; label: string }[] = [
   { value: '', label: 'Todos os tipos' },
@@ -86,6 +88,8 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
   const [historyReloadNonce, setHistoryReloadNonce] = useState(0);
   const [confirmListing, setConfirmListing] = useState<MarketListing | null>(null);
   const [buyQtyDraft, setBuyQtyDraft] = useState('1');
+  const [notice, setNotice] = useState<UiNotice | null>(null);
+  const [isBuying, setIsBuying] = useState(false);
   const [buySearch, setBuySearch] = useState('');
   const [buyCategory, setBuyCategory] = useState('');
   const [buyType, setBuyType] = useState<'' | Upgrade['type']>('');
@@ -751,7 +755,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                     <div key={listing.id} className="bg-slate-800/50 border border-slate-700 hover:border-slate-500 rounded-lg p-3 flex justify-between items-center group transition-all">
                       <div className="flex items-center gap-4">
                         <div className="w-12 h-12 bg-slate-900 rounded border border-slate-700 flex items-center justify-center text-2xl text-slate-400 overflow-hidden">
-                          {hasImage ? <img src={hasImage} className="w-full h-full object-cover" /> : item.icon}
+                          {hasImage ? <img src={hasImage} alt="" onError={(e) => handleImageError(e)} className="w-full h-full object-cover" /> : item.icon}
                         </div>
                         <div>
                           <h3 className="font-bold text-slate-200 text-sm group-hover:text-red-400 transition-colors">
@@ -848,7 +852,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                 return (
                   <div key={l.id} className="bg-slate-950 border border-slate-800 p-3 rounded flex items-center gap-4">
                     <div className="w-12 h-12 bg-slate-900 rounded border border-slate-700 flex items-center justify-center text-slate-500">
-                      {item.image ? <img src={item.image} className="w-full h-full object-cover" /> : item.icon}
+                      {item.image ? <img src={item.image} alt="" onError={(e) => handleImageError(e)} className="w-full h-full object-cover" /> : item.icon}
                     </div>
                     <div className="flex-1">
                       <div className="font-bold text-slate-200 text-sm">
@@ -881,6 +885,17 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                           if (onClaimSuccess) onClaimSuccess();
                           const custody = await getCustodyListings();
                           setCustodyListings(custody as CustodyListingRow[]);
+                          setNotice({
+                            variant: 'success',
+                            title: 'Item resgatado',
+                            message: `${item.name} foi transferido para o teu estoque.`
+                          });
+                        } else {
+                          setNotice({
+                            variant: 'error',
+                            title: 'Não foi possível resgatar',
+                            message: r?.error || 'Tenta de novo dentro de momentos.'
+                          });
                         }
                       }}
                       className="bg-amber-900/50 hover:bg-amber-800 border border-amber-700 text-amber-300 text-xs px-3 py-1.5 rounded font-bold transition-colors"
@@ -1068,7 +1083,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                     <div key={listing.id} className="bg-slate-950 border border-slate-800 rounded p-2 flex justify-between items-center">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-slate-900 rounded border border-slate-700 flex items-center justify-center text-xl text-slate-400 overflow-hidden">
-                          {item.image ? <img src={item.image} className="w-full h-full object-cover" /> : item.icon}
+                          {item.image ? <img src={item.image} alt="" onError={(e) => handleImageError(e)} className="w-full h-full object-cover" /> : item.icon}
                         </div>
                         <div>
                           <div className="text-slate-300 font-bold text-xs">{item.name}</div>
@@ -1098,6 +1113,8 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
 
 
 
+      <UiNoticeModal notice={notice} onClose={() => setNotice(null)} overlayZClassName="z-[140]" />
+
       {
         confirmListing && (
           <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -1115,7 +1132,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                   <div className="space-y-3">
                     <div className="flex items-center gap-3">
                       <div className="w-12 h-12 bg-slate-900 rounded border border-slate-700 flex items-center justify-center text-2xl text-slate-400 overflow-hidden">
-                        {item?.image ? <img src={item.image} className="w-full h-full object-cover" /> : item?.icon}
+                        {item?.image ? <img src={item.image} alt="" onError={(e) => handleImageError(e)} className="w-full h-full object-cover" /> : item?.icon}
                       </div>
                       <div>
                         <div className="text-slate-200 font-bold text-sm">
@@ -1167,7 +1184,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                         Cancelar
                       </button>
                       <button onClick={async () => {
-                        if (!confirmListing) return;
+                        if (!confirmListing || isBuying) return;
                         const mq = Math.max(1, parseInt(String(confirmListing.qty ?? 1), 10) || 1);
                         const trimmed = String(buyQtyDraft ?? '').trim();
                         const pq = parseInt(trimmed, 10);
@@ -1178,9 +1195,15 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                               ? crypto.randomUUID()
                               : `p2p_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
                         }
-                        const res = await buyMarketListing(confirmListing.id, qBuy, {
-                          idempotencyKey: buyIdempotencyKeyRef.current
-                        });
+                        setIsBuying(true);
+                        let res: Awaited<ReturnType<typeof buyMarketListing>>;
+                        try {
+                          res = await buyMarketListing(confirmListing.id, qBuy, {
+                            idempotencyKey: buyIdempotencyKeyRef.current
+                          });
+                        } finally {
+                          setIsBuying(false);
+                        }
                         if (res && res.ok) {
                           const got = typeof res.purchasedQty === 'number' ? res.purchasedQty : qBuy;
                           const paid = typeof res.totalUsdc === 'number' ? res.totalUsdc : null;
@@ -1188,18 +1211,47 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                             console.warn('[BlackMarket] Resposta do servidor difere do pedido:', { pedido: qBuy, confirmTotal, res });
                           }
                           setHistoryReloadNonce((n) => n + 1);
-                          if (onClaimSuccess) onClaimSuccess();
                           setConfirmListing(null);
+                          /**
+                           * Política do projecto: compra P2P → custódia (Cofre). Levar o jogador para a aba Cofre
+                           * automaticamente e recarregar custódia para evitar o sintoma "comprei mas não recebi nada".
+                           */
+                          setMode('vault');
+                          try {
+                            const custody = await getCustodyListings();
+                            setCustodyListings(custody as CustodyListingRow[]);
+                          } catch {
+                            /* ignore - mode change já dispara o efeito de carregamento */
+                          }
+                          if (onClaimSuccess) onClaimSuccess();
                           await refreshBuyListings();
+                          const totalUsdc = typeof res.totalUsdc === 'number' ? res.totalUsdc : confirmTotal;
+                          setNotice({
+                            variant: 'success',
+                            title: 'Compra concluída',
+                            message: `Pagaste $${formatCost(totalUsdc)} por ${got} un. O item ficou no Cofre — clica em "Resgatar item" para enviar ao estoque.`
+                          });
                         } else {
                           const insuff =
                             res.error === 'Insufficient USDC' ||
                             /insufficient|insuficiente/i.test(String(res.error || res.message || ''));
-                          if (insuff) alert(`USDC insuficiente. Déficit: $${res.missing?.toFixed(2) || '0.00'}`);
-                          else alert(res.error || res.message || 'Não foi possível concluir a compra.');
+                          if (insuff) {
+                            const miss = typeof res.missing === 'number' ? res.missing : 0;
+                            setNotice({
+                              variant: 'error',
+                              title: 'USDC insuficiente',
+                              message: `Faltam $${miss.toFixed(2)} para concluir esta compra.`
+                            });
+                          } else {
+                            setNotice({
+                              variant: 'error',
+                              title: 'Compra não concluída',
+                              message: res.error || res.message || 'Não foi possível concluir a compra.'
+                            });
+                          }
                         }
-                      }} disabled={!canAfford || confirmTotal <= 0} className="flex-1 px-3 py-2 text-xs font-bold uppercase rounded border bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white border-red-700">
-                        Confirmar
+                      }} disabled={!canAfford || confirmTotal <= 0 || isBuying} className="flex-1 px-3 py-2 text-xs font-bold uppercase rounded border bg-red-600 hover:bg-red-500 disabled:opacity-50 disabled:cursor-not-allowed text-white border-red-700">
+                        {isBuying ? 'A processar…' : 'Confirmar'}
                       </button>
                     </div>
                   </div>

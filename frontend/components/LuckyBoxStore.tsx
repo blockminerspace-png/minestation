@@ -212,14 +212,22 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                 ? crypto.randomUUID()
                 : `lb_o_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
-        // Animation Delay
-        setTimeout(async () => {
-            const result = await onOpenBox(boxId, { idempotencyKey: ik });
-            if (result) {
-                setRewards(result.rewards);
+        void (async () => {
+            try {
+                const result = await onOpenBox(boxId, { idempotencyKey: ik });
+                if (result && Array.isArray(result.rewards) && result.rewards.length > 0) {
+                    setRewards(result.rewards);
+                }
+            } catch (e: unknown) {
+                setNotice({
+                    variant: 'error',
+                    title: 'Caixas da Sorte',
+                    message: e instanceof Error ? e.message : 'Erro ao abrir a caixa.'
+                });
+            } finally {
+                setOpeningBox(null);
             }
-            setOpeningBox(null);
-        }, 1500);
+        })();
     };
 
     const handleDiscardClick = async (boxId: string, name: string, qty: number) => {

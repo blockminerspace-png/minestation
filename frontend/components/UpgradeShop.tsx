@@ -126,17 +126,8 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
       .map((p) => {
         const vis = upgrades.find((u) => u.id === p.id);
         return mapShopProductToUpgrade(p, vis);
-      })
-      .filter((u) => {
-        if (u.visibleToAccessLevelIds && u.visibleToAccessLevelIds.length > 0) {
-          const hasPrimary = user.accessLevelId && u.visibleToAccessLevelIds.includes(user.accessLevelId);
-          const hasAny =
-            user.accessLevelIds && user.accessLevelIds.some((l) => u.visibleToAccessLevelIds!.includes(l));
-          if (!hasPrimary && !hasAny) return false;
-        }
-        return true;
       });
-  }, [shop, upgrades, user.accessLevelId, user.accessLevelIds]);
+  }, [shop, upgrades]);
 
   const filteredUpgrades = useMemo(() => {
     return displayUpgrades
@@ -146,6 +137,11 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
       })
       .sort((a, b) => a.baseCost - b.baseCost);
   }, [displayUpgrades, filterType]);
+
+  useEffect(() => {
+    if (filterType === 'all' || displayUpgrades.length === 0 || filteredUpgrades.length > 0) return;
+    setFilterType('all');
+  }, [displayUpgrades.length, filterType, filteredUpgrades.length]);
 
   const cartLines = shop?.cart.lines ?? [];
   const cartTotal = shop?.cart.totalUsdc ?? 0;
@@ -271,12 +267,15 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
     }
     if (res.status === 409 || res.status === 422) {
       await refreshShop();
+      const mismatch =
+        res.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH'
+          ? 'Esta confirmação já foi tratada ou a chave de idempotência não corresponde ao carrinho actual. Os dados foram actualizados.'
+          : res.error ||
+            'O carrinho ou o saldo mudou no servidor. Os dados foram actualizados — reverifica antes de confirmar.';
       onShopNotice?.({
         variant: 'error',
         title: 'Lojinha Miner',
-        message:
-          res.error ||
-          'O carrinho ou o saldo mudou no servidor. Os dados foram actualizados — reverifica antes de confirmar.'
+        message: mismatch
       });
       setConfirmCheckoutOpen(false);
       return;

@@ -217,8 +217,16 @@ function isLootBoxListedAsActive(isActive: number | null | undefined): boolean {
  */
 export async function executeLootBoxOpenInTransaction(
   tx: Prisma.TransactionClient,
-  args: { userId: number; boxId: string; idempotencyKey?: string | null }
+  args: {
+    userId: number;
+    boxId: string;
+    idempotencyKey?: string | null;
+    /** Fingerprint do pedido; com `idempotencyKey`, grava-se cache na **mesma** transação (sem 2.º round-trip ao Prisma global). */
+    idempotencyFingerprint?: string | null;
+  }
 ): Promise<{ rewards: LootRewardGrant[]; gainedUsdc: number; boxName: string; openingId: string }> {
+  /** Evita espera indefinida em `FOR UPDATE` (504 no proxy). Unidade: ms. */
+  await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = 45000`);
   const { userId, boxId } = args;
   const idemKey =
     typeof args.idempotencyKey === 'string' && args.idempotencyKey.trim()
@@ -235,15 +243,50 @@ export async function executeLootBoxOpenInTransaction(
 
   const boxDef = await tx.loot_boxes.findUnique({
     where: { id: boxId },
-    select: { name: true, trigger: true }
+    select: { name: true, trigger: true, description: true }
   });
   if (!boxDef) {
     throw new LootBoxOpenError(404, 'Caixa não encontrada.');
   }
 
-  const itemRows = await tx.loot_box_items.findMany({
+  let itemRows = await tx.loot_box_items.findMany({
     where: { box_id: boxId }
   });
+
+  /**
+   * Auto-reparação de caixas de prémio da roleta (`trigger = 'roleta_reward'`):
+   * descobrimos caixas antigas com `description = reward_for_<itemId>` mas sem registos em
+   * `loot_box_items` (criadas por uma versão antiga ou após limpezas manuais).
+   * Em vez de bloquear o jogador com 500, inserimos a linha que faltava e seguimos.
+   */
+  if (itemRows.length === 0 && String(boxDef.trigger || '') === 'roleta_reward') {
+    const desc = String(boxDef.description || '');
+    const m = /^reward_for_([a-zA-Z0-9_.-]{1,200})$/.exec(desc);
+    const recoveredItemId = m?.[1] ?? '';
+    if (recoveredItemId) {
+      const exists = await tx.upgrades.findUnique({
+        where: { id: recoveredItemId },
+        select: { id: true }
+      });
+      if (exists?.id) {
+        await tx.loot_box_items.create({
+          data: {
+            box_id: boxId,
+            item_type: 'item',
+            item_id: recoveredItemId,
+            min_qty: 1,
+            max_qty: 1,
+            probability: 100
+          }
+        });
+        console.warn(
+          `[LootBox] Auto-repaired empty roleta_reward box ${boxId} ("${boxDef.name}") -> ${recoveredItemId}.`
+        );
+        itemRows = await tx.loot_box_items.findMany({ where: { box_id: boxId } });
+      }
+    }
+  }
+
   const items: LootBoxItemRow[] = itemRows.map((it) => ({
     item_type: it.item_type,
     item_id: it.item_id,
@@ -323,6 +366,38 @@ export async function executeLootBoxOpenInTransaction(
     },
     select: { id: true }
   });
+
+  if (idemKey) {
+    const payloadObj = {
+      ok: true,
+      rewards,
+      openingId: opening.id,
+      version: 1 as const
+    };
+    const fp =
+      args.idempotencyFingerprint != null && String(args.idempotencyFingerprint).trim()
+        ? String(args.idempotencyFingerprint).trim().slice(0, 64)
+        : null;
+    try {
+      await tx.lucky_box_idempotency.create({
+        data: {
+          user_id: userId,
+          scope: 'open',
+          idempotency_key: idemKey,
+          http_status: 200,
+          body_json: JSON.stringify(payloadObj),
+          created_at: BigInt(Date.now()),
+          request_fingerprint: fp
+        }
+      });
+    } catch (e: unknown) {
+      const code = e && typeof e === 'object' && 'code' in e ? String((e as { code?: string }).code) : '';
+      if (code === 'P2002') {
+        throw new LootBoxOpenError(409, 'Pedido duplicado em curso. Recarrega ou usa outra chave de idempotência.');
+      }
+      throw e;
+    }
+  }
 
   return { rewards, gainedUsdc, boxName: boxDef.name, openingId: opening.id };
 }

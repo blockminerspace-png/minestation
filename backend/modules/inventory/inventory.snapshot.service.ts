@@ -16,6 +16,7 @@ import type {
   InventoryStateV1Dto,
   PlayerInventorySnapshot
 } from './inventory.types.js';
+import { shouldExposeBatteryInInventoryWarehouse } from '../batteries/batteryInvariant.service.js';
 
 function stockRowsToMap(rows: { item_id: string; qty: number }[]): Record<string, number> {
   const stock: Record<string, number> = {};
@@ -216,30 +217,29 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
         .filter((id) => id.length > 0)
     )
   ];
+  const mountedSet = new Set(mountedBatteryIds);
 
-  const batteryWhere =
-    mountedBatteryIds.length > 0
-      ? {
-          user_id: userId,
-          workshop_slot_index: null,
-          NOT: { id: { in: mountedBatteryIds } }
-        }
-      : { user_id: userId, workshop_slot_index: null };
-
-  const [stockRows, batRows, gs] = await Promise.all([
+  const [stockRows, batRowsRaw, gs] = await Promise.all([
     prisma.stock.findMany({
       where: { user_id: userId },
       select: { item_id: true, qty: true }
     }),
     prisma.stored_batteries.findMany({
-      where: batteryWhere,
+      where: { user_id: userId },
       select: {
         id: true,
         item_id: true,
         current_charge: true,
         power_capacity_wh: true,
         display_name: true,
-        image_url: true
+        image_url: true,
+        status: true,
+        location: true,
+        rack_id: true,
+        slot_id: true,
+        room_id: true,
+        workshop_slot_index: true,
+        workshop_component_slot_id: true
       }
     }),
     prisma.game_states.findUnique({
@@ -250,7 +250,7 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
 
   const stock = stockRowsToMap(stockRows);
   const stockKeys = Object.keys(stock);
-  const batItemIds = [...new Set(batRows.map((b) => String(b.item_id || '').trim()).filter(Boolean))];
+  const batItemIds = [...new Set(batRowsRaw.map((b) => String(b.item_id || '').trim()).filter(Boolean))];
   const allUpgradeIds = [...new Set([...stockKeys, ...batItemIds])];
 
   const upgrades =
@@ -286,10 +286,38 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
   const partialChargeBatteries: InventoryBatteryInstanceDto[] = [];
   const fullChargeBatteries: InventoryBatteryInstanceDto[] = [];
 
-  for (const b of batRows) {
+  for (const b of batRowsRaw) {
     const id = typeof b.id === 'string' ? b.id.trim() : '';
     const itemId = typeof b.item_id === 'string' ? b.item_id.trim() : '';
     if (!id || !itemId) continue;
+    const expose = shouldExposeBatteryInInventoryWarehouse(
+      {
+        id,
+        status: b.status != null ? String(b.status) : null,
+        location: b.location != null ? String(b.location) : null,
+        rack_id: b.rack_id != null ? String(b.rack_id) : null,
+        slot_id: b.slot_id != null ? Number(b.slot_id) : null,
+        room_id: b.room_id != null ? String(b.room_id) : null,
+        workshop_slot_index: b.workshop_slot_index != null ? Number(b.workshop_slot_index) : null,
+        workshop_component_slot_id:
+          b.workshop_component_slot_id != null ? String(b.workshop_component_slot_id) : null
+      },
+      mountedSet
+    );
+    if (!expose.ok) {
+      if (expose.event === 'inventory_state_battery_divergence' || expose.event === 'inventory_state_battery_blocked') {
+        console.warn(
+          JSON.stringify({
+            event: expose.event,
+            userId,
+            batteryId: id.slice(0, 12),
+            reason: expose.reason,
+            onRack: mountedSet.has(id)
+          })
+        );
+      }
+      continue;
+    }
     const dto = batteryDtoFromRow(b, upByIdForCharge.get(itemId));
     if (dto.isFull) fullChargeBatteries.push(dto);
     else partialChargeBatteries.push(dto);

@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
+import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from './batteries.catalog.js';
 
 type ChangesStoredBattery = {
   id: string;
@@ -29,7 +30,7 @@ export async function ensureStoredBatteriesArrayFromDb(
   );
   changes.storedBatteries = ext.rows.map((r) => ({
     id: r.id,
-    itemId: r.item_id,
+    itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
     currentCharge: Number(r.current_charge) || 0,
     powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
     displayName: r.display_name != null ? String(r.display_name) : null,
@@ -62,7 +63,7 @@ export async function returnRackBatteryToChangesOnNftSanitize(
         const row0 = br.rows[0];
         changes.storedBatteries!.push({
           id: row0.id,
-          itemId: row0.item_id,
+          itemId: normalizeKnown1000WhBatteryCatalogId(row0.item_id),
           currentCharge: Number(row0.current_charge) || 0,
           powerCapacityWh: row0.power_capacity_wh != null ? Number(row0.power_capacity_wh) : null,
           displayName: row0.display_name != null ? String(row0.display_name) : null,
@@ -75,25 +76,26 @@ export async function returnRackBatteryToChangesOnNftSanitize(
       return;
     }
   }
-  const u = await client.query('SELECT type, power_capacity FROM upgrades WHERE id = $1', [s]);
+  const catalogId = normalizeKnown1000WhBatteryCatalogId(s);
+  const u = await client.query('SELECT type, power_capacity FROM upgrades WHERE id = $1', [catalogId]);
   const row = u.rows[0];
   if (row && row.type === 'battery') {
     const capRaw = row.power_capacity;
     const cap = capRaw === null || capRaw === undefined ? null : Number(capRaw);
     const charge = Number(rack.currentCharge) || 0;
-    const isInf = cap === -1;
+    const isInf = cap === -1 || isKnownInfiniteBatteryCatalogId(catalogId);
     const isFull = isInf || (typeof cap === 'number' && cap > 0 && charge >= cap * 0.999);
     if (isFull) {
-      stock[s] = Math.floor((Number(stock[s]) || 0) + 1);
+      stock[catalogId] = Math.floor((Number(stock[catalogId]) || 0) + 1);
     } else {
       await ensureStoredBatteriesArrayFromDb(client, uid, changes);
       changes.storedBatteries!.push({
         id: crypto.randomUUID(),
-        itemId: s,
+        itemId: catalogId,
         currentCharge: charge
       });
     }
     return;
   }
-  stock[s] = Math.floor((Number(stock[s]) || 0) + 1);
+  stock[catalogId] = Math.floor((Number(stock[catalogId]) || 0) + 1);
 }

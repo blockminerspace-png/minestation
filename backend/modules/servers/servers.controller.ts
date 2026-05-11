@@ -37,7 +37,9 @@ export function registerServersModuleRoutes(app: Application, deps: ServersModul
         return;
       }
 
-      const dto = await buildServersAuthoritativeStateDto(prisma, pool, uid, String(u.email || ''));
+      const dto = await buildServersAuthoritativeStateDto(prisma, pool, uid, String(u.email || ''), {
+        requestId: typeof req.get === 'function' ? req.get('x-request-id') : undefined
+      });
       res.status(200).json(dto);
     } catch (e) {
       sendInternalErrorSafeMessageOrPrisma(

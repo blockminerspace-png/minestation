@@ -7,6 +7,7 @@
  */
 import type { PoolClient } from 'pg';
 import { isRackBatteryInstanceUuid } from './batteries.repository.js';
+import { CANONICAL_1000WH_BATTERY_ID } from './batteries.catalog.js';
 
 type PgLike = Pick<PoolClient, 'query'>;
 
@@ -50,7 +51,7 @@ export async function recoverOrphanRackBatteryStorageRows(
         WHERE COALESCE(is_active, 1) <> 0
           AND (lower(COALESCE(type, '')) = 'battery' OR lower(COALESCE(category, '')) = 'battery')
           AND id NOT LIKE 'temp_legacy\\_%' ESCAPE '\\'
-        ORDER BY CASE WHEN id = 'small_battery' THEN 0 ELSE 1 END,
+        ORDER BY CASE WHEN id = $3::text THEN 0 ELSE 1 END,
                  base_cost ASC NULLS LAST,
                  id ASC
         LIMIT 1
@@ -72,14 +73,26 @@ export async function recoverOrphanRackBatteryStorageRows(
          FROM cand c
          CROSS JOIN fb
          LEFT JOIN LATERAL (
-           SELECT btrim(sb2.item_id::text) AS item_id
+           SELECT CASE
+                    WHEN btrim(sb2.item_id::text) = 'small_battery' THEN $3::text
+                    ELSE btrim(sb2.item_id::text)
+                  END AS item_id
              FROM stored_batteries sb2
              JOIN upgrades u2 ON u2.id = btrim(COALESCE(sb2.item_id, ''))
             WHERE sb2.user_id = $1
               AND (lower(COALESCE(u2.type, '')) = 'battery' OR lower(COALESCE(u2.category, '')) = 'battery')
               AND u2.id NOT LIKE 'temp_legacy\\_%' ESCAPE '\\'
-            GROUP BY btrim(sb2.item_id::text)
-            ORDER BY COUNT(*) DESC, length(btrim(sb2.item_id::text)) ASC
+            GROUP BY CASE
+                       WHEN btrim(sb2.item_id::text) = 'small_battery' THEN $3::text
+                       ELSE btrim(sb2.item_id::text)
+                     END
+            ORDER BY COUNT(*) DESC,
+                     length(
+                       CASE
+                         WHEN btrim(sb2.item_id::text) = 'small_battery' THEN $3::text
+                         ELSE btrim(sb2.item_id::text)
+                       END
+                     ) ASC
             LIMIT 1
          ) dom ON true
          LEFT JOIN upgrades u ON u.id = COALESCE(dom.item_id, fb.fid)
@@ -94,7 +107,7 @@ export async function recoverOrphanRackBatteryStorageRows(
         RETURNING id, item_id, current_charge
      )
      SELECT id, item_id, current_charge FROM ins`,
-    [uid, payload]
+    [uid, payload, CANONICAL_1000WH_BATTERY_ID]
   );
 
   return (res.rows || []).map((row) => ({

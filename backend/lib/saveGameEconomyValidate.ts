@@ -1,5 +1,9 @@
 import type { Pool, PoolClient } from 'pg';
 import { STORED_BATTERY_CATALOG_PENDING_ID } from '../modules/batteries/batteries.constants.js';
+import {
+  CANONICAL_1000WH_BATTERY_ID,
+  normalizeKnown1000WhBatteryCatalogId
+} from '../modules/batteries/batteries.catalog.js';
 
 /** Alinhado a `RACK_ID_RE` no servidor — IDs de item / instância. */
 export const SAVE_GAME_ITEM_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
@@ -14,7 +18,6 @@ const MAX_DAILY_KEYS = 250;
 const MAX_STORED_BATTERIES = 800;
 const DAILY_TS_MIN = 0;
 const DAILY_TS_MAX = 4102444800000; // ~2100
-
 function parseIntQty(q: unknown): number | null {
   const n = typeof q === 'number' ? Math.trunc(q) : parseInt(String(q ?? ''), 10);
   if (!Number.isFinite(n)) return null;
@@ -56,6 +59,36 @@ export function isAdminDailyActionKey(key: string): boolean {
 }
 
 const STOCK_VALIDATE_LOG_SAMPLES = 24;
+
+async function load1000WhBatteryAliasMap(client: PoolClient): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  try {
+    const target = await client.query<{ id: string }>(
+      `SELECT id::text
+         FROM upgrades
+        WHERE id = $1
+          AND (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
+        LIMIT 1`,
+      [CANONICAL_1000WH_BATTERY_ID]
+    );
+    if ((target.rowCount ?? 0) === 0) return out;
+    const src = await client.query<{ id: string }>(
+      `SELECT id::text
+         FROM upgrades
+        WHERE id <> $1
+          AND (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
+          AND power_capacity = 1000`,
+      [CANONICAL_1000WH_BATTERY_ID]
+    );
+    for (const row of src.rows || []) {
+      const id = String(row.id || '').trim();
+      if (id) out.set(id, CANONICAL_1000WH_BATTERY_ID);
+    }
+  } catch (e) {
+    console.warn('[batteryAlias] Falha ao ler aliases 1000Wh:', e instanceof Error ? e.message : String(e));
+  }
+  return out;
+}
 
 /**
  * Diagnóstico de falhas ao gravar `stock` (save-game). Causas típicas:
@@ -105,18 +138,18 @@ export async function validateStockForSave(
     };
   }
 
-  const itemIds: string[] = [];
-  const qtys: number[] = [];
+  const itemQty = new Map<string, number>();
   const badQtyKeys: string[] = [];
+  const aliasMap = await load1000WhBatteryAliasMap(client);
   for (const k of keys) {
-    const itemId = String(k);
+    const rawItemId = String(k);
+    const itemId = aliasMap.get(rawItemId) || rawItemId;
     const q = parseIntQty(stock[k]);
     if (q === null || q < 0 || q > MAX_STOCK_QTY) {
-      badQtyKeys.push(itemId);
+      badQtyKeys.push(rawItemId);
       continue;
     }
-    itemIds.push(itemId);
-    qtys.push(q);
+    itemQty.set(itemId, (itemQty.get(itemId) || 0) + q);
   }
   if (badQtyKeys.length > 0) {
     return {
@@ -128,6 +161,8 @@ export async function validateStockForSave(
     };
   }
 
+  const itemIds = [...itemQty.keys()];
+  const qtys = itemIds.map((id) => itemQty.get(id) || 0);
   if (itemIds.length === 0) return { ok: true, itemIds: [], qtys: [] };
   try {
     const chk = await client.query('SELECT id FROM upgrades WHERE id = ANY($1::text[])', [itemIds]);
@@ -270,10 +305,11 @@ export async function validateStoredBatteriesForSave(
       `SELECT id::text FROM upgrades
        WHERE LOWER(COALESCE(type::text, '')) = 'battery'
          AND COALESCE(is_active, 1) <> 0
-       ORDER BY CASE WHEN id = 'small_battery' THEN 0 ELSE 1 END,
+       ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END,
                 COALESCE(base_cost, 0) ASC NULLS LAST,
                 id ASC
-       LIMIT 1`
+       LIMIT 1`,
+      [CANONICAL_1000WH_BATTERY_ID]
     );
     fallbackCatalogId = String(fbRes.rows[0]?.id || '').trim();
   } catch (e) {
@@ -356,12 +392,14 @@ export async function validateStoredBatteriesForSave(
   }
 
   const resolvedIds: string[] = [];
+  const aliasMap = await load1000WhBatteryAliasMap(client);
   for (const r of rows) {
     let it = r.itemId;
     if (it === STORED_BATTERY_CATALOG_PENDING_ID) {
       const dbv = (dbMap.get(r.id) || '').trim();
-      it = SAVE_GAME_ITEM_ID_RE.test(dbv) ? dbv : fallbackCatalogId;
+      it = SAVE_GAME_ITEM_ID_RE.test(dbv) ? normalizeKnown1000WhBatteryCatalogId(dbv) : fallbackCatalogId;
     }
+    it = aliasMap.get(it) || normalizeKnown1000WhBatteryCatalogId(it);
     resolvedIds.push(it);
   }
 
@@ -819,9 +857,9 @@ export async function enrichWorkshopSlotsSlotItemIdsFromChargingHistory(
   workshopSlots: unknown[]
 ): Promise<void> {
   const email = String(userEmail || '').trim();
-  if (!email) return;
 
   const orphans: string[] = [];
+  const instanceIds: string[] = [];
   for (const ws of workshopSlots) {
     if (!ws || !isPlainObjectRecord(ws)) continue;
     const intRaw = ws.internalSlots;
@@ -829,44 +867,68 @@ export async function enrichWorkshopSlotsSlotItemIdsFromChargingHistory(
     if (!isPlainObjectRecord(intRaw)) continue;
     const sidMap = isPlainObjectRecord(sidRaw) ? sidRaw : {};
     for (const [slotId, instId] of Object.entries(intRaw)) {
-      const existingSid = sidMap[slotId];
-      if (existingSid !== undefined && existingSid !== null && String(existingSid).trim() !== '') {
-        continue;
-      }
       if (instId === undefined || instId === null) continue;
       const clean = String(instId).trim();
       if (clean.length < 20) continue;
       if (!SAVE_GAME_ITEM_ID_RE.test(clean)) continue;
+      instanceIds.push(clean);
+      const existingSid = sidMap[slotId];
+      if (existingSid !== undefined && existingSid !== null && String(existingSid).trim() !== '') {
+        continue;
+      }
       orphans.push(clean);
     }
   }
-  if (orphans.length === 0) return;
 
-  const uniq = [...new Set(orphans)];
+  const uniqAll = [...new Set(instanceIds)];
   try {
-    const histRes = await client.query(
-      `SELECT DISTINCT ON (battery_instance_id) battery_instance_id, battery_item_id
-       FROM charging_history
-       WHERE user_email = $1
-         AND battery_instance_id = ANY($2::text[])
-         AND battery_item_id IS NOT NULL
-         AND BTRIM(battery_item_id::text) <> ''
-       ORDER BY battery_instance_id, timestamp DESC`,
-      [email, uniq]
-    );
-    const resolve = new Map<string, string>();
-    for (const row of histRes.rows as Array<{ battery_instance_id: string; battery_item_id: string }>) {
-      const bid = String(row.battery_instance_id || '').trim();
-      const iid = String(row.battery_item_id || '').trim();
-      if (bid && iid) resolve.set(bid, iid);
+    const storedResolve = new Map<string, { itemId: string; charge: number }>();
+    if (uniqAll.length > 0) {
+      const sbRes = await client.query(
+        `SELECT id, item_id, current_charge
+           FROM stored_batteries
+          WHERE id = ANY($1::text[])`,
+        [uniqAll]
+      );
+      for (const row of sbRes.rows as Array<{ id: string; item_id: string | null; current_charge: unknown }>) {
+        const bid = String(row.id || '').trim();
+        const iid = String(row.item_id || '').trim();
+        const charge = Number(row.current_charge);
+        if (bid) storedResolve.set(bid, { itemId: iid, charge: Number.isFinite(charge) ? charge : 0 });
+      }
     }
-    if (resolve.size === 0) return;
+
+    const resolve = new Map<string, string>();
+    for (const [bid, row] of storedResolve.entries()) {
+      if (row.itemId) resolve.set(bid, row.itemId);
+    }
+
+    const orphanIds = [...new Set(orphans.filter((id) => !resolve.has(id)))];
+    if (email && orphanIds.length > 0) {
+      const histRes = await client.query(
+        `SELECT DISTINCT ON (battery_instance_id) battery_instance_id, battery_item_id
+         FROM charging_history
+         WHERE user_email = $1
+           AND battery_instance_id = ANY($2::text[])
+           AND battery_item_id IS NOT NULL
+           AND BTRIM(battery_item_id::text) <> ''
+         ORDER BY battery_instance_id, timestamp DESC`,
+        [email, orphanIds]
+      );
+      for (const row of histRes.rows as Array<{ battery_instance_id: string; battery_item_id: string }>) {
+        const bid = String(row.battery_instance_id || '').trim();
+        const iid = String(row.battery_item_id || '').trim();
+        if (bid && iid) resolve.set(bid, iid);
+      }
+    }
+    if (resolve.size === 0 && storedResolve.size === 0) return;
 
     for (const ws of workshopSlots) {
       if (!ws || !isPlainObjectRecord(ws)) continue;
       const intRaw = ws.internalSlots;
       if (!isPlainObjectRecord(intRaw)) continue;
       const sidRaw = ws.slotItemIds;
+      const chargeRaw = ws.slotCharges;
       const nextMap: Record<string, string> = isPlainObjectRecord(sidRaw)
         ? Object.fromEntries(
             Object.entries(sidRaw)
@@ -874,17 +936,30 @@ export async function enrichWorkshopSlotsSlotItemIdsFromChargingHistory(
               .map(([k, v]) => [k, String(v).trim()])
           )
         : {};
+      const nextCharges: Record<string, number> = isPlainObjectRecord(chargeRaw)
+        ? Object.fromEntries(
+            Object.entries(chargeRaw)
+              .map(([k, v]) => [k, Number(v)])
+              .filter(([, v]) => Number.isFinite(v))
+          )
+        : {};
       let changed = false;
       for (const [slotId, instId] of Object.entries(intRaw)) {
         if (instId === undefined || instId === null) continue;
         const clean = String(instId).trim();
         const itemIdGuess = resolve.get(clean);
-        if (!itemIdGuess) continue;
-        if (nextMap[slotId] && nextMap[slotId].trim() !== '') continue;
-        nextMap[slotId] = itemIdGuess;
-        changed = true;
+        if (itemIdGuess && (!nextMap[slotId] || nextMap[slotId].trim() === '')) {
+          nextMap[slotId] = itemIdGuess;
+          changed = true;
+        }
+        const stored = storedResolve.get(clean);
+        if (stored) {
+          nextCharges[slotId] = stored.charge;
+          changed = true;
+        }
       }
       if (changed) ws.slotItemIds = nextMap;
+      if (changed) ws.slotCharges = nextCharges;
     }
   } catch (e) {
     console.warn(

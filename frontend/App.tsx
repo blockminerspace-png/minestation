@@ -39,10 +39,20 @@ import {
   saveGameState as apiSaveGameState,
   postServersRackAuxEquip,
   postServersRackAuxUnequip,
+  postServersPlaceRack,
+  postServersRemoveRack,
+  postServersRackMinerEquip,
+  postServersRackMinerUnequip,
   postServerRoomBulkBatteries,
   postServerRoomRoomCoins,
+  postWorkshopSlotEquip,
+  postWorkshopSlotUnequip,
+  postWorkshopBatteryChargeStart,
+  postWorkshopBatteryChargeStop,
   postWorkshopMutate,
   getGlobalLastLoadTime,
+  newServerIntentIdempotencyKey,
+  newWorkshopIntentIdempotencyKey,
   setUpgrades as apiSetUpgrades,
   setAccessLevels as apiSetAccessLevels,
   setLootBoxes as apiSetLootBoxes,
@@ -55,6 +65,7 @@ import {
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import { appendUsdcShortfallLine } from './utils/playerMoneyMessages';
+import { findWithdrawTokenCfg, isWithdrawTokenUsable } from './utils/withdrawTokenMatch';
 import { trackSpaPageView } from './lib/analytics';
 import {
   gamePathFromView,
@@ -130,6 +141,12 @@ function resolveEquippedBatteryCatalogId(
   return null;
 }
 
+function isKnownInfiniteBatteryItem(itemId: unknown): boolean {
+  const id = itemId == null ? '' : String(itemId).trim().toLowerCase();
+  if (!id) return false;
+  return id === 'battery_protostar' || id === 'battery_estelar' || id === 'battery_stellar' || id.includes('protostar') || id.includes('estelar') || id.includes('stellar');
+}
+
 const calculateProduction = (placedRacks: PlacedRack[], upgradesList: Upgrade[]) => {
   let total = 0;
   placedRacks.forEach(rack => {
@@ -140,10 +157,14 @@ const calculateProduction = (placedRacks: PlacedRack[], upgradesList: Upgrade[])
           ? String(rack.batteryId).trim()
           : '';
     const battery =
-      (catBid && upgradesList.find((u) => u.id === catBid && u.type === 'battery')) ||
-      (rack.batteryId && upgradesList.find((u) => u.id === rack.batteryId)) ||
+      (catBid && upgradesList.find((u) => u.id === catBid && (u.type === 'battery' || String(u.category || '').toLowerCase() === 'battery'))) ||
+      (rack.batteryId && upgradesList.find((u) => u.id === rack.batteryId && (u.type === 'battery' || String(u.category || '').toLowerCase() === 'battery'))) ||
       undefined;
-    const isInfinite = battery && battery.powerCapacity == -1;
+    const isInfinite =
+      rack.currentCharge === -1 ||
+      rack.batteryPowerCapacityWh === -1 ||
+      isKnownInfiniteBatteryItem(catBid) ||
+      (battery && battery.powerCapacity == -1);
     if (rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0)) {
       let rackBaseProd = 0;
       rack.slots.forEach(slotItemId => {
@@ -357,6 +378,9 @@ export default function App() {
   /** UUID na rig (bateria tirada do stock) → id de catálogo até existir linha em `stored_batteries` após save/reload. */
   const rackBatteryFromStockCatalogRef = useRef<Map<string, string>>(new Map());
   const rackAuxIntentBusyRef = useRef(false);
+  const rackPlaceBusyRef = useRef(false);
+  const bulkBatteryBusyRef = useRef(false);
+  const withdrawBusyRef = useRef(false);
 
   /** Sincroniza hints UUID→catálogo com `stored_batteries` (GET/recuperação) e remove chaves órfãs. */
   useEffect(() => {
@@ -636,13 +660,22 @@ export default function App() {
         }
         if (res && res.ok === false) {
           const errMsg = String((res as { error?: string }).error || '');
+          const errCode = String((res as { code?: string }).code || '');
           if (attempt < 2 && transientSaveError(errMsg)) {
             await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
             continue;
           }
-          console.error('[SaveGame]', errMsg);
+          console.error('[SaveGame]', errCode || errMsg);
           if (showAlertOnHardFail) {
-            alert('Não foi possível guardar: ' + errMsg + '\nA recarregar o estado do servidor.');
+            if (errCode === 'LEGACY_SAVEGAME_CRITICAL_REJECTED') {
+              alert(
+                'O servidor recusou um pedido legado que alterava estado crítico. Recarregámos o estado; use só as acções do jogo suportadas (intenções / rotas novas).'
+              );
+            } else if (errCode === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+              alert('Conflito de idempotência: não reutilize a mesma chave com um pedido diferente.');
+            } else {
+              alert('Não foi possível guardar: ' + errMsg + '\nA recarregar o estado do servidor.');
+            }
           }
           pendingSaveDomainRef.current = 'full';
           await handleReloadGameState();
@@ -1617,89 +1650,107 @@ export default function App() {
   const handleBurnNFT = useCallback((id: string, amt: number) => { setGameState(p => { const cur = p.stock[id] || 0; if (cur < amt) return p; return { ...p, stock: { ...p.stock, [id]: cur - amt } }; }); requestSave(); }, [requestSave]);
 
   const handlePlaceRack = useCallback(
-    (typeId: string, roomId: string, slotIndex: number, ctx?: { roomName?: string; nftAutoArmario1Only?: boolean }) => {
+    async (typeId: string, roomId: string, slotIndex: number, ctx?: { roomName?: string; nftAutoArmario1Only?: boolean }) => {
       if (isNftAutoArmario1OnlyRoomContext(roomId, ctx?.roomName, ctx?.nftAutoArmario1Only) && typeId !== NFT_AUTO_ALLOWED_CHASSIS_ID) {
         alert('Nesta sala só é permitido o chassis Rack H1 NFT Collection.');
         return;
       }
-      setGameState((p) => {
-        if ((p.stock[typeId] || 0) < 1) return p;
-        const def = gameUpgrades.find((u) => u.id === typeId);
-        if (!def) return p;
-        const nr: PlacedRack = {
-          id: crypto.randomUUID(),
-          itemId: typeId,
-          slots: Array(def.slotsCapacity || 10).fill(null),
-          multiplierSlots: Array(def.aiSlotsCapacity || 0).fill(null),
-          batteryId: null,
-          wiringId: null,
-          currentCharge: 0,
-          isOn: false,
-          roomId,
-          slotIndex
-        };
-        return { ...p, stock: { ...p.stock, [typeId]: p.stock[typeId] - 1 }, placedRacks: [...p.placedRacks, nr] };
-      });
-      requestSave();
+      if (!user?.email || rackPlaceBusyRef.current) return;
+      rackPlaceBusyRef.current = true;
+      const roomNorm = normalizePlacedRackRoomId(roomId);
+      try {
+        const out = await postServersPlaceRack({
+          catalogItemId: typeId,
+          roomId: roomNorm,
+          slotIndex,
+          idempotencyKey: newServerIntentIdempotencyKey(),
+          clientStateVersion: getGlobalLastLoadTime()
+        });
+        if (out.ok !== true) {
+          if (out.forceReload || out.code === 'STATE_VERSION_CONFLICT' || out.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+            setGameStateReloadNonce((n) => n + 1);
+          }
+          alert(out.error || 'Não foi possível colocar a rig.');
+          return;
+        }
+        setGameState((p) => ({
+          ...p,
+          stock: { ...out.stock },
+          placedRacks: [...out.placedRacks],
+          storedBatteries: [...out.storedBatteries]
+        }));
+      } finally {
+        rackPlaceBusyRef.current = false;
+      }
     },
-    [gameUpgrades, requestSave]
+    [user?.email, setGameStateReloadNonce]
   );
 
-  const handleRemoveRack = useCallback((rackId: string) => {
+  const handleRemoveRack = useCallback(async (rackId: string) => {
     if (!confirm('Desmontar esta rig? Todos os componentes (GPUs, fiação, bateria, multiplicadores) voltam para o estoque.')) return;
-    setGameState(p => {
-      const r = p.placedRacks.find(x => x.id === rackId);
-      if (!r) return p;
-      const ns = { ...p.stock };
-      let nb = [...p.storedBatteries];
-      ns[r.itemId] = (ns[r.itemId] || 0) + 1;
-      (Array.isArray(r.slots) ? r.slots : []).forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
-      (Array.isArray(r.multiplierSlots) ? r.multiplierSlots : []).forEach(i => { if (i) ns[i] = (ns[i] || 0) + 1; });
-      if (r.wiringId) ns[r.wiringId] = (ns[r.wiringId] || 0) + 1;
-      if (r.batteryId) {
-        const hintSnap = Object.fromEntries(rackBatteryFromStockCatalogRef.current);
-        rackBatteryFromStockCatalogRef.current.delete(String(r.batteryId));
-        const catId = resolveEquippedBatteryCatalogId(r.batteryId, nb, gameUpgrades, hintSnap);
-        if (catId) {
-          const upg = gameUpgrades.find((u) => u.id === catId && u.type === 'battery');
-          const capacity = upg?.powerCapacity || 100;
-          const isFull = r.currentCharge >= (capacity * 0.999);
-          if (isFull) {
-            ns[catId] = (ns[catId] || 0) + 1;
-          } else {
-            nb.push({
-              id: crypto.randomUUID(),
-              itemId: catId,
-              currentCharge: r.currentCharge,
-              powerCapacityWh: upg?.powerCapacity ?? null,
-              displayName: upg?.name ?? null,
-              imageUrl: upg?.image ?? null
-            });
-          }
+    if (!user?.email || rackPlaceBusyRef.current) return;
+    rackPlaceBusyRef.current = true;
+    try {
+      const out = await postServersRemoveRack(rackId);
+      if (out.ok !== true) {
+        if (out.forceReload || out.code === 'STATE_VERSION_CONFLICT' || out.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+          setGameStateReloadNonce((n) => n + 1);
         }
+        alert(out.error || 'Não foi possível desmontar a rig.');
+        return;
       }
-      return { ...p, stock: ns, storedBatteries: nb, placedRacks: p.placedRacks.filter(x => x.id !== rackId) };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
+      setGameState((p) => ({
+        ...p,
+        stock: { ...out.stock },
+        placedRacks: [...out.placedRacks],
+        storedBatteries: [...out.storedBatteries]
+      }));
+    } finally {
+      rackPlaceBusyRef.current = false;
+    }
+  }, [user?.email, setGameStateReloadNonce]);
 
-  const handleEquipMiner = useCallback((rid: string, idx: number, mid: string) => {
-    setGameState(p => {
-      if ((p.stock[mid] || 0) < 1) return p; const ri = p.placedRacks.findIndex(r => r.id === rid); if (ri === -1) return p;
-      const ur = [...p.placedRacks]; const r = { ...ur[ri], slots: [...ur[ri].slots] }; if (r.slots[idx]) return p;
-      r.slots[idx] = mid; ur[ri] = r; return { ...p, stock: { ...p.stock, [mid]: p.stock[mid] - 1 }, placedRacks: ur };
-    });
-    requestSave();
-  }, [requestSave]);
+  const handleEquipMiner = useCallback(async (rid: string, idx: number, mid: string) => {
+    if (!user?.email || rackAuxIntentBusyRef.current) return;
+    rackAuxIntentBusyRef.current = true;
+    try {
+      const out = await postServersRackMinerEquip(rid, idx, mid);
+      if (out.ok !== true) {
+        if (out.status === 409 || out.forceReload) setGameStateReloadNonce((n) => n + 1);
+        alert(out.error || 'Não foi possível instalar a GPU.');
+        return;
+      }
+      setGameState((p) => ({
+        ...p,
+        stock: out.stock,
+        storedBatteries: out.storedBatteries,
+        placedRacks: out.placedRacks
+      }));
+    } finally {
+      rackAuxIntentBusyRef.current = false;
+    }
+  }, [user?.email, setGameStateReloadNonce]);
 
-  const handleUnequipMiner = useCallback((rid: string, idx: number) => {
-    setGameState(p => {
-      const ri = p.placedRacks.findIndex(r => r.id === rid); if (ri === -1) return p;
-      const ur = [...p.placedRacks]; const r = { ...ur[ri], slots: [...ur[ri].slots] }; const item = r.slots[idx]; if (!item) return p;
-      r.slots[idx] = null; ur[ri] = r; return { ...p, stock: { ...p.stock, [item]: (p.stock[item] || 0) + 1 }, placedRacks: ur };
-    });
-    requestSave();
-  }, [requestSave]);
+  const handleUnequipMiner = useCallback(async (rid: string, idx: number) => {
+    if (!user?.email || rackAuxIntentBusyRef.current) return;
+    rackAuxIntentBusyRef.current = true;
+    try {
+      const out = await postServersRackMinerUnequip(rid, idx);
+      if (out.ok !== true) {
+        if (out.status === 409 || out.forceReload) setGameStateReloadNonce((n) => n + 1);
+        alert(out.error || 'Não foi possível remover a GPU.');
+        return;
+      }
+      setGameState((p) => ({
+        ...p,
+        stock: out.stock,
+        storedBatteries: out.storedBatteries,
+        placedRacks: out.placedRacks
+      }));
+    } finally {
+      rackAuxIntentBusyRef.current = false;
+    }
+  }, [user?.email, setGameStateReloadNonce]);
 
   const handleEquipAux = useCallback(
     async (rid: string, iid: string, type: string, sbid?: string, idx?: number) => {
@@ -1870,15 +1921,29 @@ export default function App() {
 
   /** Equipa a mesma bateria (stock + armazém) em massa na sala — regras e persistência no servidor. */
   const handleSetRoomRacksBattery = useCallback(async (roomId: string, batteryUpgradeId: string, opts?: BulkRoomBatteryRunOptions) => {
+    if (bulkBatteryBusyRef.current) return;
+    bulkBatteryBusyRef.current = true;
     const roomNorm = normalizePlacedRackRoomId(roomId);
+    const idem = newServerIntentIdempotencyKey();
+    try {
     const res = await postServerRoomBulkBatteries({
       roomId: roomNorm,
       batteryUpgradeId,
       smartFill: opts?.smartFill,
-      rigSort: opts?.rigSort
+      rigSort: opts?.rigSort,
+      idempotencyKey: idem,
+      clientStateVersion: getGlobalLastLoadTime()
     });
-    if (!res.ok) {
-      setBulkBatteryNotice({ title: 'Bateria da sala', message: 'error' in res ? res.error : 'Erro desconhecido.' });
+    if (res.ok === false) {
+      if (res.forceReload || res.code === 'STATE_VERSION_CONFLICT') {
+        await handleReloadGameState();
+        setBulkBatteryNotice({
+          title: 'Sincronização',
+          message: res.error || 'O estado foi atualizado; lista de servidores foi recarregada.'
+        });
+        return;
+      }
+      setBulkBatteryNotice({ title: 'Bateria da sala', message: res.error || 'Erro desconhecido.' });
       return;
     }
     const smart = !!res.smartFill;
@@ -1897,22 +1962,29 @@ export default function App() {
       storedBatteries: res.storedBatteries,
       placedRacks: res.placedRacks
     }));
-  }, []);
+    } finally {
+      bulkBatteryBusyRef.current = false;
+    }
+  }, [handleReloadGameState]);
 
   const handleEquipWorkshop = useCallback(
     async (idx: number, mid: string) => {
       if (workshopMutationBusyRef.current) return;
       workshopMutationBusyRef.current = true;
       try {
-        const r = await postWorkshopMutate({
-          action: 'equip_bench',
+        const r = await postWorkshopSlotEquip({
           slotIndex: idx,
           itemId: mid,
-          expectedServerUpdatedAt: getGlobalLastLoadTime()
+          idempotencyKey: newWorkshopIntentIdempotencyKey(),
+          clientStateVersion: getGlobalLastLoadTime()
         });
         if (r.ok === false) {
-          if (r.forceReload) await handleReloadGameState();
-          else alert(r.error);
+          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+            await handleReloadGameState();
+            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
+            return;
+          }
+          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível instalar a estrutura.' });
           return;
         }
         applyWorkshopServerSlice(r);
@@ -1928,14 +2000,18 @@ export default function App() {
       if (workshopMutationBusyRef.current) return;
       workshopMutationBusyRef.current = true;
       try {
-        const r = await postWorkshopMutate({
-          action: 'unequip_bench',
+        const r = await postWorkshopSlotUnequip({
           slotIndex: idx,
-          expectedServerUpdatedAt: getGlobalLastLoadTime()
+          idempotencyKey: newWorkshopIntentIdempotencyKey(),
+          clientStateVersion: getGlobalLastLoadTime()
         });
         if (r.ok === false) {
-          if (r.forceReload) await handleReloadGameState();
-          else alert(r.error);
+          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+            await handleReloadGameState();
+            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
+            return;
+          }
+          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível remover a estrutura.' });
           return;
         }
         applyWorkshopServerSlice(r);
@@ -1951,18 +2027,33 @@ export default function App() {
       if (workshopMutationBusyRef.current) return;
       workshopMutationBusyRef.current = true;
       try {
-        const r = await postWorkshopMutate({
-          action: 'equip_component',
-          slotIndex: wsIdx,
-          componentSlotId: slotId,
-          componentSlotLayoutIndex: layoutSlotIndex,
-          itemId: iid,
-          storedBatteryId: sbid,
-          expectedServerUpdatedAt: getGlobalLastLoadTime()
-        });
+        const idem = newWorkshopIntentIdempotencyKey();
+        const cv = getGlobalLastLoadTime();
+        const r = sbid
+          ? await postWorkshopBatteryChargeStart({
+              batteryId: sbid,
+              benchSlotIndex: wsIdx,
+              componentSlotId: slotId,
+              componentSlotLayoutIndex: layoutSlotIndex,
+              idempotencyKey: idem,
+              clientStateVersion: cv
+            })
+          : await postWorkshopMutate({
+              action: 'equip_component',
+              slotIndex: wsIdx,
+              componentSlotId: slotId,
+              componentSlotLayoutIndex: layoutSlotIndex,
+              itemId: iid,
+              idempotencyKey: idem,
+              clientStateVersion: cv
+            });
         if (r.ok === false) {
-          if (r.forceReload) await handleReloadGameState();
-          else alert(r.error);
+          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+            await handleReloadGameState();
+            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
+            return;
+          }
+          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível montar o componente.' });
           return;
         }
         applyWorkshopServerSlice(r);
@@ -1974,20 +2065,38 @@ export default function App() {
   );
 
   const handleUnequipWorkshopComponent = useCallback(
-    async (wsIdx: number, slotId: string, layoutSlotIndex: number) => {
+    async (wsIdx: number, slotId: string, layoutSlotIndex: number, batteryInstanceId?: string) => {
       if (workshopMutationBusyRef.current) return;
       workshopMutationBusyRef.current = true;
       try {
-        const r = await postWorkshopMutate({
-          action: 'unequip_component',
-          slotIndex: wsIdx,
-          componentSlotId: slotId,
-          componentSlotLayoutIndex: layoutSlotIndex,
-          expectedServerUpdatedAt: getGlobalLastLoadTime()
-        });
+        const idem = newWorkshopIntentIdempotencyKey();
+        const cv = getGlobalLastLoadTime();
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+        const r =
+          batteryInstanceId && uuidRe.test(String(batteryInstanceId).trim())
+            ? await postWorkshopBatteryChargeStop({
+                batteryId: String(batteryInstanceId).trim(),
+                benchSlotIndex: wsIdx,
+                componentSlotId: slotId,
+                componentSlotLayoutIndex: layoutSlotIndex,
+                idempotencyKey: idem,
+                clientStateVersion: cv
+              })
+            : await postWorkshopMutate({
+                action: 'unequip_component',
+                slotIndex: wsIdx,
+                componentSlotId: slotId,
+                componentSlotLayoutIndex: layoutSlotIndex,
+                idempotencyKey: idem,
+                clientStateVersion: cv
+              });
         if (r.ok === false) {
-          if (r.forceReload) await handleReloadGameState();
-          else alert(r.error);
+          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+            await handleReloadGameState();
+            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
+            return;
+          }
+          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível remover o componente.' });
           return;
         }
         applyWorkshopServerSlice(r);
@@ -2017,7 +2126,7 @@ export default function App() {
       console.error("[Workshop] Instant recharge failed", err);
       alert("Erro de rede ao recarregar.");
     }
-  }, [user, gameUpgrades, requestSave]);
+  }, [user, gameUpgrades]);
 
   const launchApplixir = useCallback(async (wsIdx: number) => {
     if (!monetizationSettings?.applixirSiteId || !monetizationSettings?.applixirZoneId) {
@@ -2161,14 +2270,13 @@ export default function App() {
   const handleWithdrawCoin = useCallback(async (coinId: string, amt: number) => {
     const s = web3SettingsState;
     const coin = miningCoins.find(c => c.id === coinId);
-    const matching = s?.withdrawTokens?.find(t => {
-      const isNameMatch = t.name === (coin?.name || '');
-      const isNative = ['POL', 'POLYGON', 'BNB', 'ETH', 'WETH'].includes(t.name?.toUpperCase() || '');
-      const hasValidContract = /^0x[a-fA-F0-9]{40}$/.test(t.contract || '');
-      return isNameMatch && (isNative || hasValidContract);
-    });
-    if (!user?.polygonWallet || !matching || !coin) {
-      alert("Configuração de saque incompleta ou carteira não vinculada.");
+    const matching = findWithdrawTokenCfg(s?.withdrawTokens, coin);
+    if (!user?.polygonWallet || !coin) {
+      alert('Carteira Polygon não vinculada. Conecta a carteira no perfil para levantar.');
+      return;
+    }
+    if (!matching || !isWithdrawTokenUsable(matching)) {
+      alert(`Levantamento indisponível para ${coin.symbol || coin.name}. Confirma a configuração no painel administrativo.`);
       return;
     }
 
@@ -2179,12 +2287,12 @@ export default function App() {
 
     const cur = (gameState.coinBalances || {})[coinId] || 0;
 
-    if (amt <= 0 || amt < minW) {
+    if (!Number.isFinite(amt) || amt <= 0 || amt < minW) {
       alert(`Valor mínimo para saque: ${minW.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${coin.symbol}`);
       return;
     }
     if (amt > cur) {
-      alert("Saldo insuficiente.");
+      alert('Saldo insuficiente.');
       return;
     }
 
@@ -2195,19 +2303,59 @@ export default function App() {
       : `Confirmar solicitação de saque de ${amt} ${coin.symbol} para a carteira ${user.polygonWallet}?`;
 
     if (!confirm(msg)) return;
+    if (withdrawBusyRef.current) return;
+    withdrawBusyRef.current = true;
+    const idempotencyKey = `wd_${crypto.randomUUID()}`;
+    try {
+      const res = await requestWithdrawal(coinId, amt, user.polygonWallet, idempotencyKey);
 
-    const res = await requestWithdrawal(coinId, amt, user.polygonWallet);
-
-    if (res.ok) {
-      setGameState(prev => {
-        const next = { ...(prev.coinBalances || {}) };
-        next[coinId] = (next[coinId] || 0) - amt;
-        return { ...prev, coinBalances: next };
-      });
-      alert(res.message || "Solicitação de saque enviada com sucesso!");
-      requestSave('full');
-    } else {
-      alert(res.error || "Erro ao solicitar saque.");
+      if (res.ok) {
+        setGameState(prev => {
+          const next = { ...(prev.coinBalances || {}) };
+          next[coinId] = Math.max(0, (next[coinId] || 0) - amt);
+          return { ...prev, coinBalances: next };
+        });
+        /** Recarrega o estado da carteira para refletir withdrawal_requests (histórico) sem precisar de F5. */
+        try {
+          const fresh = await getWalletState();
+          if (fresh) {
+            const mined = Array.isArray((fresh as { minedBalances?: { coinId: string; minedBalance: number }[] }).minedBalances)
+              ? (fresh as { minedBalances?: { coinId: string; minedBalance: number }[] }).minedBalances
+              : null;
+            if (mined && mined.length) {
+              setGameState(prev => {
+                const next = { ...(prev.coinBalances || {}) };
+                for (const m of mined) {
+                  if (m && typeof m.coinId === 'string') {
+                    next[m.coinId] = Number(m.minedBalance) || 0;
+                  }
+                }
+                return { ...prev, coinBalances: next };
+              });
+            }
+          }
+        } catch { /* refresh é best-effort */ }
+        alert(res.message || 'Solicitação de saque enviada com sucesso!');
+        requestSave('full');
+      } else {
+        const code = (res as { code?: string }).code;
+        const status = (res as { status?: number }).status ?? 0;
+        if (code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+          alert(res.error || 'Pedido em conflito. Recarrega o estado da carteira.');
+        } else if (status >= 400 && status < 500 && res.error) {
+          /** 4xx → mensagem específica do backend (saldo insuficiente, moeda não configurada, etc.). */
+          alert(res.error);
+        } else if (status >= 500) {
+          /** 5xx → mensagem genérica + sugestão de retry. */
+          alert('Erro interno no servidor. Tenta novamente em alguns minutos.');
+        } else if (res.error) {
+          alert(res.error);
+        } else {
+          alert('Erro ao solicitar saque. Tenta novamente.');
+        }
+      }
+    } finally {
+      withdrawBusyRef.current = false;
     }
   }, [web3SettingsState, miningCoins, user, gameState.coinBalances, requestSave]);
 
@@ -2302,10 +2450,7 @@ export default function App() {
       idempotencyKey: opts?.idempotencyKey
     });
 
-    if (res.ok && res.rewards) {
-      void handleReloadGameState();
-      return { rewards: res.rewards };
-    } else {
+    if (!res.ok) {
       setLuckyBoxNotice({
         variant: 'error',
         title: 'Caixas da Sorte',
@@ -2313,6 +2458,18 @@ export default function App() {
       });
       return null;
     }
+
+    void handleReloadGameState();
+    const rewards = Array.isArray(res.rewards) ? res.rewards : [];
+    if (rewards.length === 0) {
+      setLuckyBoxNotice({
+        variant: 'info',
+        title: 'Caixas da Sorte',
+        message:
+          'Abertura registada. Recarrega a página para ver o stock; se a caixa desapareceu e não há itens novos, contacta o suporte com a hora do pedido.'
+      });
+    }
+    return { rewards };
   };
 
   const handleDiscardLootBox = async (boxId: string) => {
@@ -2400,8 +2557,18 @@ export default function App() {
                         }
                         let base = 0;
                         gameState.placedRacks.forEach(r => {
-                          const batt = gameUpgrades.find(u => u.id === r.batteryId);
-                          const isInf = batt && batt.powerCapacity == -1;
+                          const battId =
+                            r.batteryCatalogItemId != null && String(r.batteryCatalogItemId).trim() !== ''
+                              ? String(r.batteryCatalogItemId).trim()
+                              : r.batteryId;
+                          const batt = gameUpgrades.find(
+                            u => u.id === battId && (u.type === 'battery' || String(u.category || '').toLowerCase() === 'battery')
+                          );
+                          const isInf =
+                            r.currentCharge === -1 ||
+                            r.batteryPowerCapacityWh === -1 ||
+                            isKnownInfiniteBatteryItem(battId) ||
+                            (batt && batt.powerCapacity == -1);
                           if (!r.isOn || !r.wiringId || !r.batteryId || (!isInf && r.currentCharge <= 0 && r.currentCharge !== undefined)) return;
                           if (r.selectedCoinId === c.id) {
                             let rbase = 0;

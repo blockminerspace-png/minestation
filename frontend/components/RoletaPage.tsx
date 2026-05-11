@@ -35,7 +35,7 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
   const [redeeming, setRedeeming] = useState(false);
   const [roletaCode, setRoletaCode] = useState<string | null>(null);
   const [notice, setNotice] = useState<UiNotice | null>(null);
-  const [paidTabSpinLabel, setPaidTabSpinLabel] = useState('Giro US$0.10');
+  const [paidTabSpinLabel, setPaidTabSpinLabel] = useState('Giro US$1.00');
 
   /** Preço do giro pago vindo do servidor (cabeçalho / separador). */
   useEffect(() => {

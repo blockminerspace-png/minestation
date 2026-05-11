@@ -149,12 +149,14 @@ export function registerLootBoxPlayerRoutes(app: Express, deps: LootBoxPlayerDep
         JSON.stringify(rewards),
         gainedUsdc
       );
-      await appendGameActivityLog(null, userId, 'loot_box_open', {
+      void appendGameActivityLog(null, userId, 'loot_box_open', {
         boxId,
         boxName,
         rewardCount: rewards.length,
         gainedUsdc,
         rewardsPreview: rewards.slice(0, 12)
+      }).catch(() => {
+        /* Mongo não pode bloquear resposta HTTP */
       });
 
       res.json({ ok: true, rewards, openingId });

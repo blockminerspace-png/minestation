@@ -10,6 +10,24 @@ import {
   workshopBatteryStorageKeyAtLayoutIndex,
   type WorkshopBatteryLayoutSlot
 } from '../lib/workshopBatterySlotStorageKey.js';
+import { parseIdempotencyKey } from '../validation/roletaValidation.js';
+import {
+  advisoryLockPairFromIntent,
+  attachIntentFingerprint,
+  GAME_INTENT_IDEM_FP_KEY,
+  readGameIntentIdempotencyReplay,
+  stableIntentFingerprint,
+  stripIntentFingerprint
+} from '../lib/gameIntentIdempotencyPrisma.js';
+import {
+  semanticChargingData,
+  semanticInventoryWarehouseData
+} from '../modules/batteries/batteryInvariant.service.js';
+import {
+  isWorkshopBatteryChargeFull,
+  snapWorkshopBatteryChargeWh
+} from '../lib/workshopBatteryCharge.js';
+import { normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 const WORKSHOP_BENCH_COUNT = 6;
 const INSTANCE_UUID_RE =
@@ -42,15 +60,37 @@ export type WorkshopMutateBody = {
   storedBatteryId?: string;
   /** Optimistic lock opcional — se enviado e divergir do servidor → 409 + forceReload */
   expectedServerUpdatedAt?: number;
+  /** Alias do cliente para a mesma revisão que `expectedServerUpdatedAt`. */
+  clientStateVersion?: number;
+  /** Obrigatório em pedidos HTTP (oficina idempotente). */
+  idempotencyKey?: string;
 };
 
 export type WorkshopMutateOk = {
   ok: true;
   serverUpdatedAt: number;
+  stateVersion?: number;
   workshopSlots: unknown[];
   stock: Record<string, number>;
   storedBatteries: Array<{ id: string; itemId: string; currentCharge: number }>;
+  idempotentReplay?: boolean;
 };
+
+export function workshopMutationIntentScope(userId: number): string {
+  return `workshop_mut:${userId}`;
+}
+
+export function workshopMutationIntentFingerprint(body: WorkshopMutateBody): string {
+  return stableIntentFingerprint({
+    action: body.action,
+    slotIndex: body.slotIndex,
+    itemId: body.itemId ?? null,
+    componentSlotId: body.componentSlotId ?? null,
+    componentSlotLayoutIndex: body.componentSlotLayoutIndex ?? null,
+    storedBatteryId: body.storedBatteryId ?? null,
+    expected: body.expectedServerUpdatedAt ?? body.clientStateVersion ?? null
+  });
+}
 
 function parseJsonObject(raw: string | null | undefined): Record<string, unknown> {
   if (raw == null || raw === '') return {};
@@ -193,6 +233,7 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
       catalogId = slotItemIds[legacyKey];
     }
     if (!catalogId || !SAVE_GAME_ITEM_ID_RE.test(catalogId)) continue;
+    catalogId = normalizeKnown1000WhBatteryCatalogId(catalogId);
 
     // Carga: stored_batteries é a fonte de verdade mais recente (o cron escreve lá diretamente).
     // slot_charges pode estar stale se o cron não ainda não escreveu nesta transação.
@@ -200,20 +241,19 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
     const whFromSlotCharges = chargeWhAtBatteryLayoutIndex(slotCharges, layout, li);
     const existingRow = await tx.stored_batteries.findUnique({ where: { id: bid }, select: { current_charge: true } });
     const whFromStored = existingRow ? Number(existingRow.current_charge) : 0;
-    const wh = Math.max(whFromSlotCharges, Number.isFinite(whFromStored) ? whFromStored : 0);
-
-    // Busca metadados só se vamos criar (upsert cria se não existe)
-    const batDef = existingRow
-      ? null
-      : await tx.upgrades.findUnique({
-          where: { id: catalogId },
-          select: { power_capacity: true, name: true, image: true }
-        });
-    const imgUrl =
-      batDef?.image != null && String(batDef.image).trim() !== ''
-        ? String(batDef.image).trim().slice(0, 2048)
-        : null;
-
+    const batDef = await tx.upgrades.findUnique({
+      where: { id: catalogId },
+      select: { power_capacity: true, name: true, image: true }
+    });
+    const cap = batDef?.power_capacity != null ? Number(batDef.power_capacity) : null;
+    let wh = Math.max(whFromSlotCharges, Number.isFinite(whFromStored) ? whFromStored : 0);
+    if (cap === -1) {
+      wh = -1;
+      slotCharges[canonKey] = -1;
+    } else if (cap != null) {
+      wh = snapWorkshopBatteryChargeWh(wh, cap);
+    }
+    const semCh = semanticChargingData(slotIndex, canonKey);
     if (existingRow) {
       // Linha já existe: só atualiza slot linkage e carga (sem regredir)
       await tx.stored_batteries.update({
@@ -221,18 +261,19 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
         data: {
           current_charge: wh,
           workshop_slot_index: slotIndex,
-          workshop_component_slot_id: canonKey
+          workshop_component_slot_id: canonKey,
+          status: semCh.status,
+          location: semCh.location,
+          last_moved_at: new Date(),
+          updated_at: new Date(),
+          version: { increment: 1 }
         }
       });
     } else {
       // Linha não existe (fantasma): recria com metadados completos
-      const fullDef = await tx.upgrades.findUnique({
-        where: { id: catalogId },
-        select: { power_capacity: true, name: true, image: true }
-      });
       const fullImg =
-        fullDef?.image != null && String(fullDef.image).trim() !== ''
-          ? String(fullDef.image).trim().slice(0, 2048)
+        batDef?.image != null && String(batDef.image).trim() !== ''
+          ? String(batDef.image).trim().slice(0, 2048)
           : null;
       await tx.stored_batteries.create({
         data: {
@@ -240,11 +281,16 @@ async function syncStoredBatteriesWithWorkshopSlotRow(
           user_id: userId,
           item_id: catalogId,
           current_charge: wh,
-          power_capacity_wh: fullDef?.power_capacity != null ? Number(fullDef.power_capacity) : null,
-          display_name: fullDef?.name != null ? String(fullDef.name).slice(0, 500) : null,
+          power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : null,
+          display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : null,
           image_url: fullImg,
           workshop_slot_index: slotIndex,
-          workshop_component_slot_id: canonKey
+          workshop_component_slot_id: canonKey,
+          status: semCh.status,
+          location: semCh.location,
+          version: 1,
+          last_moved_at: new Date(),
+          updated_at: new Date()
         }
       });
     }
@@ -460,11 +506,12 @@ async function loadSlice(tx: Prisma.TransactionClient, userId: number): Promise<
   ]);
   const stock: Record<string, number> = {};
   for (const r of stockRows) {
-    stock[r.item_id] = r.qty;
+    const itemId = normalizeKnown1000WhBatteryCatalogId(r.item_id);
+    stock[itemId] = (stock[itemId] || 0) + (Number(r.qty) || 0);
   }
   const storedBatteries = batRows.map((r) => ({
     id: r.id,
-    itemId: r.item_id,
+    itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
     currentCharge: Number(r.current_charge) || 0,
     powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
     displayName: r.display_name != null ? String(r.display_name) : null,
@@ -491,50 +538,68 @@ async function recoverBatteryFromSlot(
   chargeWh: number,
   reason: string
 ): Promise<void> {
-  const batDef = await loadUpgrade(tx, catalogId);
+  const canonicalCatalogId = normalizeKnown1000WhBatteryCatalogId(catalogId);
+  const batDef = await loadUpgrade(tx, canonicalCatalogId);
   const cap = batDef?.power_capacity != null ? Number(batDef.power_capacity) : 100;
-  const isInf = cap === -1;
-  const isFull = isInf || (cap > 0 && chargeWh >= cap * 0.999);
+  const normalizedChargeWh = snapWorkshopBatteryChargeWh(chargeWh, cap);
+  const isFull = isWorkshopBatteryChargeFull(normalizedChargeWh, cap);
 
   if (isFull) {
     await tx.stored_batteries.deleteMany({ where: { id: instanceId, user_id: userId } });
     const row = await tx.stock.findUnique({
-      where: { user_id_item_id: { user_id: userId, item_id: catalogId } }
+      where: { user_id_item_id: { user_id: userId, item_id: canonicalCatalogId } }
     });
     const next = (row?.qty ?? 0) + 1;
     await tx.stock.upsert({
-      where: { user_id_item_id: { user_id: userId, item_id: catalogId } },
-      create: { user_id: userId, item_id: catalogId, qty: 1 },
+      where: { user_id_item_id: { user_id: userId, item_id: canonicalCatalogId } },
+      create: { user_id: userId, item_id: canonicalCatalogId, qty: 1 },
       update: { qty: next }
     });
   } else {
-    const ch = Math.max(0, chargeWh);
+    const ch = Math.max(0, normalizedChargeWh);
     const img =
       batDef?.image != null && String(batDef.image).trim() !== ''
         ? String(batDef.image).trim().slice(0, 2048)
         : null;
+    const semInv = semanticInventoryWarehouseData();
     await tx.stored_batteries.upsert({
       where: { id: instanceId },
       create: {
         id: instanceId,
         user_id: userId,
-        item_id: catalogId,
+        item_id: canonicalCatalogId,
         current_charge: ch,
         power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : null,
         display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : null,
         image_url: img,
         workshop_slot_index: null,
-        workshop_component_slot_id: null
+        workshop_component_slot_id: null,
+        status: semInv.status,
+        location: semInv.location,
+        rack_id: semInv.rack_id,
+        slot_id: semInv.slot_id,
+        room_id: semInv.room_id,
+        version: 1,
+        last_moved_at: new Date(),
+        updated_at: new Date()
       },
       update: {
         user_id: userId,
-        item_id: catalogId,
+        item_id: canonicalCatalogId,
         current_charge: ch,
         power_capacity_wh: batDef?.power_capacity != null ? Number(batDef.power_capacity) : undefined,
         display_name: batDef?.name != null ? String(batDef.name).slice(0, 500) : undefined,
         image_url: img ?? undefined,
         workshop_slot_index: null,
-        workshop_component_slot_id: null
+        workshop_component_slot_id: null,
+        status: semInv.status,
+        location: semInv.location,
+        rack_id: semInv.rack_id,
+        slot_id: semInv.slot_id,
+        room_id: semInv.room_id,
+        last_moved_at: new Date(),
+        updated_at: new Date(),
+        version: { increment: 1 }
       }
     });
   }
@@ -544,10 +609,10 @@ async function recoverBatteryFromSlot(
     workshop_slot_index: wsIdx,
     component_slot_id: slotId,
     battery_instance_id: instanceId,
-    battery_item_id: catalogId,
+    battery_item_id: canonicalCatalogId,
     charge_amount: chargeWh,
     stock_confirmed: true,
-    details: sanitizeDetails({ reason, batteryName: catalogId })
+    details: sanitizeDetails({ reason, batteryName: canonicalCatalogId })
   });
 }
 
@@ -585,11 +650,47 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
 
   const slotIndex = assertSlotIndex(body.slotIndex);
 
+  const idem = parseIdempotencyKey(body.idempotencyKey);
+  if (!idem) {
+    throw new WorkshopMutationError('idempotencyKey obrigatório (8–128 caracteres seguros).', 400);
+  }
+  const fp = workshopMutationIntentFingerprint(body);
+  const scope = workshopMutationIntentScope(userId);
+
+  const replayPre = await readGameIntentIdempotencyReplay(prisma, userId, scope, idem);
+  if (replayPre) {
+    const stored = replayPre.body as Record<string, unknown>;
+    const prevFp = typeof stored[GAME_INTENT_IDEM_FP_KEY] === 'string' ? stored[GAME_INTENT_IDEM_FP_KEY] : '';
+    if (prevFp && prevFp !== fp) {
+      throw new WorkshopMutationError('Mesma chave de idempotência com pedido diferente.', 409, false);
+    }
+    return {
+      ...(stripIntentFingerprint(stored) as unknown as WorkshopMutateOk),
+      idempotentReplay: true
+    };
+  }
+
   return prisma.$transaction(
     async (tx) => {
+      const [lkA, lkB] = advisoryLockPairFromIntent(userId, scope, idem);
+      await tx.$executeRawUnsafe('SELECT pg_advisory_xact_lock($1::int, $2::int)', lkA, lkB);
+
+      const replayIn = await readGameIntentIdempotencyReplay(prisma, userId, scope, idem);
+      if (replayIn) {
+        const stored = replayIn.body as Record<string, unknown>;
+        const prevFp = typeof stored[GAME_INTENT_IDEM_FP_KEY] === 'string' ? stored[GAME_INTENT_IDEM_FP_KEY] : '';
+        if (prevFp && prevFp !== fp) {
+          throw new WorkshopMutationError('Mesma chave de idempotência com pedido diferente.', 409, false);
+        }
+        return {
+          ...(stripIntentFingerprint(stored) as unknown as WorkshopMutateOk),
+          idempotentReplay: true
+        };
+      }
+
       await ensureGameStateRow(tx, userId);
       await lockUserGameState(tx, userId);
-      await checkExpectedRevision(tx, userId, body.expectedServerUpdatedAt);
+      await checkExpectedRevision(tx, userId, body.expectedServerUpdatedAt ?? body.clientStateVersion);
 
       if (action === 'equip_bench') {
         const itemId = assertItemId(body.itemId, 'Peça');
@@ -874,13 +975,16 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             initCharge = maxCap;
           }
 
+          const semCh = semanticChargingData(slotIndex, persistSlotKey);
           if (sbid) {
             await tx.stored_batteries.update({
               where: { id: sbid },
               data: {
-                workshop_slot_index: slotIndex,
-                workshop_component_slot_id: persistSlotKey,
-                current_charge: initCharge
+                ...semCh,
+                current_charge: initCharge,
+                last_moved_at: new Date(),
+                updated_at: new Date(),
+                version: { increment: 1 }
               }
             });
           } else {
@@ -897,8 +1001,10 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
                 power_capacity_wh: partDef.power_capacity != null ? Number(partDef.power_capacity) : null,
                 display_name: partDef.name != null ? String(partDef.name).slice(0, 500) : null,
                 image_url: imgNew,
-                workshop_slot_index: slotIndex,
-                workshop_component_slot_id: persistSlotKey
+                ...semCh,
+                last_moved_at: new Date(),
+                updated_at: new Date(),
+                version: 1
               }
             });
           }
@@ -1061,8 +1167,8 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             details: sanitizeDetails({})
           });
           const cap = upg.power_capacity != null ? Number(upg.power_capacity) : 100;
-          const isInf = cap === -1;
-          const isFull = isInf || (cap > 0 && charge >= cap * 0.999);
+          const normalizedCharge = snapWorkshopBatteryChargeWh(charge, cap);
+          const isFull = isWorkshopBatteryChargeFull(normalizedCharge, cap);
           if (isFull) {
             await tx.stored_batteries.deleteMany({ where: { id: val, user_id: userId } });
             const row = await tx.stock.findUnique({
@@ -1076,11 +1182,12 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
             });
           } else {
             const instId = INSTANCE_UUID_RE.test(val) ? val : crypto.randomUUID();
-            const ch = Math.max(0, charge);
+            const ch = Math.max(0, normalizedCharge);
             const imgW =
               upg.image != null && String(upg.image).trim() !== ''
                 ? String(upg.image).trim().slice(0, 2048)
                 : null;
+            const semInv = semanticInventoryWarehouseData();
             await tx.stored_batteries.upsert({
               where: { id: instId },
               create: {
@@ -1091,8 +1198,10 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
                 power_capacity_wh: upg.power_capacity != null ? Number(upg.power_capacity) : null,
                 display_name: upg.name != null ? String(upg.name).slice(0, 500) : null,
                 image_url: imgW,
-                workshop_slot_index: null,
-                workshop_component_slot_id: null
+                ...semInv,
+                last_moved_at: new Date(),
+                updated_at: new Date(),
+                version: 1
               },
               update: {
                 user_id: userId,
@@ -1101,8 +1210,10 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
                 power_capacity_wh: upg.power_capacity != null ? Number(upg.power_capacity) : undefined,
                 display_name: upg.name != null ? String(upg.name).slice(0, 500) : undefined,
                 image_url: imgW ?? undefined,
-                workshop_slot_index: null,
-                workshop_component_slot_id: null
+                ...semInv,
+                last_moved_at: new Date(),
+                updated_at: new Date(),
+                version: { increment: 1 }
               }
             });
           }
@@ -1137,7 +1248,35 @@ export async function runWorkshopMutation(userId: number, body: WorkshopMutateBo
 
       const serverUpdatedAt = await bumpServerUpdatedAt(tx, userId);
       const slice = await loadSlice(tx, userId);
-      return { ok: true as const, serverUpdatedAt, ...slice };
+      const responseBody: Record<string, unknown> = {
+        ok: true,
+        serverUpdatedAt,
+        stateVersion: serverUpdatedAt,
+        ...slice,
+        idempotentReplay: false
+      };
+      attachIntentFingerprint(responseBody, fp);
+      await tx.game_servers_intent_idempotency.upsert({
+        where: {
+          user_id_scope_idempotency_key: {
+            user_id: userId,
+            scope,
+            idempotency_key: idem
+          }
+        },
+        create: {
+          user_id: userId,
+          scope,
+          idempotency_key: idem,
+          http_status: 200,
+          response_json: responseBody as object
+        },
+        update: {
+          http_status: 200,
+          response_json: responseBody as object
+        }
+      });
+      return stripIntentFingerprint(responseBody) as WorkshopMutateOk;
     },
     { timeout: 25_000, maxWait: 8_000 }
   );

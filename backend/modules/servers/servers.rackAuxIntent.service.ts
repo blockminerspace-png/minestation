@@ -2,8 +2,11 @@
  * Regras de equipar/desequipar auxiliares na rig (bateria, cablagem, multiplicador) — espelho do frontend `App.tsx`.
  */
 import crypto from 'node:crypto';
+import { stableIntentFingerprint } from '../../lib/gameIntentIdempotencyPrisma.js';
 import { SAVE_GAME_ITEM_ID_RE } from '../../lib/saveGameEconomyValidate.js';
 import type { PlacedRackLoaded } from '../../lib/serverRoomPersistence.js';
+import { isKnownInfiniteBatteryCatalogId } from '../batteries/batteries.catalog.js';
+import { normalizePlacedRackRoomId } from '../batteries/batteries.validation.js';
 
 export type RackAuxUpgradeRow = {
   id: string;
@@ -12,6 +15,11 @@ export type RackAuxUpgradeRow = {
   powerCapacity?: number;
   name?: string | null;
   image?: string | null;
+  slotsCapacity?: number;
+  aiSlotsCapacity?: number;
+  /** 0 = inactivo no catálogo. */
+  isActive?: number;
+  compatibleRacks?: string[];
 };
 
 export type StoredBatteryRowLite = {
@@ -77,8 +85,117 @@ export type RackAuxApplyResult =
   | { ok: true; stock: Record<string, number>; storedBatteries: StoredBatteryRowLite[]; placedRacks: PlacedRackLoaded[] }
   | { ok: false; error: string };
 
+export type RackAuxApplyFn = (
+  prev: {
+    stock: Record<string, number>;
+    storedBatteries: StoredBatteryRowLite[];
+    placedRacks: PlacedRackLoaded[];
+  },
+  upgrades: RackAuxUpgradeRow[],
+  /** Instância montada na rig → catálogo (`placed_racks.battery_catalog_item_id`), quando não há linha em `stored_batteries`. */
+  rackBatteryCatalogHints: Readonly<Map<string, string>> | null
+) => RackAuxApplyResult;
+
+/** Mapa bateria montada (UUID) → item de catálogo, a partir do estado carregado das rigs. */
+export function rackBatteryCatalogHintsFromPlacedRacks(
+  placedRacks: PlacedRackLoaded[]
+): Readonly<Map<string, string>> | null {
+  const m = new Map<string, string>();
+  for (const r of placedRacks) {
+    const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+    const cat = r.batteryCatalogItemId != null ? String(r.batteryCatalogItemId).trim() : '';
+    if (bid && cat) m.set(bid, cat);
+  }
+  return m.size > 0 ? m : null;
+}
+
 function isBatteryUpgrade(upgrades: RackAuxUpgradeRow[], id: string): boolean {
   return upgrades.some((u) => u.id === id && u.type === 'battery');
+}
+
+function isMachineUpgrade(upgrades: RackAuxUpgradeRow[], id: string): boolean {
+  return upgrades.some((u) => u.id === id && u.type === 'machine');
+}
+
+export function applyRackMinerEquip(
+  prev: {
+    stock: Record<string, number>;
+    storedBatteries: StoredBatteryRowLite[];
+    placedRacks: PlacedRackLoaded[];
+  },
+  rackId: string,
+  slotIndexRaw: number,
+  catalogItemId: string,
+  upgrades: RackAuxUpgradeRow[]
+): RackAuxApplyResult {
+  const ri = prev.placedRacks.findIndex((r) => r.id === rackId);
+  if (ri === -1) return { ok: false, error: 'Rig não encontrada.' };
+
+  const slotIndex = Math.floor(Number(slotIndexRaw));
+  if (!Number.isFinite(slotIndex) || slotIndex < 0) return { ok: false, error: 'Slot de GPU inválido.' };
+
+  const itemId = String(catalogItemId || '').trim();
+  if (!SAVE_GAME_ITEM_ID_RE.test(itemId) || !isMachineUpgrade(upgrades, itemId)) {
+    return { ok: false, error: 'GPU inválida.' };
+  }
+
+  const def = upgrades.find((u) => u.id === itemId && u.type === 'machine');
+  if (!def || def.isActive === 0) return { ok: false, error: 'GPU indisponível ou inativa.' };
+
+  const placedRacks = prev.placedRacks.map(cloneRack);
+  const rack = cloneRack(placedRacks[ri]);
+  const rackDef = upgrades.find((u) => u.id === rack.itemId);
+  const declaredSlots =
+    rackDef?.slotsCapacity != null && Number.isFinite(rackDef.slotsCapacity)
+      ? Math.max(0, Math.min(128, Math.floor(Number(rackDef.slotsCapacity))))
+      : 0;
+  const maxAllowedSlot = declaredSlots > 0 ? declaredSlots - 1 : 127;
+  if (slotIndex > maxAllowedSlot) return { ok: false, error: 'Slot de GPU inválido.' };
+  rack.slots = [...(rack.slots || [])];
+  while (rack.slots.length <= slotIndex) rack.slots.push('');
+  if (rack.slots[slotIndex]) return { ok: false, error: 'Slot já ocupado.' };
+  if (def.compatibleRacks?.length && !def.compatibleRacks.includes(rack.itemId)) {
+    return { ok: false, error: 'GPU incompatível com esta rig.' };
+  }
+
+  const stock = { ...prev.stock };
+  if ((stock[itemId] || 0) < 1) return { ok: false, error: 'Stock insuficiente.' };
+  stock[itemId] = (stock[itemId] || 0) - 1;
+  if (stock[itemId] <= 0) delete stock[itemId];
+
+  rack.slots[slotIndex] = itemId;
+  placedRacks[ri] = rack;
+  return { ok: true, stock, storedBatteries: [...prev.storedBatteries], placedRacks };
+}
+
+export function applyRackMinerUnequip(
+  prev: {
+    stock: Record<string, number>;
+    storedBatteries: StoredBatteryRowLite[];
+    placedRacks: PlacedRackLoaded[];
+  },
+  rackId: string,
+  slotIndexRaw: number
+): RackAuxApplyResult {
+  const ri = prev.placedRacks.findIndex((r) => r.id === rackId);
+  if (ri === -1) return { ok: false, error: 'Rig não encontrada.' };
+
+  const slotIndex = Math.floor(Number(slotIndexRaw));
+  if (!Number.isFinite(slotIndex) || slotIndex < 0) return { ok: false, error: 'Slot de GPU inválido.' };
+
+  const placedRacks = prev.placedRacks.map(cloneRack);
+  const rack = cloneRack(placedRacks[ri]);
+  if (slotIndex >= (rack.slots || []).length) return { ok: false, error: 'Slot de GPU inválido.' };
+
+  const itemId = rack.slots[slotIndex] != null ? String(rack.slots[slotIndex]).trim() : '';
+  if (!itemId) return { ok: false, error: 'Nada equipado nesse slot.' };
+
+  const stock = { ...prev.stock };
+  stock[itemId] = (stock[itemId] || 0) + 1;
+  rack.slots = [...(rack.slots || [])];
+  rack.slots[slotIndex] = '';
+  placedRacks[ri] = rack;
+  return { ok: true, stock, storedBatteries: [...prev.storedBatteries], placedRacks };
 }
 
 /**
@@ -122,7 +239,7 @@ export function applyRackAuxEquip(
       if (catOld) {
         const upg = upgrades.find((u) => u.id === catOld && u.type === 'battery');
         const capacity = upg?.powerCapacity || 100;
-        const isFull = oldCharge >= capacity * 0.999;
+        const isFull = capacity === -1 || isKnownInfiniteBatteryCatalogId(catOld) || oldCharge === -1 || oldCharge >= capacity * 0.999;
         if (isFull) {
           ns[catOld] = (ns[catOld] || 0) + 1;
         } else {
@@ -150,13 +267,13 @@ export function applyRackAuxEquip(
       if (s.workshopSlotIndex != null || s.workshopComponentSlotId) {
         return { ok: false, error: 'Bateria está na oficina; remova da oficina antes de equipar na rig.' };
       }
-      const initCharge = s.currentCharge;
       nb = nb.filter((b) => b.id !== sbid);
       r.batteryId = sbid;
       const catW = String(s.itemId).trim();
       const upW = upgrades.find((u) => u.id === catW && u.type === 'battery');
+      const initCharge = upW?.powerCapacity === -1 || isKnownInfiniteBatteryCatalogId(catW) ? -1 : s.currentCharge;
       r.batteryCatalogItemId = catW;
-      r.batteryPowerCapacityWh = upW?.powerCapacity ?? null;
+      r.batteryPowerCapacityWh = upW?.powerCapacity === -1 || isKnownInfiniteBatteryCatalogId(catW) ? -1 : upW?.powerCapacity ?? null;
       r.batteryDisplayName = upW?.name ?? null;
       r.batteryImageUrl = upW?.image ?? null;
       r.currentCharge = initCharge;
@@ -168,11 +285,11 @@ export function applyRackAuxEquip(
       }
       if ((ns[iid] || 0) < 1) return { ok: false, error: 'Stock insuficiente.' };
       ns[iid]--;
-      const initCharge = upgrades.find((u) => u.id === iid)?.powerCapacity || 0;
+      const initCharge = isKnownInfiniteBatteryCatalogId(iid) ? -1 : upgrades.find((u) => u.id === iid)?.powerCapacity || 0;
       r.batteryId = newBatteryInstanceId();
       const upS = upgrades.find((u) => u.id === iid && u.type === 'battery');
       r.batteryCatalogItemId = iid;
-      r.batteryPowerCapacityWh = upS?.powerCapacity ?? null;
+      r.batteryPowerCapacityWh = upS?.powerCapacity === -1 || isKnownInfiniteBatteryCatalogId(iid) ? -1 : upS?.powerCapacity ?? null;
       r.batteryDisplayName = upS?.name ?? null;
       r.batteryImageUrl = upS?.image ?? null;
       r.currentCharge = initCharge;
@@ -230,21 +347,22 @@ export function applyRackAuxUnequip(
 
   if (input.kind === 'battery') {
     const catId = resolveEquippedBatteryCatalogId(id, nb, upgrades, hintObj);
-    if (!catId) return { ok: false, error: 'Não foi possível resolver o tipo da bateria.' };
-    const upg = upgrades.find((u) => u.id === catId && u.type === 'battery');
-    const capacity = upg?.powerCapacity || 100;
-    const isFull = r.currentCharge >= capacity * 0.999;
-    if (isFull) {
-      ns[catId] = (ns[catId] || 0) + 1;
-    } else {
-      nb.push({
-        id: newBatteryInstanceId(),
-        itemId: catId,
-        currentCharge: r.currentCharge,
-        powerCapacityWh: upg?.powerCapacity ?? null,
-        displayName: upg?.name ?? null,
-        imageUrl: upg?.image ?? null
-      });
+    if (catId) {
+      const upg = upgrades.find((u) => u.id === catId && u.type === 'battery');
+      const capacity = upg?.powerCapacity || 100;
+      const isFull = capacity === -1 || isKnownInfiniteBatteryCatalogId(catId) || r.currentCharge === -1 || r.currentCharge >= capacity * 0.999;
+      if (isFull) {
+        ns[catId] = (ns[catId] || 0) + 1;
+      } else {
+        nb.push({
+          id: newBatteryInstanceId(),
+          itemId: catId,
+          currentCharge: r.currentCharge,
+          powerCapacityWh: upg?.powerCapacity ?? null,
+          displayName: upg?.name ?? null,
+          imageUrl: upg?.image ?? null
+        });
+      }
     }
     r.batteryId = null;
     r.batteryCatalogItemId = undefined;
@@ -265,4 +383,195 @@ export function applyRackAuxUnequip(
 
   placedRacks[ri] = r;
   return { ok: true, stock: ns, storedBatteries: nb, placedRacks };
+}
+
+export function placeRackIntentFingerprint(parts: {
+  catalogItemId: string;
+  roomId: string;
+  slotIndex: number;
+}): string {
+  return stableIntentFingerprint({
+    catalogItemId: String(parts.catalogItemId || '').trim(),
+    roomId: normalizePlacedRackRoomId(parts.roomId),
+    slotIndex: Math.floor(Number(parts.slotIndex) || 0)
+  });
+}
+
+export function applyRemoveRackToStock(
+  prev: {
+    stock: Record<string, number>;
+    storedBatteries: StoredBatteryRowLite[];
+    placedRacks: PlacedRackLoaded[];
+  },
+  rackId: string,
+  upgrades: RackAuxUpgradeRow[],
+  rackHints: Readonly<Map<string, string>> | null
+): RackAuxApplyResult {
+  const ri = prev.placedRacks.findIndex((r) => r.id === rackId);
+  if (ri === -1) return { ok: false, error: 'Rig não encontrada.' };
+
+  const rack = cloneRack(prev.placedRacks[ri]);
+  const stock = { ...prev.stock };
+  const storedBatteries = [...prev.storedBatteries];
+  const hintObj = rackHints ? Object.fromEntries(rackHints) : undefined;
+
+  const bump = (id: string | null | undefined) => {
+    const itemId = id != null ? String(id).trim() : '';
+    if (!itemId) return;
+    stock[itemId] = (stock[itemId] || 0) + 1;
+  };
+
+  bump(rack.itemId);
+  bump(rack.wiringId);
+  for (const sid of rack.slots || []) bump(sid || null);
+  for (const mid of rack.multiplierSlots || []) bump(mid || null);
+
+  const batteryId = rack.batteryId != null ? String(rack.batteryId).trim() : '';
+  if (batteryId) {
+    const catId = resolveEquippedBatteryCatalogId(batteryId, storedBatteries, upgrades, hintObj);
+    if (catId) {
+      const upg = upgrades.find((u) => u.id === catId && u.type === 'battery');
+      const capacity = upg?.powerCapacity || 100;
+      const isFull = capacity === -1 || rack.currentCharge >= capacity * 0.999;
+      if (isFull) {
+        stock[catId] = (stock[catId] || 0) + 1;
+      } else {
+        storedBatteries.push({
+          id: newBatteryInstanceId(),
+          itemId: catId,
+          currentCharge: rack.currentCharge,
+          powerCapacityWh: upg?.powerCapacity ?? null,
+          displayName: upg?.name ?? null,
+          imageUrl: upg?.image ?? null
+        });
+      }
+    }
+  }
+
+  const placedRacks = prev.placedRacks.filter((r) => r.id !== rackId).map(cloneRack);
+  return { ok: true, stock, storedBatteries, placedRacks };
+}
+
+/** Coloca nova rig a partir do stock (espelho seguro de `handlePlaceRack` no cliente). */
+export function applyPlaceRackFromStock(
+  prev: {
+    stock: Record<string, number>;
+    storedBatteries: StoredBatteryRowLite[];
+    placedRacks: PlacedRackLoaded[];
+  },
+  catalogItemId: string,
+  roomIdRaw: string,
+  slotIndexRaw: number,
+  upgrades: RackAuxUpgradeRow[]
+): RackAuxApplyResult {
+  const typeId = String(catalogItemId || '').trim();
+  if (!typeId || !SAVE_GAME_ITEM_ID_RE.test(typeId)) {
+    return { ok: false, error: 'Chassi inválido.' };
+  }
+  const def = upgrades.find((u) => u.id === typeId);
+  if (!def) {
+    return { ok: false, error: 'Item de catálogo não encontrado.' };
+  }
+  if (def.isActive === 0) {
+    return { ok: false, error: 'Item indisponível ou inativo.' };
+  }
+  const roomN = normalizePlacedRackRoomId(roomIdRaw);
+  if (!roomN || roomN === 'null') {
+    return { ok: false, error: 'Sala inválida.' };
+  }
+  if (!Number.isFinite(slotIndexRaw) || slotIndexRaw < 0 || slotIndexRaw > 999) {
+    return { ok: false, error: 'Índice de slot inválido.' };
+  }
+  const slotIndex = Math.floor(slotIndexRaw);
+  const stock = { ...prev.stock };
+  const storedBatteries = [...prev.storedBatteries];
+  const placedBeforeInsert = prev.placedRacks.map(cloneRack);
+  const occupiedIndex = placedBeforeInsert.findIndex(
+    (r) => normalizePlacedRackRoomId(r.roomId) === roomN && Math.floor(Number(r.slotIndex) || 0) === slotIndex
+  );
+  if (occupiedIndex >= 0) {
+    const oldRack = placedBeforeInsert[occupiedIndex];
+    const bump = (id: string | null | undefined) => {
+      const itemId = id != null ? String(id).trim() : '';
+      if (!itemId) return;
+      stock[itemId] = (stock[itemId] || 0) + 1;
+    };
+
+    bump(oldRack.itemId);
+    bump(oldRack.wiringId);
+    for (const sid of oldRack.slots || []) bump(sid || null);
+    for (const mid of oldRack.multiplierSlots || []) bump(mid || null);
+
+    const oldBatteryId = oldRack.batteryId != null ? String(oldRack.batteryId).trim() : '';
+    if (oldBatteryId) {
+      const hint =
+        oldRack.batteryCatalogItemId != null && String(oldRack.batteryCatalogItemId).trim() !== ''
+          ? { [oldBatteryId]: String(oldRack.batteryCatalogItemId).trim() }
+          : undefined;
+      const catId = resolveEquippedBatteryCatalogId(oldBatteryId, storedBatteries, upgrades, hint);
+      if (catId) {
+        const upg = upgrades.find((u) => u.id === catId && u.type === 'battery');
+        const capacity = upg?.powerCapacity || 100;
+        const isFull = capacity === -1 || oldRack.currentCharge >= capacity * 0.999;
+        if (isFull) {
+          stock[catId] = (stock[catId] || 0) + 1;
+        } else {
+          storedBatteries.push({
+            id: newBatteryInstanceId(),
+            itemId: catId,
+            currentCharge: oldRack.currentCharge,
+            powerCapacityWh: upg?.powerCapacity ?? null,
+            displayName: upg?.name ?? null,
+            imageUrl: upg?.image ?? null
+          });
+        }
+      }
+    }
+
+    placedBeforeInsert.splice(occupiedIndex, 1);
+  }
+
+  const qty = Number(stock[typeId] || 0);
+  if (!Number.isFinite(qty) || qty < 1) {
+    return { ok: false, error: 'Stock insuficiente para montar esta rig.' };
+  }
+  const cap =
+    def.slotsCapacity != null && Number.isFinite(def.slotsCapacity)
+      ? Math.max(1, Math.min(128, Math.floor(Number(def.slotsCapacity))))
+      : 10;
+  const aiCap =
+    def.aiSlotsCapacity != null && Number.isFinite(def.aiSlotsCapacity)
+      ? Math.max(0, Math.min(64, Math.floor(Number(def.aiSlotsCapacity))))
+      : 0;
+  let rackId: string;
+  try {
+    rackId = crypto.randomUUID();
+  } catch {
+    rackId = `rack_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+  }
+  const slots: string[] = [];
+  for (let i = 0; i < cap; i++) slots.push('');
+  const multiplierSlots: string[] = [];
+  for (let i = 0; i < aiCap; i++) multiplierSlots.push('');
+  const newRack: PlacedRackLoaded = {
+    id: rackId,
+    itemId: typeId,
+    slots,
+    multiplierSlots,
+    wiringId: null,
+    batteryId: null,
+    currentCharge: 0,
+    isOn: false,
+    selectedCoinId: null,
+    roomId: roomN,
+    slotIndex,
+    batteryCatalogItemId: null,
+    batteryPowerCapacityWh: null,
+    batteryDisplayName: null,
+    batteryImageUrl: null
+  };
+  stock[typeId] = qty - 1;
+  if (stock[typeId] <= 0) delete stock[typeId];
+  const placedRacks = [...placedBeforeInsert, newRack];
+  return { ok: true, stock, storedBatteries, placedRacks };
 }

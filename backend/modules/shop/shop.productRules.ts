@@ -30,7 +30,18 @@ export async function assertMinerShopProductQuantity(
     return { ok: false, status: 422, error: 'Item não disponível para compra.' };
   }
   if (row.is_active === 0) return { ok: false, status: 422, error: 'Produto indisponível.' };
-  if (row.sell_in_hardware_market === 0) {
+  const hasExplicitHardwareProducts = await prisma.upgrades.count({
+    where: {
+      OR: [{ is_active: null }, { is_active: { not: 0 } }],
+      is_nft: { not: 1 },
+      sell_in_hardware_market: { not: 0 },
+      AND: [{ status: { notIn: ['legacy', 'exclusive'] } }],
+      category: { not: 'legacy-temp' },
+      type: { not: 'legacy-temp' },
+      NOT: { id: { startsWith: 'temp_legacy_' } }
+    }
+  });
+  if (hasExplicitHardwareProducts > 0 && row.sell_in_hardware_market === 0) {
     return { ok: false, status: 422, error: 'Este item não está à venda na Lojinha.' };
   }
   if (row.is_nft === 1) {

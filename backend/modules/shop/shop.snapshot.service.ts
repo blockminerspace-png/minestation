@@ -28,8 +28,15 @@ export async function buildShopStateV1(userId: number): Promise<ShopStateV1Dto> 
   const hwVal = await getSettingValue('hardware_market_enabled');
   const hardwareMarketEnabled = hwVal == null || hwVal === '1';
 
-  const cartId = await getOrCreateShopCartId(userId);
-  const rawLines = await listShopCartLines(userId);
+  let cartId = '';
+  let rawLines: Awaited<ReturnType<typeof listShopCartLines>> = [];
+  try {
+    cartId = await getOrCreateShopCartId(userId);
+    rawLines = await listShopCartLines(userId);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    console.warn('[ShopState] carrinho indisponível; loja será carregada com carrinho vazio:', msg.slice(0, 240));
+  }
   const priceMap = productByIdMap(products);
 
   const lines: ShopCartLineDto[] = [];

@@ -4,6 +4,7 @@
  */
 import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
+import { syncStoredBatterySemanticsForUser } from '../modules/batteries/batterySemanticSync.js';
 import { normalizePlacedRackRoomId } from '../modules/batteries/batteries.validation.js';
 import {
   validateStoredBatteryWarehouseRemovalAllowed,
@@ -21,6 +22,7 @@ import {
   type PrevPlacedRackBattRow,
   type StoredBatteryRowSnap
 } from '../modules/batteries/batteries.repository.js';
+import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 export { loadUserStoredBatteries, normalizePlacedRackRoomId };
 
@@ -28,7 +30,8 @@ export async function loadUserStock(client: PoolClient, uid: number | string): P
   const stockRes = await client.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]);
   const stock: Record<string, number> = {};
   stockRes.rows.forEach((r: { item_id: string; qty: number }) => {
-    stock[r.item_id] = r.qty;
+    const itemId = normalizeKnown1000WhBatteryCatalogId(r.item_id);
+    stock[itemId] = (stock[itemId] || 0) + (Number(r.qty) || 0);
   });
   return stock;
 }
@@ -125,6 +128,8 @@ export type UpgradeWithCompat = {
   icon: string;
   status: string;
   compatibleRacks: string[];
+  /** 0 = inativo no catálogo (não colocar nova rig). */
+  isActive?: number;
 };
 
 export async function loadUpgradesWithCompat(client: PoolClient): Promise<UpgradeWithCompat[]> {
@@ -140,6 +145,7 @@ export async function loadUpgradesWithCompat(client: PoolClient): Promise<Upgrad
     name: String(r.name ?? ''),
     category: String(r.category ?? ''),
     type: String(r.type ?? ''),
+    isActive: r.is_active == null ? 1 : Number(r.is_active),
     baseCost: Number(r.base_cost) || 0,
     baseProduction: Number(r.base_production) || 0,
     powerConsumption: r.power_consumption != null ? Number(r.power_consumption) : undefined,
@@ -293,7 +299,7 @@ async function returnRackBatteryFromDismantleToChanges(
       if (!changes.storedBatteries!.some((x) => x.id === r.id)) {
         changes.storedBatteries!.push({
           id: r.id,
-          itemId: r.item_id,
+          itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
           currentCharge: Number(r.current_charge) || 0,
           powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : undefined,
           displayName: r.display_name != null ? String(r.display_name) : undefined,
@@ -309,7 +315,7 @@ async function returnRackBatteryFromDismantleToChanges(
     const capRaw = row.power_capacity;
     const cap = capRaw === null || capRaw === undefined ? null : Number(capRaw);
     const charge = Number(rackCurrentCharge) || 0;
-    const isInf = cap === -1;
+    const isInf = cap === -1 || isKnownInfiniteBatteryCatalogId(bid);
     const isFull = isInf || (typeof cap === 'number' && cap > 0 && charge >= cap * 0.999);
     if (isFull) {
       additions[bid] = (additions[bid] || 0) + 1;
@@ -368,8 +374,14 @@ export async function persistStockStoredBatteriesPlacedRacks(
   }
 
   if (stock) {
-    const itemIds = Object.keys(stock);
-    const qtys = Object.values(stock).map((q) => q || 0);
+    const stockNorm = new Map<string, number>();
+    for (const [rawId, rawQty] of Object.entries(stock)) {
+      const itemId = normalizeKnown1000WhBatteryCatalogId(rawId);
+      if (!itemId) continue;
+      stockNorm.set(itemId, (stockNorm.get(itemId) || 0) + (Number(rawQty) || 0));
+    }
+    const itemIds = [...stockNorm.keys()];
+    const qtys = itemIds.map((id) => stockNorm.get(id) || 0);
     if (itemIds.length > 0) {
       await client.query(
         `
@@ -386,7 +398,7 @@ export async function persistStockStoredBatteriesPlacedRacks(
     await deleteWarehouseStoredBatteriesExceptKeepIds(client, Number(uid), incomingIds);
     if (storedBatteriesNorm.length > 0) {
       const bIds = storedBatteriesNorm.map((b) => b.id);
-      const bItemIds = storedBatteriesNorm.map((b) => b.itemId);
+      const bItemIds = storedBatteriesNorm.map((b) => normalizeKnown1000WhBatteryCatalogId(b.itemId));
       const bCharges = storedBatteriesNorm.map((b) => b.currentCharge || 0);
       const upStored = await fetchBatteryUpgradeRowsByIds(client, bItemIds);
       const bPowers = bItemIds.map((cid) => {
@@ -549,12 +561,18 @@ export async function persistStockStoredBatteriesPlacedRacks(
         let cat: string | null = null;
         if (isRackBatteryInstanceUuid(bid)) {
           const inst = preMountBatterySnap.get(bid);
-          cat = inst?.item_id != null ? String(inst.item_id).trim() : null;
+          cat = inst?.item_id != null ? normalizeKnown1000WhBatteryCatalogId(inst.item_id) : null;
           if (!cat && prow && String(prow.battery_id || '') === bid) {
-            cat = prow.battery_catalog_item_id != null ? String(prow.battery_catalog_item_id).trim() : null;
+            cat =
+              prow.battery_catalog_item_id != null
+                ? normalizeKnown1000WhBatteryCatalogId(prow.battery_catalog_item_id)
+                : null;
+          }
+          if (!cat && r.batteryCatalogItemId != null && String(r.batteryCatalogItemId).trim() !== '') {
+            cat = normalizeKnown1000WhBatteryCatalogId(r.batteryCatalogItemId);
           }
         } else {
-          cat = bid;
+          cat = normalizeKnown1000WhBatteryCatalogId(bid);
         }
         if (cat) catalogIdsForUpgrades.add(cat);
       }
@@ -563,7 +581,11 @@ export async function persistStockStoredBatteriesPlacedRacks(
       const rIds = placedRacks.map((r) => r.id);
       const rItems = placedRacks.map((r) => r.itemId);
       const rWirings = placedRacks.map((r) => r.wiringId || null);
-      const rBatteries = placedRacks.map((r) => r.batteryId || null);
+      const rBatteries = placedRacks.map((r) => {
+        const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+        if (!bid || isRackBatteryInstanceUuid(bid)) return r.batteryId || null;
+        return normalizeKnown1000WhBatteryCatalogId(bid);
+      });
       const rCharges = placedRacks.map((r) => r.currentCharge || 0);
       const rOns = placedRacks.map((r) => (r.isOn ? 1 : 0));
       const rCoins = placedRacks.map((r) => r.selectedCoinId || null);
@@ -586,10 +608,35 @@ export async function persistStockStoredBatteriesPlacedRacks(
             }
           : null;
         const snap = buildRackBatteryPersistSnapshot(r.batteryId, preMountBatterySnap, upgradeByCatalog, prevBatt);
-        rBatCats.push(snap.catalogItemId);
-        rBatPows.push(snap.powerWh);
-        rBatNames.push(snap.displayName != null && snap.displayName.trim() !== '' ? snap.displayName.trim().slice(0, 500) : null);
-        rBatImgs.push(snap.imageUrl != null && snap.imageUrl.trim() !== '' ? snap.imageUrl.trim().slice(0, 2048) : null);
+        const catOut =
+          snap.catalogItemId != null && String(snap.catalogItemId).trim() !== ''
+            ? normalizeKnown1000WhBatteryCatalogId(snap.catalogItemId)
+            : r.batteryCatalogItemId != null && String(r.batteryCatalogItemId).trim() !== ''
+              ? normalizeKnown1000WhBatteryCatalogId(r.batteryCatalogItemId)
+              : null;
+        const uFromCat = catOut ? upgradeByCatalog.get(catOut) : undefined;
+        const powOut =
+          snap.powerWh != null && Number.isFinite(Number(snap.powerWh))
+            ? Number(snap.powerWh)
+            : uFromCat?.power_capacity != null && Number.isFinite(Number(uFromCat.power_capacity))
+              ? Number(uFromCat.power_capacity)
+              : null;
+        const nameOut =
+          snap.displayName != null && String(snap.displayName).trim() !== ''
+            ? String(snap.displayName).trim().slice(0, 500)
+            : uFromCat?.name != null && String(uFromCat.name).trim() !== ''
+              ? String(uFromCat.name).trim().slice(0, 500)
+              : null;
+        const imgOut =
+          snap.imageUrl != null && String(snap.imageUrl).trim() !== ''
+            ? String(snap.imageUrl).trim().slice(0, 2048)
+            : uFromCat?.image != null && String(uFromCat.image).trim() !== ''
+              ? String(uFromCat.image).trim().slice(0, 2048)
+              : null;
+        rBatCats.push(catOut);
+        rBatPows.push(powOut);
+        rBatNames.push(nameOut);
+        rBatImgs.push(imgOut);
       }
 
       await client.query(
@@ -671,5 +718,9 @@ export async function persistStockStoredBatteriesPlacedRacks(
         );
       }
     }
+  }
+
+  if (Array.isArray(placedRacks) || storedBatteriesNorm) {
+    await syncStoredBatterySemanticsForUser(client, Number(uid));
   }
 }

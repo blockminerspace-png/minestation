@@ -52,6 +52,20 @@ Manter `ufw default deny incoming`, permitir só `80/tcp`, `443/tcp` e SSH a par
 
 Não uses `cloudflare-allow.inc` no `server` que serve `localhost` sem Cloudflare — bloqueia o teu browser. Reserva esta include para o vhost de produção atrás do proxy.
 
+## Erro 524 (timeout na origem)
+
+A Cloudflare devolve **524** quando o visitante liga ao edge mas a **origem** (o teu Nginx/Node) **não respondeu** dentro do limite de espera da Cloudflare para esse pedido.
+
+Isto aparece em rotas lentas (`POST /api/market/buy`, `POST /api/lucky-boxes/open`, etc.) se:
+
+1. O **Node/Prisma** demora demasiado (locks, pool, consultas pesadas), ou  
+2. O **Nginx** corta antes (`proxy_read_timeout` no `location /` por defeito ~120s — neste repo há blocos dedicados com **300s** para `/api/market/` e `/api/lucky-boxes/`), ou  
+3. O limite na **Cloudflare** é inferior ao tempo que a origem precisa.
+
+**O que fazer:** no painel Cloudflare (domínio → **Rules** / **Speed** / plano conforme UI), aumenta o **timeout da origem** / *proxy read timeout* para a API (valores típicos: **120–300 s**). Plano Free tem tectos mais baixos; em alguns casos só planos superiores permitem 300s.
+
+Confirma também que o `minestation.conf` na VM inclui os `location ^~ /api/market/` e `location ^~ /api/lucky-boxes/` com `proxy_read_timeout 300s` e que fizeste `nginx -s reload`.
+
 ## Erro 526 (Invalid SSL certificate)
 
 Com modo SSL na Cloudflare **Full (strict)** (recomendado), a origem tem de apresentar um certificado **válido** cujo **CN/SAN** coincida com o hostname que o visitante pediu (ex.: `dev.genesisdao.tech` não pode usar só o certificado de `genesisdao.tech`).

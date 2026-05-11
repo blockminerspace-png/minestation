@@ -3,7 +3,7 @@ import pool from '../../config/db.js';
 import { getSettingsRecord } from '../../lib/settingsPrisma.js';
 import { parseIdempotencyKey, RoletaAppError } from '../../validation/roletaValidation.js';
 import { sendInternalErrorSafeMessageOrPrisma } from '../../utils/apiErrorResponse.js';
-import { runExchangeLiquidation } from './walletExchangeLiquidation.js';
+import { runExchangeLiquidation, walletExchangeLiquidateRequestFingerprint } from './walletExchangeLiquidation.js';
 import { parseDeskLiquidationPercentagePoints } from './walletDeskPercent.js';
 
 export type WalletPlayerDeps = {
@@ -185,6 +185,11 @@ export function registerWalletPlayerRoutes(app: Express, deps: WalletPlayerDeps)
 
     const client = await pool.connect();
     try {
+      const requestFingerprint = walletExchangeLiquidateRequestFingerprint({
+        coinId,
+        fractionMode: 'desk_shortcuts',
+        deskPercentagePoints: pct
+      });
       const result = await runExchangeLiquidation(client, {
         userId,
         coinId,
@@ -194,7 +199,8 @@ export function registerWalletPlayerRoutes(app: Express, deps: WalletPlayerDeps)
         feePercent,
         idempotencyKey: idem,
         idempotencyScope: 'wallet_exchange_liquidate',
-        serverNowMs
+        serverNowMs,
+        requestFingerprint
       });
 
       if (!result.idempotentReplay) {
@@ -219,6 +225,13 @@ export function registerWalletPlayerRoutes(app: Express, deps: WalletPlayerDeps)
       });
     } catch (e) {
       if (e instanceof RoletaAppError) {
+        if (e.statusCode === 409 && e.message.includes('idempotência')) {
+          return res.status(409).json({
+            error: e.message,
+            code: 'IDEMPOTENCY_PAYLOAD_MISMATCH',
+            forceReload: true
+          });
+        }
         return res.status(e.statusCode).json({ error: e.message });
       }
       console.error('[wallet/exchange/liquidate]', e);

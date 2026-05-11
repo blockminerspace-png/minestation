@@ -24,6 +24,8 @@ import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './li
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
 import { recoverOrphanRackBatteryStorageRows } from './dist/modules/batteries/batteries.recovery.js';
 import { ensureStoredBatteriesIntegrity } from './dist/modules/batteries/batteries.integrity.js';
+import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from './dist/modules/batteries/batteries.catalog.js';
+import { orphanRackBatteryAutoRecoverEnabled } from './dist/lib/orphanRackBatteryRecoveryGate.js';
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
 function roundMiningEconomyField8Decimals(n) {
@@ -64,6 +66,7 @@ import { registerRoletaPlayerRoutes } from './dist/controllers/roletaController.
 import { registerWheelPlayerRoutes } from './dist/modules/wheel/wheelPlayerController.js';
 import { registerWalletPlayerRoutes } from './dist/modules/wallet/walletPlayerController.js';
 import { runExchangeLiquidation } from './dist/modules/wallet/walletExchangeLiquidation.js';
+import { runWithdrawRequestIdempotent, withdrawRequestFingerprint } from './dist/modules/wallet/walletWithdrawRequest.js';
 import { registerUpgradesPlayerRoutes } from './dist/modules/upgrades/upgradesPlayer.controller.js';
 import { runUpgradePackagePurchase } from './dist/modules/upgrades/upgradesPurchase.service.js';
 import { RoletaAppError, parseIdempotencyKey } from './dist/validation/roletaValidation.js';
@@ -94,6 +97,7 @@ import { registerSupportPlayerRoutes } from './dist/modules/support/supportPlaye
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { registerPartnersPlayerRoutes } from './dist/modules/partners/partnersPlayer.controller.js';
 import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
+import { registerWorkshopIntentRoutes } from './dist/controllers/workshopIntent.controller.js';
 import { registerInventoryRoutes } from './dist/controllers/inventoryController.js';
 import { registerInventoryModuleRoutes } from './dist/modules/inventory/inventory.controller.js';
 import { registerShopModuleRoutes } from './dist/modules/shop/shop.controller.js';
@@ -1192,6 +1196,8 @@ app.use(helmet({
                 "'unsafe-eval'",
                 "https://cdn.applixir.com",
                 "https://static.cloudflareinsights.com",
+                "https://ajax.cloudflare.com",
+                "https://challenges.cloudflare.com",
                 "https://www.googletagmanager.com",
                 "https://www.google-analytics.com",
                 "https://*.googletagmanager.com"
@@ -1205,12 +1211,13 @@ app.use(helmet({
                 "https://www.googletagmanager.com",
                 "https://analytics.google.com",
                 "https://region1.google-analytics.com",
-                "https://stats.g.doubleclick.net"
+                "https://stats.g.doubleclick.net",
+                "https://cloudflareinsights.com"
             ],
             "img-src": ["'self'", "data:", "https:", "http:"],
             "style-src": ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
             "font-src": ["'self'", "https://fonts.gstatic.com"],
-            "frame-src": ["'self'", "https://cdn.applixir.com"],
+            "frame-src": ["'self'", "https://cdn.applixir.com", "https://challenges.cloudflare.com"],
             "object-src": ["'none'"],
             ...(cspUpgradeInsecure ? { "upgrade-insecure-requests": [] } : {}),
         },
@@ -1509,6 +1516,7 @@ registerProfilePlayerRoutes(app, {
     referralClaimSensitiveLimiter
 });
 registerWorkshopMutationRoutes(app, { authenticateToken });
+registerWorkshopIntentRoutes(app, { authenticateToken });
 registerInventoryRoutes(app, { authenticateToken, pool: db });
 registerInventoryModuleRoutes(app, { authenticateToken, pool: db });
 registerShopModuleRoutes(app, { pool: db, authenticateToken });
@@ -1865,6 +1873,54 @@ app.post('/api/admin/update-coin-balance', isAdmin, async (req, res) => {
         client.release();
     }
 });
+/** Gravação admin explícita (evita `adminOverride` em `/api/save-game` sem LEGACY_ADMIN_SAVEGAME_VIA_PUBLIC=1). */
+app.post('/api/admin/users/:userId/save-game-override', isAdmin, async (req, res) => {
+    try {
+        const adminActorId = req.userId;
+        if (!adminActorId)
+            return res.status(401).json({ error: 'Não autenticado.' });
+        const targetUserId = parseInt(String(req.params.userId), 10);
+        if (!Number.isFinite(targetUserId) || targetUserId <= 0) {
+            return res.status(400).json({ error: 'userId inválido.' });
+        }
+        const target = await prisma.users.findUnique({
+            where: { id: targetUserId },
+            select: { id: true, email: true }
+        });
+        if (!target?.email)
+            return res.status(404).json({ error: 'Utilizador não encontrado.' });
+        const changes = req.body?.changes;
+        if (!changes || typeof changes !== 'object' || Array.isArray(changes)) {
+            return res.status(400).json({ error: 'changes obrigatório (objeto).' });
+        }
+        const reason = typeof req.body?.reason === 'string' ? String(req.body.reason).trim().slice(0, 500) : '';
+        const traceIdRaw = req.headers['x-request-id'] ?? req.headers['x-correlation-id'];
+        const traceId = typeof traceIdRaw === 'string' && traceIdRaw.trim()
+            ? traceIdRaw.trim().slice(0, 200)
+            : crypto.randomUUID();
+        console.log(JSON.stringify({
+            event: 'admin_save_game_override_http',
+            actorUserId: adminActorId,
+            targetUserId,
+            reason,
+            requestId: traceId,
+            ts: new Date().toISOString()
+        }));
+        const te = String(target.email).trim().toLowerCase();
+        const syntheticReq = {
+            ...req,
+            headers: req.headers ?? {},
+            userId: adminActorId,
+            body: { changes, adminOverride: true, targetEmail: te, overrideReason: reason },
+            originalUrl: '/api/admin/users/save-game-override'
+        };
+        return await handleSaveGamePost(syntheticReq, res);
+    }
+    catch (e) {
+        console.error('[admin/users/save-game-override]', e);
+        return res.status(500).json({ error: 'Erro interno.' });
+    }
+});
 app.post('/api/admin/bulk-update-coin-balance', isAdmin, async (req, res) => {
     const { coinId, amount } = req.body;
     console.log(`[Admin] Requisitada atualização em massa para ${coinId} com valor ${amount}`);
@@ -1957,8 +2013,16 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
             if (!coinsMap.has(cid))
                 continue;
             // Battery check
-            const battDef = upsMap.get(rack.battery_id);
-            const isInfinite = battDef && battDef.power_capacity === -1;
+            const batteryCatalogId = rack.battery_catalog_item_id != null && String(rack.battery_catalog_item_id).trim() !== ''
+                ? normalizeKnown1000WhBatteryCatalogId(rack.battery_catalog_item_id)
+                : normalizeKnown1000WhBatteryCatalogId(rack.battery_id);
+            const battDef = upsMap.get(batteryCatalogId);
+            const batterySnapPowerCap = Number(rack.battery_power_capacity_wh);
+            const rackCurrentCharge = Number(rack.current_charge);
+            const isInfinite = rackCurrentCharge === -1 ||
+                batterySnapPowerCap === -1 ||
+                isKnownInfiniteBatteryCatalogId(batteryCatalogId) ||
+                (battDef && Number(battDef.power_capacity) === -1);
             if (!isInfinite && rack.current_charge <= 0)
                 continue;
             // Base Prod
@@ -6512,27 +6576,46 @@ app.get('/api/game-state/:email', async (req, res) => {
             }
         }
         if (placedRacks.length > 0) {
-            try {
-                const recovered = await recoverOrphanRackBatteryStorageRows(db, uid, placedRacks);
-                if (recovered.length > 0) {
-                    const seen = new Set(storedBatteries.map((b) => b.id));
-                    for (const row of recovered) {
-                        if (seen.has(row.id))
-                            continue;
-                        seen.add(row.id);
-                        storedBatteries.push({
-                            id: row.id,
-                            itemId: row.item_id,
-                            currentCharge: row.current_charge,
-                            workshopSlotIndex: null,
-                            workshopComponentSlotId: null
-                        });
+            if (orphanRackBatteryAutoRecoverEnabled()) {
+                try {
+                    const recovered = await recoverOrphanRackBatteryStorageRows(db, uid, placedRacks);
+                    if (recovered.length > 0) {
+                        const seen = new Set(storedBatteries.map((b) => b.id));
+                        for (const row of recovered) {
+                            if (seen.has(row.id))
+                                continue;
+                            seen.add(row.id);
+                            storedBatteries.push({
+                                id: row.id,
+                                itemId: row.item_id,
+                                currentCharge: row.current_charge,
+                                workshopSlotIndex: null,
+                                workshopComponentSlotId: null
+                            });
+                        }
+                        console.warn(`[GameState] Recuperada(s) ${recovered.length} instância(s) de bateria em armazém (UUID sem linha; carga preservada) uid=${uid}`);
                     }
-                    console.warn(`[GameState] Recuperada(s) ${recovered.length} instância(s) de bateria em armazém (UUID sem linha; carga preservada) uid=${uid}`);
+                }
+                catch (eRec) {
+                    console.error(`[GameState] Falha ao recuperar baterias órfãs uid=${uid}:`, eRec instanceof Error ? eRec.message : String(eRec));
                 }
             }
-            catch (eRec) {
-                console.error(`[GameState] Falha ao recuperar baterias órfãs uid=${uid}:`, eRec instanceof Error ? eRec.message : String(eRec));
+            else {
+                const have = new Set(storedBatteries.map((b) => String(b.id || '').trim()));
+                let miss = 0;
+                for (const r of placedRacks) {
+                    const b = String(r.batteryId || '').trim();
+                    if (b && isRackBatteryInstanceUuid(b) && !have.has(b))
+                        miss++;
+                }
+                if (miss > 0) {
+                    console.warn(JSON.stringify({
+                        event: 'game_state_get_orphan_rack_battery',
+                        userId: uid,
+                        racksWithMissingStoredRow: miss,
+                        autoRecover: false
+                    }));
+                }
             }
         }
         const workshopSlots = [null, null, null, null, null, null];
@@ -6701,15 +6784,32 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
             console.warn('[validatePlacedRacksForSave] stored_batteries:', e instanceof Error ? e.message : String(e));
         }
     }
-    const isRackBatteryInstanceUuidLocal = (bid) => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(bid || '').trim());
     try {
-        const recovered = await recoverOrphanRackBatteryStorageRows(dbq, uidNum, racks);
-        if (recovered.length > 0) {
-            console.warn(`[validatePlacedRacksForSave] recuperada(s) ${recovered.length} bateria(s) órfã(s) em stored_batteries user=${userId}`);
-            const sb2 = await dbq.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uidNum]);
-            storedBattCatalogByInstanceId.clear();
-            for (const row of sb2.rows || []) {
-                mergeStoredBatteryRowIntoMap(row);
+        if (orphanRackBatteryAutoRecoverEnabled()) {
+            const recovered = await recoverOrphanRackBatteryStorageRows(dbq, uidNum, racks);
+            if (recovered.length > 0) {
+                console.warn(`[validatePlacedRacksForSave] recuperada(s) ${recovered.length} bateria(s) órfã(s) em stored_batteries user=${userId}`);
+                const sb2 = await dbq.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uidNum]);
+                storedBattCatalogByInstanceId.clear();
+                for (const row of sb2.rows || []) {
+                    mergeStoredBatteryRowIntoMap(row);
+                }
+            }
+        }
+        else if (Number.isFinite(uidNum) && uidNum > 0 && Array.isArray(racks)) {
+            let uuidBatt = 0;
+            for (const r of racks) {
+                const b = String(r?.batteryId ?? '').trim();
+                if (b && isRackBatteryInstanceUuid(b))
+                    uuidBatt++;
+            }
+            if (uuidBatt > 0) {
+                console.warn(JSON.stringify({
+                    event: 'legacy_save_orphan_risk_scan',
+                    userId: uidNum,
+                    racksReferencingInstanceUuid: uuidBatt,
+                    autoRecover: false
+                }));
             }
         }
     }
@@ -6763,7 +6863,7 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
                 // Legado: `placed_racks.battery_id` = id de catálogo (pré UUID-only no cliente).
                 upgradeIds.add(bidRaw);
             }
-            else if (isRackBatteryInstanceUuidLocal(bidRaw) && fallbackBatteryCatalogId) {
+            else if (isRackBatteryInstanceUuid(bidRaw) && fallbackBatteryCatalogId) {
                 upgradeIds.add(fallbackBatteryCatalogId);
             }
             else {
@@ -6821,6 +6921,20 @@ async function handleSaveGamePost(req, res) {
     if (!req.userId || !changes)
         return res.status(400).json({ error: 'Missing fields' });
     try {
+        const urlPath = String(req.originalUrl || req.url || '');
+        const allowLegacyAdminPublicSave = String(process.env.LEGACY_ADMIN_SAVEGAME_VIA_PUBLIC ?? '').trim() === '1';
+        if (adminOverride && !allowLegacyAdminPublicSave && urlPath.includes('/api/save-game')) {
+            const admGate = await prisma.users.findUnique({
+                where: { id: req.userId },
+                select: { is_admin: true }
+            });
+            if (admGate?.is_admin) {
+                return res.status(400).json({
+                    error: 'Gravação admin: use POST /api/admin/users/:userId/save-game-override. Compatibilidade: LEGACY_ADMIN_SAVEGAME_VIA_PUBLIC=1.',
+                    code: 'ADMIN_SAVEGAME_USE_OVERRIDE_ROUTE'
+                });
+            }
+        }
         let uid = req.userId;
         const saveActivityLogs = [];
         // Security: Only allow adminOverride if user is actually admin
@@ -6873,7 +6987,7 @@ async function handleSaveGamePost(req, res) {
             await client.query("SET LOCAL statement_timeout = '20s'");
             // LOCK ORDER FIX: Always lock the primary user record first to avoid deadlocks
             await client.query('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', [uid]);
-            const saveDomainRaw = String(req.headers['x-game-save-domain'] || '')
+            const saveDomainRaw = String((req.headers && req.headers['x-game-save-domain']) || '')
                 .trim()
                 .toLowerCase();
             const saveDomain = saveDomainRaw === 'inventory' || saveDomainRaw === 'servers' || saveDomainRaw === 'workshop'
@@ -8609,7 +8723,15 @@ app.use((req, res, next) => {
     }
     next();
 });
-app.use(express.static(path.join(__dirname, '../frontend/dist')));
+// `no-transform`: com proxy Cloudflare (DNS “laranja”), evita injeção JavaScript Detections no HTML da SPA.
+app.use(express.static(path.join(__dirname, '../frontend/dist'), {
+    setHeaders(res, absPath) {
+        const base = path.basename(absPath);
+        if (base === 'index.html') {
+            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private, no-transform');
+        }
+    }
+}));
 // --- EXCHANGE ---
 app.get('/api/exchange-settings', async (req, res) => {
     try {
@@ -8713,66 +8835,56 @@ app.post('/api/exchange/sell', async (req, res) => {
 });
 // --- WITHDRAWALS ---
 app.post('/api/withdraw', async (req, res) => {
-    const { coinId, amount, walletAddress } = req.body;
+    const body = req.body || {};
+    const coinId = typeof body.coinId === 'string' ? body.coinId.trim() : '';
+    const amount = Number(body.amount);
+    const walletAddress = typeof body.walletAddress === 'string' ? body.walletAddress.trim() : '';
+    const idem = parseIdempotencyKey(body.idempotencyKey);
     if (!req.userId)
         return res.status(401).json({ error: 'Não autenticado' });
-    if (!coinId || !amount || amount <= 0 || !walletAddress)
+    if (!idem) {
+        return res.status(400).json({
+            error: 'idempotencyKey inválido ou ausente (8–128 caracteres seguros).',
+            code: 'IDEMPOTENCY_KEY_REQUIRED'
+        });
+    }
+    if (!coinId || !Number.isFinite(amount) || amount <= 0 || !walletAddress) {
         return res.status(400).json({ error: 'Dados incompletos' });
+    }
+    const uid = typeof req.userId === 'number' ? req.userId : parseInt(String(req.userId), 10);
+    if (!Number.isFinite(uid) || uid <= 0) {
+        return res.status(401).json({ error: 'Não autenticado' });
+    }
     const client = await db.connect();
     try {
-        await client.query('BEGIN');
-        const uid = req.userId;
-        // 1. Verificar saldo
-        const balRes = await client.query('SELECT amount FROM coin_balances WHERE user_id = $1 AND coin_id = $2 FOR UPDATE', [uid, coinId]);
-        const balance = Number(balRes.rows[0]?.amount) || 0;
-        if (balance < amount) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'Saldo insuficiente' });
-        }
-        // 2. Buscar taxa/valor mínimo de USDC para conversão informativa
-        const coinRes = await client.query('SELECT usdc_rate, symbol FROM mining_coins WHERE id = $1', [coinId]);
-        const coin = coinRes.rows[0];
-        if (!coin) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Moeda não encontrada' });
-        }
-        const amountUsdc = amount * (coin.usdc_rate || 0);
-        // 3. Buscar taxa do token nas configurações
-        const withdrawTokensRaw = await getSettingValue('web3_withdraw_tokens');
-        let withdrawTokens = [];
-        try {
-            withdrawTokens = withdrawTokensRaw
-                ? typeof withdrawTokensRaw === 'string'
-                    ? JSON.parse(withdrawTokensRaw)
-                    : withdrawTokensRaw
-                : [];
-        }
-        catch (parseErr) {
-            console.error('[Withdraw] Settings parse error:', parseErr);
-            withdrawTokens = [];
-        }
-        const tokenCfg = withdrawTokens.find(t => t.name === coin.symbol);
-        if (!tokenCfg) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: `A moeda ${coin.symbol} não está configurada para saques no painel administrativo.` });
-        }
-        const feePercent = Number(tokenCfg?.feePercent) || 0;
-        const feeAmount = amount * (feePercent / 100);
-        const netAmount = amount - feeAmount;
-        // 4. Deduzir saldo
-        await client.query('UPDATE coin_balances SET amount = amount - $1 WHERE user_id = $2 AND coin_id = $3', [amount, uid, coinId]);
-        // 5. Criar solicitação
-        const requestId = crypto.randomUUID();
-        await client.query(`
-      INSERT INTO withdrawal_requests (id, user_id, coin_id, amount_crypto, amount_usdc, fee_amount, net_amount, wallet_address, status, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending', $9)
-    `, [requestId, uid, coinId, amount, amountUsdc, feeAmount, netAmount, walletAddress, Date.now()]);
-        await client.query('COMMIT');
-        res.json({ ok: true, requestId, message: 'Solicitação de saque enviada com sucesso!' });
+        const fp = withdrawRequestFingerprint({ coinId, amount, walletAddress });
+        const out = await runWithdrawRequestIdempotent(client, {
+            userId: uid,
+            coinId,
+            amount,
+            walletAddress,
+            idempotencyKey: idem,
+            requestFingerprint: fp,
+            serverNowMs: Date.now()
+        });
+        res.json({
+            ok: true,
+            requestId: out.requestId,
+            message: out.message,
+            idempotentReplay: !!out.idempotentReplay
+        });
     }
     catch (e) {
-        if (client)
-            await client.query('ROLLBACK');
+        if (e instanceof RoletaAppError) {
+            if (e.statusCode === 409 && e.message.includes('idempotência')) {
+                return res.status(409).json({
+                    error: e.message,
+                    code: 'IDEMPOTENCY_PAYLOAD_MISMATCH',
+                    forceReload: true
+                });
+            }
+            return res.status(e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 400).json({ error: e.message });
+        }
         console.error('[Withdraw] Error:', e);
         sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
     }
@@ -8974,6 +9086,8 @@ const startServer = async () => {
     }
     registerBatteriesServerRoomRoutes(app, {
         db,
+        prisma,
+        authenticateToken,
         appendGameActivityLog,
         validatePlacedRacksForSave,
         sanitizePlacedRacksNftAutoRoom
@@ -8997,6 +9111,7 @@ const startServer = async () => {
         res.status(404).type('text/plain').send('Not Found');
     });
     app.get('*', (req, res) => {
+        res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private, no-transform');
         res.sendFile(path.join(__dirname, '../frontend/dist/index.html'));
     });
     const httpServer = http.createServer(app);
