@@ -1,9 +1,6 @@
 import type { Pool, PoolClient } from 'pg';
 import { STORED_BATTERY_CATALOG_PENDING_ID } from '../modules/batteries/batteries.constants.js';
-import {
-  CANONICAL_1000WH_BATTERY_ID,
-  normalizeKnown1000WhBatteryCatalogId
-} from '../modules/batteries/batteries.catalog.js';
+import { normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 /** Alinhado a `RACK_ID_RE` no servidor — IDs de item / instância. */
 export const SAVE_GAME_ITEM_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
@@ -60,36 +57,6 @@ export function isAdminDailyActionKey(key: string): boolean {
 
 const STOCK_VALIDATE_LOG_SAMPLES = 24;
 
-async function load1000WhBatteryAliasMap(client: PoolClient): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
-  try {
-    const target = await client.query<{ id: string }>(
-      `SELECT id::text
-         FROM upgrades
-        WHERE id = $1
-          AND (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
-        LIMIT 1`,
-      [CANONICAL_1000WH_BATTERY_ID]
-    );
-    if ((target.rowCount ?? 0) === 0) return out;
-    const src = await client.query<{ id: string }>(
-      `SELECT id::text
-         FROM upgrades
-        WHERE id <> $1
-          AND (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
-          AND power_capacity = 1000`,
-      [CANONICAL_1000WH_BATTERY_ID]
-    );
-    for (const row of src.rows || []) {
-      const id = String(row.id || '').trim();
-      if (id) out.set(id, CANONICAL_1000WH_BATTERY_ID);
-    }
-  } catch (e) {
-    console.warn('[batteryAlias] Falha ao ler aliases 1000Wh:', e instanceof Error ? e.message : String(e));
-  }
-  return out;
-}
-
 /**
  * Diagnóstico de falhas ao gravar `stock` (save-game). Causas típicas:
  * - `invalid_key`: chave fora do padrão (espaços, `__proto__`, merge de objetos errado, estado corrompido no cliente).
@@ -140,10 +107,9 @@ export async function validateStockForSave(
 
   const itemQty = new Map<string, number>();
   const badQtyKeys: string[] = [];
-  const aliasMap = await load1000WhBatteryAliasMap(client);
   for (const k of keys) {
     const rawItemId = String(k);
-    const itemId = aliasMap.get(rawItemId) || rawItemId;
+    const itemId = normalizeKnown1000WhBatteryCatalogId(rawItemId);
     const q = parseIntQty(stock[k]);
     if (q === null || q < 0 || q > MAX_STOCK_QTY) {
       badQtyKeys.push(rawItemId);
@@ -305,13 +271,23 @@ export async function validateStoredBatteriesForSave(
       `SELECT id::text FROM upgrades
        WHERE LOWER(COALESCE(type::text, '')) = 'battery'
          AND COALESCE(is_active, 1) <> 0
-       ORDER BY CASE WHEN id = $1 THEN 0 ELSE 1 END,
-                COALESCE(base_cost, 0) ASC NULLS LAST,
+         AND COALESCE(power_capacity, 0) <> -1
+       ORDER BY COALESCE(base_cost, 0) ASC NULLS LAST,
                 id ASC
-       LIMIT 1`,
-      [CANONICAL_1000WH_BATTERY_ID]
+       LIMIT 1`
     );
     fallbackCatalogId = String(fbRes.rows[0]?.id || '').trim();
+    if (!fallbackCatalogId) {
+      const fbAny = await client.query<{ id: string }>(
+        `SELECT id::text FROM upgrades
+         WHERE LOWER(COALESCE(type::text, '')) = 'battery'
+           AND COALESCE(is_active, 1) <> 0
+         ORDER BY COALESCE(base_cost, 0) ASC NULLS LAST,
+                  id ASC
+         LIMIT 1`
+      );
+      fallbackCatalogId = String(fbAny.rows[0]?.id || '').trim();
+    }
   } catch (e) {
     console.warn(
       '[validateStoredBatteriesForSave] fallback bateria:',
@@ -392,14 +368,13 @@ export async function validateStoredBatteriesForSave(
   }
 
   const resolvedIds: string[] = [];
-  const aliasMap = await load1000WhBatteryAliasMap(client);
   for (const r of rows) {
     let it = r.itemId;
     if (it === STORED_BATTERY_CATALOG_PENDING_ID) {
       const dbv = (dbMap.get(r.id) || '').trim();
       it = SAVE_GAME_ITEM_ID_RE.test(dbv) ? normalizeKnown1000WhBatteryCatalogId(dbv) : fallbackCatalogId;
     }
-    it = aliasMap.get(it) || normalizeKnown1000WhBatteryCatalogId(it);
+    it = normalizeKnown1000WhBatteryCatalogId(it);
     resolvedIds.push(it);
   }
 

@@ -7148,13 +7148,15 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
   const uidNum = Number(userId);
   const catalogBatteryRows = await prisma.upgrades.findMany({
     where: { type: 'battery' },
-    select: { id: true }
+    select: { id: true, power_capacity: true, base_cost: true }
   });
   const catalogBatteryIds = new Set(catalogBatteryRows.map((x) => x.id));
+  const isInfiniteBatteryCapacity = (pc: number | null | undefined) => pc != null && Number(pc) === -1;
+  const finiteBatteriesSorted = [...catalogBatteryRows]
+    .filter((x) => !isInfiniteBatteryCapacity(x.power_capacity))
+    .sort((a, b) => (a.base_cost ?? 0) - (b.base_cost ?? 0) || a.id.localeCompare(b.id));
   const fallbackBatteryCatalogId = String(
-    catalogBatteryRows.find((x) => x.id === CANONICAL_1000WH_BATTERY_ID)?.id ||
-      catalogBatteryRows[0]?.id ||
-      ''
+    finiteBatteriesSorted[0]?.id ?? catalogBatteryRows[0]?.id ?? ''
   ).trim();
 
   /** UUID de instância → id de catálogo vindo da rig (`placed_racks` / payload do save). */
