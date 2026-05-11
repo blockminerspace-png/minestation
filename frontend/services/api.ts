@@ -684,6 +684,224 @@ export async function clearMyPolygonWallet(
   }
 }
 
+/** Overview do Programa Genesis Referral do utilizador autenticado. */
+export type ReferralOverview = {
+  ok: true;
+  referralCode: string | null;
+  inviteUrl: string | null;
+  referredBy: string | null;
+  stats: {
+    invitedCount: number;
+    totalReferredDepositsUsdc: number;
+    totalCommissionUsdc: number;
+    paidCommissionUsdc: number;
+    pendingCommissionUsdc: number;
+    commissionRate: number;
+    commissionPercent: number;
+    commissionsCount: number;
+  };
+  referredUsers: Array<{
+    id: number;
+    username: string | null;
+    emailMasked: string | null;
+    createdAt: number;
+    linkId: number;
+    totalDepositedUsdc: number;
+    totalCommissionUsdc: number;
+    commissionsCount: number;
+  }>;
+  commissions: Array<{
+    id: string;
+    createdAt: number;
+    referredUser: { id: number; username: string | null; emailMasked: string | null };
+    depositAmountUsdc: number;
+    commissionRate: number;
+    commissionAmountUsdc: number;
+    sourceType: string;
+    sourceTransactionId: string;
+    status: 'paid';
+  }>;
+};
+
+export async function getReferralOverview(): Promise<ReferralOverview | null> {
+  try {
+    const res = await apiFetch(`${base}/profile/referral/overview`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    if (!raw || typeof raw !== 'object' || (raw as { ok?: unknown }).ok !== true) return null;
+    return raw as ReferralOverview;
+  } catch {
+    return null;
+  }
+}
+
+/** Vincula código de indicação usando o endpoint moderno do perfil. */
+export async function postProfileReferralBind(
+  code: string
+): Promise<{ ok: boolean; error?: string; code?: string }> {
+  try {
+    const res = await apiFetch(`${base}/profile/referral/bind`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code })
+    });
+    const data = (await res.json().catch(() => ({}))) as { error?: string; code?: string };
+    if (!res.ok) return { ok: false, error: data.error || `Erro ${res.status}`, code: data.code };
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Erro de rede.' };
+  }
+}
+
+export type AdminReferralSummary = {
+  ok: true;
+  commissionPercent: number;
+  commissionRate: number;
+  stats: {
+    uniqueReferrers: number;
+    totalLinks: number;
+    referredDistinct: number;
+    commissionsCount: number;
+    totalReferredDepositsUsdc: number;
+    totalCommissionPaidUsdc: number;
+    pendingCommissionUsdc: number;
+  };
+  topReferrers: Array<{
+    id: number;
+    username: string | null;
+    email: string | null;
+    invitedCount: number;
+    commissionTotalUsdc: number;
+  }>;
+};
+
+export type AdminReferralCommissionRow = {
+  id: string;
+  createdAt: number;
+  sourceType: string;
+  sourceTransactionId: string;
+  depositAmountUsdc: number;
+  commissionPercent: number;
+  commissionRate: number;
+  commissionAmountUsdc: number;
+  referrer: { id: number; username: string | null; email: string | null };
+  referred: { id: number; username: string | null; email: string | null };
+  status: 'paid';
+};
+
+export type AdminReferralLinkRow = {
+  linkId: number;
+  referrer: { id: number; username: string | null; email: string | null };
+  referred: { id: number | null; username: string | null; email: string | null };
+  firstCommissionAt: number;
+  totalDepositedUsdc: number;
+  totalCommissionUsdc: number;
+};
+
+export async function getAdminReferralSummary(): Promise<AdminReferralSummary | null> {
+  try {
+    const res = await apiFetch(`${base}/admin/referrals/summary`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    if (!raw || typeof raw !== 'object' || (raw as { ok?: unknown }).ok !== true) return null;
+    return raw as AdminReferralSummary;
+  } catch {
+    return null;
+  }
+}
+
+export async function getAdminReferralCommissions(filters: {
+  page?: number;
+  limit?: number;
+  startDate?: number | null;
+  endDate?: number | null;
+  referrer?: string;
+  referred?: string;
+  minCommission?: number | null;
+  maxCommission?: number | null;
+  q?: string;
+}): Promise<{
+  ok: boolean;
+  page: number;
+  limit: number;
+  total: number;
+  rows: AdminReferralCommissionRow[];
+} | null> {
+  const params = new URLSearchParams();
+  if (filters.page) params.set('page', String(filters.page));
+  if (filters.limit) params.set('limit', String(filters.limit));
+  if (filters.startDate) params.set('startDate', String(filters.startDate));
+  if (filters.endDate) params.set('endDate', String(filters.endDate));
+  if (filters.referrer) params.set('referrer', filters.referrer);
+  if (filters.referred) params.set('referred', filters.referred);
+  if (filters.minCommission != null) params.set('minCommission', String(filters.minCommission));
+  if (filters.maxCommission != null) params.set('maxCommission', String(filters.maxCommission));
+  if (filters.q) params.set('q', filters.q);
+  try {
+    const res = await apiFetch(`${base}/admin/referrals/commissions?${params.toString()}`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    if (!raw || typeof raw !== 'object' || (raw as { ok?: unknown }).ok !== true) return null;
+    return raw as {
+      ok: boolean;
+      page: number;
+      limit: number;
+      total: number;
+      rows: AdminReferralCommissionRow[];
+    };
+  } catch {
+    return null;
+  }
+}
+
+export async function getAdminReferralLinks(filters: {
+  page?: number;
+  limit?: number;
+  q?: string;
+}): Promise<{
+  ok: boolean;
+  page: number;
+  limit: number;
+  total: number;
+  rows: AdminReferralLinkRow[];
+} | null> {
+  const params = new URLSearchParams();
+  if (filters.page) params.set('page', String(filters.page));
+  if (filters.limit) params.set('limit', String(filters.limit));
+  if (filters.q) params.set('q', filters.q);
+  try {
+    const res = await apiFetch(`${base}/admin/referrals/links?${params.toString()}`);
+    if (!res.ok) return null;
+    const raw = await res.json().catch(() => null);
+    if (!raw || typeof raw !== 'object' || (raw as { ok?: unknown }).ok !== true) return null;
+    return raw as {
+      ok: boolean;
+      page: number;
+      limit: number;
+      total: number;
+      rows: AdminReferralLinkRow[];
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function buildAdminReferralCsvUrl(filters: {
+  startDate?: number | null;
+  endDate?: number | null;
+  referrer?: string;
+  referred?: string;
+  q?: string;
+}): string {
+  const params = new URLSearchParams();
+  if (filters.startDate) params.set('startDate', String(filters.startDate));
+  if (filters.endDate) params.set('endDate', String(filters.endDate));
+  if (filters.referrer) params.set('referrer', filters.referrer);
+  if (filters.referred) params.set('referred', filters.referred);
+  if (filters.q) params.set('q', filters.q);
+  return `${base}/admin/referrals/export.csv?${params.toString()}`;
+}
+
 export async function getProfileState(): Promise<ProfileApiState | null> {
   try {
     const res = await apiFetch(`${base}/profile/state`);

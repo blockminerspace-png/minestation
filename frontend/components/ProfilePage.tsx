@@ -9,6 +9,7 @@ import {
   getSeasonPurchases,
   getAccessLevels,
   claimReferralCode,
+  postProfileReferralBind,
   getNewsFee,
   submitPlayerNews,
   getGameState,
@@ -22,6 +23,8 @@ import {
   getSession,
   type ProfileApiState
 } from '@/services/api';
+import { ReferralOverviewPanel } from './ReferralOverviewPanel';
+import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
 
 function utf8MessageToHex(message: string): string {
   const bytes = new TextEncoder().encode(message);
@@ -52,6 +55,10 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
   const [profileBadges, setProfileBadges] = useState<ProfileApiState['badges']>([]);
   const [referralCodeInput, setReferralCodeInput] = useState('');
   const [referralClaimLoading, setReferralClaimLoading] = useState(false);
+  /** Modal estilizado para feedback de operações de referral (substitui alert nativo). */
+  const [notice, setNotice] = useState<UiNotice | null>(null);
+  /** Forçar reload do painel de overview após binding/refresh. */
+  const [referralReloadNonce, setReferralReloadNonce] = useState(0);
   const [identitySaving, setIdentitySaving] = useState(false);
   const [passwordSaving, setPasswordSaving] = useState(false);
   const [walletBusy, setWalletBusy] = useState(false);
@@ -473,6 +480,16 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                 </div>
               </div>
 
+              {user.referredBy && (
+                <div className="bg-white dark:bg-slate-950 rounded-lg p-3 border border-slate-200 dark:border-slate-800 mt-3">
+                  <div className="text-xs font-bold text-slate-500 uppercase">Quem te indicou</div>
+                  <div className="mt-1 text-sm font-mono text-emerald-600 dark:text-emerald-400 truncate">
+                    {user.referredBy}
+                  </div>
+                </div>
+              )}
+
+              {/* fallback: usuário já indicado mas sem `user.referredBy` no payload — não renderiza nada extra. */}
               {!user.referredBy && (
                 <div className="bg-white dark:bg-slate-950 rounded-lg p-3 border border-slate-200 dark:border-slate-800 mt-3">
                   <div className="text-xs font-bold text-slate-500 uppercase mb-2">Quem te indicou?</div>
@@ -488,26 +505,67 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
                     <button
                       type="button"
                       onClick={async () => {
-                        if (!referralCodeInput.trim() || referralClaimLoading) return;
+                        const code = referralCodeInput.trim();
+                        if (!code || referralClaimLoading) return;
                         setReferralClaimLoading(true);
-                        const res = await claimReferralCode(user.email, referralCodeInput.trim());
+                        // Prefere o endpoint moderno (`/api/profile/referral/bind`) — usa anti-fraude por
+                        // IP + valida self/cycle no servidor. O legacy `claimReferralCode` fica como
+                        // fallback se a versão do backend ainda não tiver a rota.
+                        const res = await postProfileReferralBind(code);
+                        if (!res.ok && res.code !== 'REFERRAL_ALREADY_BOUND' && res.code !== 'REFERRAL_SELF' && res.code !== 'REFERRAL_CODE_INVALID' && res.code !== 'REFERRAL_IP_RULE' && res.code !== 'REFERRAL_CYCLE') {
+                          // Backend antigo ou erro 404 — tenta o endpoint legacy.
+                          const legacy = await claimReferralCode(user.email, code);
+                          setReferralClaimLoading(false);
+                          if (legacy && legacy.ok) {
+                            setReferralCodeInput('');
+                            await refreshSessionUser();
+                            await reloadProfileState();
+                            setReferralReloadNonce((n) => n + 1);
+                            setNotice({
+                              variant: 'success',
+                              title: 'Indicador vinculado',
+                              message: `Código aceito. Você recebe automaticamente USDC sempre que o indicador depositar — a comissão é creditada pelo servidor.`
+                            });
+                          } else {
+                            await reloadProfileState();
+                            setNotice({
+                              variant: 'error',
+                              title: 'Não foi possível vincular',
+                              message: legacy?.error || 'Os dados da conta podem ter sido atualizados — verifique e tente novamente.'
+                            });
+                          }
+                          return;
+                        }
                         setReferralClaimLoading(false);
-                        if (res && res.ok) {
+                        if (res.ok) {
                           setReferralCodeInput('');
                           await refreshSessionUser();
                           await reloadProfileState();
-                          alert(
-                            'Código vinculado com sucesso. A comissão em USDC é calculada e creditada pelo servidor quando houver depósito elegível do indicado.'
-                          );
+                          setReferralReloadNonce((n) => n + 1);
+                          setNotice({
+                            variant: 'success',
+                            title: 'Indicador vinculado',
+                            message: 'Pronto! Agora cada depósito USDC do teu indicador gera comissão automática para ele.'
+                          });
                         } else {
                           await reloadProfileState();
-                          alert(
-                            res?.error ||
-                              'Falha ao vincular código. Os dados da conta podem ter sido atualizados — verifique e tente novamente.'
-                          );
+                          const map: Record<string, { title: string; message: string }> = {
+                            REFERRAL_ALREADY_BOUND: { title: 'Já vinculado', message: 'Você já possui um indicador vinculado.' },
+                            REFERRAL_SELF: { title: 'Código inválido', message: 'Você não pode usar o próprio código.' },
+                            REFERRAL_CODE_INVALID: { title: 'Código inválido', message: 'Esse código de indicação não existe.' },
+                            REFERRAL_CYCLE: { title: 'Vínculo bloqueado', message: 'Não é possível usar o código de alguém que você já indicou.' },
+                            REFERRAL_IP_RULE: { title: 'Anti-fraude', message: res.error || 'Não foi possível vincular este código a partir do seu IP.' }
+                          };
+                          const m = res.code && map[res.code];
+                          setNotice({
+                            variant: 'error',
+                            title: m?.title || 'Não foi possível vincular',
+                            message: m?.message || res.error || 'Tente de novo dentro de momentos.'
+                          });
                         }
                       }}
-                      className="bg-green-600 hover:bg-green-500 text-white px-4 rounded-lg text-sm font-bold"
+                      disabled={referralClaimLoading}
+                      className="bg-green-600 hover:bg-green-500 disabled:opacity-50 text-white px-4 rounded-lg text-sm font-bold"
                     >
                       {referralClaimLoading ? 'Processando...' : 'VINCULAR CÓDIGO'}
                     </button>
@@ -516,6 +574,9 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
               )}
             </div>
           </div>
+
+          {/* Histórico e relatório do Programa Genesis Referral. */}
+          <ReferralOverviewPanel reloadNonce={referralReloadNonce} />
 
           {(() => {
             const userLvlIds = user.accessLevelIds || (user.accessLevelId ? [user.accessLevelId] : []);
@@ -695,6 +756,7 @@ export const ProfilePage: React.FC<ProfilePageProps> = ({ user, onUpdateProfile,
 
       </div>
 
+      <UiNoticeModal notice={notice} onClose={() => setNotice(null)} overlayZClassName="z-[160]" />
     </div>
   );
 };

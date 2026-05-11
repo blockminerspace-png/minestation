@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
-import { RefreshCw, ExternalLink, Eye, Copy, ArrowRight, Filter, ChevronLeft, ChevronRight, Calendar, User, Mail, Pencil, Download, Search, X as CloseIcon, Calculator, LayoutList, Wallet, Plus, Trash2, Save, Settings } from 'lucide-react';
+import { RefreshCw, ExternalLink, Eye, Copy, ArrowRight, Filter, ChevronLeft, ChevronRight, Calendar, User, Mail, Pencil, Download, Search, X as CloseIcon, Calculator, LayoutList, Wallet, Plus, Trash2, Save, Settings, Sparkles } from 'lucide-react';
 import { PlayerCalculator } from './PlayerCalculator';
 import { User as UserType, MiningCoin, Upgrade } from '../types';
 import { getWalletLabels, saveWalletLabel, getMiningCoins, getUpgrades, saveMiningCoin, deleteMiningCoin, getAdminTreasuryTokenTxs, getWeb3Settings } from '../services/api';
 
 import { AdminManualWithdrawals } from './AdminManualWithdrawals';
+import { AdminReferral } from './AdminReferral';
 
 /** Fallback se `web3_deposit_wallet` estiver vazio nas settings */
 const TREASURY_WALLET_FALLBACK = '0x3D9bDA32f0cbA0E84C332Fd0151D434A4840F38a';
@@ -78,13 +79,13 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
     const [limit] = useState(20);
     const [filterPeriod, setFilterPeriod] = useState<'all' | 'day' | 'year'>('all');
     const [searchTerm, setSearchTerm] = useState(() => localStorage.getItem('adminReportsSearchTerm') || '');
-    const [subtab, setSubtab] = useState<'transactions' | 'calculator' | 'withdrawals'>(() => (localStorage.getItem('adminReportsSubtab') as any) || 'transactions');
+    const [subtab, setSubtab] = useState<'transactions' | 'calculator' | 'withdrawals' | 'referral'>(() => (localStorage.getItem('adminReportsSubtab') as any) || 'transactions');
 
     const reportsOperatorRestricted = !!(currentUser?.isAdmin && !currentUser?.isSuperAdmin);
 
     useEffect(() => {
         if (!reportsOperatorRestricted) return;
-        if (subtab === 'calculator' || subtab === 'withdrawals') {
+        if (subtab === 'calculator' || subtab === 'withdrawals' || subtab === 'referral') {
             setSubtab('transactions');
             localStorage.setItem('adminReportsSubtab', 'transactions');
         }
@@ -458,6 +459,16 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
                             <Wallet size={16} />
                             Saques Manuais
                         </button>
+                        <button
+                            onClick={() => {
+                                setSubtab('referral');
+                                localStorage.setItem('adminReportsSubtab', 'referral');
+                            }}
+                            className={`px-4 py-2 text-sm font-bold rounded border flex items-center gap-2 transition-all ${subtab === 'referral' ? 'bg-amber-600/20 text-white border-amber-600/50 shadow-[0_0_10px_rgba(217,119,6,0.1)]' : 'text-slate-400 hover:text-white border-transparent hover:border-slate-700'}`}
+                        >
+                            <Sparkles size={16} />
+                            Comissões Referral
+                        </button>
                     </>
                 )}
                 {reportsOperatorRestricted && (
@@ -750,6 +761,12 @@ export const AdminReports: React.FC<AdminReportsProps> = ({ users = [], currentU
             {subtab === 'withdrawals' && !reportsOperatorRestricted && (
                 <div className="flex-1 overflow-auto custom-scrollbar">
                     <AdminManualWithdrawals />
+                </div>
+            )}
+
+            {subtab === 'referral' && !reportsOperatorRestricted && (
+                <div className="flex-1 overflow-auto custom-scrollbar">
+                    <AdminReferral />
                 </div>
             )}
 

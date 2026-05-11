@@ -58,6 +58,7 @@ import { initDb } from './dist/config/initDb.js';
 import { sendResetEmail } from './dist/utils/mailer.js';
 import { COOKIE_ACCESS, getJwtAuthConfig, createResolveAuthMiddleware, issueJwtAuthCookies, handleJwtRefresh, revokeJwtRefreshForUser, clearAuthCookies, verifyAccessToken } from './dist/src/auth/index.js';
 import { registerDeviceFingerprintAdminRoutes } from './dist/controllers/deviceFingerprintAdminController.js';
+import { registerAdminReferralRoutes } from './dist/controllers/adminReferralController.js';
 import { registerP2pMarketRoutes } from './dist/controllers/p2pMarketController.js';
 import { registerBlackMarketModuleRoutes } from './dist/modules/black-market/black-market.controller.js';
 import { registerLuckyBoxesModuleRoutes } from './dist/modules/lucky-boxes/lucky-boxes.controller.js';
@@ -1443,6 +1444,7 @@ app.use(async (req, res, next) => {
     next();
 });
 registerDeviceFingerprintAdminRoutes(app, { isAdmin });
+registerAdminReferralRoutes(app, { isAdmin });
 registerP2pMarketRoutes(app, { emitMarketWs });
 registerBlackMarketModuleRoutes(app, { authenticateToken });
 registerLootBoxPlayerRoutes(app, {

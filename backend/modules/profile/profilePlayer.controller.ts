@@ -14,6 +14,7 @@ import {
   verifyWalletConnectSignature
 } from './profileWallet.service.js';
 import { bindProfileReferralCode } from './profileReferralBind.service.js';
+import { buildReferralOverview } from './profileReferralOverview.service.js';
 import { listProfileSecurityEvents } from './profileAudit.service.js';
 
 function requestId(req: Request): string {
@@ -192,6 +193,27 @@ export function registerProfilePlayerRoutes(app: Express, deps: ProfilePlayerCon
       res.json({ ok: true, referral: ref ?? null });
     } catch (e) {
       sendInternalErrorSafeMessageOrPrisma(res, '[GET /api/profile/referral/state]', e, 'Erro ao carregar indicações.');
+    }
+  });
+
+  app.get('/api/profile/referral/overview', authenticateToken, async (req: Request, res: Response) => {
+    const uid = uidRequired(req);
+    if (!uid) return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
+    try {
+      const overview = await buildReferralOverview({
+        userId: uid,
+        inviteBaseUrl: inviteBaseUrlFromRequest(req),
+        historyLimit: 80
+      });
+      res.json(overview);
+    } catch (e) {
+      console.error('[Referral] /api/profile/referral/overview', e);
+      sendInternalErrorSafeMessageOrPrisma(
+        res,
+        '[GET /api/profile/referral/overview]',
+        e,
+        'Erro ao carregar histórico de indicações.'
+      );
     }
   });
 
