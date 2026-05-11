@@ -2891,8 +2891,8 @@ export default function App() {
             {/* GAME CONTENT WRAPPER WITH SIDEBARS */}
             <div className="flex-1 min-w-0 flex justify-center overflow-hidden relative w-full h-full">
 
-              {/* Left Skyscraper (Dynamic) — escondido na Dashboard para não competir com o layout do hero */}
-              {currentView !== 'dashboard' && (
+              {/* Laterais — escondidas na Dashboard (layout limpo) e em Parceiros (vitrine full-width). */}
+              {currentView !== 'dashboard' && currentView !== 'partners' && (
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-amber-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-amber-500/40 shadow-2xl shadow-amber-500/5">
                 {verticalAds[0] ? (
                   <a href={verticalAds[0].link || '#'} target={verticalAds[0].link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
@@ -3194,8 +3194,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right Skyscraper (Dynamic) — escondido na Dashboard */}
-              {currentView !== 'dashboard' && (
+              {currentView !== 'dashboard' && currentView !== 'partners' && (
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-orange-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-orange-500/40 shadow-2xl shadow-orange-500/5">
                 {verticalAds[1] || verticalAds[0] ? (
                   <a href={(verticalAds[1] || verticalAds[0]).link || '#'} target={(verticalAds[1] || verticalAds[0]).link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">

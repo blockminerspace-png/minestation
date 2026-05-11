@@ -12,7 +12,7 @@
  *  - Tudo é responsivo (1/2/3 colunas) e tem skeleton + empty + error states.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   AlertCircle,
@@ -21,16 +21,20 @@ import {
   Battery,
   Bell,
   Calendar,
+  ChevronLeft,
   ChevronRight,
   Clapperboard,
   Compass,
   Crown,
   Eye,
+  Flame,
   Gift,
   Server as ServerIcon,
   ShoppingCart,
   Skull,
   Sparkles,
+  LayoutGrid,
+  Leaf,
   Trophy,
   Wallet as WalletIcon,
   Wrench,
@@ -178,85 +182,186 @@ function SectionCard({
 // Header + Módulos do ecossistema
 // =====================================================================
 
-function DashboardHeader({ miner, wallet }: { miner: DashboardMinerState; wallet: DashboardWalletState }) {
-  const hash = formatHash(miner.hashTotal);
-  return (
-    <header className="rounded-2xl border border-amber-500/20 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-4 sm:px-6 py-4 flex flex-wrap items-center gap-4 shadow-lg shadow-amber-500/5">
-      <div className="flex items-center gap-3 min-w-0">
-        <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-600 flex items-center justify-center font-extrabold text-slate-950 shadow-inner shadow-orange-300/40">
-          G
-        </div>
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.25em] text-amber-400">Genesis Miner</div>
-          <h1 className="text-base sm:text-lg font-extrabold text-white truncate">Dashboard</h1>
-        </div>
-      </div>
-      <div className="grow" />
-      <div className="flex flex-wrap items-center gap-2">
-        <StatPill label="USDC" value={`$${formatUsdc(wallet.usdc)}`} tone="emerald" />
-        <StatPill label="Hash Total" value={`${hash.value} ${hash.unit}`} tone="amber" />
-        <StatPill
-          label="Status"
-          value={miner.status === 'online' ? 'Online' : miner.status === 'idle' ? 'Inativo' : 'Offline'}
-          tone={miner.status === 'online' ? 'emerald' : miner.status === 'idle' ? 'amber' : 'cyan'}
-        />
-      </div>
-    </header>
-  );
+function ecosystemModuleIcon(id: string) {
+  switch (id) {
+    case 'workerrealm':
+      return <Flame size={18} strokeWidth={2.25} />;
+    case 'blockminer':
+      return <LayoutGrid size={18} strokeWidth={2.25} />;
+    case 'minecore':
+      return <Leaf size={18} strokeWidth={2.25} />;
+    case 'masterleague':
+      return <Trophy size={18} strokeWidth={2.25} />;
+    case 'reworth':
+      return <Skull size={18} strokeWidth={2.25} />;
+    default:
+      return <Sparkles size={18} />;
+  }
+}
+
+function ecosystemThemeClasses(id: string): {
+  frame: string;
+  glow: string;
+  iconWrap: string;
+  subText: string;
+  btn: string;
+  placeholder: string;
+} {
+  switch (id) {
+    case 'workerrealm':
+      return {
+        frame: 'border-orange-500/55 shadow-[0_0_28px_-6px_rgba(249,115,22,0.55)]',
+        glow: 'shadow-orange-500/25',
+        iconWrap: 'border-orange-400/40 bg-orange-500/15 text-orange-300',
+        subText: 'text-orange-200/85',
+        btn: 'border-orange-400/70 text-orange-200 hover:bg-orange-500/15',
+        placeholder: 'from-orange-950/90 via-slate-950 to-red-950/80'
+      };
+    case 'blockminer':
+      return {
+        frame: 'border-violet-500/60 shadow-[0_0_32px_-8px_rgba(167,139,250,0.55)]',
+        glow: 'shadow-violet-500/30',
+        iconWrap: 'border-violet-400/45 bg-violet-500/15 text-violet-200',
+        subText: 'text-violet-200/85',
+        btn: 'border-violet-400/70 text-violet-200 hover:bg-violet-500/15',
+        placeholder: 'from-violet-950/90 via-slate-950 to-indigo-950/80'
+      };
+    case 'minecore':
+      return {
+        frame: 'border-emerald-500/55 shadow-[0_0_28px_-6px_rgba(52,211,153,0.45)]',
+        glow: 'shadow-emerald-500/25',
+        iconWrap: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200',
+        subText: 'text-emerald-200/85',
+        btn: 'border-emerald-400/70 text-emerald-200 hover:bg-emerald-500/15',
+        placeholder: 'from-emerald-950/90 via-slate-950 to-lime-950/70'
+      };
+    case 'masterleague':
+      return {
+        frame: 'border-sky-500/55 shadow-[0_0_28px_-6px_rgba(56,189,248,0.45)]',
+        glow: 'shadow-sky-500/25',
+        iconWrap: 'border-sky-400/40 bg-sky-500/15 text-sky-200',
+        subText: 'text-sky-200/85',
+        btn: 'border-sky-400/70 text-sky-200 hover:bg-sky-500/15',
+        placeholder: 'from-sky-950/90 via-slate-950 to-blue-950/80'
+      };
+    default:
+      return {
+        frame: 'border-amber-500/50 shadow-[0_0_28px_-6px_rgba(245,158,11,0.4)]',
+        glow: 'shadow-amber-500/25',
+        iconWrap: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
+        subText: 'text-amber-200/85',
+        btn: 'border-amber-400/70 text-amber-200 hover:bg-amber-500/15',
+        placeholder: 'from-amber-950/90 via-slate-950 to-yellow-950/70'
+      };
+  }
 }
 
 function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[] }) {
+  const stripRef = useRef<HTMLDivElement>(null);
+
+  const scrollStrip = useCallback((dir: -1 | 1) => {
+    const el = stripRef.current;
+    if (!el) return;
+    const w = Math.max(280, Math.floor(el.clientWidth * 0.82));
+    el.scrollBy({ left: dir * w, behavior: 'smooth' });
+  }, []);
+
   if (!modules.length) return null;
+
   return (
-    <SectionCard title="Módulos & Parceiros do Ecossistema" icon={<Sparkles size={14} />}>
-      <div className="flex gap-3 overflow-x-auto custom-scrollbar pb-1 -mx-1 px-1 snap-x snap-mandatory">
-        {modules.map((m) => (
-          <a
-            key={m.id}
-            href={m.status === 'available' ? m.href : undefined}
-            target={m.external ? '_blank' : undefined}
-            rel={m.external ? 'noopener noreferrer' : undefined}
-            onClick={(e) => {
-              if (m.status !== 'available') e.preventDefault();
-            }}
-            className={`group snap-start shrink-0 w-[220px] sm:w-[240px] rounded-xl border border-slate-700/60 bg-gradient-to-b from-slate-900 to-slate-950 hover:border-amber-500/40 transition-all overflow-hidden ${
-              m.status === 'available' ? 'cursor-pointer' : 'cursor-not-allowed opacity-80'
-            }`}
-          >
-            <div className="aspect-[16/9] bg-gradient-to-br from-amber-500/10 via-orange-500/10 to-cyan-500/10 flex items-center justify-center relative overflow-hidden">
-              {m.imageUrl ? (
-                <img
-                  src={m.imageUrl}
-                  alt={m.title}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                />
-              ) : (
-                <span className="text-3xl font-extrabold text-amber-200/40 tracking-widest">
-                  {m.title.charAt(0)}
-                </span>
-              )}
-              {m.status === 'coming_soon' ? (
-                <span className="absolute top-2 right-2 text-[9px] uppercase tracking-widest bg-slate-950/70 border border-slate-700 text-slate-300 px-1.5 py-0.5 rounded">
-                  Em breve
-                </span>
-              ) : (
-                <span className="absolute top-2 right-2 text-[9px] uppercase tracking-widest bg-emerald-500/20 border border-emerald-500/40 text-emerald-200 px-1.5 py-0.5 rounded">
-                  Online
-                </span>
-              )}
-            </div>
-            <div className="p-3">
-              <div className="text-sm font-bold text-white truncate">{m.title}</div>
-              <div className="text-[11px] text-slate-400 truncate">{m.subtitle}</div>
-              <div className="mt-2 flex items-center justify-between text-amber-300 text-[11px] font-bold uppercase tracking-wider group-hover:text-amber-200">
-                <span>Entrar</span>
-                <ArrowUpRight size={14} />
-              </div>
-            </div>
-          </a>
-        ))}
+    <section className="relative rounded-2xl border border-slate-800/90 bg-[radial-gradient(ellipse_at_top,_rgba(251,146,60,0.06),transparent_55%),linear-gradient(to_bottom,#0b1220,#070b12)] px-3 py-6 sm:px-5 sm:py-8 shadow-xl shadow-black/40">
+      <div className="pointer-events-none absolute inset-0 opacity-[0.07] bg-[linear-gradient(rgba(148,163,184,0.25)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.2)_1px,transparent_1px)] bg-[size:24px_24px]" />
+
+      <h2 className="relative text-center text-[11px] sm:text-xs font-black uppercase tracking-[0.28em] text-white mb-6 sm:mb-8 px-2">
+        Módulos & Parceiros do Ecossistema
+      </h2>
+
+      <div className="relative flex items-stretch gap-1 sm:gap-2">
+        <button
+          type="button"
+          onClick={() => scrollStrip(-1)}
+          className="hidden sm:inline-flex shrink-0 w-9 h-9 sm:w-10 sm:h-10 self-center items-center justify-center rounded-lg border border-orange-500/50 bg-slate-950/80 text-orange-400 hover:bg-orange-500/10 hover:border-orange-400 transition-colors"
+          aria-label="Anterior"
+        >
+          <ChevronLeft size={22} strokeWidth={2.5} />
+        </button>
+
+        <div
+          ref={stripRef}
+          className="flex min-w-0 flex-1 gap-4 overflow-x-auto overflow-y-hidden snap-x snap-mandatory pb-2 pt-1 custom-scrollbar scroll-pl-2 sm:scroll-pl-4"
+        >
+          {modules.map((m) => {
+            const th = ecosystemThemeClasses(m.id);
+            const canGo = m.status === 'available';
+            return (
+              <a
+                key={m.id}
+                href={canGo ? m.href : undefined}
+                target={m.external ? '_blank' : undefined}
+                rel={m.external ? 'noopener noreferrer' : undefined}
+                onClick={(e) => {
+                  if (!canGo) e.preventDefault();
+                }}
+                className={`group relative flex snap-start shrink-0 flex-col w-[min(280px,calc(100vw-3rem))] sm:w-[300px] rounded-xl overflow-hidden bg-slate-950/80 backdrop-blur-sm transition-transform duration-300 hover:-translate-y-0.5 ${th.frame} ${
+                  canGo ? 'cursor-pointer' : 'cursor-not-allowed opacity-[0.92]'
+                }`}
+              >
+                <div className="relative z-[1] flex items-start gap-2.5 px-3 pt-3 sm:px-4 sm:pt-4">
+                  <span
+                    className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border ${th.iconWrap}`}
+                  >
+                    {ecosystemModuleIcon(m.id)}
+                  </span>
+                  <div className="min-w-0 pt-0.5">
+                    <div className="text-[13px] sm:text-sm font-black uppercase tracking-wide text-white leading-tight truncate">
+                      {m.title}
+                    </div>
+                    <div className={`text-[10px] sm:text-[11px] font-bold uppercase tracking-widest mt-0.5 truncate ${th.subText}`}>
+                      {m.subtitle}
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  className={`relative z-[1] mx-3 sm:mx-4 mt-3 flex-1 min-h-[132px] sm:min-h-[150px] rounded-lg overflow-hidden border border-white/5 ${th.glow}`}
+                >
+                  {m.imageUrl ? (
+                    <img src={m.imageUrl} alt="" className="h-full w-full object-cover object-center" loading="lazy" />
+                  ) : (
+                    <div className={`h-full w-full bg-gradient-to-br ${th.placeholder} flex items-center justify-center`}>
+                      <span className="text-4xl font-black text-white/10">{m.title.charAt(0)}</span>
+                    </div>
+                  )}
+                  {m.status === 'coming_soon' ? (
+                    <span className="absolute top-2 right-2 text-[9px] font-black uppercase tracking-widest bg-black/65 border border-white/15 text-slate-200 px-2 py-0.5 rounded-sm">
+                      Em breve
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="relative z-[1] p-3 sm:p-4 pt-3">
+                  <div
+                    className={`flex items-center justify-center gap-2 rounded-md border py-2 text-[11px] font-black uppercase tracking-[0.2em] transition-colors ${th.btn}`}
+                  >
+                    Entrar
+                    <ChevronRight size={16} strokeWidth={2.5} className="opacity-90" />
+                  </div>
+                </div>
+              </a>
+            );
+          })}
+        </div>
+
+        <button
+          type="button"
+          onClick={() => scrollStrip(1)}
+          className="hidden sm:inline-flex shrink-0 w-9 h-9 sm:w-10 sm:h-10 self-center items-center justify-center rounded-lg border border-orange-500/50 bg-slate-950/80 text-orange-400 hover:bg-orange-500/10 hover:border-orange-400 transition-colors"
+          aria-label="Seguinte"
+        >
+          <ChevronRight size={22} strokeWidth={2.5} />
+        </button>
       </div>
-    </SectionCard>
+    </section>
   );
 }
 
@@ -631,7 +736,7 @@ function QuickAccessGrid({
 function DashboardSkeleton() {
   return (
     <div className="space-y-4 animate-pulse">
-      <div className="h-20 rounded-2xl bg-slate-900/60 border border-slate-800/60" />
+      <div className="h-44 rounded-2xl bg-slate-900/60 border border-slate-800/60" />
       <div className="h-40 rounded-2xl bg-slate-900/60 border border-slate-800/60" />
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
         <div className="lg:col-span-3 space-y-4">
@@ -713,7 +818,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
     return (
       <div className="space-y-4">
-        <DashboardHeader miner={miner} wallet={wallet} />
         <EcosystemModulesStrip modules={ecosystemModules} />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">

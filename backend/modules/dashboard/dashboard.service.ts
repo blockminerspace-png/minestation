@@ -36,7 +36,7 @@ const ECOSYSTEM_MODULES: readonly DashboardEcosystemModule[] = [
   {
     id: 'workerrealm',
     title: 'WorkerRealm',
-    subtitle: 'Dungeons & Workers',
+    subtitle: 'Dungeons',
     imageUrl: null,
     href: 'https://workerrealm.com',
     external: true,
@@ -46,10 +46,10 @@ const ECOSYSTEM_MODULES: readonly DashboardEcosystemModule[] = [
     id: 'blockminer',
     title: 'BlockMiner',
     subtitle: 'Faucets & Tasks',
-    imageUrl: null,
+    imageUrl: '/img/parceiros/blockminer.png',
     href: 'https://blockminer.io',
     external: true,
-    status: 'coming_soon'
+    status: 'available'
   },
   {
     id: 'minecore',
