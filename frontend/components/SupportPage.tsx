@@ -33,6 +33,8 @@ import {
 
 type Props = {
   userEmail?: string | null;
+  /** Fallback quando email vazio (ex.: conta só com username). */
+  username?: string | null;
   onClose?: () => void;
 };
 
@@ -106,7 +108,7 @@ function mergeSupportPicks(
   return { next, rejectReason };
 }
 
-export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
+export const SupportPage: React.FC<Props> = ({ userEmail, username, onClose }) => {
   const supportMutateBusyRef = useRef(false);
   const [tab, setTab] = useState<Tab>('list');
   const [list, setList] = useState<MySupportTicketSummary[]>([]);
@@ -135,9 +137,9 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
       const st = await getSupportState({ limit: '50' });
       if (st?.account) {
         const hint = st.account.emailHint || st.account.username;
-        setAccountDisplay(hint || userEmail || null);
+        setAccountDisplay(hint || (userEmail && userEmail.trim()) || (username && username.trim()) || null);
       } else {
-        setAccountDisplay(userEmail || null);
+        setAccountDisplay((userEmail && userEmail.trim()) || (username && username.trim()) || null);
       }
       const rows = st?.tickets ?? [];
       setList(
@@ -154,7 +156,7 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
     } finally {
       setListLoading(false);
     }
-  }, [userEmail]);
+  }, [userEmail, username]);
 
   useEffect(() => {
     if (tab === 'list') loadList();
@@ -374,12 +376,15 @@ export const SupportPage: React.FC<Props> = ({ userEmail, onClose }) => {
         </div>
 
         <div className="p-4 sm:p-6">
-          {(accountDisplay || userEmail) && (
-            <p className="text-xs text-slate-500 mb-4">
-              Conta:{' '}
-              <span className="text-slate-300 font-mono">{accountDisplay || userEmail}</span>
-            </p>
-          )}
+          <p className="text-xs text-slate-500 mb-4">
+            Conta:{' '}
+            <span className="text-slate-300 font-mono">
+              {accountDisplay ||
+                (userEmail && userEmail.trim()) ||
+                (username && username.trim()) ||
+                'Conta sem email'}
+            </span>
+          </p>
 
           {tab === 'list' && (
             <div className="space-y-3">

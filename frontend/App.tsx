@@ -725,7 +725,11 @@ export default function App() {
     }
     // Níveis antigos podem não incluir `black_market` em allowedPages; se o P2P está ligado na economia, mostrar o separador.
     if (economySettings.blackMarketEnabled && !pages.includes('black_market')) {
-      return [...pages, 'black_market'];
+      pages = [...pages, 'black_market'];
+    }
+    // Suporte: sempre no menu para conta autenticada (não depende de `allowedPages` do nível, email, role, etc.).
+    if (user && !pages.includes('support')) {
+      pages = [...pages, 'support'];
     }
     return pages;
   };
@@ -737,7 +741,6 @@ export default function App() {
     const gated: Array<{ view: View; requiredPage: string }> = [
       { view: 'roleta', requiredPage: 'lucky_store' },
       { view: 'transparency', requiredPage: 'transparency' },
-      { view: 'support', requiredPage: 'support' },
       { view: 'partners', requiredPage: 'partners' },
     ];
     for (const { view, requiredPage } of gated) {
@@ -800,7 +803,7 @@ export default function App() {
       const fromUrl = gameViewFromEnglishPathname(window.location.pathname);
       const allowed = getAllowedPages();
       const calcOk = !isOperatorAdminOnly;
-      const ok = (v: View) => (v === 'calculator' ? calcOk : allowed.includes(v));
+      const ok = (v: View) => (v === 'calculator' ? calcOk : v === 'support' ? true : allowed.includes(v));
       if (fromUrl && ok(fromUrl)) {
         setCurrentView((prev) => (fromUrl !== prev ? fromUrl : prev));
         return;
@@ -829,7 +832,7 @@ export default function App() {
     const fromUrl = gameViewFromEnglishPathname(window.location.pathname);
     const allowed = getAllowedPages();
     const calcOk = !isOperatorAdminOnly;
-    const ok = (v: View) => (v === 'calculator' ? calcOk : allowed.includes(v));
+    const ok = (v: View) => (v === 'calculator' ? calcOk : v === 'support' ? true : allowed.includes(v));
     if (fromUrl && ok(fromUrl)) {
       setCurrentView((prev) => (fromUrl !== prev ? fromUrl : prev));
       return;
@@ -2768,7 +2771,7 @@ export default function App() {
                   {getAllowedPages().includes('partners') && (<button onClick={() => { goToGameView('partners'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Clapperboard size={16} /> {gameNav('partners')}</button>)}
                 </div>
               )}
-              <div className="max-w-7xl mx-auto hidden md:flex w-full max-w-full min-w-0 flex-wrap justify-center gap-x-0 gap-y-0.5 px-2 sm:px-3 py-1">
+              <div className="max-w-7xl mx-auto hidden md:flex w-full min-w-0 max-w-full flex-nowrap justify-start gap-x-0 overflow-x-auto overflow-y-hidden overscroll-x-contain px-2 py-1 touch-pan-x sm:px-3 [scrollbar-width:thin]">
                 {getAllowedPages().includes('servers') && (<button type="button" onClick={() => { goToGameView('servers'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={15} className="shrink-0" /> {gameNav('servers')}</button>)}
                 {getAllowedPages().includes('inventory') && (<button type="button" onClick={() => { goToGameView('inventory'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={15} className="shrink-0" /> {gameNav('inventory')}</button>)}
                 {getAllowedPages().includes('oficina') && (<button type="button" onClick={() => { goToGameView('oficina'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={15} className="shrink-0" /> {gameNav('oficina')}</button>)}
@@ -3035,11 +3038,15 @@ export default function App() {
                       <Footer />
                     </div>
                   )}
-                  {saveLoaded && currentView === 'support' && getAllowedPages().includes('support') && (
+                  {saveLoaded && currentView === 'support' && user && (
                     <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
                       <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <SupportPage userEmail={user?.email} onClose={() => goToGameView('servers')} />
+                          <SupportPage
+                            userEmail={user.email?.trim() ? user.email : undefined}
+                            username={user.username?.trim() ? user.username : undefined}
+                            onClose={() => goToGameView('servers')}
+                          />
                         </Suspense>
                       </div>
                       <Footer />
