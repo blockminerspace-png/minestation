@@ -763,8 +763,10 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
             {rewards && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-300">
                     <div className="bg-white dark:bg-slate-900 border border-orange-500 rounded-2xl shadow-[0_0_50px_rgba(194,65,12,0.3)] w-full max-w-md p-6 relative animate-in zoom-in-95 duration-300 flex flex-col items-center">
-                        <div className="absolute -top-10 left-1/2 -translate-x-1/2 bg-orange-600 text-white rounded-full p-4 shadow-lg border-4 border-slate-900 animate-bounce">
-                            <Gift size={32} />
+                        <div className="absolute -top-10 left-1/2 -translate-x-1/2">
+                            <div className="bg-orange-600 text-white rounded-full p-4 shadow-lg border-4 border-slate-900 animate-bounce">
+                                <Gift size={32} />
+                            </div>
                         </div>
 
                         <h3 className="mt-6 text-2xl font-black text-transparent bg-clip-text bg-gradient-to-r from-amber-500 to-orange-700 uppercase tracking-widest mb-2">
