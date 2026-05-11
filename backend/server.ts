@@ -7105,7 +7105,7 @@ app.get('/api/game-state/:email', async (req, res) => {
       dailyActions,
       stock,
       unopenedBoxes,
-      storedBatteries,
+      storedBatteries: dedupeStoredBatteriesByIdForGameState(storedBatteries),
       placedRacks,
       coinBalances,
       playerListings,
@@ -7120,6 +7120,23 @@ app.get('/api/game-state/:email', async (req, res) => {
     sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
   }
 });
+
+/** Primeira ocorrência ganha (ordem da query). Sem `id`, preserva a entrada (evita sumir linhas legadas). */
+function dedupeStoredBatteriesByIdForGameState<T extends { id?: unknown }>(list: T[]): T[] {
+  const out: T[] = [];
+  const seen = new Set<string>();
+  for (const b of list) {
+    const id = String(b?.id ?? '').trim();
+    if (!id) {
+      out.push(b);
+      continue;
+    }
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push(b);
+  }
+  return out;
+}
 
 const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
 
