@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useId } from 'react';
+import React, { useState, useEffect, useMemo, useId, useRef } from 'react';
 import { Sparkles, Gift } from 'lucide-react';
 import { WheelItem } from '../types';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
@@ -57,6 +57,18 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
   /** Marca o índice vencedor após o stop, para destacar visualmente o segmento. */
   const [winnerIdx, setWinnerIdx] = useState<number | null>(null);
 
+  /**
+   * Refs para o cálculo do giro: como o efeito de animação só pode reagir ao **início**
+   * de um giro (alteração de `mustSpin`/`targetWinner.id`), precisamos ler `items` e
+   * `onStopSpinning` no momento certo sem os colocar nas deps — caso contrário, qualquer
+   * refetch de catálogo (`gameUpgrades` no App) repropagava nova referência de `items`
+   * durante o giro, reiniciava o efeito e travava a roda em ~0,5 s.
+   */
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
+  const onStopRef = useRef(onStopSpinning);
+  onStopRef.current = onStopSpinning;
+
   const totalWeight = useMemo(
     () => Math.max(1e-9, items.reduce((a, b) => a + Math.max(0, Number(b.weight) || 0), 0)),
     [items]
@@ -83,45 +95,67 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
       ? `repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg ${sliceDeg - 0.75}deg, rgba(15,23,42,0.65) ${sliceDeg - 0.75}deg ${sliceDeg}deg)`
       : undefined;
 
+  /**
+   * Efeito de **arranque** do giro: depende exclusivamente de `mustSpin` virar `true` +
+   * id do `targetWinner`. `items`/`onStopSpinning` são lidos via ref para não reiniciar a
+   * animação a cada refetch externo (ex.: saldo USDC atualiza e App re-renderiza com
+   * nova ref de `gameUpgrades` → GameView refazia o `setItems`, o que antes invalidava
+   * esta deps e cancelava o `setTimeout`).
+   */
   useEffect(() => {
-    if (mustSpin && targetWinner && items.length > 0) {
-      let winnerStart = 0;
-      let winnerSize = 0;
-      let foundIdx = -1;
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i]!;
-        const deg = (Math.max(0, Number(item.weight) || 0) / totalWeight) * 360;
-        if (item.id === targetWinner.id) {
-          winnerSize = deg;
-          foundIdx = i;
-          break;
-        }
-        winnerStart += deg;
+    if (!mustSpin || !targetWinner) {
+      if (!mustSpin && !targetWinner) {
+        setWinnerIdx(null);
       }
-
-      const winnerCenter = winnerStart + winnerSize / 2;
-      const extraDeg = SPIN_EXTRA_TURNS * 360;
-      const targetRotation = extraDeg + (360 - winnerCenter);
-
-      const currentMod = rotation % 360;
-      const dist = targetRotation - currentMod;
-      const finalRotation = rotation + dist + (dist < 0 ? 360 : 0);
-
-      setWinnerIdx(null);
-      setRotation(finalRotation);
-
-      const timer = setTimeout(() => {
-        setWinnerIdx(foundIdx >= 0 ? foundIdx : null);
-        onStopSpinning();
-      }, SPIN_DURATION_MS);
-      return () => clearTimeout(timer);
+      return;
     }
-    if (!mustSpin && !targetWinner) {
-      setWinnerIdx(null);
+    const currentItems = itemsRef.current;
+    if (currentItems.length === 0) return;
+
+    const totalW = Math.max(
+      1e-9,
+      currentItems.reduce((a, b) => a + Math.max(0, Number(b.weight) || 0), 0)
+    );
+
+    let winnerStart = 0;
+    let winnerSize = 0;
+    let foundIdx = -1;
+    const targetId = targetWinner.id;
+    const targetItemId = targetWinner.itemId;
+    for (let i = 0; i < currentItems.length; i++) {
+      const item = currentItems[i]!;
+      const deg = (Math.max(0, Number(item.weight) || 0) / totalW) * 360;
+      const matches =
+        item.id === targetId || (targetItemId && item.itemId === targetItemId);
+      if (matches) {
+        winnerSize = deg;
+        foundIdx = i;
+        break;
+      }
+      winnerStart += deg;
     }
-    // `rotation` omitido de propósito: só reage a novo giro (mustSpin/targetWinner/items).
+
+    const winnerCenter = winnerStart + winnerSize / 2;
+    const extraDeg = SPIN_EXTRA_TURNS * 360;
+    const targetRotation = extraDeg + (360 - winnerCenter);
+
+    setWinnerIdx(null);
+    setRotation((prev) => {
+      const currentMod = ((prev % 360) + 360) % 360;
+      const dist = ((targetRotation - currentMod) % 360 + 360) % 360;
+      return prev + extraDeg + dist;
+    });
+
+    const timer = setTimeout(() => {
+      setWinnerIdx(foundIdx >= 0 ? foundIdx : null);
+      const fn = onStopRef.current;
+      fn?.();
+    }, SPIN_DURATION_MS);
+    return () => clearTimeout(timer);
+    // ATENÇÃO: deps mínimas; `items` e `onStopSpinning` lidos por ref para evitar
+    // que refetches do catálogo no App reiniciem a animação a meio.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mustSpin, targetWinner, items, onStopSpinning, totalWeight]);
+  }, [mustSpin, targetWinner?.id, targetWinner?.itemId]);
 
   return (
     <div

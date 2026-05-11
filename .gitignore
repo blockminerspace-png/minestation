@@ -36,6 +36,8 @@ backups/
 *.sql
 # Prisma migrations must be versioned
 !backend/prisma/migrations/**/*.sql
+# Manutenção idempotente — corre no vm-maintenance.sh
+!backend/scripts/*.sql
 *.rar
 *.zip
 

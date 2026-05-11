@@ -117,6 +117,12 @@ fi
 SQL_INTEGRITY_B64="$(base64 -w0 <"$ROOT/backend/scripts/ensure_stored_batteries_integrity.sql")"
 remote bash --noprofile --norc -lc "echo $(printf '%q' "$SQL_INTEGRITY_B64") | base64 -d | docker exec -i $(printf '%q' "$PG_CONTAINER") psql -U postgres -d $(printf '%q' "$PG_DATABASE") -v ON_ERROR_STOP=1"
 
+echo "[vm-maintenance] SQL: roleta — Pack de Pilhas AA -> 100 kW (idempotente)"
+if [[ -f "$ROOT/backend/scripts/ensure_wheel_prizes_replace_aa_with_100kw.sql" ]]; then
+  SQL_WHEEL_B64="$(base64 -w0 <"$ROOT/backend/scripts/ensure_wheel_prizes_replace_aa_with_100kw.sql")"
+  remote bash --noprofile --norc -lc "echo $(printf '%q' "$SQL_WHEEL_B64") | base64 -d | docker exec -i $(printf '%q' "$PG_CONTAINER") psql -U postgres -d $(printf '%q' "$PG_DATABASE") -v ON_ERROR_STOP=1 -q -t" >/dev/null
+fi
+
 echo "[vm-maintenance] Node: rewrite-img-paths-after-reorg.mjs"
 remote bash --noprofile --norc -lc "set -euo pipefail; cd $(printf '%q' "$REMOTE_REPO_DIR"); docker compose exec -T $(printf '%q' "$APP_SERVICE") sh -c 'cd /app/backend && node scripts/rewrite-img-paths-after-reorg.mjs'"
 
