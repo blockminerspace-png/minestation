@@ -133,6 +133,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
     return displayUpgrades
       .filter((u) => {
         if (filterType === 'all') return true;
+        if (filterType === 'nft') return !!u.isNft;
         return u.type === filterType;
       })
       .sort((a, b) => a.baseCost - b.baseCost);
@@ -195,9 +196,17 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
   );
 
   const handleAddToCart = (id: string, delta: number) => {
+    const u = displayUpgrades.find((x) => x.id === id);
+    if (u?.isNft) {
+      onShopNotice?.({
+        variant: 'info',
+        title: 'Lojinha Miner',
+        message: 'Itens NFT não são compráveis com USDC aqui. Usa a Carteira / Web3 do jogo para obter ou gerir NFTs.'
+      });
+      return;
+    }
     const current = qtyOnLines(cartLines, id);
     const newAmount = Math.max(0, current + delta);
-    const u = displayUpgrades.find((x) => x.id === id);
     if (u && u.status === 'limited' && newAmount > 0) {
       const max = u.maxGlobalStock ?? 0;
       const sold = u.totalSold ?? 0;
@@ -412,6 +421,17 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
             >
               <Wrench size={14} /> Carregadores
             </button>
+            <button
+              type="button"
+              onClick={() => setFilterType('nft')}
+              className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${
+                filterType === 'nft'
+                  ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400'
+                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
+              }`}
+            >
+              <Hexagon size={14} /> NFT
+            </button>
           </div>
 
           <div className="p-2 space-y-2 custom-scrollbar pb-4" style={{ WebkitOverflowScrolling: 'touch' }}>
@@ -431,6 +451,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
                   : [];
               const compText = rackNames.length ? rackNames.join(', ') : 'Qualquer rack compatível';
               const rowBusy = syncingProductId === upgrade.id;
+              const isNftRow = !!upgrade.isNft;
 
               const containerAspectRatio = isRack ? 'aspect-[5/6]' : isMachine ? 'aspect-video' : 'aspect-square';
 
@@ -490,11 +511,20 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
                       <div className="flex flex-col items-end shrink-0">
                         <div
                           className={`text-sm font-mono font-bold ${
-                            canAffordOne ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'
+                            isNftRow
+                              ? 'text-slate-400 dark:text-slate-500'
+                              : canAffordOne
+                                ? 'text-green-600 dark:text-green-400'
+                                : 'text-red-500 dark:text-red-400'
                           }`}
                         >
-                          ${formatCost(nextCost)}
+                          {isNftRow ? '—' : `$${formatCost(nextCost)}`}
                         </div>
+                        {isNftRow && (
+                          <span className="text-[9px] text-orange-500 dark:text-orange-400 font-bold uppercase mt-0.5">
+                            Web3
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -562,45 +592,60 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
                             </div>
                           </div>
                         )}
+                        {isNftRow && (
+                          <p className="text-[10px] text-orange-600/90 dark:text-orange-400/90 mt-1 leading-snug max-w-[14rem]">
+                            NFT: obtido via Carteira / fluxos Web3 — não é possível adicionar ao carrinho com USDC.
+                          </p>
+                        )}
                       </div>
 
-                      <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 rounded-lg p-1 border border-slate-200 dark:border-slate-800">
-                        <button
-                          type="button"
-                          onClick={() => handleAddToCart(upgrade.id, -1)}
-                          className="w-6 h-6 flex items-center justify-center rounded bg-white dark:bg-slate-800 hover:bg-red-100 dark:hover:bg-red-900/50 text-slate-600 dark:text-slate-400 hover:text-red-500 transition-colors disabled:opacity-30"
-                          disabled={inCart === 0 || rowBusy || shopLoading || !hardwareOpen || !isEnabled}
+                      {isNftRow ? (
+                        <div
+                          className="flex flex-col items-end justify-end shrink-0 max-w-[7.5rem] text-right text-[10px] text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-2 bg-slate-50 dark:bg-slate-900/80"
+                          title="Itens NFT não são compráveis na Lojinha com USDC."
                         >
-                          <Minus size={12} />
-                        </button>
-                        <span
-                          className={`text-xs font-mono font-bold w-6 text-center ${
-                            inCart > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'
-                          }`}
-                        >
-                          {inCart}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleAddToCart(upgrade.id, 1)}
-                          className="w-6 h-6 flex items-center justify-center rounded bg-white dark:bg-slate-800 hover:bg-green-100 dark:hover:bg-green-900/50 text-slate-600 dark:text-slate-400 hover:text-green-500 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-600"
-                          disabled={
-                            rowBusy ||
-                            shopLoading ||
-                            !hardwareOpen ||
-                            !isEnabled ||
-                            (upgrade.status === 'limited' &&
-                              (upgrade.totalSold || 0) + inCart >= (upgrade.maxGlobalStock || 0))
-                          }
-                          title={
-                            upgrade.status === 'limited' && (upgrade.totalSold || 0) + inCart >= (upgrade.maxGlobalStock || 0)
-                              ? 'Lote esgotado'
-                              : 'Adicionar ao carrinho'
-                          }
-                        >
-                          <Plus size={12} />
-                        </button>
-                      </div>
+                          <Hexagon size={14} className="text-orange-500 mx-auto mb-1" />
+                          <span className="font-bold uppercase text-[9px] text-orange-600 dark:text-orange-400">Só Web3</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-2 bg-slate-100 dark:bg-slate-950 rounded-lg p-1 border border-slate-200 dark:border-slate-800">
+                          <button
+                            type="button"
+                            onClick={() => handleAddToCart(upgrade.id, -1)}
+                            className="w-6 h-6 flex items-center justify-center rounded bg-white dark:bg-slate-800 hover:bg-red-100 dark:hover:bg-red-900/50 text-slate-600 dark:text-slate-400 hover:text-red-500 transition-colors disabled:opacity-30"
+                            disabled={inCart === 0 || rowBusy || shopLoading || !hardwareOpen || !isEnabled}
+                          >
+                            <Minus size={12} />
+                          </button>
+                          <span
+                            className={`text-xs font-mono font-bold w-6 text-center ${
+                              inCart > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-slate-400'
+                            }`}
+                          >
+                            {inCart}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleAddToCart(upgrade.id, 1)}
+                            className="w-6 h-6 flex items-center justify-center rounded bg-white dark:bg-slate-800 hover:bg-green-100 dark:hover:bg-green-900/50 text-slate-600 dark:text-slate-400 hover:text-green-500 transition-colors disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-slate-600"
+                            disabled={
+                              rowBusy ||
+                              shopLoading ||
+                              !hardwareOpen ||
+                              !isEnabled ||
+                              (upgrade.status === 'limited' &&
+                                (upgrade.totalSold || 0) + inCart >= (upgrade.maxGlobalStock || 0))
+                            }
+                            title={
+                              upgrade.status === 'limited' && (upgrade.totalSold || 0) + inCart >= (upgrade.maxGlobalStock || 0)
+                                ? 'Lote esgotado'
+                                : 'Adicionar ao carrinho'
+                            }
+                          >
+                            <Plus size={12} />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

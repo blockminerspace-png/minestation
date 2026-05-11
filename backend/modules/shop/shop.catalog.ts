@@ -3,7 +3,8 @@ import { normalizePublicAssetUrl } from '../../lib/publicAssetUrl.js';
 import type { ShopProductDto } from './shop.types.js';
 
 /**
- * Catálogo alinhado a `GET /api/upgrades` + filtros da Lojinha (sem NFT, mercado hardware).
+ * Catálogo alinhado a `GET /api/upgrades` + filtros da Lojinha (mercado hardware).
+ * Itens NFT entram na listagem para o jogador filtrar / consultar; checkout USDC continua bloqueado no API.
  */
 export async function loadHardwareShopProducts(isAdminUser: boolean): Promise<ShopProductDto[]> {
   const rows = await prisma.upgrades.findMany({
@@ -60,10 +61,15 @@ export async function loadHardwareShopProducts(isAdminUser: boolean): Promise<Sh
 export function filterProductsForMinerShop(products: ShopProductDto[]): ShopProductDto[] {
   const base = products.filter((u) => {
     if (u.status === 'legacy' || u.status === 'exclusive') return false;
-    if (u.isNft) return false;
     if (!u.isActive) return false;
     return true;
   });
-  const explicitHardware = base.filter((u) => u.sellInHardwareMarket);
-  return explicitHardware.length > 0 ? explicitHardware : base;
+  const nonNft = base.filter((u) => !u.isNft);
+  const explicitHardware = nonNft.filter((u) => u.sellInHardwareMarket);
+  const core = explicitHardware.length > 0 ? explicitHardware : nonNft;
+  const nftRows = base.filter((u) => u.isNft);
+  const byId = new Map<string, ShopProductDto>();
+  for (const p of core) byId.set(p.id, p);
+  for (const p of nftRows) byId.set(p.id, p);
+  return Array.from(byId.values());
 }
