@@ -7436,8 +7436,60 @@ async function handleSaveGamePost(req, res) {
         // they committed.
         const dbGsRes = await client.query('SELECT server_updated_at FROM game_states WHERE user_id = $1', [uid]);
         const dbServerUpdatedAt = Number(dbGsRes.rows[0]?.server_updated_at || 0);
-        if (!effectiveAdminOverride && changes.lastLoadTime && dbServerUpdatedAt > Number(changes.lastLoadTime)) {
-          throw new HttpControlledError(200, { forceReload: true });
+        const clientLastLoadTimeRaw = changes.lastLoadTime;
+        const clientLastLoadTime = Number(clientLastLoadTimeRaw);
+        const clientLastLoadTimeValid =
+          clientLastLoadTimeRaw != null && Number.isFinite(clientLastLoadTime) && clientLastLoadTime > 0;
+        const hasCriticalSliceFields =
+          saveDomain !== '' ||
+          changes.placedRacks !== undefined ||
+          changes.stock !== undefined ||
+          changes.storedBatteries !== undefined ||
+          changes.workshopSlots !== undefined ||
+          changes.unopenedBoxes !== undefined;
+        if (!effectiveAdminOverride && hasCriticalSliceFields && !clientLastLoadTimeValid) {
+          // Save legado sem versão verificável → estado anterior pode reintroduzir slots já libertados
+          // por mutação autoritativa (regressão de unequip → duplicação infinita no cliente).
+          if (process.env.GPU_DUP_DEBUG === '1') {
+            console.warn(
+              JSON.stringify({
+                event: '[GPU_DUP_DEBUG][save_game_rejected_stale]',
+                reason: 'missing_lastLoadTime',
+                userId: Number(uid),
+                saveDomain,
+                dbServerUpdatedAt,
+                clientLastLoadTime: clientLastLoadTimeRaw ?? null
+              })
+            );
+          }
+          throw new HttpControlledError(409, {
+            ok: false,
+            code: 'STATE_VERSION_CONFLICT',
+            forceReload: true,
+            error: 'O estado do jogo foi atualizado. Recarregue e tente novamente.',
+            serverStateVersion: dbServerUpdatedAt
+          });
+        }
+        if (!effectiveAdminOverride && clientLastLoadTimeValid && dbServerUpdatedAt > clientLastLoadTime) {
+          if (process.env.GPU_DUP_DEBUG === '1') {
+            console.warn(
+              JSON.stringify({
+                event: '[GPU_DUP_DEBUG][save_game_rejected_stale]',
+                reason: 'stale_clientLastLoadTime',
+                userId: Number(uid),
+                saveDomain,
+                dbServerUpdatedAt,
+                clientLastLoadTime
+              })
+            );
+          }
+          throw new HttpControlledError(409, {
+            ok: false,
+            code: 'STATE_VERSION_CONFLICT',
+            forceReload: true,
+            error: 'O estado do jogo foi atualizado. Recarregue e tente novamente.',
+            serverStateVersion: dbServerUpdatedAt
+          });
         }
 
         nftAutoSanitized = false;

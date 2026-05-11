@@ -78,6 +78,7 @@ import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
 import { RemoteBannerImage } from './components/RemoteBannerImage';
 import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
+import { gpuDupLog } from './utils/gpuDupDebug';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
 import { lazyWithReload } from './lib/lazyWithReload';
@@ -513,6 +514,14 @@ export default function App() {
   const currentViewRef = useRef<View>(currentView);
   const gamePathHydratedRef = useRef(false);
   const pendingSaveDomainRef = useRef<'full' | 'inventory' | 'servers' | 'workshop'>('full');
+  /**
+   * Geração lógica de mutações autoritativas (Servidores/Oficina). Cada intent bem-sucedida
+   * incrementa este contador para que `runPlayerSaveWithRetries` possa descartar saves legados
+   * em voo que capturaram um snapshot anterior (evita reintroduzir GPUs já libertadas do slot).
+   */
+  const serverIntentMutationGenRef = useRef(0);
+  /** Sinaliza ao debounce que não há mais saves legados úteis enquanto não houver nova alteração. */
+  const skipNextLegacySaveRef = useRef(false);
   /** Evita double-click / pedidos em paralelo na oficina (mutações servidor-authoritativas). */
   const workshopMutationBusyRef = useRef(false);
   /** Geração de pedido GET inventário — descarta respostas atrasadas ao mudar de separador. */
@@ -555,6 +564,12 @@ export default function App() {
             partial: r.partialChargeBatteries
           });
           setInventoryStackableCategories(r.stackableCategories);
+          gpuDupLog('inventory_load', {
+            stockSnapshot: Object.fromEntries(
+              Object.entries(r.stock || {}).filter(([, v]) => Number(v) > 0)
+            ),
+            intentGen: serverIntentMutationGenRef.current
+          });
           setGameState((p) => ({
             ...p,
             stock: { ...r.stock },
@@ -649,12 +664,26 @@ export default function App() {
         /502|503|504|522|network|fetch|failed|timeout|econnreset|socket/i.test(String(msg || ''));
 
       const domain = pendingSaveDomainRef.current;
+      const startGen = serverIntentMutationGenRef.current;
+      gpuDupLog('legacy_save_start', { domain, intentGen: startGen });
       for (let attempt = 0; attempt < 3; attempt++) {
-        const res = await apiSaveGameState(saveKey, gameStateRef.current, {
+        const payloadSnapshot = gameStateRef.current;
+        gpuDupLog('legacy_save_payload', {
+          domain,
+          attempt,
+          intentGen: startGen,
+          placedRacksCount: payloadSnapshot.placedRacks?.length ?? 0,
+          stockKeys: Object.keys(payloadSnapshot.stock || {}).length
+        });
+        const res = await apiSaveGameState(saveKey, payloadSnapshot, {
           domain: domain === 'full' ? undefined : domain
         });
+        // Se uma mutação autoritativa de Servidores ocorreu durante este save legado, descarta
+        // qualquer eco de estado (mesmo NFT-AUTO sanitised) — o servidor já é fonte da verdade.
+        const staleByIntent = serverIntentMutationGenRef.current !== startGen;
         if (res && res.forceReload) {
           pendingSaveDomainRef.current = 'full';
+          gpuDupLog('legacy_save_end', { result: 'forceReload', attempt, staleByIntent });
           await handleReloadGameState();
           return;
         }
@@ -666,11 +695,16 @@ export default function App() {
             continue;
           }
           console.error('[SaveGame]', errCode || errMsg);
+          gpuDupLog('legacy_save_end', { result: 'error', code: errCode, attempt, staleByIntent });
           if (showAlertOnHardFail) {
             if (errCode === 'LEGACY_SAVEGAME_CRITICAL_REJECTED') {
               alert(
                 'O servidor recusou um pedido legado que alterava estado crítico. Recarregámos o estado; use só as acções do jogo suportadas (intenções / rotas novas).'
               );
+            } else if (errCode === 'STATE_VERSION_CONFLICT') {
+              // Caso esperado quando há corrida com mutação autoritativa de Servidores/Oficina:
+              // não alarmar o utilizador — o reload abaixo já sincroniza o estado.
+              console.warn('[SaveGame] STATE_VERSION_CONFLICT — A recarregar o estado.');
             } else if (errCode === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
               alert('Conflito de idempotência: não reutilize a mesma chave com um pedido diferente.');
             } else {
@@ -681,7 +715,10 @@ export default function App() {
           await handleReloadGameState();
           return;
         }
-        applyNftAutoSanitizedClientSync(res, gameStateRef, setGameState);
+        if (!staleByIntent) {
+          applyNftAutoSanitizedClientSync(res, gameStateRef, setGameState);
+        }
+        gpuDupLog('legacy_save_end', { result: 'ok', attempt, staleByIntent });
         pendingSaveDomainRef.current = 'full';
         return;
       }
@@ -694,6 +731,14 @@ export default function App() {
     const canAutosave =
       Boolean(user?.email?.trim()) || (user?.id != null && String(user.id).trim() !== '');
     if (saveTrigger === 0 || !canAutosave || user.isAdmin || !saveLoaded) return;
+    // Mutação autoritativa (Servidores/Oficina) já gravou o estado no servidor e devolveu o snapshot:
+    // qualquer save legado em fila usaria um snapshot anterior e re-introduziria slots/stock obsoletos.
+    if (skipNextLegacySaveRef.current) {
+      skipNextLegacySaveRef.current = false;
+      pendingSaveDomainRef.current = 'full';
+      gpuDupLog('legacy_save_skipped_after_intent', { intentGen: serverIntentMutationGenRef.current });
+      return;
+    }
     const timeout = setTimeout(() => {
       void runPlayerSaveWithRetries(true);
     }, 500); // 500ms debounce
@@ -1676,6 +1721,8 @@ export default function App() {
           alert(out.error || 'Não foi possível colocar a rig.');
           return;
         }
+        serverIntentMutationGenRef.current += 1;
+        skipNextLegacySaveRef.current = true;
         setGameState((p) => ({
           ...p,
           stock: { ...out.stock },
@@ -1702,6 +1749,8 @@ export default function App() {
         alert(out.error || 'Não foi possível desmontar a rig.');
         return;
       }
+      serverIntentMutationGenRef.current += 1;
+      skipNextLegacySaveRef.current = true;
       setGameState((p) => ({
         ...p,
         stock: { ...out.stock },
@@ -1716,6 +1765,7 @@ export default function App() {
   const handleEquipMiner = useCallback(async (rid: string, idx: number, mid: string) => {
     if (!user?.email || rackAuxIntentBusyRef.current) return;
     rackAuxIntentBusyRef.current = true;
+    gpuDupLog('before_equip', { rackId: rid, slotIndex: idx, itemId: mid });
     try {
       const out = await postServersRackMinerEquip(rid, idx, mid);
       if (out.ok !== true) {
@@ -1723,6 +1773,17 @@ export default function App() {
         alert(out.error || 'Não foi possível instalar a GPU.');
         return;
       }
+      serverIntentMutationGenRef.current += 1;
+      skipNextLegacySaveRef.current = true;
+      gpuDupLog('after_equip_response', {
+        rackId: rid,
+        slotIndex: idx,
+        itemId: mid,
+        stateVersion: out.stateVersion,
+        rackSlots: out.placedRacks.find((r) => r.id === rid)?.slots ?? null,
+        stockDelta: out.stock[mid] ?? null,
+        intentGen: serverIntentMutationGenRef.current
+      });
       setGameState((p) => ({
         ...p,
         stock: out.stock,
@@ -1737,6 +1798,11 @@ export default function App() {
   const handleUnequipMiner = useCallback(async (rid: string, idx: number) => {
     if (!user?.email || rackAuxIntentBusyRef.current) return;
     rackAuxIntentBusyRef.current = true;
+    gpuDupLog('before_unequip', {
+      rackId: rid,
+      slotIndex: idx,
+      currentSlot: gameStateRef.current.placedRacks.find((r) => r.id === rid)?.slots?.[idx] ?? null
+    });
     try {
       const out = await postServersRackMinerUnequip(rid, idx);
       if (out.ok !== true) {
@@ -1744,12 +1810,26 @@ export default function App() {
         alert(out.error || 'Não foi possível remover a GPU.');
         return;
       }
+      serverIntentMutationGenRef.current += 1;
+      skipNextLegacySaveRef.current = true;
+      const rackOut = out.placedRacks.find((r) => r.id === rid);
+      gpuDupLog('after_unequip_response', {
+        rackId: rid,
+        slotIndex: idx,
+        stateVersion: out.stateVersion,
+        rackSlots: rackOut?.slots ?? null,
+        stockSnapshot: Object.fromEntries(
+          Object.entries(out.stock).filter(([, v]) => Number(v) > 0)
+        ),
+        intentGen: serverIntentMutationGenRef.current
+      });
       setGameState((p) => ({
         ...p,
         stock: out.stock,
         storedBatteries: out.storedBatteries,
         placedRacks: out.placedRacks
       }));
+      gpuDupLog('after_set_state', { rackId: rid, slotIndex: idx, intentGen: serverIntentMutationGenRef.current });
     } finally {
       rackAuxIntentBusyRef.current = false;
     }
@@ -1760,6 +1840,8 @@ export default function App() {
       if (!user?.email || rackAuxIntentBusyRef.current) return;
       rackAuxIntentBusyRef.current = true;
       const applyServer = (out: ServersRackAuxIntentOk) => {
+        serverIntentMutationGenRef.current += 1;
+        skipNextLegacySaveRef.current = true;
         setGameState((p) => ({
           ...p,
           stock: out.stock,
@@ -1817,6 +1899,8 @@ export default function App() {
       if (!user?.email || rackAuxIntentBusyRef.current) return;
       rackAuxIntentBusyRef.current = true;
       const applyServer = (out: ServersRackAuxIntentOk) => {
+        serverIntentMutationGenRef.current += 1;
+        skipNextLegacySaveRef.current = true;
         setGameState((p) => ({
           ...p,
           stock: out.stock,

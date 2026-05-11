@@ -217,6 +217,18 @@ async function runRackAuxMutation(
         }
       };
     }
+    if (process.env.GPU_DUP_DEBUG === '1') {
+      console.log(
+        JSON.stringify({
+          event: '[GPU_DUP_DEBUG][game_state_get]',
+          userId,
+          scope,
+          rackId,
+          dbVersion,
+          clientStateVersion
+        })
+      );
+    }
 
     // Same `pg` client: não usar Promise.all — queries em paralelo corrompem o fluxo do driver.
     const stock = await loadUserStock(client, userId);
@@ -255,10 +267,40 @@ async function runRackAuxMutation(
     };
 
     const rackHints = rackBatteryCatalogHintsFromPlacedRacks(prev.placedRacks);
+    if (process.env.GPU_DUP_DEBUG === '1') {
+      const rackPrev = prev.placedRacks.find((r) => r.id === rackId);
+      console.log(
+        JSON.stringify({
+          event: '[GPU_DUP_DEBUG][unequip_prev]',
+          userId,
+          scope,
+          rackId,
+          stockSnapshot: Object.fromEntries(
+            Object.entries(prev.stock).filter(([, v]) => Number(v) > 0)
+          ),
+          rackSlots: rackPrev?.slots ?? null
+        })
+      );
+    }
     const out = apply(prev, upgrades, rackHints);
     if (!out.ok) {
       await client.query('ROLLBACK');
       return { status: 400, body: { ok: false, error: out.error } };
+    }
+    if (process.env.GPU_DUP_DEBUG === '1') {
+      const rackOut = out.placedRacks.find((r) => r.id === rackId);
+      console.log(
+        JSON.stringify({
+          event: '[GPU_DUP_DEBUG][unequip_out]',
+          userId,
+          scope,
+          rackId,
+          stockSnapshot: Object.fromEntries(
+            Object.entries(out.stock).filter(([, v]) => Number(v) > 0)
+          ),
+          rackSlots: rackOut?.slots ?? null
+        })
+      );
     }
 
     const rackVal = await validatePlacedRacksForSave(client, out.placedRacks, userId);
