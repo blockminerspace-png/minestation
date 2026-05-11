@@ -486,22 +486,25 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                                 <div className="w-full text-left relative z-10">
                                     <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conteúdo</div>
                                     <div className="space-y-1">
-                                        {(box.items || []).map((it: any, idx: number) => {
+                                        {(box.items || []).filter((it: any) => it.type !== 'bundle').map((it: any, idx: number) => {
                                             const isCurrency = it.type === 'currency';
                                             const isCoin = it.type === 'coin';
                                             const itemDef = !isCurrency && !isCoin ? upgrades.find(u => u.id === it.id) : null;
                                             const name = isCurrency ? 'USDC' : (isCoin ? it.id.toUpperCase() : (itemDef?.name || it.id));
                                             const icon = isCurrency ? '💵' : (isCoin ? '🪙' : (itemDef?.icon || '📦'));
+                                            const isUpgradePackage = box.trigger === 'upgrade_package';
                                             return (
                                                 <div key={idx} className="flex items-center gap-2 bg-slate-50 dark:bg-slate-950/40 border border-slate-200 dark:border-slate-800 rounded p-2 text-[12px]">
                                                     <span className="text-base flex items-center justify-center w-5 h-5">{renderIcon(icon, "text-base", "w-4 h-4")}</span>
                                                     <span className="flex-1 text-slate-700 dark:text-slate-300">{name}</span>
-                                                    <span className="font-mono text-slate-600 dark:text-slate-400">x{it.minQty}-{it.maxQty}</span>
-                                                    <span className="text-yellow-600 dark:text-yellow-400 font-mono">{Math.round(it.probability)}%</span>
+                                                    <span className="font-mono text-slate-600 dark:text-slate-400">{isUpgradePackage ? `x${it.minQty}` : `x${it.minQty}-${it.maxQty}`}</span>
+                                                    {!isUpgradePackage && (
+                                                        <span className="text-yellow-600 dark:text-yellow-400 font-mono">{Math.round(it.probability)}%</span>
+                                                    )}
                                                 </div>
                                             );
                                         })}
-                                        {(box.items || []).length === 0 && (
+                                        {(box.items || []).filter((it: any) => it.type !== 'bundle').length === 0 && (
                                             <div className="text-[12px] text-slate-500">
                                                 {box.trigger === 'roleta_code'
                                                     ? 'O prémio é definido na roleta: use um código de resgate e gire antes de receber a caixa de prémio.'
@@ -667,11 +670,13 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                                 <div className="w-full text-left mb-3">
                                     <div className="text-[11px] uppercase tracking-wider text-slate-500 mb-2">Conteúdo</div>
                                     <div className="space-y-1">
-                                        {effectiveLootBoxItems(box, upgrades).map((it, idx) => {
+                                        {effectiveLootBoxItems(box, upgrades).filter((it) => it.type !== 'bundle').map((it, idx) => {
                                             const isCurrency = it.type === 'currency';
-                                            const itemDef = !isCurrency ? upgrades.find((u) => u.id === it.id) : null;
-                                            const name = isCurrency ? 'USDC' : itemDef?.name || it.id;
-                                            const icon = isCurrency ? '💵' : itemDef?.icon || '📦';
+                                            const isCoin = it.type === 'coin';
+                                            const itemDef = !isCurrency && !isCoin ? upgrades.find((u) => u.id === it.id) : null;
+                                            const name = isCurrency ? 'USDC' : isCoin ? it.id.toUpperCase() : itemDef?.name || it.id;
+                                            const icon = isCurrency ? '💵' : isCoin ? '🪙' : itemDef?.icon || '📦';
+                                            const isUpgradePackage = box.trigger === 'upgrade_package';
                                             return (
                                                 <div
                                                     key={idx}
@@ -682,15 +687,17 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                                                     </span>
                                                     <span className="flex-1 text-slate-700 dark:text-slate-300">{name}</span>
                                                     <span className="font-mono text-slate-600 dark:text-slate-400">
-                                                        x{it.minQty}-{it.maxQty}
+                                                        {isUpgradePackage ? `x${it.minQty}` : `x${it.minQty}-${it.maxQty}`}
                                                     </span>
-                                                    <span className="text-yellow-600 dark:text-yellow-400 font-mono">
-                                                        {Math.round(it.probability)}%
-                                                    </span>
+                                                    {!isUpgradePackage && (
+                                                        <span className="text-yellow-600 dark:text-yellow-400 font-mono">
+                                                            {Math.round(it.probability)}%
+                                                        </span>
+                                                    )}
                                                 </div>
                                             );
                                         })}
-                                        {effectiveLootBoxItems(box, upgrades).length === 0 && (
+                                        {effectiveLootBoxItems(box, upgrades).filter((it) => it.type !== 'bundle').length === 0 && (
                                             <div className="text-[12px] text-slate-500">
                                                 {box.trigger === 'roleta_code'
                                                     ? 'Prémio pela roleta após resgatar um código — não há lista fixa de itens.'

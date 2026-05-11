@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { prisma } from '../../config/prisma.js';
 import { stableIntentFingerprint } from '../../lib/gameIntentIdempotencyPrisma.js';
-import { grantAdminUpgradeRewardsInTx } from '../../models/adminUpgradeGrantModel.js';
+import { materializeUpgradePackageAsLootBoxInTx } from '../../models/adminUpgradeGrantModel.js';
 import { RoletaAppError } from '../../validation/roletaValidation.js';
 import { parseUpgradePackageId, usdcDecimalFromRow } from './upgrades.catalog.js';
 
@@ -14,6 +14,8 @@ export type UpgradePurchaseOk = {
   newUsdc: number;
   idempotentReplay: boolean;
   packageVersion: number;
+  /** Caixa criada para o pacote (`Caixas da Sorte`). */
+  box?: { id: string; name: string; quantity: number };
 };
 
 function buildIdemPayload(ok: UpgradePurchaseOk): string {
@@ -270,7 +272,17 @@ export async function runUpgradePackagePurchase(args: {
         throw e;
       }
 
-      await grantAdminUpgradeRewardsInTx(userId, upgrade.id, tx);
+      /**
+       * Em vez de entregar items / moedas / passes / acesso directamente,
+       * materializamos o pacote como **uma caixa única** em `loot_boxes` e
+       * incrementamos `unopened_boxes` em +1. A entrega real acontece quando
+       * o jogador abrir a caixa em "Caixas da Sorte" (linha bundle =>
+       * `grantAdminUpgradeRewardsInTx`).
+       */
+      const created = await materializeUpgradePackageAsLootBoxInTx(tx, {
+        userId,
+        upgradeId: upgrade.id
+      });
 
       const finalGs = await tx.game_states.findUnique({
         where: { user_id: userId },
@@ -287,7 +299,8 @@ export async function runUpgradePackagePurchase(args: {
         ok: true,
         newUsdc,
         idempotentReplay: false,
-        packageVersion: fresh?.version ?? upgrade.version
+        packageVersion: fresh?.version ?? upgrade.version,
+        box: { id: created.boxId, name: created.boxName, quantity: 1 }
       };
 
       if (idemKey) {

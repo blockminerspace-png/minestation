@@ -2948,7 +2948,14 @@ export async function getUpgradesState(): Promise<UpgradesStatePayload | null> {
 }
 
 export type UpgradesPurchaseResult =
-  | { ok: true; newUsdc: number; idempotentReplay: boolean; packageVersion: number }
+  | {
+      ok: true;
+      newUsdc: number;
+      idempotentReplay: boolean;
+      packageVersion: number;
+      /** Caixa criada para o pacote em Caixas da Sorte. */
+      box?: { id: string; name: string; quantity: number };
+    }
   | { ok: false; error?: string; status?: number; missing?: number };
 
 /** Compra de pacote (Upgrades) — idempotência obrigatória. */
@@ -2983,11 +2990,27 @@ export async function postUpgradesPurchase(params: {
         missing
       };
     }
+    const boxRaw = json.box;
+    const box =
+      boxRaw && typeof boxRaw === 'object' && boxRaw !== null
+        ? {
+            id: typeof (boxRaw as Record<string, unknown>).id === 'string' ? String((boxRaw as Record<string, unknown>).id) : '',
+            name:
+              typeof (boxRaw as Record<string, unknown>).name === 'string'
+                ? String((boxRaw as Record<string, unknown>).name)
+                : '',
+            quantity:
+              typeof (boxRaw as Record<string, unknown>).quantity === 'number'
+                ? Number((boxRaw as Record<string, unknown>).quantity)
+                : 1
+          }
+        : undefined;
     return {
       ok: true,
       newUsdc: typeof json.newUsdc === 'number' ? json.newUsdc : 0,
       idempotentReplay: json.idempotentReplay === true,
-      packageVersion: typeof json.packageVersion === 'number' ? json.packageVersion : 1
+      packageVersion: typeof json.packageVersion === 'number' ? json.packageVersion : 1,
+      box: box && box.id ? box : undefined
     };
   } catch {
     return { ok: false, error: 'Erro de rede' };

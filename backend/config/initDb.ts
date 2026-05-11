@@ -794,6 +794,15 @@ export const initDb = async () => {
       ALTER TABLE referral_models ADD COLUMN IF NOT EXISTS black_market_commission_percent DOUBLE PRECISION DEFAULT 0;
     `);
 
+    /**
+     * `admin_upgrade_passes.qty` foi declarada no schema Prisma mas o `CREATE TABLE` em BDs antigas
+     * não a criou; sem ela qualquer `findMany` Prisma (SELECT *) em entrega de pacote dispara
+     * `column does not exist` e a UI vê "Erro ao processar o pedido.".
+     */
+    await client.query(`
+      ALTER TABLE admin_upgrade_passes ADD COLUMN IF NOT EXISTS qty INTEGER NOT NULL DEFAULT 1;
+    `);
+
     await client.query(`
       ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS power_capacity_wh DOUBLE PRECISION;
       ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS display_name TEXT;

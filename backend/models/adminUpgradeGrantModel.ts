@@ -73,6 +73,157 @@ export async function grantPassRewardsInTx(
 const GENESIS_BUNDLE_UPGRADE_ID = '53f0c699-0471-4e65-a147-17064e3aafe0';
 const GENESIS_ROOM_ID = 'room_1765936323521';
 
+/** Prefixo do ID da caixa criada a partir de um pacote de upgrade. */
+export const UPGRADE_PACKAGE_BOX_TRIGGER = 'upgrade_package';
+/** Aceita apenas chars suportados por `parseLootBoxId` (`[a-zA-Z0-9_.-]+`). */
+function upgradePackageBoxIdFromUpgradeId(upgradeId: string): string {
+  const safe = String(upgradeId || '').trim().replace(/[^a-zA-Z0-9_.-]/g, '_');
+  return `upgrade_pkg_${safe}`.slice(0, 200);
+}
+
+type LootBoxItemDraft = {
+  item_type: string;
+  item_id: string;
+  min_qty: number;
+  max_qty: number;
+  probability: number;
+};
+
+/**
+ * Materializa um pacote de upgrade como **uma única caixa** em `loot_boxes` e
+ * incrementa `unopened_boxes` do utilizador em +1.
+ *
+ * Estrutura da caixa:
+ * - 1 linha de entrega (`item_type='bundle'`, `probability=100`) que, na abertura,
+ *   delega em `grantAdminUpgradeRewardsInTx` (USDC + moedas + items + passes + access).
+ * - N linhas de display (`probability=0`) para o frontend mostrar o conteúdo nominal
+ *   sem afetar o sorteio.
+ */
+export async function materializeUpgradePackageAsLootBoxInTx(
+  tx: Prisma.TransactionClient,
+  args: { userId: number; upgradeId: string }
+): Promise<{ boxId: string; boxName: string }> {
+  const { userId, upgradeId } = args;
+  const upgrade = await tx.admin_upgrades.findUnique({ where: { id: upgradeId } });
+  if (!upgrade) {
+    throw new Error('Upgrade não encontrado ao materializar caixa.');
+  }
+
+  const boxId = upgradePackageBoxIdFromUpgradeId(upgrade.id);
+  const baseName = String(upgrade.name || '').trim();
+  const boxName = (baseName ? `Pacote ${baseName}` : `Pacote ${upgrade.id}`).slice(0, 200);
+  /**
+   * Mantemos o sufixo `upgrade_package:<id>` machine-readable para troubleshooting,
+   * mas prefixamos um título amigável que o frontend mostra acima do conteúdo do card.
+   */
+  const description = `Pacote de upgrade · abra para receber o conteúdo. (upgrade_package:${upgrade.id})`;
+  /** Ícone reutilizável; nada exige asset dedicado para pacotes. */
+  const icon = '/img/lootboxes/upgrade_package.png';
+
+  await tx.loot_boxes.upsert({
+    where: { id: boxId },
+    create: {
+      id: boxId,
+      name: boxName,
+      description,
+      price: 0,
+      trigger: UPGRADE_PACKAGE_BOX_TRIGGER,
+      icon,
+      /** Mantemos `is_active=0` para não aparecer na loja (`shop/shop_once/special`); inventário ignora este filtro. */
+      is_active: 0,
+      stock: null,
+      max_per_order: 1,
+      max_per_user: null
+    },
+    update: {
+      name: boxName,
+      description,
+      trigger: UPGRADE_PACKAGE_BOX_TRIGGER,
+      is_active: 0
+    }
+  });
+
+  const [adminItems, adminCoins, adminBoxes] = await Promise.all([
+    tx.admin_upgrade_items.findMany({ where: { upgrade_id: upgrade.id } }),
+    tx.admin_upgrade_coins.findMany({ where: { upgrade_id: upgrade.id } }),
+    tx.admin_upgrade_boxes.findMany({ where: { upgrade_id: upgrade.id } })
+  ]);
+
+  const drafts: LootBoxItemDraft[] = [];
+
+  drafts.push({
+    item_type: 'bundle',
+    item_id: upgrade.id,
+    min_qty: 1,
+    max_qty: 1,
+    probability: 100
+  });
+
+  for (const it of adminItems) {
+    const q = Math.max(0, Math.floor(Number(it.qty) || 0));
+    if (q <= 0) continue;
+    drafts.push({
+      item_type: 'item',
+      item_id: String(it.item_id),
+      min_qty: q,
+      max_qty: q,
+      probability: 0
+    });
+  }
+
+  const usdc = Math.max(0, Number(upgrade.grant_usdc ?? 0));
+  if (Number.isFinite(usdc) && usdc > 0) {
+    drafts.push({
+      item_type: 'currency',
+      item_id: 'usdc',
+      min_qty: Math.floor(usdc),
+      max_qty: Math.floor(usdc),
+      probability: 0
+    });
+  }
+
+  for (const c of adminCoins) {
+    const amt = Math.max(0, Math.floor(Number(c.amount) || 0));
+    if (amt <= 0) continue;
+    drafts.push({
+      item_type: 'coin',
+      item_id: String(c.coin_id),
+      min_qty: amt,
+      max_qty: amt,
+      probability: 0
+    });
+  }
+
+  /**
+   * Caixas-recompensa (outras loot_boxes incluídas pelo pacote) ficam fora do display
+   * para evitar nomes desconhecidos no card; continuam a ser entregues no `open` via
+   * `grantAdminUpgradeRewardsInTx` (linha bundle).
+   */
+  void adminBoxes;
+
+  await tx.loot_box_items.deleteMany({ where: { box_id: boxId } });
+  if (drafts.length > 0) {
+    await tx.loot_box_items.createMany({
+      data: drafts.map((d) => ({
+        box_id: boxId,
+        item_type: d.item_type,
+        item_id: d.item_id,
+        min_qty: d.min_qty,
+        max_qty: d.max_qty,
+        probability: d.probability
+      }))
+    });
+  }
+
+  await tx.unopened_boxes.upsert({
+    where: { user_id_box_id: { user_id: userId, box_id: boxId } },
+    create: { user_id: userId, box_id: boxId, qty: 1 },
+    update: { qty: { increment: 1 } }
+  });
+
+  return { boxId, boxName };
+}
+
 /**
  * Concede um pacote admin (loja / promo) dentro de uma transação Prisma.
  * Concede pacote admin (única implementação usada em Prisma).

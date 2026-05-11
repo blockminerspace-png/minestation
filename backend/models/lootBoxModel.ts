@@ -318,8 +318,14 @@ export async function executeLootBoxOpenInTransaction(
     );
   }
 
-  const isRegistrationBox = String(boxDef.trigger || '') === 'registration';
-  const { rewards, gainedUsdc, gainedItems, gainedCoins, gainedBundles } = isRegistrationBox
+  /**
+   * `registration` (caixa inicial) e `upgrade_package` (compra em /upgrades) entregam
+   * TODOS os items configurados, não sorteiam apenas um. As linhas com `probability=0`
+   * existem apenas para display no card e são ignoradas pelo `rollLootBoxGrantAll`.
+   */
+  const trig = String(boxDef.trigger || '');
+  const useGrantAll = trig === 'registration' || trig === 'upgrade_package';
+  const { rewards, gainedUsdc, gainedItems, gainedCoins, gainedBundles } = useGrantAll
     ? rollLootBoxGrantAll(items)
     : rollLootBoxOnce(items);
 

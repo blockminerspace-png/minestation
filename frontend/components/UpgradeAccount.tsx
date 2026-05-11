@@ -12,6 +12,7 @@ import {
   type UpgradesStatePayload
 } from '../services/api';
 import { appendUsdcShortfallLine, looksLikeInsufficientUsdcMessage } from '../utils/playerMoneyMessages';
+import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
 
 interface UpgradeAccountProps {
   user: User;
@@ -21,7 +22,15 @@ interface UpgradeAccountProps {
   onSuggestDeposit?: (amount: number) => void;
   onPassPurchased?: (seasonId: string, passId: string, newUsdc: number) => void;
   onReloadGameState?: () => void;
+  /** Permite navegar para a aba "Caixas da Sorte" após sucesso de compra. */
+  onGoToLuckyBoxes?: () => void;
 }
+
+type PurchaseSuccess = {
+  packageName: string;
+  boxName: string | null;
+  itemsPreview: string[];
+};
 
 /** Lista branca para descrições HTML vindas do admin (UpgradeAccount). */
 const RICH_HTML_PURIFY: Config = {
@@ -155,11 +164,14 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
   usdcBalance: _usdcBalance = 0,
   onSuggestDeposit,
   onPassPurchased,
-  onReloadGameState
+  onReloadGameState,
+  onGoToLuckyBoxes
 }) => {
   const [upgradesState, setUpgradesState] = useState<UpgradesStatePayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [purchaseBusyId, setPurchaseBusyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState<UiNotice | null>(null);
+  const [purchaseSuccess, setPurchaseSuccess] = useState<PurchaseSuccess | null>(null);
 
   const reloadState = useCallback(async () => {
     if (!user?.email) {
@@ -199,18 +211,31 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
       if (onReloadGameState) await onReloadGameState();
       if (onPassPurchased) onPassPurchased('', '', res.newUsdc);
       await reloadState();
-      alert(`Pacote adquirido: ${pkg.name}`);
+      const itemsPreview = (pkg.itemsPreview || []).map((row) => `${row.quantity}x ${row.label}`);
+      setPurchaseSuccess({
+        packageName: pkg.name,
+        boxName: res.box?.name || `Pacote ${pkg.name}`,
+        itemsPreview
+      });
       return;
     }
     if (res.status === 409 || res.status === 422) {
       await reloadState();
-      alert(res.error || 'Esta oferta foi atualizada, tente novamente.');
+      setNotice({
+        variant: 'info',
+        title: 'Oferta atualizada',
+        message: res.error || 'Esta oferta foi atualizada, recarregue e tente novamente.'
+      });
       return;
     }
     if (res.missing != null && onSuggestDeposit) {
       onSuggestDeposit(parseFloat(String(res.missing)));
     }
-    alert(appendUsdcShortfallLine(res.error || 'Falha na compra.', res.missing));
+    setNotice({
+      variant: 'error',
+      title: 'Não foi possível concluir a compra',
+      message: appendUsdcShortfallLine(res.error || 'Falha na compra.', res.missing)
+    });
   };
 
   const packages = upgradesState?.packages ?? [];
@@ -389,6 +414,69 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
           </div>
         )}
       </div>
+
+      <UiNoticeModal notice={notice} onClose={() => setNotice(null)} overlayZClassName="z-[150]" />
+
+      {purchaseSuccess ? (
+        <div
+          className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Pacote adquirido"
+          onClick={() => setPurchaseSuccess(null)}
+        >
+          <div
+            className="relative w-full max-w-md rounded-2xl border border-emerald-600/60 bg-slate-900 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 inline-flex rounded-full bg-emerald-500/20 p-2 text-emerald-400">
+              <Gift size={22} aria-hidden />
+            </div>
+            <h3 className="mb-2 text-base font-black uppercase tracking-wide text-white">Pacote adquirido!</h3>
+            <p className="text-sm leading-relaxed text-slate-300">
+              {purchaseSuccess.boxName ? (
+                <>
+                  Sua caixa <span className="font-bold text-emerald-300">{purchaseSuccess.boxName}</span> foi
+                  enviada para <span className="font-bold text-amber-300">Caixas da Sorte</span>. Abra-a para receber os itens.
+                </>
+              ) : (
+                <>Sua caixa foi enviada para Caixas da Sorte. Abra-a para receber os itens.</>
+              )}
+            </p>
+            {purchaseSuccess.itemsPreview.length > 0 ? (
+              <div className="mt-4 max-h-48 overflow-y-auto rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                <div className="mb-2 text-[10px] font-black uppercase tracking-[0.18em] text-slate-500">Conteúdo</div>
+                <ul className="space-y-1">
+                  {purchaseSuccess.itemsPreview.map((line, i) => (
+                    <li key={i} className="text-xs text-slate-200">• {line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row">
+              {onGoToLuckyBoxes ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPurchaseSuccess(null);
+                    onGoToLuckyBoxes();
+                  }}
+                  className="w-full rounded-xl bg-amber-500 py-2.5 text-xs font-black uppercase tracking-widest text-slate-950 transition hover:bg-amber-400 sm:flex-1"
+                >
+                  Ir para Caixas da Sorte
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setPurchaseSuccess(null)}
+                className="w-full rounded-xl bg-slate-800 py-2.5 text-xs font-black uppercase tracking-widest text-white transition hover:bg-slate-700 sm:flex-1"
+              >
+                Continuar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 };

@@ -624,7 +624,15 @@ export default function App() {
       setGameState(p => ({ ...p, unopenedBoxes: newBoxes }));
     }
 
-    const [gs, freshUpgrades] = await Promise.all([apiGetGameState('me'), getUpgrades()]);
+    /**
+     * Recarrega também o catálogo de loot boxes: a compra de pacotes em /upgrades cria
+     * caixas dinâmicas (`upgrade_pkg_*`) que precisam aparecer no inventário imediatamente.
+     */
+    const [gs, freshUpgrades, freshLootBoxes] = await Promise.all([
+      apiGetGameState('me'),
+      getUpgrades(),
+      getLootBoxes()
+    ]);
     const { data } = gs;
     if (data) {
       const label =
@@ -635,6 +643,9 @@ export default function App() {
     }
     if (Array.isArray(freshUpgrades)) {
       setGameUpgrades(freshUpgrades);
+    }
+    if (Array.isArray(freshLootBoxes)) {
+      setLootBoxDefs(freshLootBoxes);
     }
   }, [user]);
 
@@ -3097,7 +3108,7 @@ export default function App() {
                     <div className="flex-1 flex flex-col">
                       <div className="flex-1">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <UpgradeAccount user={user} accessLevels={accessLevels} onUpgrade={handleUpgradeAccess} usdcBalance={gameState.usdc} onSuggestDeposit={handleSuggestDeposit} onPassPurchased={handlePassPurchased} onReloadGameState={handleReloadGameState} />
+                          <UpgradeAccount user={user} accessLevels={accessLevels} onUpgrade={handleUpgradeAccess} usdcBalance={gameState.usdc} onSuggestDeposit={handleSuggestDeposit} onPassPurchased={handlePassPurchased} onReloadGameState={handleReloadGameState} onGoToLuckyBoxes={() => setCurrentView('lucky_store')} />
                         </Suspense>
                       </div>
                       <Footer />
