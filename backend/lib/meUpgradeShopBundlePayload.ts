@@ -31,19 +31,12 @@ function isNftAutoArmario1OnlyRoomRowFromDb(row: { id?: unknown; name?: unknown 
 /** Igual a `GET /api/admin-upgrades` (req.userId pode ser undefined → só ativos). */
 export async function loadAdminUpgradesForUser(userId: number | undefined): Promise<unknown[]> {
   let isAdminUser = false;
-  let userRoomIds: string[] = [];
   if (userId) {
     const uRow = await prisma.users.findUnique({
       where: { id: userId },
       select: { is_admin: true }
     });
     if (uRow?.is_admin) isAdminUser = true;
-
-    const rooms = await prisma.user_rig_rooms.findMany({
-      where: { user_id: userId },
-      select: { room_id: true }
-    });
-    userRoomIds = rooms.map((r) => r.room_id);
   }
 
   const query = isAdminUser
@@ -90,7 +83,7 @@ export async function loadAdminUpgradesForUser(userId: number | undefined): Prom
     passes: passesMap[String(u.id)] || [],
     coins: coinsMap[String(u.id)] || [],
     visibleToAccessLevelIds: visibilityMap[String(u.id)] || [],
-    alreadyOwned: u.id === '53f0c699-0471-4e65-a147-17064e3aafe0' && userRoomIds.includes('room_1765936323521'),
+    alreadyOwned: false,
     version: u.version != null ? Number(u.version) : 1,
     slug: u.slug ?? null,
     category: u.category != null ? String(u.category) : 'PROMO_PACK',

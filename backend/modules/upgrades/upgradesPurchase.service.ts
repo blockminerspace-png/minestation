@@ -5,8 +5,6 @@ import { materializeUpgradePackageAsLootBoxInTx } from '../../models/adminUpgrad
 import { RoletaAppError } from '../../validation/roletaValidation.js';
 import { parseUpgradePackageId, usdcDecimalFromRow } from './upgrades.catalog.js';
 
-const GENESIS_BUNDLE_UPGRADE_ID = '53f0c699-0471-4e65-a147-17064e3aafe0';
-const GENESIS_ROOM_ID = 'room_1765936323521';
 const IDEM_SCOPE = 'upgrade_purchase';
 
 export type UpgradePurchaseOk = {
@@ -166,7 +164,7 @@ export async function runUpgradePackagePurchase(args: {
 
       const user = await tx.users.findUnique({
         where: { id: userId },
-        select: { id: true, access_level_id: true }
+        select: { id: true }
       });
       if (!user) {
         throw new RoletaAppError('Utilizador não encontrado.', 404);
@@ -190,29 +188,6 @@ export async function runUpgradePackagePurchase(args: {
       const clientV = args.clientPackageVersion;
       if (clientV != null && Number.isFinite(clientV) && clientV !== upgrade.version) {
         throw new RoletaAppError('Esta oferta foi atualizada — recarregue a página e tente novamente.', 409);
-      }
-
-      const dup = await tx.admin_upgrade_purchases.findUnique({
-        where: { user_id_upgrade_id: { user_id: userId, upgrade_id: upgrade.id } }
-      });
-      if (dup) {
-        throw new RoletaAppError('Já adquiriu este pacote.', 422);
-      }
-
-      if (
-        upgrade.grant_access_level_id &&
-        user.access_level_id === upgrade.grant_access_level_id
-      ) {
-        throw new RoletaAppError(`Já possui o nível de acesso deste pacote.`, 422);
-      }
-
-      if (pkgId === GENESIS_BUNDLE_UPGRADE_ID) {
-        const room = await tx.user_rig_rooms.findUnique({
-          where: { user_id_room_id: { user_id: userId, room_id: GENESIS_ROOM_ID } }
-        });
-        if (room) {
-          throw new RoletaAppError('Já possui a sala incluída neste pacote.', 422);
-        }
       }
 
       if (upgrade.stock_remaining != null) {
@@ -256,21 +231,13 @@ export async function runUpgradePackagePurchase(args: {
         data: { usdc: newBalFloat }
       });
 
-      try {
-        await tx.admin_upgrade_purchases.create({
-          data: {
-            user_id: userId,
-            upgrade_id: upgrade.id,
-            purchased_at: nowBi
-          }
-        });
-      } catch (e: unknown) {
-        const code = e && typeof e === 'object' && 'code' in e ? String((e as { code?: string }).code) : '';
-        if (code === 'P2002') {
-          throw new RoletaAppError('Esta compra já foi registada — recarregue a página.', 409);
+      await tx.admin_upgrade_purchases.create({
+        data: {
+          user_id: userId,
+          upgrade_id: upgrade.id,
+          purchased_at: nowBi
         }
-        throw e;
-      }
+      });
 
       /**
        * Em vez de entregar items / moedas / passes / acesso directamente,

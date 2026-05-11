@@ -347,10 +347,10 @@ export const initDb = async () => {
       );
 
       CREATE TABLE IF NOT EXISTS admin_upgrade_purchases (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
         user_id INTEGER NOT NULL REFERENCES users(id),
         upgrade_id TEXT NOT NULL REFERENCES admin_upgrades(id),
-        purchased_at BIGINT NOT NULL,
-        PRIMARY KEY (user_id, upgrade_id)
+        purchased_at BIGINT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS admin_upgrade_visibility (

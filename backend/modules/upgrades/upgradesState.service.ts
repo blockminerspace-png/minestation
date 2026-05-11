@@ -154,7 +154,6 @@ export async function buildUpgradesStatePayload(userId: number, nowMs?: number):
 
     let unpurchasableReason: string | null = null;
     if (!p.isActive) unpurchasableReason = 'Pacote inativo.';
-    else if (p.alreadyOwned) unpurchasableReason = 'Já adquirido.';
     else if (p.startsAt != null && nowBi < BigInt(p.startsAt)) unpurchasableReason = 'Venda ainda não iniciou.';
     else if (p.endsAt != null && nowBi > BigInt(p.endsAt)) unpurchasableReason = 'Oferta expirada.';
     else if (p.stockRemaining != null && p.stockRemaining <= 0) unpurchasableReason = 'Esgotado.';

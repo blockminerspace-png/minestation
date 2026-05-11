@@ -172,6 +172,7 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
   const [purchaseBusyId, setPurchaseBusyId] = useState<string | null>(null);
   const [notice, setNotice] = useState<UiNotice | null>(null);
   const [purchaseSuccess, setPurchaseSuccess] = useState<PurchaseSuccess | null>(null);
+  const [confirmPackage, setConfirmPackage] = useState<UpgradesStatePackage | null>(null);
 
   const reloadState = useCallback(async () => {
     if (!user?.email) {
@@ -196,7 +197,7 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
     };
   }, [reloadState]);
 
-  const handleBuyPackage = async (pkg: UpgradesStatePackage) => {
+  const executePurchase = async (pkg: UpgradesStatePackage) => {
     if (!user?.email || purchaseBusyId) return;
     if (!pkg.isPurchasable) return;
     setPurchaseBusyId(pkg.id);
@@ -221,10 +222,15 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
     }
     if (res.status === 409 || res.status === 422) {
       await reloadState();
+      const err = res.error || '';
+      const isStaleOffer =
+        res.status === 409 ||
+        /atualizada|recarreg/i.test(err) ||
+        /vers[aã]o|oferta/i.test(err);
       setNotice({
-        variant: 'info',
-        title: 'Oferta atualizada',
-        message: res.error || 'Esta oferta foi atualizada, recarregue e tente novamente.'
+        variant: isStaleOffer ? 'info' : 'error',
+        title: isStaleOffer ? 'Oferta atualizada' : 'Compra não concluída',
+        message: err || 'Tente novamente.'
       });
       return;
     }
@@ -236,6 +242,12 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
       title: 'Não foi possível concluir a compra',
       message: appendUsdcShortfallLine(res.error || 'Falha na compra.', res.missing)
     });
+  };
+
+  const requestPurchase = (pkg: UpgradesStatePackage) => {
+    if (!user?.email || purchaseBusyId) return;
+    if (!pkg.isPurchasable) return;
+    setConfirmPackage(pkg);
   };
 
   const packages = upgradesState?.packages ?? [];
@@ -293,7 +305,7 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
             <Crown className="text-slate-600 mb-4" size={48} />
             <p className="text-lg font-bold text-slate-200 mb-2">Nenhum upgrade disponível no momento</p>
             <p className="text-sm text-slate-500 max-w-md">
-              Não há pacotes à venda para o seu perfil agora, ou todos já foram adquiridos. Volte mais tarde ou fale com o suporte se esperava ver uma oferta aqui.
+              Não há pacotes à venda para o seu perfil agora. Volte mais tarde ou fale com o suporte se esperava ver uma oferta aqui.
             </p>
           </div>
         ) : (
@@ -303,13 +315,11 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
               const img = safePackageImageUrl(offer.imageUrl);
               const busy = purchaseBusyId === offer.id;
               const anyBusy = purchaseBusyId != null;
-              const owned = offer.alreadyOwned;
-              const lockedOut = !offer.isPurchasable;
 
               return (
                 <div
                   key={offer.id}
-                  className={`group relative glass-card rounded-[2rem] p-8 border transition-all duration-500 flex flex-col min-h-[550px] ${styles.border} ${owned ? 'opacity-80 scale-95 grayscale-[0.5]' : lockedOut ? 'opacity-95' : 'hover:-translate-y-4 hover:brightness-110'}`}
+                  className={`group relative glass-card rounded-[2rem] p-8 border transition-all duration-500 flex flex-col min-h-[550px] ${styles.border} ${!offer.isPurchasable ? 'opacity-95' : 'hover:-translate-y-4 hover:brightness-110'}`}
                 >
                   <div className={`absolute top-0 inset-x-0 h-40 ${styles.glow} blur-3xl rounded-full -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-700`} />
 
@@ -352,31 +362,29 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
                       {offer.stockRemaining != null ? (
                         <div className="text-[10px] text-slate-500 font-mono">Stock: {offer.stockRemaining}</div>
                       ) : null}
-                      {offer.unpurchasableReason && !owned ? (
+                      {offer.unpurchasableReason ? (
                         <div className="text-[10px] text-amber-400/90">{offer.unpurchasableReason}</div>
                       ) : null}
                     </div>
 
                     <button
                       type="button"
-                      onClick={() => void handleBuyPackage(offer)}
-                      disabled={anyBusy || owned || !offer.isPurchasable}
+                      onClick={() => requestPurchase(offer)}
+                      disabled={anyBusy || !offer.isPurchasable}
                       className={`w-full py-4 rounded-2xl font-black text-xs tracking-[0.1em] uppercase transition-all duration-300 relative overflow-hidden group/btn disabled:grayscale disabled:opacity-50 mb-8
-                          ${owned || !offer.isPurchasable ? 'bg-slate-800 text-slate-500' : `bg-gradient-to-br ${styles.btn} text-white shadow-2xl hover:scale-[1.02] active:scale-95`}
+                          ${!offer.isPurchasable ? 'bg-slate-800 text-slate-500' : `bg-gradient-to-br ${styles.btn} text-white shadow-2xl hover:scale-[1.02] active:scale-95`}
                         `}
                     >
                       <span className="relative z-10">
-                        {owned
-                          ? 'ADQUIRIDO'
-                          : busy
-                            ? 'A PROCESSAR…'
-                            : !offer.isPurchasable
-                              ? looksLikeInsufficientUsdcMessage(offer.unpurchasableReason || '')
-                                ? 'SALDO INSUFICIENTE'
-                                : 'INDISPONÍVEL'
-                              : 'ADQUIRIR E UPGRADAR'}
+                        {busy
+                          ? 'A PROCESSAR…'
+                          : !offer.isPurchasable
+                            ? looksLikeInsufficientUsdcMessage(offer.unpurchasableReason || '')
+                              ? 'SALDO INSUFICIENTE'
+                              : 'INDISPONÍVEL'
+                            : 'ADQUIRIR E UPGRADAR'}
                       </span>
-                      {offer.isPurchasable && !owned && (
+                      {offer.isPurchasable && (
                         <div className="absolute inset-0 bg-white/20 translate-y-full group-hover/btn:translate-y-0 transition-transform duration-300" />
                       )}
                     </button>
@@ -402,18 +410,57 @@ export const UpgradeAccount: React.FC<UpgradeAccountProps> = ({
                       )}
                     </div>
                   </div>
-
-                  {owned && (
-                    <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-500 text-white text-[10px] font-black px-4 py-1 rounded-full shadow-lg z-20">
-                      ADQUIRIDO
-                    </div>
-                  )}
                 </div>
               );
             })}
           </div>
         )}
       </div>
+
+      {confirmPackage ? (
+        <div
+          className="fixed inset-0 z-[155] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Confirmar compra"
+          onClick={() => setConfirmPackage(null)}
+        >
+          <div
+            className="relative w-full max-w-md rounded-2xl border border-amber-600/50 bg-slate-900 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-2 pr-8 text-base font-black uppercase tracking-wide text-white">Confirmar compra</h3>
+            <p className="text-sm text-slate-300">
+              Comprar <span className="font-bold text-white">{confirmPackage.name}</span> por{' '}
+              <span className="font-mono font-bold text-amber-300">${formatUsdcDisplay(confirmPackage.finalPrice)} USDC</span>?
+            </p>
+            <p className="mt-3 text-xs leading-relaxed text-slate-400">
+              O valor será debitado do seu saldo. Uma caixa com o conteúdo do pacote será enviada para{' '}
+              <span className="font-semibold text-slate-300">Caixas da Sorte</span> — abra-a para receber os itens no estoque.
+            </p>
+            <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setConfirmPackage(null)}
+                className="w-full rounded-xl border border-slate-600 bg-slate-800 py-2.5 text-xs font-black uppercase tracking-widest text-slate-200 transition hover:bg-slate-700 sm:w-auto sm:min-w-[140px]"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  const pkg = confirmPackage;
+                  setConfirmPackage(null);
+                  void executePurchase(pkg);
+                }}
+                className="w-full rounded-xl bg-amber-500 py-2.5 text-xs font-black uppercase tracking-widest text-slate-950 transition hover:bg-amber-400 sm:w-auto sm:min-w-[180px]"
+              >
+                Confirmar e pagar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <UiNoticeModal notice={notice} onClose={() => setNotice(null)} overlayZClassName="z-[150]" />
 

@@ -628,11 +628,12 @@ model season_pass_rewards {
 }
 
 model admin_upgrade_purchases {
+  id           String @id @default(uuid()) @db.Uuid
   user_id      Int
   upgrade_id   String
   purchased_at BigInt
 
-  @@id([user_id, upgrade_id])
+  @@index([user_id, upgrade_id])
   @@map("admin_upgrade_purchases")
 }
 
