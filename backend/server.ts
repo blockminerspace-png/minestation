@@ -7140,6 +7140,47 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
       ''
   ).trim();
 
+  /** UUID de instância → id de catálogo vindo da rig (`placed_racks` / payload do save). */
+  const placedRackBatteryCatalogByInstanceId = new Map<string, string>();
+  const ingestRackBatteryCatalogHint = (batteryIdRaw: unknown, catalogRaw: unknown) => {
+    const bid = String(batteryIdRaw ?? '').trim();
+    if (!bid || !isRackBatteryInstanceUuid(bid)) return;
+    const cat = normalizeKnown1000WhBatteryCatalogId(catalogRaw ?? '');
+    if (!cat || !catalogBatteryIds.has(cat)) return;
+    placedRackBatteryCatalogByInstanceId.set(bid, cat);
+  };
+  if (Number.isFinite(uidNum) && uidNum > 0) {
+    try {
+      const prCat = await dbq.query(
+        `SELECT battery_id::text AS bid, battery_catalog_item_id::text AS cat
+           FROM placed_racks
+          WHERE user_id = $1::int
+            AND battery_id IS NOT NULL
+            AND battery_catalog_item_id IS NOT NULL`,
+        [uidNum]
+      );
+      for (const row of prCat.rows || []) {
+        ingestRackBatteryCatalogHint(row.bid, row.cat);
+      }
+    } catch (ePr) {
+      console.warn(
+        '[validatePlacedRacksForSave] placed_racks battery catalog hints:',
+        ePr instanceof Error ? ePr.message : String(ePr)
+      );
+    }
+  }
+  if (Array.isArray(racks)) {
+    for (const rx of racks) {
+      if (!rx || typeof rx !== 'object') continue;
+      const rid = rx as {
+        batteryId?: unknown;
+        batteryCatalogItemId?: unknown;
+        battery_catalog_item_id?: unknown;
+      };
+      ingestRackBatteryCatalogHint(rid.batteryId, rid.batteryCatalogItemId ?? rid.battery_catalog_item_id);
+    }
+  }
+
   const refreshOwnedStoredBatteryIds = async () => {
     ownedStoredBatteryIds.clear();
     if (!Number.isFinite(uidNum) || uidNum <= 0) return;
@@ -7163,6 +7204,12 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
     const rawItem = normalizeKnown1000WhBatteryCatalogId(row.item_id);
     if (rawItem && catalogBatteryIds.has(rawItem)) {
       storedBattCatalogByInstanceId.set(iid, rawItem);
+      return;
+    }
+    const fromRack = placedRackBatteryCatalogByInstanceId.get(iid);
+    const rackCat = fromRack ? normalizeKnown1000WhBatteryCatalogId(fromRack) : '';
+    if (rackCat && catalogBatteryIds.has(rackCat)) {
+      storedBattCatalogByInstanceId.set(iid, rackCat);
       return;
     }
     if (fallbackBatteryCatalogId) {
@@ -7250,14 +7297,25 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
         const fromStore = storedBattCatalogByInstanceId.get(bidRaw);
         if (fromStore && catalogBatteryIds.has(fromStore)) {
           upgradeIds.add(fromStore);
-        } else if (fallbackBatteryCatalogId) {
-          upgradeIds.add(fallbackBatteryCatalogId);
+        } else {
+          const rcOwn = normalizeKnown1000WhBatteryCatalogId(placedRackBatteryCatalogByInstanceId.get(bidRaw) ?? '');
+          if (rcOwn && catalogBatteryIds.has(rcOwn)) upgradeIds.add(rcOwn);
+          else if (fallbackBatteryCatalogId) upgradeIds.add(fallbackBatteryCatalogId);
         }
       } else if (catalogBatteryIds.has(normalizeKnown1000WhBatteryCatalogId(bidRaw))) {
         // Legado: `placed_racks.battery_id` = id de catálogo (pré UUID-only no cliente).
         upgradeIds.add(normalizeKnown1000WhBatteryCatalogId(bidRaw));
-      } else if (isRackBatteryInstanceUuid(bidRaw) && fallbackBatteryCatalogId) {
-        upgradeIds.add(fallbackBatteryCatalogId);
+      } else if (isRackBatteryInstanceUuid(bidRaw)) {
+        const rc = normalizeKnown1000WhBatteryCatalogId(placedRackBatteryCatalogByInstanceId.get(bidRaw) ?? '');
+        if (rc && catalogBatteryIds.has(rc)) upgradeIds.add(rc);
+        else if (fallbackBatteryCatalogId) upgradeIds.add(fallbackBatteryCatalogId);
+        else {
+          return {
+            ok: false,
+            error:
+              'Referência de bateria inválida numa rig (dados desatualizados). Recarregue a página (F5) e tente de novo.'
+          };
+        }
       } else {
         return {
           ok: false,
