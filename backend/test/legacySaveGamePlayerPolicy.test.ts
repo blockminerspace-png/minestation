@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   applyLegacySaveGameFullBarrier,
   legacyCriticalKeysInChanges,
-  neutralizeLegacySaveGameSlicePayload
+  neutralizeLegacySaveGameSlicePayload,
+  overlayPlacedRacksDbWithClientRuntime
 } from '../lib/legacySaveGamePlayerPolicy.js';
 import type { PoolClient } from 'pg';
 
@@ -42,6 +43,30 @@ describe('legacySaveGamePlayerPolicy', () => {
     expect(r.mode).toBe('reject');
     expect(r.code).toBe('LEGACY_SAVEGAME_CRITICAL_REJECTED');
     expect(changes.stock).toEqual({ x: 1 });
+  });
+
+  it('overlayPlacedRacksDbWithClientRuntime aplica isOn e selectedCoinId do cliente por id', () => {
+    const db = [
+      { id: 'rack-a', itemId: 'chassis', isOn: true, selectedCoinId: 'btc', wiringId: 'w1' },
+      { id: 'rack-b', itemId: 'chassis2', isOn: true, selectedCoinId: 'eth', wiringId: 'w2' }
+    ];
+    const client = [
+      { id: 'rack-a', isOn: false, selectedCoinId: 'doge' },
+      { id: 'rack-b', isOn: true }
+    ];
+    const out = overlayPlacedRacksDbWithClientRuntime(db, client) as Array<Record<string, unknown>>;
+    expect(out[0].isOn).toBe(false);
+    expect(out[0].selectedCoinId).toBe('doge');
+    expect(out[0].wiringId).toBe('w1');
+    expect(out[1].isOn).toBe(true);
+    expect(out[1].selectedCoinId).toBe('eth');
+  });
+
+  it('overlayPlacedRacksDbWithClientRuntime limpa moeda quando cliente envia vazio', () => {
+    const db = [{ id: 'r1', isOn: true, selectedCoinId: 'btc' }];
+    const client = [{ id: 'r1', selectedCoinId: '' }];
+    const out = overlayPlacedRacksDbWithClientRuntime(db, client) as Array<Record<string, unknown>>;
+    expect(out[0].selectedCoinId).toBeUndefined();
   });
 
   it('neutralizeLegacySaveGameSlicePayload inventory remove stock do cliente', async () => {

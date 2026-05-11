@@ -7,6 +7,41 @@ import type { SaveGameQueryClient } from './sqlTransaction.js';
 import { loadWorkshopSlotsArrayForMerge } from './gameSaveSliceMerge.js';
 import { loadUserPlacedRacksWithSlots } from './serverRoomPersistence.js';
 
+/**
+ * Mantém topologia de rigs da BD (fonte de verdade) mas aplica do cliente os campos
+ * operáveis em jogo que o slice `save-servers` envia (ex.: interruptor, moeda por rig).
+ */
+export function overlayPlacedRacksDbWithClientRuntime(dbRacks: unknown[], clientRacks: unknown): unknown[] {
+  if (!Array.isArray(dbRacks)) return [];
+  const clientList = Array.isArray(clientRacks) ? clientRacks : [];
+  const clientById = new Map<string, Record<string, unknown>>();
+  for (const raw of clientList) {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const rec = raw as Record<string, unknown>;
+    if (typeof rec.id !== 'string') continue;
+    const id = rec.id.trim();
+    if (!id) continue;
+    clientById.set(id, rec);
+  }
+  return dbRacks.map((raw) => {
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return raw;
+    const db = raw as Record<string, unknown>;
+    if (typeof db.id !== 'string') return raw;
+    const id = db.id.trim();
+    if (!id) return raw;
+    const c = clientById.get(id);
+    if (!c) return raw;
+    const next: Record<string, unknown> = { ...db };
+    if ('isOn' in c) next.isOn = Boolean(c.isOn);
+    if ('selectedCoinId' in c) {
+      const sc = c.selectedCoinId;
+      next.selectedCoinId =
+        sc === null || sc === undefined || sc === '' ? undefined : String(sc);
+    }
+    return next;
+  });
+}
+
 export type LegacySaveGameBarrierResult =
   | { mode: 'allow' }
   | { mode: 'reject'; status: 409 | 422; message: string; code: string; fields: string[] };
@@ -210,8 +245,10 @@ export async function neutralizeLegacySaveGameSlicePayload(
       removed.push('storedBatteries');
     }
   } else if (saveDomain === 'servers') {
-    changes.placedRacks = await loadUserPlacedRacksWithSlots(pg, uid);
-    removed.push('placedRacks(replaced_from_db)');
+    const clientPlacedRacks = changes.placedRacks;
+    const dbRacks = await loadUserPlacedRacksWithSlots(pg, uid);
+    changes.placedRacks = overlayPlacedRacksDbWithClientRuntime(dbRacks, clientPlacedRacks);
+    removed.push('placedRacks(db_topology+client_runtime)');
     if ('stock' in changes) {
       delete changes.stock;
       removed.push('stock');
