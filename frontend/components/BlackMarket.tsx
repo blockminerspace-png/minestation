@@ -22,6 +22,7 @@ import {
   claimMarketFunds,
   getCustodyListings,
   claimCustodyItem,
+  claimAllCustodyItems,
   getMarketTradeHistory,
   getBlackMarketState,
   getBlackMarketListingsPage
@@ -90,6 +91,10 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
   const [buyQtyDraft, setBuyQtyDraft] = useState('1');
   const [notice, setNotice] = useState<UiNotice | null>(null);
   const [isBuying, setIsBuying] = useState(false);
+  /** Trava contra duplo-clique no botão «Resgatar tudo» (a transação no backend também é idempotente). */
+  const [isClaimingAll, setIsClaimingAll] = useState(false);
+  /** Lock no claim individual (por listingId) para evitar duplo clique localmente. */
+  const [claimingId, setClaimingId] = useState<string | null>(null);
   const [buySearch, setBuySearch] = useState('');
   const [buyCategory, setBuyCategory] = useState('');
   const [buyType, setBuyType] = useState<'' | Upgrade['type']>('');
@@ -524,60 +529,72 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
   const parsedSellQty = parseInt(sellQty);
   const publishDisabled = (!sellableItems.length || !sellItemId || !sellPrice || !sellQty || isNaN(parsedSellPrice) || parsedSellPrice <= 0 || isNaN(parsedSellQty) || parsedSellQty <= 0 || parsedSellPrice < minAllowed || parsedSellPrice > maxAllowed);
 
+  /** Configuração das tabs principais (Comprar/Vender/Cofre/Histórico) — declarativo para
+   *  manter consistência visual e suportar scroll horizontal em ecrãs pequenos. */
+  const tabConfig: { id: 'buy' | 'sell' | 'vault' | 'history'; label: string; badge?: number; icon?: React.ReactNode }[] = [
+    { id: 'buy', label: 'Comprar' },
+    { id: 'sell', label: 'Vender' },
+    { id: 'vault', label: 'Cofre', badge: custodyListings.length || 0 },
+    { id: 'history', label: 'Histórico', icon: <History size={14} /> }
+  ];
+
   return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl flex flex-col shadow-2xl relative transition-colors">
+    <div className="bg-slate-900 border border-slate-800 rounded-xl flex flex-col shadow-2xl relative transition-colors overflow-hidden">
       {/* Background Texture */}
-      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-50 pointer-events-none"></div>
+      <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/dark-matter.png')] opacity-40 pointer-events-none"></div>
 
       {/* Header */}
-      <div className="p-4 bg-slate-950 border-b border-slate-800 flex justify-between items-center relative z-10">
-        <div>
-          <h2 className="text-xl font-bold text-red-500 flex items-center gap-2 animate-pulse">
-            <Skull size={20} /> Mercado paralelo (P2P)
-          </h2>
-          <p className="text-[10px] text-slate-500 uppercase tracking-widest">Liquidez entre operadores • Itens em custódia até o fechamento</p>
-        </div>
-
-        <div className="flex gap-2 items-center">
+      <div className="px-4 sm:px-6 pt-4 sm:pt-5 pb-3 bg-gradient-to-b from-slate-950 to-slate-950/80 border-b border-slate-800 relative z-10">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <h2 className="text-lg sm:text-xl font-bold text-red-500 flex items-center gap-2">
+              <Skull size={22} /> Mercado paralelo (P2P)
+            </h2>
+            <p className="text-[10px] sm:text-[11px] text-slate-500 uppercase tracking-widest mt-1">
+              Liquidez entre operadores • Itens ficam em custódia até o resgate
+            </p>
+          </div>
           {vaultProceedsDisplay > 0 && (
-            <div className="mr-2 flex items-center gap-2 bg-yellow-900/50 px-3 py-1 rounded border border-yellow-700 animate-in fade-in zoom-in">
-              <span className="text-[10px] text-yellow-500 uppercase font-bold">Proventos:</span>
-              <span className="text-sm font-mono font-bold text-yellow-400">${formatCost(vaultProceedsDisplay)}</span>
-              <div className="text-[10px] text-yellow-600">(liquidar no cofre)</div>
+            <div className="inline-flex shrink-0 items-center gap-2 bg-yellow-900/30 border border-yellow-700/60 px-3 py-1.5 rounded-lg">
+              <span className="text-[10px] text-yellow-500 uppercase font-bold tracking-wider">Proventos</span>
+              <span className="text-sm font-mono font-bold text-yellow-300">${formatCost(vaultProceedsDisplay)}</span>
+              <span className="text-[10px] text-yellow-600 hidden sm:inline">liquidar no Cofre</span>
             </div>
           )}
+        </div>
 
-          <button
-            onClick={() => setMode('buy')}
-            className={`px-4 py-2 rounded font-bold text-xs transition-colors border ${mode === 'buy' ? 'bg-red-900/50 border-red-500 text-red-400' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'}`}
-          >
-            COMPRAR
-          </button>
-          <button
-            onClick={() => setMode('sell')}
-            className={`px-4 py-2 rounded font-bold text-xs transition-colors border ${mode === 'sell' ? 'bg-red-900/50 border-red-500 text-red-400' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'}`}
-          >
-            VENDER
-          </button>
-
-          <button
-            onClick={() => setMode('vault')}
-            className={`px-4 py-2 rounded font-bold text-xs transition-colors border ${mode === 'vault' ? 'bg-red-900/50 border-red-500 text-red-400' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'}`}
-          >
-            COFRE
-          </button>
-          <button
-            onClick={() => setMode('history')}
-            className={`px-3 py-2 rounded font-bold text-xs transition-colors border flex items-center gap-1.5 ${mode === 'history' ? 'bg-red-900/50 border-red-500 text-red-400' : 'bg-slate-800 border-slate-700 text-slate-500 hover:text-slate-300'}`}
-            title="Histórico de negócios P2P"
-          >
-            <History size={14} /> HISTÓRICO
-          </button>
+        {/* Tabs estilo pill com scroll horizontal em mobile */}
+        <div className="mt-4 -mx-1 flex gap-1.5 overflow-x-auto pb-1 sm:gap-2 sm:pb-0 sm:overflow-visible touch-pan-x scrollbar-thin scrollbar-thumb-slate-700">
+          {tabConfig.map((t) => {
+            const active = mode === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setMode(t.id)}
+                className={[
+                  'shrink-0 inline-flex items-center gap-1.5 px-4 py-2 rounded-full text-[11px] sm:text-xs font-black uppercase tracking-wide transition-all border',
+                  active
+                    ? 'bg-red-600/20 border-red-500/60 text-red-300 shadow-inner shadow-red-900/40'
+                    : 'bg-slate-900/60 border-slate-700/60 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+                ].join(' ')}
+              >
+                {t.icon}
+                {t.label}
+                {t.badge && t.badge > 0 ? (
+                  <span className={[
+                    'inline-flex items-center justify-center min-w-[1.25rem] h-5 px-1.5 rounded-full text-[10px] font-mono font-bold',
+                    active ? 'bg-red-500 text-white' : 'bg-amber-600/80 text-white'
+                  ].join(' ')}>{t.badge}</span>
+                ) : null}
+              </button>
+            );
+          })}
         </div>
       </div>
 
       {/* CONTENT */}
-      <div className="p-4 custom-scrollbar relative z-10 bg-slate-900/80 max-h-[min(70vh,520px)] overflow-y-auto">
+      <div className="px-4 sm:px-6 py-4 sm:py-5 custom-scrollbar relative z-10 bg-slate-900/80 max-h-[min(72vh,560px)] overflow-y-auto">
 
         {/* HISTORY */}
         {mode === 'history' && (
@@ -736,7 +753,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                     Nenhuma oferta coincide com os filtros. Limpa a pesquisa ou muda categoria/tipo.
                   </div>
                 ) : (
-              <div className="space-y-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {sortedBuyListings.map(listing => {
                   const item = upgrades.find(u => u.id === listing.itemId);
                   if (!item) return null;
@@ -752,26 +769,26 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                   const isReservedForOther = listing.reservedBy && listing.reservedBy !== currentUserName && listing.reservedBy !== currentUserEmail;
                   const hasImage = item.image;
                   return (
-                    <div key={listing.id} className="bg-slate-800/50 border border-slate-700 hover:border-slate-500 rounded-lg p-3 flex justify-between items-center group transition-all">
-                      <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 bg-slate-900 rounded border border-slate-700 flex items-center justify-center text-2xl text-slate-400 overflow-hidden">
+                    <div key={listing.id} className="bg-slate-900/70 border border-slate-800 hover:border-red-600/40 hover:shadow-lg hover:shadow-red-900/10 rounded-xl p-4 flex items-center justify-between gap-3 group transition-all">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-14 h-14 shrink-0 bg-slate-950 rounded-lg border border-slate-700 flex items-center justify-center text-2xl text-slate-400 overflow-hidden">
                           {hasImage ? <img src={hasImage} alt="" onError={(e) => handleImageError(e)} className="w-full h-full object-cover" /> : item.icon}
                         </div>
-                        <div>
-                          <h3 className="font-bold text-slate-200 text-sm group-hover:text-red-400 transition-colors">
-                            {item.name}
+                        <div className="min-w-0">
+                          <h3 className="font-bold text-slate-100 text-sm group-hover:text-red-300 transition-colors flex items-center gap-2 flex-wrap">
+                            <span className="truncate max-w-[10rem] sm:max-w-[14rem]">{item.name}</span>
                             {(listing.qty && listing.qty > 1) && (
-                              <span className="ml-2 text-xs bg-red-900/50 text-red-400 px-1.5 py-0.5 rounded border border-red-800">
+                              <span className="text-[10px] bg-red-900/50 text-red-300 px-2 py-0.5 rounded-full border border-red-800 font-mono">
                                 x{listing.qty}
                               </span>
                             )}
                           </h3>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-slate-500">Vendedor: {listing.sellerName}</span>
+                          <div className="mt-1 text-[11px] text-slate-500 truncate" title={listing.sellerName}>
+                            Vendedor: <span className="text-slate-400">{listing.sellerName}</span>
                           </div>
                         </div>
                       </div>
-                      <div className="text-right">
+                      <div className="text-right shrink-0">
                         <div
                           className={`font-mono font-bold text-sm ${
                             canAffordFull ? 'text-green-400' : canAffordAny ? 'text-amber-400' : 'text-red-500'
@@ -792,12 +809,14 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                             }
                           }}
                           disabled={!canAffordAny || isOwn || isReservedForOther || !isEnabled}
-                          className={`
-                                            mt-1 px-4 py-1.5 rounded text-xs font-bold flex items-center gap-1 ml-auto transition-colors
-                                            ${(!canAffordAny || isOwn || isReservedForOther || !isEnabled) ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-red-900/50 text-red-400 border border-red-800 hover:bg-red-800'}
-                                        `}
+                          className={[
+                            'mt-2 px-4 py-1.5 rounded-lg text-xs font-bold inline-flex items-center justify-center gap-1 ml-auto transition-colors min-w-[5.5rem]',
+                            (!canAffordAny || isOwn || isReservedForOther || !isEnabled)
+                              ? 'bg-slate-800 text-slate-600 cursor-not-allowed border border-slate-800'
+                              : 'bg-red-900/60 text-red-200 border border-red-700/70 hover:bg-red-700'
+                          ].join(' ')}
                         >
-                          {!isEnabled ? 'Desk offline' : 'Comprar'}
+                          {!isEnabled ? 'Offline' : 'Comprar'}
                         </button>
                       </div>
                     </div>
@@ -809,7 +828,6 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
             )}
           </div>
         )}
-      </div>
 
       {/* VAULT MODE */}
       {mode === 'vault' && (
@@ -835,31 +853,81 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
             </div>
           )}
 
-          <h3 className="text-slate-400 font-bold text-xs uppercase flex items-center gap-2 mt-4">
-            <Lock size={14} /> Itens em custódia ({custodyListings.length})
-          </h3>
+          {/* Cabeçalho do Cofre + botão Resgatar tudo */}
+          <div className="flex flex-col gap-3 mt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <h3 className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-300">
+                <Lock size={14} className="text-amber-500" /> Itens em custódia ({custodyListings.length})
+              </h3>
+              <p className="mt-1 text-[11px] text-slate-500">
+                Itens comprados no P2P ficam em custódia até resgatares para o Estoque.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={custodyListings.length === 0 || isClaimingAll}
+              onClick={async () => {
+                if (isClaimingAll || custodyListings.length === 0) return;
+                setIsClaimingAll(true);
+                try {
+                  const r = await claimAllCustodyItems();
+                  if (r && r.ok) {
+                    const n = typeof r.claimed === 'number' ? r.claimed : custodyListings.length;
+                    if (onClaimSuccess) onClaimSuccess();
+                    try {
+                      const custody = await getCustodyListings();
+                      setCustodyListings(custody as CustodyListingRow[]);
+                    } catch { /* ignore */ }
+                    setNotice({
+                      variant: 'success',
+                      title: 'Resgate concluído',
+                      message: r.message || `${n} ${n === 1 ? 'item foi resgatado' : 'itens foram resgatados'} para o Estoque.`
+                    });
+                  } else {
+                    setNotice({
+                      variant: 'error',
+                      title: 'Não foi possível resgatar',
+                      message: r?.error || 'Tenta de novo dentro de momentos.'
+                    });
+                  }
+                } finally {
+                  setIsClaimingAll(false);
+                }
+              }}
+              className="inline-flex items-center justify-center gap-2 rounded-lg border border-amber-600/60 bg-gradient-to-br from-amber-600 to-orange-600 px-4 py-2 text-xs font-black uppercase tracking-wide text-white shadow-md transition hover:from-amber-500 hover:to-orange-500 disabled:cursor-not-allowed disabled:opacity-40 sm:px-5 sm:text-sm"
+              title={custodyListings.length === 0 ? 'Sem itens em custódia' : 'Resgatar todos os itens para o Estoque'}
+            >
+              {isClaimingAll ? (
+                <>Resgatando…</>
+              ) : (
+                <>Resgatar tudo {custodyListings.length > 0 && <span className="opacity-80">({custodyListings.length})</span>}</>
+              )}
+            </button>
+          </div>
 
           {custodyListings.length === 0 ? (
-            <div className="text-center py-12 text-slate-600 border border-dashed border-slate-800 rounded-lg">
+            <div className="text-center py-14 text-slate-500 border border-dashed border-slate-800/80 rounded-xl bg-slate-950/40">
               <Lock size={48} className="mx-auto mb-4 opacity-20" />
-              Nenhum item aguardando retirada no cofre.
+              <p className="text-sm">Nenhum item aguardando retirada no cofre.</p>
+              <p className="mt-1 text-[11px] text-slate-600">Compra um item no separador «Comprar» e ele aparece aqui.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 sm:gap-4">
               {custodyListings.map(l => {
                 const item = upgrades.find(u => u.id === l.itemId);
                 if (!item) return null;
+                const isThisClaiming = claimingId === l.id;
                 return (
-                  <div key={l.id} className="bg-slate-950 border border-slate-800 p-3 rounded flex items-center gap-4">
-                    <div className="w-12 h-12 bg-slate-900 rounded border border-slate-700 flex items-center justify-center text-slate-500">
+                  <div key={l.id} className="bg-slate-950/80 border border-slate-800/80 hover:border-amber-700/50 rounded-xl p-4 flex items-center gap-4 transition-colors shadow-sm">
+                    <div className="w-14 h-14 bg-slate-900 rounded-lg border border-slate-700 flex items-center justify-center text-slate-500 overflow-hidden shrink-0">
                       {item.image ? <img src={item.image} alt="" onError={(e) => handleImageError(e)} className="w-full h-full object-cover" /> : item.icon}
                     </div>
-                    <div className="flex-1">
-                      <div className="font-bold text-slate-200 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-bold text-slate-100 text-sm truncate">
                         {item.name}
                         {(l.qty && l.qty > 1) && <span className="text-xs text-slate-500 ml-2">x{l.qty}</span>}
                       </div>
-                      <div className="text-xs text-slate-500">
+                      <div className="text-xs text-slate-500 mt-0.5">
                         {typeof l.buyerPaidUsdc === 'number' && Number.isFinite(l.buyerPaidUsdc) ? (
                           <>
                             <span className="text-slate-400">USDC debitado: </span>
@@ -879,28 +947,35 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                       </div>
                     </div>
                     <button
+                      disabled={isThisClaiming || isClaimingAll}
                       onClick={async () => {
-                        const r = await claimCustodyItem(l.id);
-                        if (r && r.ok) {
-                          if (onClaimSuccess) onClaimSuccess();
-                          const custody = await getCustodyListings();
-                          setCustodyListings(custody as CustodyListingRow[]);
-                          setNotice({
-                            variant: 'success',
-                            title: 'Item resgatado',
-                            message: `${item.name} foi transferido para o teu estoque.`
-                          });
-                        } else {
-                          setNotice({
-                            variant: 'error',
-                            title: 'Não foi possível resgatar',
-                            message: r?.error || 'Tenta de novo dentro de momentos.'
-                          });
+                        if (claimingId || isClaimingAll) return;
+                        setClaimingId(l.id);
+                        try {
+                          const r = await claimCustodyItem(l.id);
+                          if (r && r.ok) {
+                            if (onClaimSuccess) onClaimSuccess();
+                            const custody = await getCustodyListings();
+                            setCustodyListings(custody as CustodyListingRow[]);
+                            setNotice({
+                              variant: 'success',
+                              title: 'Item resgatado',
+                              message: `${item.name} foi transferido para o teu estoque.`
+                            });
+                          } else {
+                            setNotice({
+                              variant: 'error',
+                              title: 'Não foi possível resgatar',
+                              message: r?.error || 'Tenta de novo dentro de momentos.'
+                            });
+                          }
+                        } finally {
+                          setClaimingId(null);
                         }
                       }}
-                      className="bg-amber-900/50 hover:bg-amber-800 border border-amber-700 text-amber-300 text-xs px-3 py-1.5 rounded font-bold transition-colors"
+                      className="bg-amber-900/50 hover:bg-amber-800 border border-amber-700 text-amber-200 text-xs px-3 py-2 rounded-lg font-bold transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                     >
-                      Resgatar item
+                      {isThisClaiming ? 'Resgatando…' : 'Resgatar'}
                     </button>
                   </div>
                 )
@@ -1110,8 +1185,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
           </div>
         </div>
       )}
-
-
+      </div>
 
       <UiNoticeModal notice={notice} onClose={() => setNotice(null)} overlayZClassName="z-[140]" />
 
@@ -1213,23 +1287,25 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                           setHistoryReloadNonce((n) => n + 1);
                           setConfirmListing(null);
                           /**
-                           * Política do projecto: compra P2P → custódia (Cofre). Levar o jogador para a aba Cofre
-                           * automaticamente e recarregar custódia para evitar o sintoma "comprei mas não recebi nada".
+                           * Não trocamos de aba após a compra (UX 2024-11): o jogador costuma comprar
+                           * vários itens em sequência e o redirecionamento automático para «Cofre»
+                           * interrompia esse fluxo. Atualizamos o contador do Cofre em background
+                           * para o badge da aba refletir o novo estado e abrimos um toast com a
+                           * mensagem clara de onde o item ficou.
                            */
-                          setMode('vault');
                           try {
                             const custody = await getCustodyListings();
                             setCustodyListings(custody as CustodyListingRow[]);
                           } catch {
-                            /* ignore - mode change já dispara o efeito de carregamento */
+                            /* ignore */
                           }
                           if (onClaimSuccess) onClaimSuccess();
                           await refreshBuyListings();
                           const totalUsdc = typeof res.totalUsdc === 'number' ? res.totalUsdc : confirmTotal;
                           setNotice({
                             variant: 'success',
-                            title: 'Compra concluída',
-                            message: `Pagaste $${formatCost(totalUsdc)} por ${got} un. O item ficou no Cofre — clica em "Resgatar item" para enviar ao estoque.`
+                            title: 'Compra realizada',
+                            message: `Pagaste $${formatCost(totalUsdc)} por ${got} un. O item foi enviado para o Cofre — podes resgatá-lo quando quiser.`
                           });
                         } else {
                           const insuff =

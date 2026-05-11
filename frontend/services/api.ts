@@ -2572,6 +2572,20 @@ export async function claimCustodyItem(listingId: string): Promise<{ ok: boolean
   } catch { return { ok: false, error: 'Network error' }; }
 }
 
+/**
+ * Resgata, numa única transação no backend, todos os itens em custódia do
+ * utilizador. O servidor responde 400 amigável se não houver nada para resgatar.
+ */
+export async function claimAllCustodyItems(): Promise<{ ok: boolean; claimed?: number; message?: string; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/market/claim-all`, { method: 'POST' });
+    if (!res.ok) {
+      try { return await res.json(); } catch { return { ok: false }; }
+    }
+    try { return await res.json(); } catch { return { ok: true }; }
+  } catch { return { ok: false, error: 'Network error' }; }
+}
+
 export async function getTopWithdrawalsByCoin(): Promise<Array<{ coinId: string; coinName: string; top: { username: string; email: string; total: number }[] }>> {
   try {
     const res = await apiFetch(`${base}/stats/top-withdrawals-by-coin`);

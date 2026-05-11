@@ -872,6 +872,72 @@ export function registerP2pMarketRoutes(app: Express, deps: P2pMarketDeps): void
     }
   });
 
+  /**
+   * Resgata em lote todos os itens em custódia do utilizador autenticado.
+   * Mesma regra do `/api/market/claim-item` mas executado numa única transação
+   * com `SELECT ... FOR UPDATE` no `game_states` e em cada `player_listings`
+   * a resgatar (impede duplo-clique de duplicar o stock).
+   *
+   * Resposta: { ok: true, claimed: <n>, message } — ou 400 amigável se vazio.
+   */
+  app.post('/api/market/claim-all', async (req: Request, res: Response) => {
+    const userId = uidNum(req);
+    if (!userId) {
+      res.status(401).json({ error: 'Não autenticado' });
+      return;
+    }
+    try {
+      const claimedIds: string[] = [];
+      await prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRawUnsafe('SELECT 1 FROM game_states WHERE user_id = $1 FOR UPDATE', userId);
+          const rows = await tx.$queryRawUnsafe(
+            `SELECT id, item_id, qty FROM player_listings
+             WHERE status = 'awaiting_pickup' AND reserved_by = $1
+             FOR UPDATE`,
+            userId
+          );
+          const list = Array.isArray(rows) ? (rows as { id: string; item_id: string; qty?: number }[]) : [];
+          if (list.length === 0) {
+            throw new P2pUserError(400, { error: 'Sem itens em custódia para resgatar.' });
+          }
+          for (const l of list) {
+            const q = listingQtyFromRow(l.qty);
+            await tx.$executeRawUnsafe(
+              `INSERT INTO stock (user_id, item_id, qty) VALUES ($1, $2, $3)
+               ON CONFLICT (user_id, item_id) DO UPDATE SET qty = stock.qty + EXCLUDED.qty`,
+              userId,
+              l.item_id,
+              q
+            );
+            await tx.$executeRawUnsafe('DELETE FROM player_listings WHERE id = $1', l.id);
+            claimedIds.push(l.id);
+          }
+          const bumpAt = Date.now();
+          await tx.$executeRawUnsafe(
+            'UPDATE game_states SET server_updated_at = $1, last_updated_at = $1 WHERE user_id = $2',
+            bumpAt,
+            userId
+          );
+        },
+        txOpts
+      );
+      emitMarketWs({ type: 'market', event: 'custody_claimed_all', claimed: claimedIds.length });
+      logUserAction(userId, 'p2p_custody_claim_all', { claimed: claimedIds.length, listingIds: claimedIds });
+      res.json({
+        ok: true,
+        claimed: claimedIds.length,
+        message: `${claimedIds.length} ${claimedIds.length === 1 ? 'item resgatado' : 'itens resgatados'} para o estoque.`
+      });
+    } catch (e: unknown) {
+      if (e instanceof P2pUserError) {
+        res.status(e.status).json(e.body);
+        return;
+      }
+      sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'p2p', e, 'Erro.');
+    }
+  });
+
   app.post('/api/market/claim-item', async (req: Request, res: Response) => {
     const userId = uidNum(req);
     if (!userId) {
