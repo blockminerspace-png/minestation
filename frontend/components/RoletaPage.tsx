@@ -130,58 +130,47 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
     : usdcBalance.toLocaleString('en-US', { maximumFractionDigits: 2 });
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden animate-in fade-in slide-in-from-bottom-3 duration-300">
-      {/* Halos decorativos para look premium dark/cyber sem afetar a interação */}
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden animate-in fade-in slide-in-from-bottom-2 duration-300">
+      {/* Halos decorativos dark/cyber — sem pointer-events para nunca bloquear interação. */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-        <div className="absolute -top-32 left-1/4 h-72 w-72 rounded-full bg-orange-500/15 blur-3xl" />
-        <div className="absolute top-32 right-0 h-80 w-80 rounded-full bg-amber-600/10 blur-3xl" />
-        <div className="absolute bottom-0 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-emerald-600/10 blur-3xl" />
+        <div className="absolute -top-24 left-1/4 h-64 w-64 rounded-full bg-orange-500/12 blur-3xl" />
+        <div className="absolute top-40 right-0 h-72 w-72 rounded-full bg-amber-600/8 blur-3xl" />
+        <div className="absolute bottom-10 left-1/2 h-56 w-56 -translate-x-1/2 rounded-full bg-emerald-600/8 blur-3xl" />
       </div>
 
-      <div className="relative z-10 mx-auto flex w-full min-w-0 max-w-5xl flex-1 flex-col gap-3 px-3 pb-28 pt-4 sm:gap-4 sm:px-6 sm:pb-32 sm:pt-7 lg:pb-40">
-        <header className="flex min-w-0 flex-col gap-3 border-b border-orange-500/25 pb-3 sm:pb-4">
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-            <div className="flex items-start gap-3">
-              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 text-white shadow-lg shadow-orange-600/30 sm:h-14 sm:w-14">
-                <Sparkles className="h-6 w-6 sm:h-7 sm:w-7" strokeWidth={2.2} aria-hidden />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-orange-500/90">Prémios</p>
-                <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-                  Roleta da sorte
-                </h1>
-                <p className="mt-0.5 max-w-xl text-xs text-slate-600 dark:text-slate-400 sm:text-sm">
-                  Resgata um código promocional ou paga um giro com o teu saldo USDC. Prémios entregues à
-                  conta abrem em <span className="font-semibold text-orange-500">Caixas da Sorte</span>.
-                </p>
-              </div>
+      {/* Container fluido: padding mínimo, sem footer/banners abaixo (removidos no App). */}
+      <div className="relative z-10 mx-auto flex w-full min-w-0 max-w-5xl flex-1 flex-col gap-3 px-3 pb-6 pt-3 sm:gap-4 sm:px-6 sm:pb-8 sm:pt-5">
+        {/* Header compacto numa linha só (com pílulas saldo/preço inline). */}
+        <header className="flex min-w-0 flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-orange-500 to-amber-600 text-white shadow-md shadow-orange-600/30 sm:h-11 sm:w-11">
+              <Sparkles className="h-5 w-5 sm:h-5.5 sm:w-5.5" strokeWidth={2.2} aria-hidden />
             </div>
-            {/* Cartão lateral com saldo USDC + preço do giro pago (info útil em todos os modos) */}
-            <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:shrink-0">
-              <div className="rounded-xl border border-emerald-600/30 bg-emerald-950/30 px-3 py-2 text-left shadow-inner">
-                <div className="flex items-center gap-1.5">
-                  <Wallet className="h-3 w-3 text-emerald-400" aria-hidden />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400/80">Saldo</span>
-                </div>
-                <div className="mt-0.5 font-mono text-sm font-black tabular-nums text-amber-100 sm:text-base">
-                  ${usdcShort}
-                </div>
-              </div>
-              <div className="rounded-xl border border-orange-500/30 bg-orange-950/30 px-3 py-2 text-left shadow-inner">
-                <div className="flex items-center gap-1.5">
-                  <Gift className="h-3 w-3 text-orange-400" aria-hidden />
-                  <span className="text-[10px] font-bold uppercase tracking-widest text-orange-400/80">Giro</span>
-                </div>
-                <div className="mt-0.5 font-mono text-sm font-black tabular-nums text-orange-100 sm:text-base">
-                  {paidTabSpinLabel.replace('Giro ', '')}
-                </div>
-              </div>
+            <div className="min-w-0">
+              <h1 className="text-lg font-black leading-tight tracking-tight text-slate-900 dark:text-white sm:text-2xl">
+                Roleta da sorte
+              </h1>
+              <p className="text-[11px] leading-tight text-slate-500 dark:text-slate-400 sm:text-xs">
+                Resgata código ou gira pago — prémios abrem em <span className="font-semibold text-orange-500">Caixas da Sorte</span>.
+              </p>
+            </div>
+          </div>
+          {/* Pílulas inline e discretas — não competem visualmente com a roleta. */}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <div className="flex items-center gap-1.5 rounded-full border border-emerald-600/40 bg-emerald-950/40 px-2.5 py-1 shadow-inner">
+              <Wallet className="h-3 w-3 text-emerald-400" aria-hidden />
+              <span className="font-mono text-xs font-bold tabular-nums text-emerald-100">${usdcShort}</span>
+            </div>
+            <div className="flex items-center gap-1.5 rounded-full border border-orange-500/40 bg-orange-950/40 px-2.5 py-1 shadow-inner">
+              <Gift className="h-3 w-3 text-orange-400" aria-hidden />
+              <span className="font-mono text-xs font-bold tabular-nums text-orange-100">{paidTabSpinLabel.replace('Giro ', '')}</span>
             </div>
           </div>
         </header>
 
+        {/* Tabs pill — visual cleaner, transição mais fluida. */}
         <div
-          className="flex gap-1 rounded-xl border border-slate-700/80 bg-slate-900/40 p-1 sm:max-w-md"
+          className="flex gap-1 rounded-full border border-slate-700/70 bg-slate-900/50 p-1 backdrop-blur-sm sm:max-w-sm"
           role="tablist"
           aria-label="Modo da roleta"
         >
@@ -190,13 +179,13 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
             role="tab"
             aria-selected={tab === 'code'}
             onClick={() => setTab('code')}
-            className={`flex min-h-[40px] flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-bold uppercase tracking-wide transition sm:text-sm ${
+            className={`flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-full px-3 text-[11px] font-bold uppercase tracking-wide transition-all duration-200 sm:text-xs ${
               tab === 'code'
-                ? 'bg-orange-600 text-white shadow-md'
-                : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
+                ? 'bg-gradient-to-r from-orange-600 to-amber-600 text-white shadow-md shadow-orange-900/30'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <Ticket className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+            <Ticket className="h-3.5 w-3.5 shrink-0" aria-hidden />
             Por código
           </button>
           <button
@@ -204,47 +193,43 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
             role="tab"
             aria-selected={tab === 'paid'}
             onClick={() => setTab('paid')}
-            className={`flex min-h-[40px] flex-1 items-center justify-center gap-1.5 rounded-lg px-3 text-xs font-bold uppercase tracking-wide transition sm:text-sm ${
+            className={`flex min-h-[36px] flex-1 items-center justify-center gap-1.5 rounded-full px-3 text-[11px] font-bold uppercase tracking-wide transition-all duration-200 sm:text-xs ${
               tab === 'paid'
-                ? 'bg-emerald-700 text-white shadow-md'
-                : 'text-slate-400 hover:bg-slate-800/80 hover:text-slate-200'
+                ? 'bg-gradient-to-r from-emerald-600 to-teal-600 text-white shadow-md shadow-emerald-900/30'
+                : 'text-slate-400 hover:text-slate-200'
             }`}
           >
-            <DollarSign className="h-3.5 w-3.5 shrink-0 opacity-90" aria-hidden />
+            <DollarSign className="h-3.5 w-3.5 shrink-0" aria-hidden />
             {paidTabSpinLabel}
           </button>
         </div>
 
         {tab === 'code' ? (
           <section
-            className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-orange-500/25 bg-gradient-to-b from-slate-900 via-slate-950 to-black shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:rounded-2xl"
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-orange-500/25 bg-gradient-to-b from-slate-900/95 via-slate-950 to-black shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
             aria-label="Roleta e resgate por código"
           >
-            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(251,146,60,0.12),transparent_55%)]" aria-hidden />
+            <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(251,146,60,0.10),transparent_60%)]" aria-hidden />
 
-            <div className="relative z-10 border-b border-orange-500/20 bg-slate-900/80 px-3 py-3 sm:px-6 sm:py-5">
-              <h2 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-slate-200 sm:text-sm">
-                <Ticket className="h-4 w-4 text-orange-400" aria-hidden />
-                Código da roleta
-              </h2>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-3">
-                <input
-                  type="text"
-                  value={promoCode}
-                  onChange={(e) => setPromoCode(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && !redeeming && handleRedeem()}
-                  placeholder="Cole o código e resgate"
-                  autoComplete="off"
-                  spellCheck={false}
-                  disabled={Boolean(roletaCode)}
-                  className="min-h-[44px] flex-1 rounded-xl border border-slate-600 bg-slate-950/90 px-3 font-mono text-sm uppercase tracking-wide text-slate-100 shadow-inner outline-none transition focus:border-orange-500 focus:ring-2 focus:ring-orange-500/30 disabled:cursor-not-allowed disabled:opacity-50 sm:min-h-[48px] sm:px-4"
-                />
-                <div className="flex flex-wrap gap-2 sm:shrink-0">
+            {/* Faixa de input só aparece quando ainda não há código — evita poluição visual durante o giro. */}
+            {!roletaCode ? (
+              <div className="relative z-10 border-b border-orange-500/15 px-3 py-3 sm:px-5 sm:py-4">
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch sm:gap-2.5">
+                  <input
+                    type="text"
+                    value={promoCode}
+                    onChange={(e) => setPromoCode(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !redeeming && handleRedeem()}
+                    placeholder="Cole o código promocional"
+                    autoComplete="off"
+                    spellCheck={false}
+                    className="min-h-[42px] flex-1 rounded-xl border border-slate-700 bg-slate-950/80 px-3 font-mono text-sm uppercase tracking-wide text-slate-100 shadow-inner outline-none transition-all duration-200 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/25 sm:px-4"
+                  />
                   <button
                     type="button"
                     onClick={handleRedeem}
-                    disabled={redeeming || !promoCode.trim() || Boolean(roletaCode)}
-                    className="inline-flex min-h-[44px] flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 px-6 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-orange-900/25 transition hover:from-orange-500 hover:to-amber-500 disabled:pointer-events-none disabled:opacity-40 sm:min-h-[48px] sm:flex-none sm:px-8 sm:text-sm"
+                    disabled={redeeming || !promoCode.trim()}
+                    className="inline-flex min-h-[42px] items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 px-6 text-xs font-black uppercase tracking-widest text-white shadow-md shadow-orange-900/30 transition-all duration-200 hover:from-orange-500 hover:to-amber-500 hover:shadow-lg active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 sm:px-8 sm:text-sm"
                   >
                     {redeeming ? (
                       <>
@@ -255,23 +240,29 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
                       'Resgatar'
                     )}
                   </button>
-                  {roletaCode ? (
-                    <button
-                      type="button"
-                      onClick={clearRoletaSession}
-                      className="inline-flex min-h-[44px] items-center justify-center rounded-xl border border-slate-500 bg-slate-800/90 px-4 text-xs font-bold uppercase tracking-wide text-slate-200 transition hover:border-slate-400 hover:bg-slate-700 sm:min-h-[48px]"
-                    >
-                      Trocar código
-                    </button>
-                  ) : null}
                 </div>
               </div>
-            </div>
+            ) : (
+              /* Quando há código activo: barra fina só com botão "Trocar código" — máx. foco na roda. */
+              <div className="relative z-10 flex items-center justify-between border-b border-orange-500/15 px-3 py-2 sm:px-5">
+                <div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-widest text-orange-300/90">
+                  <Ticket className="h-3.5 w-3.5" aria-hidden />
+                  Código activo
+                </div>
+                <button
+                  type="button"
+                  onClick={clearRoletaSession}
+                  className="rounded-full border border-slate-600/80 bg-slate-800/70 px-3 py-1 text-[10px] font-bold uppercase tracking-wide text-slate-300 transition-all duration-200 hover:border-slate-500 hover:bg-slate-700 hover:text-white"
+                >
+                  Trocar código
+                </button>
+              </div>
+            )}
 
-            <div className="relative z-10 flex min-h-[min(48vh,22rem)] flex-1 flex-col items-center justify-center px-2 py-4 sm:min-h-[min(60vh,32rem)] sm:px-6 sm:py-8 md:min-h-[min(68vh,40rem)]">
+            <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-2 py-4 sm:px-5 sm:py-6">
               {roletaCode ? (
                 <div className="flex w-full min-w-0 max-w-3xl flex-1 flex-col items-center justify-center">
-                  <div className="w-full max-w-full origin-center scale-[0.88] sm:scale-[1.02] md:scale-105 lg:scale-110">
+                  <div className="w-full max-w-full">
                     <GameView
                       items={[]}
                       onBack={clearRoletaSession}
@@ -286,14 +277,13 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
                   </div>
                 </div>
               ) : (
-                <div className="flex max-w-md flex-col items-center gap-2 px-2 text-center sm:gap-3 sm:px-4">
+                <div className="flex max-w-md flex-col items-center gap-2.5 px-2 text-center sm:px-4">
                   <Sparkles className="h-10 w-10 text-orange-400/40" strokeWidth={1.5} aria-hidden />
                   <p className="text-sm font-semibold text-slate-400">
-                    Cole um código de roleta acima ou abra esta página com um sorteio pendente — a roda aparece aqui
-                    depois do resgate.
+                    Cole um código de roleta acima — a roda aparece aqui depois do resgate.
                   </p>
                   <p className="text-xs text-slate-600">
-                    O sorteio é validado no servidor; um giro por código conforme as regras do código.
+                    Sorteio validado no servidor; um giro por código.
                   </p>
                 </div>
               )}
@@ -301,16 +291,16 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
           </section>
         ) : (
           <section
-            className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-xl border border-emerald-600/30 bg-gradient-to-b from-slate-900 via-slate-950 to-black shadow-[0_24px_80px_rgba(0,0,0,0.45)] sm:rounded-2xl"
+            className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-emerald-600/30 bg-gradient-to-b from-slate-900/95 via-slate-950 to-black shadow-[0_12px_40px_rgba(0,0,0,0.35)]"
             aria-label="Roleta paga"
           >
             <div
-              className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(16,185,129,0.1),transparent_55%)]"
+              className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(16,185,129,0.10),transparent_60%)]"
               aria-hidden
             />
-            <div className="relative z-10 flex min-h-[min(52vh,24rem)] flex-1 flex-col items-center justify-center px-2 py-5 sm:min-h-[min(62vh,34rem)] sm:px-6 sm:py-10 md:min-h-[min(70vh,42rem)]">
+            <div className="relative z-10 flex flex-1 flex-col items-center justify-center px-2 py-4 sm:px-5 sm:py-6">
               <div className="flex w-full min-w-0 max-w-3xl flex-1 flex-col items-center justify-center">
-                <div className="w-full max-w-full origin-center scale-[0.88] sm:scale-[1.02] md:scale-105 lg:scale-110">
+                <div className="w-full max-w-full">
                   <GameView
                     items={[]}
                     onBack={() => setTab('code')}

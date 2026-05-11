@@ -2950,6 +2950,9 @@ export default function App() {
                     </div>
                   )}
                   {saveLoaded && currentView === 'roleta' && getAllowedPages().includes('lucky_store') && (
+                    /** Roleta: sem `<Footer />` (sem MarketNews/ads/copyright) para a tela ficar limpa e
+                     *  sem barra a invadir o conteúdo principal — a UX deste ecrã é a roda + cartas, não
+                     *  conteúdo "abaixo da dobra". */
                     <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-y-auto overflow-x-hidden custom-scrollbar animate-in fade-in slide-in-from-right-4 duration-300">
                       <Suspense fallback={<LazyRouteFallback />}>
                         <RoletaPage
@@ -2961,7 +2964,6 @@ export default function App() {
                           onReloadGameState={handleReloadGameState}
                         />
                       </Suspense>
-                      <Footer />
                     </div>
                   )}
                   {saveLoaded && currentView === 'black_market' && (
