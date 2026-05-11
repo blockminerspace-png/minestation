@@ -55,6 +55,9 @@ remote() {
       -o PreferredAuthentications=password,keyboard-interactive \
       -o PubkeyAuthentication=no \
       "$SSH_USER@$SSH_HOST" "$@"
+  elif [[ -n "${SSH_PASSWORD:-}" ]] && python3 -c "import paramiko" 2>/dev/null && [[ -f "$ROOT/scripts/ssh_paramiko_cli.py" ]]; then
+    SSH_HOST="$SSH_HOST" SSH_USER="$SSH_USER" SSH_PORT="$SSH_PORT" SSH_PASSWORD="$SSH_PASSWORD" \
+      python3 "$ROOT/scripts/ssh_paramiko_cli.py" "$@"
   elif [[ -n "${SSH_PASSWORD:-}" ]] && [[ -f "$ROOT/scripts/ssh_pexpect.py" ]]; then
     SSH_HOST="$SSH_HOST" SSH_USER="$SSH_USER" SSH_PORT="$SSH_PORT" SSH_PASSWORD="$SSH_PASSWORD" \
       python3 "$ROOT/scripts/ssh_pexpect.py" "$@"
@@ -91,8 +94,8 @@ if [[ -z "${PG_CONTAINER}" ]]; then
 fi
 
 echo "[vm-maintenance] Alvo: ${SSH_USER}@${SSH_HOST}:${SSH_PORT} | git: ${REMOTE_GIT_DIR} | compose: ${REMOTE_REPO_DIR} | PG: ${PG_CONTAINER}/${PG_DATABASE}"
-if [[ -n "${SSH_PASSWORD:-}" ]] && ! command -v sshpass >/dev/null 2>&1 && [[ ! -f "$ROOT/scripts/ssh_pexpect.py" ]]; then
-  echo "Aviso: SSH_PASSWORD definido mas não há sshpass nem scripts/ssh_pexpect.py." >&2
+if [[ -n "${SSH_PASSWORD:-}" ]] && ! command -v sshpass >/dev/null 2>&1 && ! python3 -c "import paramiko" 2>/dev/null && [[ ! -f "$ROOT/scripts/ssh_pexpect.py" ]]; then
+  echo "Aviso: SSH_PASSWORD definido mas não há sshpass, paramiko nem scripts/ssh_pexpect.py." >&2
 fi
 
 if [[ "$VM_DEPLOY" == "1" ]]; then

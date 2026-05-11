@@ -28,6 +28,16 @@ opts = [
     "ServerAliveInterval=15",
     "-o",
     "StrictHostKeyChecking=accept-new",
+    # Evita que o cliente tente dezenas de chaves públicas antes da password
+    # (erro "Too many authentication failures" em servidores com MaxAuthTries baixo).
+    "-o",
+    "PubkeyAuthentication=no",
+    "-o",
+    "PreferredAuthentications=password,keyboard-interactive",
+    "-o",
+    "NumberOfPasswordPrompts=3",
+    "-o",
+    "IdentitiesOnly=yes",
 ]
 # Um único argumento remoto (aspas corretas); vários argv sem isto viram `bash -lc set -euo...` partido no servidor.
 remote_argv = sys.argv[1:]
