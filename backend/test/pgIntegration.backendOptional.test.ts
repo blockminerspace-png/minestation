@@ -6,7 +6,6 @@
  *
  * Sem `RUN_BACKEND_PG_INTEGRATION=1` ou sem `DATABASE_URL` (carregado de `backend/.env` ou env), todos os casos são ignorados.
  */
-import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -81,10 +80,5 @@ describe.skipIf(!RUN || !DATABASE_URL)('Postgres integration (RUN_BACKEND_PG_INT
     `
     );
     expect(parseInt(r.rows[0]?.c || '0', 10)).toBe(1);
-  });
-
-  it('script battery_diagnostic_readonly.mjs existe (smoke)', () => {
-    const p = path.join(__dirname, '../scripts/battery_diagnostic_readonly.mjs');
-    expect(readFileSync(p, 'utf8')).toContain('battery_diagnostic_readonly');
   });
 });

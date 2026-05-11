@@ -20,6 +20,10 @@ backend/frontend/
 # Deploy VM (credenciais — nunca commitar)
 scripts/deploy.vm.env
 
+# Snapshot legado de deploy — chaves TLS / conta ACME (nunca versionar)
+deployment_legacy_20260506/**/privkey*.pem
+deployment_legacy_20260506/**/private_key.json
+
 # Environment files (segredos — NUNCA versionar)
 .env
 backend/.env

@@ -2891,7 +2891,8 @@ export default function App() {
             {/* GAME CONTENT WRAPPER WITH SIDEBARS */}
             <div className="flex-1 min-w-0 flex justify-center overflow-hidden relative w-full h-full">
 
-              {/* Left Skyscraper (Dynamic) */}
+              {/* Left Skyscraper (Dynamic) — escondido na Dashboard para não competir com o layout do hero */}
+              {currentView !== 'dashboard' && (
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-amber-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-amber-500/40 shadow-2xl shadow-amber-500/5">
                 {verticalAds[0] ? (
                   <a href={verticalAds[0].link || '#'} target={verticalAds[0].link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
@@ -2917,6 +2918,7 @@ export default function App() {
                   />
                 )}
               </aside>
+              )}
 
               <div className="flex-1 min-w-0 overflow-hidden relative max-w-7xl w-full flex flex-col min-h-0">
                 <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar relative min-h-0 flex flex-col font-mono">
@@ -3192,7 +3194,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Right Skyscraper (Dynamic) */}
+              {/* Right Skyscraper (Dynamic) — escondido na Dashboard */}
+              {currentView !== 'dashboard' && (
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-orange-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-orange-500/40 shadow-2xl shadow-orange-500/5">
                 {verticalAds[1] || verticalAds[0] ? (
                   <a href={(verticalAds[1] || verticalAds[0]).link || '#'} target={(verticalAds[1] || verticalAds[0]).link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
@@ -3218,6 +3221,7 @@ export default function App() {
                   />
                 )}
               </aside>
+              )}
 
             </div>
           </>

@@ -9,7 +9,7 @@
 #   docker compose ps -a
 #   docker compose logs app --tail 80
 #   docker compose logs bull-worker --tail 80
-# Arranque explícito dos 5: `bash scripts/docker-stack-up.sh` (na raiz do repo).
+# Arranque explícito dos 5: `docker compose up -d` (na raiz do repo).
 
 name: minestation-dev
 
