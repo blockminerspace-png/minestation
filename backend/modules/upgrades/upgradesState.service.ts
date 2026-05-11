@@ -143,7 +143,8 @@ export async function buildUpgradesStatePayload(userId: number, nowMs?: number):
   const boxNameById = new Map(lootRows.map((b) => [b.id, b.name]));
 
   const usdcBal = usdcDecimalFromRow(gs?.usdc ?? 0);
-  const packs = packsVisible.map((p) => {
+  const packs = packsVisible
+    .map((p) => {
     const final = usdcDecimalFromRow(p.priceUsdc);
     const original =
       p.originalPriceUsdc != null && String(p.originalPriceUsdc).trim() !== ''
@@ -183,7 +184,16 @@ export async function buildUpgradesStatePayload(userId: number, nowMs?: number):
       alreadyOwned: !!p.alreadyOwned,
       itemsPreview: itemPreviewLabel(nameById, boxNameById, p)
     };
-  });
+  })
+    .sort((a, b) => {
+      const pa = Number(a.finalPrice);
+      const pb = Number(b.finalPrice);
+      if (pa !== pb) return pa - pb;
+      const oa = Number(a.sortOrder) || 0;
+      const ob = Number(b.sortOrder) || 0;
+      if (oa !== ob) return oa - ob;
+      return String(a.name).localeCompare(String(b.name), 'pt', { sensitivity: 'base' });
+    });
 
   const categories = Array.from(new Set(packs.map((p) => String(p.category || 'PROMO_PACK')))).sort();
 

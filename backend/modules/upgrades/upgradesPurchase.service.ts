@@ -20,6 +20,85 @@ function buildIdemPayload(ok: UpgradePurchaseOk): string {
   return JSON.stringify(ok);
 }
 
+/**
+ * Garante que recompensas do pacote apontam para IDs existentes antes de debitar USDC.
+ * Evita erros Prisma genéricos (P20xx) na entrega e mensagem opaca «Erro ao processar o pedido.».
+ */
+async function assertUpgradeGrantReferencesExist(
+  tx: Prisma.TransactionClient,
+  upgradeId: string,
+  grantAccessLevelId: string | null | undefined
+): Promise<void> {
+  const [items, boxes, coins, passes] = await Promise.all([
+    tx.admin_upgrade_items.findMany({ where: { upgrade_id: upgradeId }, select: { item_id: true } }),
+    tx.admin_upgrade_boxes.findMany({ where: { upgrade_id: upgradeId }, select: { box_id: true } }),
+    tx.admin_upgrade_coins.findMany({ where: { upgrade_id: upgradeId }, select: { coin_id: true } }),
+    tx.admin_upgrade_passes.findMany({ where: { upgrade_id: upgradeId }, select: { pass_id: true } })
+  ]);
+
+  const itemIds = [...new Set(items.map((r) => String(r.item_id || '').trim()).filter(Boolean))];
+  if (itemIds.length > 0) {
+    const found = await tx.upgrades.findMany({ where: { id: { in: itemIds } }, select: { id: true } });
+    const ok = new Set(found.map((f) => f.id));
+    const missing = itemIds.filter((id) => !ok.has(id));
+    if (missing.length > 0) {
+      throw new RoletaAppError(
+        `Pacote com configuração inválida: peça(es) em falta no catálogo (${missing.slice(0, 5).join(', ')}). Contacte o suporte.`,
+        422
+      );
+    }
+  }
+
+  const boxIds = [...new Set(boxes.map((r) => String(r.box_id || '').trim()).filter(Boolean))];
+  if (boxIds.length > 0) {
+    const found = await tx.loot_boxes.findMany({ where: { id: { in: boxIds } }, select: { id: true } });
+    const ok = new Set(found.map((f) => f.id));
+    const missing = boxIds.filter((id) => !ok.has(id));
+    if (missing.length > 0) {
+      throw new RoletaAppError(
+        `Pacote com configuração inválida: caixa(s) em falta (${missing.slice(0, 5).join(', ')}). Contacte o suporte.`,
+        422
+      );
+    }
+  }
+
+  const passIds = [...new Set(passes.map((r) => String(r.pass_id || '').trim()).filter(Boolean))];
+  if (passIds.length > 0) {
+    const found = await tx.season_passes.findMany({ where: { id: { in: passIds } }, select: { id: true } });
+    const ok = new Set(found.map((f) => f.id));
+    const missing = passIds.filter((id) => !ok.has(id));
+    if (missing.length > 0) {
+      throw new RoletaAppError(
+        `Pacote com configuração inválida: season pass em falta (${missing.slice(0, 5).join(', ')}). Contacte o suporte.`,
+        422
+      );
+    }
+  }
+
+  const coinIds = [...new Set(coins.map((r) => String(r.coin_id || '').trim()).filter(Boolean))];
+  for (const cid of coinIds) {
+    if (cid.toLowerCase() === 'usdc') continue;
+    const row = await tx.mining_coins.findUnique({ where: { id: cid }, select: { id: true } });
+    if (!row) {
+      throw new RoletaAppError(
+        `Pacote com configuração inválida: moeda «${cid}» inexistente. Contacte o suporte.`,
+        422
+      );
+    }
+  }
+
+  const al = grantAccessLevelId != null ? String(grantAccessLevelId).trim() : '';
+  if (al) {
+    const row = await tx.access_levels.findUnique({ where: { id: al }, select: { id: true } });
+    if (!row) {
+      throw new RoletaAppError(
+        `Pacote com configuração inválida: nível de acesso em falta. Contacte o suporte.`,
+        422
+      );
+    }
+  }
+}
+
 /** Fingerprint do pedido (pacote + versão opcional declarada pelo cliente). */
 export function upgradePurchaseRequestFingerprint(
   packageId: string,
@@ -151,11 +230,19 @@ export async function runUpgradePackagePurchase(args: {
         }
       }
 
+      await assertUpgradeGrantReferencesExist(tx, upgrade.id, upgrade.grant_access_level_id);
+
       const gs = await tx.game_states.findUnique({
         where: { user_id: userId },
         select: { usdc: true }
       });
-      const balance = usdcDecimalFromRow(gs?.usdc ?? 0);
+      if (!gs) {
+        throw new RoletaAppError(
+          'Estado do jogo ainda não foi criado. Entre no jogo (carregue o save) e tente comprar novamente.',
+          422
+        );
+      }
+      const balance = usdcDecimalFromRow(gs.usdc);
       const price = usdcDecimalFromRow(upgrade.price_usdc);
       if (balance.lt(price)) {
         throw new RoletaAppError('Saldo USDC insuficiente.', 422);
