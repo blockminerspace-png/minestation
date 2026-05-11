@@ -280,9 +280,22 @@ export async function executeLootBoxOpenInTransaction(
           }
         });
         console.warn(
-          `[LootBox] Auto-repaired empty roleta_reward box ${boxId} ("${boxDef.name}") -> ${recoveredItemId}.`
+          `[RoletaRewardBoxRepair] caixa ${boxId} ("${boxDef.name}") reparada para upgrade ${recoveredItemId}.`
         );
         itemRows = await tx.loot_box_items.findMany({ where: { box_id: boxId } });
+      } else {
+        /**
+         * Upgrade originário foi removido (admin apagou o item). A caixa órfã não pode
+         * entregar nada — devolvemos erro 422 amigável **sem** consumir a caixa. O jogador
+         * pode contactar suporte; admin remove a caixa via painel.
+         */
+        console.error(
+          `[RoletaRewardBoxRepair] caixa ${boxId} ("${boxDef.name}") aponta para upgrade ${recoveredItemId} inexistente. A pular abertura para não consumir caixa.`
+        );
+        throw new LootBoxOpenError(
+          422,
+          'Esta caixa de prémio aponta para um item que já não existe. Contacte o suporte para receber compensação — a caixa não foi consumida.'
+        );
       }
     }
   }
@@ -297,9 +310,12 @@ export async function executeLootBoxOpenInTransaction(
 
   if (items.length === 0) {
     console.error(
-      `[LootBox] Critical Error: Box ${boxId} ("${boxDef.name}") has no items configured.`
+      `[LootBoxOpen] caixa ${boxId} ("${boxDef.name}") sem itens configurados; abertura bloqueada.`
     );
-    throw new LootBoxOpenError(500, 'Configuração da caixa inválida (sem itens).');
+    throw new LootBoxOpenError(
+      422,
+      'Esta caixa não tem prémios configurados. Contacte o suporte — a caixa não foi consumida.'
+    );
   }
 
   const isRegistrationBox = String(boxDef.trigger || '') === 'registration';

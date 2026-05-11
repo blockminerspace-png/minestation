@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Sparkles, Ticket, DollarSign, Loader2 } from 'lucide-react';
+import { Sparkles, Ticket, DollarSign, Loader2, Wallet, Gift } from 'lucide-react';
 import type { Upgrade } from '../types';
 import GameView from './roleta/GameView';
 import { getPendingRoletaCode, getWheelState, postWheelRedeemCode, newWheelIdempotencyKey } from '../services/api';
@@ -125,23 +125,57 @@ export const RoletaPage: React.FC<RoletaPageProps> = ({
     setRoletaCode(null);
   }, []);
 
+  const usdcShort = usdcBalance < 0.01 && usdcBalance > 0
+    ? usdcBalance.toFixed(3)
+    : usdcBalance.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden animate-in fade-in slide-in-from-bottom-3 duration-300">
-      <div className="mx-auto flex w-full min-w-0 max-w-5xl flex-1 flex-col gap-3 px-3 py-4 sm:gap-4 sm:px-6 sm:py-7">
-        <header className="flex min-w-0 flex-col gap-1 border-b border-orange-500/25 pb-3 sm:flex-row sm:items-end sm:justify-between sm:pb-4">
-          <div className="flex items-start gap-3">
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 text-white shadow-lg shadow-orange-600/30 sm:h-14 sm:w-14">
-              <Sparkles className="h-6 w-6 sm:h-7 sm:w-7" strokeWidth={2.2} aria-hidden />
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden animate-in fade-in slide-in-from-bottom-3 duration-300">
+      {/* Halos decorativos para look premium dark/cyber sem afetar a interação */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+        <div className="absolute -top-32 left-1/4 h-72 w-72 rounded-full bg-orange-500/15 blur-3xl" />
+        <div className="absolute top-32 right-0 h-80 w-80 rounded-full bg-amber-600/10 blur-3xl" />
+        <div className="absolute bottom-0 left-1/2 h-64 w-64 -translate-x-1/2 rounded-full bg-emerald-600/10 blur-3xl" />
+      </div>
+
+      <div className="relative z-10 mx-auto flex w-full min-w-0 max-w-5xl flex-1 flex-col gap-3 px-3 pb-28 pt-4 sm:gap-4 sm:px-6 sm:pb-32 sm:pt-7 lg:pb-40">
+        <header className="flex min-w-0 flex-col gap-3 border-b border-orange-500/25 pb-3 sm:pb-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500 to-amber-600 text-white shadow-lg shadow-orange-600/30 sm:h-14 sm:w-14">
+                <Sparkles className="h-6 w-6 sm:h-7 sm:w-7" strokeWidth={2.2} aria-hidden />
+              </div>
+              <div className="min-w-0">
+                <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-orange-500/90">Prémios</p>
+                <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
+                  Roleta da sorte
+                </h1>
+                <p className="mt-0.5 max-w-xl text-xs text-slate-600 dark:text-slate-400 sm:text-sm">
+                  Resgata um código promocional ou paga um giro com o teu saldo USDC. Prémios entregues à
+                  conta abrem em <span className="font-semibold text-orange-500">Caixas da Sorte</span>.
+                </p>
+              </div>
             </div>
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-orange-500/90">Prémios</p>
-              <h1 className="text-xl font-black tracking-tight text-slate-900 dark:text-white sm:text-3xl">
-                Roleta da sorte
-              </h1>
-              <p className="mt-0.5 max-w-xl text-xs text-slate-600 dark:text-slate-400 sm:text-sm">
-                Por código promocional ou giro pago com saldo USDC no jogo (preço definido no servidor, atualmente
-                US$0,10 por giro). Códigos de caixa comuns resgate em Caixas da Sorte.
-              </p>
+            {/* Cartão lateral com saldo USDC + preço do giro pago (info útil em todos os modos) */}
+            <div className="grid w-full grid-cols-2 gap-2 sm:w-auto sm:shrink-0">
+              <div className="rounded-xl border border-emerald-600/30 bg-emerald-950/30 px-3 py-2 text-left shadow-inner">
+                <div className="flex items-center gap-1.5">
+                  <Wallet className="h-3 w-3 text-emerald-400" aria-hidden />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-emerald-400/80">Saldo</span>
+                </div>
+                <div className="mt-0.5 font-mono text-sm font-black tabular-nums text-amber-100 sm:text-base">
+                  ${usdcShort}
+                </div>
+              </div>
+              <div className="rounded-xl border border-orange-500/30 bg-orange-950/30 px-3 py-2 text-left shadow-inner">
+                <div className="flex items-center gap-1.5">
+                  <Gift className="h-3 w-3 text-orange-400" aria-hidden />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-orange-400/80">Giro</span>
+                </div>
+                <div className="mt-0.5 font-mono text-sm font-black tabular-nums text-orange-100 sm:text-base">
+                  {paidTabSpinLabel.replace('Giro ', '')}
+                </div>
+              </div>
             </div>
           </div>
         </header>

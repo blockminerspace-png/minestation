@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { GameState, LootBox, LootBoxItem, Upgrade } from '../types';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
+import { handleImageError } from '../utils/imageFallback';
 import { Gift, Package, Sparkles, DollarSign, Box, CheckCircle2, Ticket, Store, Trash2, Loader2 } from 'lucide-react';
 import { UiNoticeModal, type UiNotice } from './UiNoticeModal';
 import { getLuckyBoxesState, redeemLuckyBoxPromoCode, type LuckyBoxesStateV1, type LuckyBoxShopEntryV1 } from '../services/api';
@@ -144,8 +145,8 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
         return 'Nenhuma caixa disponível para compra no momento.';
     }, [lojaRows.length, luckyStateV1]);
 
-    // Helper to render icon (emoji or image)
-    const renderIcon = (icon: string, sizeClass: string = "text-xl", imgClass: string = "") => {
+    // Helper to render icon (emoji or image; com fallback SVG se a imagem falhar)
+    const renderIcon = (icon: string, sizeClass: string = "text-xl", imgClass: string = "", fallbackEmoji: string = '📦') => {
         if (!icon) return <span className={sizeClass}>🎁</span>;
 
         const isImage = icon.includes('/') || icon.includes('http') ||
@@ -154,7 +155,16 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
 
         if (isImage) {
             const src = normalizePublicAssetUrl(icon) || icon;
-            return <img src={src} alt="icon" className={`object-contain ${imgClass}`} style={{ width: '1em', height: '1em', fontSize: 'inherit' }} />;
+            return (
+                <img
+                    src={src}
+                    alt=""
+                    aria-hidden
+                    onError={handleImageError(fallbackEmoji)}
+                    className={`object-contain ${imgClass}`}
+                    style={{ width: '1em', height: '1em', fontSize: 'inherit' }}
+                />
+            );
         }
         return <span className={sizeClass}>{icon}</span>;
     };
@@ -206,11 +216,25 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
     );
 
     const handleOpen = (boxId: string) => {
+        if (openingBox) return;
         setOpeningBox(boxId);
         const ik =
             typeof crypto !== 'undefined' && 'randomUUID' in crypto
                 ? crypto.randomUUID()
                 : `lb_o_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+
+        /** Failsafe: nunca deixar o botão preso em "ABRINDO..." mais que 70s. O backend tem
+         *  `lock_timeout=45s` + `tx timeout=60s`, e o api fetch tem 300s. Aqui garantimos
+         *  que o utilizador tem feedback bem antes do timeout HTTP. */
+        const stuckGuard = window.setTimeout(() => {
+            setOpeningBox((cur) => (cur === boxId ? null : cur));
+            setNotice({
+                variant: 'error',
+                title: 'Caixas da Sorte',
+                message:
+                    'A abertura está a demorar mais do que o esperado. Recarrega a página e verifica o inventário antes de tentar de novo — a abertura pode ter sido registada (idempotência).'
+            });
+        }, 70_000);
 
         void (async () => {
             try {
@@ -218,6 +242,8 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                 if (result && Array.isArray(result.rewards) && result.rewards.length > 0) {
                     setRewards(result.rewards);
                 }
+                /** Se `result` for null o App.tsx (handleOpenBox) já mostrou o `luckyBoxNotice`
+                 *  global; não duplicamos para evitar dois popups em cima um do outro. */
             } catch (e: unknown) {
                 setNotice({
                     variant: 'error',
@@ -225,6 +251,7 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
                     message: e instanceof Error ? e.message : 'Erro ao abrir a caixa.'
                 });
             } finally {
+                window.clearTimeout(stuckGuard);
                 setOpeningBox(null);
             }
         })();

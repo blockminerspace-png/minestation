@@ -112,6 +112,7 @@ import { registerWalletPlayerRoutes } from './dist/modules/wallet/walletPlayerCo
 import { runExchangeLiquidation } from './dist/modules/wallet/walletExchangeLiquidation.js';
 import { executeWithdrawRequest } from './dist/modules/wallet/walletWithdrawRequest.js';
 import { ensureWalletWithdrawSchema } from './dist/modules/wallet/walletWithdrawSchema.js';
+import { ensureCriticalIdempotencySchema } from './dist/lib/criticalIdempotencySchemaEnsure.js';
 import { registerUpgradesPlayerRoutes } from './dist/modules/upgrades/upgradesPlayer.controller.js';
 import { runUpgradePackagePurchase } from './dist/modules/upgrades/upgradesPurchase.service.js';
 import { RoletaAppError, parseIdempotencyKey } from './dist/validation/roletaValidation.js';
@@ -9672,6 +9673,15 @@ const startServer = async () => {
       await ensureWalletWithdrawSchema(db);
     } catch (e) {
       console.warn('[Withdraw] ensureWalletWithdrawSchema (boot) falhou:', e instanceof Error ? e.message : e);
+    }
+
+    /** Caixas/Loja/Upgrades: idem ao saque — colunas `request_fingerprint` exigidas pelos INSERT/SELECT
+     *  podiam estar em falta apesar de `_prisma_migrations` marcar a migration como aplicada
+     *  (rollback acidental). Sem isto, abrir uma Caixa da Sorte rebenta com 500 e o botão fica preso em "ABRINDO...". */
+    try {
+      await ensureCriticalIdempotencySchema(db);
+    } catch (e) {
+      console.warn('[CriticalIdempotencySchema] (boot) falhou:', e instanceof Error ? e.message : e);
     }
   } catch (e) {
     console.error('[DB] Failed to initialize PostgreSQL:', e);
