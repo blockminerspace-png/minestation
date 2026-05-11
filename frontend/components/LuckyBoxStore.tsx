@@ -774,21 +774,56 @@ export const LuckyBoxStore: React.FC<LuckyBoxStoreProps> = ({
 
                         <div className="w-full space-y-3 mb-8">
                             {rewards.map((reward, idx) => {
-                                const isCurrency = reward.type === 'currency';
-                                const itemDef = !isCurrency ? upgrades.find(u => u.id === reward.id) : null;
-                                const name = isCurrency ? 'USDC' : (itemDef?.name || reward.id);
-                                const icon = isCurrency ? '💵' : (itemDef?.icon || '📦');
+                                const type = String(reward?.type || 'item');
+                                let name = String(reward?.id || '');
+                                let category = 'Item';
+                                let icon: string = '📦';
+
+                                if (type === 'currency') {
+                                    name = reward.id === 'usdc' ? 'USDC' : String(reward.id || '').toUpperCase();
+                                    category = 'Saldo';
+                                    icon = '💵';
+                                } else if (type === 'coin') {
+                                    name = String(reward.id || 'Moeda');
+                                    category = 'Moeda';
+                                    icon = '🪙';
+                                } else if (type === 'box') {
+                                    const def = lootBoxes.find((b) => b.id === reward.id);
+                                    name = displayLootBoxName(def?.name) || String(reward.id || 'Caixa');
+                                    category = 'Caixa';
+                                    icon = '🎁';
+                                } else if (type === 'pass') {
+                                    name = 'Season Pass';
+                                    category = 'Passe';
+                                    icon = '🎟️';
+                                } else if (type === 'access_level') {
+                                    name = 'Nível de acesso';
+                                    category = 'Acesso';
+                                    icon = '👑';
+                                } else {
+                                    const itemDef = upgrades.find((u) => u.id === reward.id);
+                                    name = itemDef?.name || String(reward.id || 'Item');
+                                    category = itemDef?.category || 'Item';
+                                    icon = itemDef?.icon || '📦';
+                                }
+
+                                const showQty = !(type === 'access_level' || type === 'pass');
+                                const qtyLabel = type === 'currency' && reward.id === 'usdc'
+                                    ? formatCost(reward.qty)
+                                    : String(reward.qty);
 
                                 return (
                                     <div key={idx} className="bg-slate-50 dark:bg-slate-800 p-3 rounded-lg border border-slate-200 dark:border-slate-700 flex items-center gap-4 animate-in slide-in-from-bottom-2 duration-500" style={{ animationDelay: `${idx * 100}ms` }}>
                                         <div className="text-2xl w-10 h-10 flex items-center justify-center">{renderIcon(icon, "text-2xl", "w-8 h-8")}</div>
                                         <div className="flex-1">
                                             <div className="font-bold text-slate-800 dark:text-white text-sm">{name}</div>
-                                            <div className="text-xs text-slate-500 uppercase">{isCurrency ? 'Saldo' : itemDef?.category || 'Item'}</div>
+                                            <div className="text-xs text-slate-500 uppercase">{category}</div>
                                         </div>
-                                        <div className="font-mono font-bold text-green-600 dark:text-green-400">
-                                            x{isCurrency && reward.id === 'usdc' ? formatCost(reward.qty) : reward.qty}
-                                        </div>
+                                        {showQty ? (
+                                            <div className="font-mono font-bold text-green-600 dark:text-green-400">
+                                                x{qtyLabel}
+                                            </div>
+                                        ) : null}
                                     </div>
                                 );
                             })}

@@ -1,6 +1,9 @@
 import { Prisma } from '@prisma/client';
 import type { SqlTransaction } from '../lib/sqlTransaction.js';
-import { grantAdminUpgradeRewardsInTx } from './adminUpgradeGrantModel.js';
+import {
+  expandAdminUpgradeBundleAsLootRewardsInTx,
+  grantAdminUpgradeRewardsInTx
+} from './adminUpgradeGrantModel.js';
 
 /**
  * Sorteio de loot box:
@@ -375,6 +378,26 @@ export async function executeLootBoxOpenInTransaction(
     for (let i = 0; i < n; i++) {
       await grantAdminUpgradeRewardsInTx(userId, b.id, tx);
     }
+  }
+
+  /**
+   * Bundles internos (`type='bundle'`, id = `admin_upgrades.id`) não têm nome próprio
+   * no catálogo do utilizador — apareceriam crus no modal "RECOMPENSAS!". Substituímos
+   * cada bundle pelos prémios reais que foram concedidos via `grantAdminUpgradeRewardsInTx`,
+   * para que o jogador veja "9× Rack A4, 9× Circuito Avançado, …" em vez do UUID do pacote.
+   */
+  if (gainedBundles.length > 0) {
+    const expanded: LootRewardGrant[] = [];
+    for (const r of rewards) {
+      if (r.type !== 'bundle') {
+        expanded.push(r);
+        continue;
+      }
+      const more = await expandAdminUpgradeBundleAsLootRewardsInTx(tx, r.id, r.qty);
+      for (const e of more) expanded.push({ type: e.type, id: e.id, qty: e.qty });
+    }
+    rewards.length = 0;
+    for (const r of expanded) rewards.push(r);
   }
 
   const opening = await tx.lucky_box_openings.create({

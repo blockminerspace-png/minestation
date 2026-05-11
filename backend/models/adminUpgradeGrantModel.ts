@@ -1,5 +1,12 @@
 import type { Prisma } from '@prisma/client';
 
+/** Item entregue por um bundle expandido (formato compatível com `LootRewardGrant`). */
+export type AdminUpgradeBundleReward = {
+  type: 'item' | 'currency' | 'coin' | 'box' | 'pass' | 'access_level';
+  id: string;
+  qty: number;
+};
+
 /**
  * Recompensas de season pass (ordem USDC → moedas → stock → caixas legacy).
  * Deve correr dentro do mesmo `prisma.$transaction` que o resgate/compra.
@@ -222,6 +229,77 @@ export async function materializeUpgradePackageAsLootBoxInTx(
   });
 
   return { boxId, boxName };
+}
+
+/**
+ * Lê o conteúdo nominal de um pacote admin (`admin_upgrade_*`) e devolve uma lista
+ * de recompensas em formato compatível com `LootRewardGrant`. Usado pelo
+ * `executeLootBoxOpenInTransaction` para substituir a entrada interna `type='bundle'`
+ * (que não tem nome próprio no catálogo do utilizador) pelos prémios reais —
+ * é o que o modal "RECOMPENSAS" exibe ao jogador. Não faz writes na BD.
+ *
+ * `multiplier` permite suportar bundles abertos N vezes (mantemos a semântica do loop
+ * que já existia em `executeLootBoxOpenInTransaction`).
+ */
+export async function expandAdminUpgradeBundleAsLootRewardsInTx(
+  tx: Prisma.TransactionClient,
+  upgradeId: string,
+  multiplier: number
+): Promise<AdminUpgradeBundleReward[]> {
+  const m = Math.max(0, Math.floor(Number(multiplier) || 0));
+  if (!m) return [];
+
+  const upgrade = await tx.admin_upgrades.findUnique({
+    where: { id: upgradeId },
+    select: { grant_usdc: true, grant_access_level_id: true }
+  });
+  if (!upgrade) return [];
+
+  const [items, coins, boxes, passes] = await Promise.all([
+    tx.admin_upgrade_items.findMany({ where: { upgrade_id: upgradeId } }),
+    tx.admin_upgrade_coins.findMany({ where: { upgrade_id: upgradeId } }),
+    tx.admin_upgrade_boxes.findMany({ where: { upgrade_id: upgradeId } }),
+    tx.admin_upgrade_passes.findMany({ where: { upgrade_id: upgradeId } })
+  ]);
+
+  const out: AdminUpgradeBundleReward[] = [];
+
+  const usdc = Number(upgrade.grant_usdc ?? 0);
+  if (Number.isFinite(usdc) && usdc > 0) {
+    out.push({ type: 'currency', id: 'usdc', qty: usdc * m });
+  }
+
+  for (const it of items) {
+    const q = Math.floor(Number(it.qty));
+    if (!Number.isFinite(q) || q <= 0) continue;
+    out.push({ type: 'item', id: String(it.item_id), qty: q * m });
+  }
+
+  for (const c of coins) {
+    const q = Number(c.amount);
+    if (!Number.isFinite(q) || q === 0) continue;
+    out.push({ type: 'coin', id: String(c.coin_id), qty: q * m });
+  }
+
+  for (const b of boxes) {
+    const q = Math.floor(Number(b.qty));
+    if (!Number.isFinite(q) || q <= 0) continue;
+    out.push({ type: 'box', id: String(b.box_id), qty: q * m });
+  }
+
+  /** Passes / acesso são marcadores de display (qty=1 cada); a entrega real continua em `grantAdminUpgradeRewardsInTx`. */
+  for (const p of passes) {
+    const passId = String(p.pass_id || '').trim();
+    if (!passId) continue;
+    out.push({ type: 'pass', id: passId, qty: 1 * m });
+  }
+
+  const alid = String(upgrade.grant_access_level_id ?? '').trim();
+  if (alid) {
+    out.push({ type: 'access_level', id: alid, qty: 1 });
+  }
+
+  return out;
 }
 
 /**
