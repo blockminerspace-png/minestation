@@ -68,7 +68,7 @@ services:
       - .env
     volumes:
       - ../backups:/app/backups
-      - ../backend/img/uploads:/app/backend/img/uploads
+      - ../backend/img:/app/backend/img
     depends_on:
       postgres:
         condition: service_healthy

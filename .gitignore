@@ -20,11 +20,16 @@ backend/frontend/
 # Deploy VM (credenciais — nunca commitar)
 scripts/deploy.vm.env
 
-# Environment files
+# Environment files (segredos — NUNCA versionar)
 .env
 backend/.env
 admin/.env
 frontend/.env
+# Backups de .env contêm segredos em claro
+.env.bak*
+**/.env.bak*
+.env.backup*
+**/.env.backup*
 
 # Database backups (sensitive data)
 backups/
