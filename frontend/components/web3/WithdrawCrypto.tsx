@@ -2,8 +2,19 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Send, PlusCircle, RefreshCw, Wallet, ShieldCheck, Database } from 'lucide-react';
 import { getWeb3Settings, setWeb3Settings, getMiningCoins } from '../../services/api';
 import { MiningCoin } from '../../types';
+import { findWithdrawTokenCfg } from '../../utils/withdrawTokenMatch';
 
-type TokenCfg = { name: string; contract: string; payoutWallet: string; minAmount?: number; minWithdrawalUsdc?: number; feePercent?: number; disabled?: boolean };
+type TokenCfg = {
+  name: string;
+  symbol?: string;
+  coinId?: string;
+  contract: string;
+  payoutWallet: string;
+  minAmount?: number;
+  minWithdrawalUsdc?: number;
+  feePercent?: number;
+  disabled?: boolean;
+};
 
 type Web3WithdrawProps = { readOnly?: boolean };
 
@@ -171,10 +182,20 @@ export const Web3Withdraw: React.FC<Web3WithdrawProps> = ({ readOnly = false }) 
     if (readOnly) return;
     setSaving(true);
     const s = await getWeb3Settings();
+    const mergedTokens = withdrawTokens.map((t) => {
+      const c = miningCoins.find(
+        (mc) =>
+          mc.id === t.coinId ||
+          mc.symbol === t.name ||
+          (t.symbol && mc.symbol === t.symbol)
+      );
+      if (!c) return { ...t, symbol: t.symbol || t.name };
+      return { ...t, coinId: c.id, symbol: c.symbol, name: t.name || c.symbol };
+    });
     await setWeb3Settings({
       ...s!,
       payoutWallet,
-      withdrawTokens,
+      withdrawTokens: mergedTokens,
     });
     setSaving(false);
     setSavedAt(Date.now());
@@ -187,7 +208,14 @@ export const Web3Withdraw: React.FC<Web3WithdrawProps> = ({ readOnly = false }) 
       if (exists) {
         return prev.map(t => t.name === name ? { ...t, [field]: value } : t);
       } else {
-        const newCfg: TokenCfg = { name, contract: '', payoutWallet, minAmount: undefined, minWithdrawalUsdc: undefined, feePercent: undefined };
+        const newCfg: TokenCfg = {
+          name,
+          contract: '',
+          payoutWallet,
+          minAmount: undefined,
+          minWithdrawalUsdc: undefined,
+          feePercent: undefined
+        };
         return [...prev, { ...newCfg, [field]: value }];
       }
 
@@ -242,7 +270,15 @@ export const Web3Withdraw: React.FC<Web3WithdrawProps> = ({ readOnly = false }) 
             <div className="py-10 text-center text-slate-500 text-sm italic">Nenhuma moeda minerável ativa encontrada.</div>
           ) : (
             miningCoins.map((coin) => {
-              const cfg = withdrawTokens.find(t => t.name === coin.symbol) || { name: coin.symbol, contract: '', payoutWallet: payoutWallet, minAmount: undefined };
+              const cfg =
+                findWithdrawTokenCfg(withdrawTokens, coin) || {
+                  name: coin.symbol,
+                  symbol: coin.symbol,
+                  coinId: coin.id,
+                  contract: '',
+                  payoutWallet,
+                  minAmount: undefined
+                };
               const balance = balances[coin.symbol];
 
               return (
@@ -338,11 +374,25 @@ export const Web3Withdraw: React.FC<Web3WithdrawProps> = ({ readOnly = false }) 
                         placeholder="Ex: 5.00"
                         className={`w-full bg-slate-950 border border-slate-700 rounded p-2 text-white text-xs ${readOnly ? 'opacity-70 cursor-not-allowed' : ''}`}
                       />
-                      {cfg.minWithdrawalUsdc && coin.priceUSD > 0 && (
-                        <span className="text-[9px] text-amber-500 mt-1 block">
-                          ≈ {(cfg.minWithdrawalUsdc / coin.priceUSD).toLocaleString('en-US', { maximumFractionDigits: 6 })} {coin.symbol}
-                        </span>
-                      )}
+                      {cfg.minWithdrawalUsdc != null &&
+                        cfg.minWithdrawalUsdc > 0 &&
+                        (() => {
+                          const rate =
+                            typeof coin.usdcRate === 'number' && coin.usdcRate > 0
+                              ? coin.usdcRate
+                              : coin.priceUSD > 0
+                                ? coin.priceUSD
+                                : 0;
+                          if (!(rate > 0)) return null;
+                          return (
+                            <span className="text-[9px] text-amber-500 mt-1 block">
+                              ≈ {(cfg.minWithdrawalUsdc! / rate).toLocaleString('en-US', {
+                                maximumFractionDigits: 6
+                              })}{' '}
+                              {coin.symbol} (bruto, alinhado ao servidor)
+                            </span>
+                          );
+                        })()}
                     </div>
                     <div>
                       <label className="text-[10px] text-slate-500 font-bold block mb-1">TAXA DE SAQUE (%)</label>

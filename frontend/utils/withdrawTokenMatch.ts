@@ -51,3 +51,29 @@ export function isWithdrawTokenUsable(cfg: WithdrawTokenCfgLike | null | undefin
   const hasValidContract = /^0x[a-fA-F0-9]{40}$/.test(String(cfg.contract || ''));
   return isNative || hasValidContract;
 }
+
+/** Taxa USDC por 1 unidade da moeda: preferir `usdcRate` (alinhado a `mining_coins.usdc_rate` / backend). */
+export function effectiveCoinUsdcRate(coin: { usdcRate?: number; priceUSD?: number }): number {
+  const u = Number(coin.usdcRate);
+  if (Number.isFinite(u) && u > 0) return u;
+  const p = Number(coin.priceUSD);
+  if (Number.isFinite(p) && p > 0) return p;
+  return 0;
+}
+
+/**
+ * Mínimo em unidades da moeda, igual ao servidor (`Math.max(minAmount, minWithdrawalUsdc / usdc_rate)`).
+ */
+export function minimumWithdrawCryptoAmount(
+  coin: { usdcRate?: number; priceUSD?: number },
+  cfg: WithdrawTokenCfgLike | null | undefined
+): number {
+  if (!cfg) return 0;
+  const minByCoinRaw = Number(cfg.minAmount);
+  const minByCoin = Number.isFinite(minByCoinRaw) && minByCoinRaw > 0 ? minByCoinRaw : 0;
+  const rate = effectiveCoinUsdcRate(coin);
+  const minUsdcRaw = Number(cfg.minWithdrawalUsdc);
+  const minByUsdc =
+    Number.isFinite(minUsdcRaw) && minUsdcRaw > 0 && rate > 0 ? minUsdcRaw / rate : 0;
+  return Math.max(minByCoin, minByUsdc);
+}

@@ -65,7 +65,8 @@ import {
 import { GameState, PlacedRack, StoredBattery, User, MarketListing, Upgrade, AccessLevel, LootBox, MiningCoin, Web3Settings, MonetizationSettings, EconomySettings, SystemNews, normalizePlacedRackRoomId, NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from './types';
 import { DEFAULT_GAME_NAV_LABELS, type GameNavLabelKey } from './constants/gameNavLabels';
 import { appendUsdcShortfallLine } from './utils/playerMoneyMessages';
-import { findWithdrawTokenCfg, isWithdrawTokenUsable } from './utils/withdrawTokenMatch';
+import { findWithdrawTokenCfg, isWithdrawTokenUsable, minimumWithdrawCryptoAmount } from './utils/withdrawTokenMatch';
+import type { WalletWithdrawResult } from './components/WalletActions';
 import { trackSpaPageView } from './lib/analytics';
 import {
   gamePathFromView,
@@ -2365,43 +2366,39 @@ export default function App() {
     }
   };
 
-  const handleWithdrawCoin = useCallback(async (coinId: string, amt: number) => {
+  const handleWithdrawCoin = useCallback(async (coinId: string, amt: number): Promise<WalletWithdrawResult> => {
     const s = web3SettingsState;
-    const coin = miningCoins.find(c => c.id === coinId);
-    const matching = findWithdrawTokenCfg(s?.withdrawTokens, coin);
+    const coin = miningCoins.find((c) => c.id === coinId);
     if (!user?.polygonWallet || !coin) {
-      alert('Carteira Polygon não vinculada. Conecta a carteira no perfil para levantar.');
-      return;
+      return { ok: false, error: 'Carteira Polygon não vinculada. Liga a carteira no perfil para levantar.' };
     }
+    const matching = findWithdrawTokenCfg(s?.withdrawTokens, coin);
     if (!matching || !isWithdrawTokenUsable(matching)) {
-      alert(`Levantamento indisponível para ${coin.symbol || coin.name}. Confirma a configuração no painel administrativo.`);
-      return;
+      return {
+        ok: false,
+        error: `Levantamento indisponível para ${coin.symbol || coin.name}. Confirma a configuração no painel administrativo.`
+      };
     }
 
-    let minW = matching?.minAmount ?? 0;
-    if (matching?.minWithdrawalUsdc && coin.priceUSD > 0) {
-      minW = matching.minWithdrawalUsdc / coin.priceUSD;
-    }
-
+    const minW = minimumWithdrawCryptoAmount(coin, matching);
     const cur = (gameState.coinBalances || {})[coinId] || 0;
 
-    if (!Number.isFinite(amt) || amt <= 0 || amt < minW) {
-      alert(`Valor mínimo para saque: ${minW.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${coin.symbol}`);
-      return;
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return { ok: false, error: 'Valor de saque inválido.' };
     }
-    if (amt > cur) {
-      alert('Saldo insuficiente.');
-      return;
+    if (minW > 0 && amt + 1e-12 < minW) {
+      return {
+        ok: false,
+        error: `O valor mínimo para saque (bruto) é ${minW.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${coin.symbol}.`
+      };
+    }
+    if (amt > cur + 1e-9) {
+      return { ok: false, error: `Saldo insuficiente. Você tem ${cur.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${coin.symbol} disponíveis.` };
     }
 
-    const fee = matching.feePercent ? (amt * (matching.feePercent / 100)) : 0;
-    const net = amt - fee;
-    const msg = fee > 0
-      ? `Confirmar solicitação de saque de ${amt} ${coin.symbol} para ${user.polygonWallet}?\n- Taxa (${matching.feePercent}%): ${fee.toFixed(8)} ${coin.symbol}\n- Valor Líquido: ${net.toFixed(8)} ${coin.symbol}`
-      : `Confirmar solicitação de saque de ${amt} ${coin.symbol} para a carteira ${user.polygonWallet}?`;
-
-    if (!confirm(msg)) return;
-    if (withdrawBusyRef.current) return;
+    if (withdrawBusyRef.current) {
+      return { ok: false, error: 'Já existe um pedido em andamento. Aguarda alguns segundos.' };
+    }
     withdrawBusyRef.current = true;
     const idempotencyKey = `wd_${crypto.randomUUID()}`;
     try {
@@ -2433,25 +2430,28 @@ export default function App() {
             }
           }
         } catch { /* refresh é best-effort */ }
-        alert(res.message || 'Solicitação de saque enviada com sucesso!');
         requestSave('full');
-      } else {
-        const code = (res as { code?: string }).code;
-        const status = (res as { status?: number }).status ?? 0;
-        if (code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
-          alert(res.error || 'Pedido em conflito. Recarrega o estado da carteira.');
-        } else if (status >= 400 && status < 500 && res.error) {
-          /** 4xx → mensagem específica do backend (saldo insuficiente, moeda não configurada, etc.). */
-          alert(res.error);
-        } else if (status >= 500) {
-          /** 5xx → mensagem genérica + sugestão de retry. */
-          alert('Erro interno no servidor. Tenta novamente em alguns minutos.');
-        } else if (res.error) {
-          alert(res.error);
-        } else {
-          alert('Erro ao solicitar saque. Tenta novamente.');
-        }
+        return {
+          ok: true,
+          message:
+            res.message ||
+            'Solicitação de saque enviada com sucesso. O saque será confirmado em até 24 horas.'
+        };
       }
+
+      const code = (res as { code?: string }).code;
+      const status = (res as { status?: number }).status ?? 0;
+      if (code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
+        return { ok: false, error: res.error || 'Pedido em conflito. Recarrega o estado da carteira.' };
+      }
+      if (status >= 400 && status < 500 && res.error) {
+        /** 4xx → mensagem específica do backend (saldo insuficiente, moeda não configurada, mínimo, etc.). */
+        return { ok: false, error: res.error };
+      }
+      if (status >= 500) {
+        return { ok: false, error: 'Erro interno no servidor. Tenta novamente em alguns minutos.' };
+      }
+      return { ok: false, error: res.error || 'Erro ao solicitar saque. Tenta novamente.' };
     } finally {
       withdrawBusyRef.current = false;
     }
@@ -3086,7 +3086,14 @@ export default function App() {
                               onSellCoin={handleSellCoin}
                               serverDeskSettings={serverDeskSettingsForExchange}
                             />
-                            <WalletActions onAddUSDC={handleAddUSDC} onStartDeposit={handleStartDeposit} depositStatus={depositFlow.status} depositAmount={depositFlow.amount} depositFailureMessage={depositFlow.failureReason} onCloseDepositStatus={() => setDepositFlow({ pending: false })} onSyncQueuedDeposit={depositFlow.status === 'queued' && depositFlow.txHash && user?.email ? async () => { const net = depositFlow.network || 'polygon'; const out = await verifyDepositWithServer(depositFlow.txHash!, net); if (out.ok) setDepositFlow((f) => ({ ...f, status: 'success' })); else if (out.pending) alert('Ainda à espera de confirmação na rede.'); else alert(out.error || 'Não foi possível sincronizar.'); } : undefined} userEmail={user?.email || null} onVerifyDepositByHash={user?.email ? async (txHash, network) => verifyDepositWithServer(txHash.trim(), network) : undefined} hasWallet={!!user?.polygonWallet} coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map(c => ({ id: c.id, name: c.name, symbol: c.symbol, priceUSD: c.priceUSD || 0 }))} coinRates={(() => { const rates: Record<string, number> = {}; gameState.placedRacks.forEach(r => { if (!r.isOn || !r.wiringId || !r.batteryId || !r.selectedCoinId) return; let base = 0; r.slots.forEach(sid => { if (!sid) return; const up = gameUpgrades.find(u => u.id === sid); if (up) base += up.baseProduction; }); let mult = 1; r.multiplierSlots?.forEach(sid => { if (!sid) return; const mod = gameUpgrades.find(u => u.id === sid); if (mod && mod.multiplier) mult += mod.multiplier; }); const prod = base * mult; const coin = miningCoins.find(c => c.id === r.selectedCoinId); const yieldPerHash = coin ? (coin.minProportion || 0) : 0; const rate = prod * yieldPerHash; rates[r.selectedCoinId] = (rates[r.selectedCoinId] || 0) + rate; }); return rates; })()} onWithdrawCoin={handleWithdrawCoin} prefillAmount={depositPrefill} withdrawTokens={web3SettingsState?.withdrawTokens?.map(t => ({ name: t.name, contract: t.contract, minAmount: t.minAmount, minWithdrawalUsdc: t.minWithdrawalUsdc, feePercent: t.feePercent }))} minDepositUsdc={web3SettingsState?.minDepositUsdc} depositPolygonDisabled={web3SettingsState?.depositPolygonDisabled} depositBnbDisabled={web3SettingsState?.depositBnbDisabled} depositBaseDisabled={web3SettingsState?.depositBaseDisabled} />
+                            <WalletActions onAddUSDC={handleAddUSDC} onStartDeposit={handleStartDeposit} depositStatus={depositFlow.status} depositAmount={depositFlow.amount} depositFailureMessage={depositFlow.failureReason} onCloseDepositStatus={() => setDepositFlow({ pending: false })} onSyncQueuedDeposit={depositFlow.status === 'queued' && depositFlow.txHash && user?.email ? async () => { const net = depositFlow.network || 'polygon'; const out = await verifyDepositWithServer(depositFlow.txHash!, net); if (out.ok) setDepositFlow((f) => ({ ...f, status: 'success' })); else if (out.pending) alert('Ainda à espera de confirmação na rede.'); else alert(out.error || 'Não foi possível sincronizar.'); } : undefined} userEmail={user?.email || null} onVerifyDepositByHash={user?.email ? async (txHash, network) => verifyDepositWithServer(txHash.trim(), network) : undefined} hasWallet={!!user?.polygonWallet} coinBalances={gameState.coinBalances || {}} miningCoins={miningCoins.map((c) => ({
+                              id: c.id,
+                              name: c.name,
+                              symbol: c.symbol,
+                              priceUSD: c.priceUSD || 0,
+                              usdcRate:
+                                typeof c.usdcRate === 'number' && c.usdcRate > 0 ? c.usdcRate : c.priceUSD || 0
+                            }))} coinRates={(() => { const rates: Record<string, number> = {}; gameState.placedRacks.forEach(r => { if (!r.isOn || !r.wiringId || !r.batteryId || !r.selectedCoinId) return; let base = 0; r.slots.forEach(sid => { if (!sid) return; const up = gameUpgrades.find(u => u.id === sid); if (up) base += up.baseProduction; }); let mult = 1; r.multiplierSlots?.forEach(sid => { if (!sid) return; const mod = gameUpgrades.find(u => u.id === sid); if (mod && mod.multiplier) mult += mod.multiplier; }); const prod = base * mult; const coin = miningCoins.find(c => c.id === r.selectedCoinId); const yieldPerHash = coin ? (coin.minProportion || 0) : 0; const rate = prod * yieldPerHash; rates[r.selectedCoinId] = (rates[r.selectedCoinId] || 0) + rate; }); return rates; })()} onWithdrawCoin={handleWithdrawCoin} prefillAmount={depositPrefill} withdrawTokens={web3SettingsState?.withdrawTokens?.map(t => ({ name: t.name, symbol: (t as { symbol?: string }).symbol, coinId: (t as { coinId?: string }).coinId, contract: t.contract, payoutWallet: (t as { payoutWallet?: string }).payoutWallet, minAmount: t.minAmount, minWithdrawalUsdc: t.minWithdrawalUsdc, feePercent: t.feePercent, disabled: (t as { disabled?: boolean }).disabled }))} minDepositUsdc={web3SettingsState?.minDepositUsdc} depositPolygonDisabled={web3SettingsState?.depositPolygonDisabled} depositBnbDisabled={web3SettingsState?.depositBnbDisabled} depositBaseDisabled={web3SettingsState?.depositBaseDisabled} />
                             <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-lg flex flex-col justify-between md:col-span-2 lg:col-span-2 xl:col-span-2 transition-colors">
                               <div>
                                 <h3 className="text-slate-700 dark:text-slate-300 font-bold flex items-center gap-2 mb-4 border-b border-slate-200 dark:border-slate-800 pb-2"><LayoutDashboard size={18} /> ESTATÍSTICAS</h3>

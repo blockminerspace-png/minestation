@@ -87,10 +87,16 @@ export function findWithdrawTokenCfg(
     const cfgSym = normCompare(t.symbol);
     const cfgNm = normCompare(t.name);
     if (coinId && cfgId === coinId) return t;
+    /** Legado: `name` no JSON por vezes guarda o id da moeda. */
+    if (coinId && cfgNm === coinId) return t;
     if (coinSym && (cfgSym === coinSym || cfgNm === coinSym)) return t;
     if (coinNm && (cfgNm === coinNm || cfgSym === coinNm)) return t;
   }
   return null;
+}
+
+function isEvmWalletAddress(addr: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(String(addr || '').trim());
 }
 
 /**
@@ -121,8 +127,13 @@ export async function runWithdrawRequestIdempotent(
   }
   const cleanWallet = String(walletAddress || '').trim();
   if (!cleanWallet) {
-    throw new RoletaAppError('Endereço da carteira é obrigatório.', 400);
+    throw new RoletaAppError('Informe uma carteira válida.', 400);
   }
+  if (!isEvmWalletAddress(cleanWallet)) {
+    throw new RoletaAppError('Informe uma carteira Polygon (EVM) válida (0x + 40 hex).', 400);
+  }
+
+  console.log('[Withdraw][start]', { userId, coinId, amount });
 
   await client.query('BEGIN');
   try {
@@ -142,7 +153,7 @@ export async function runWithdrawRequestIdempotent(
           const storedFp = String(row0.request_fingerprint ?? '').trim();
           const reqFp = String(requestFingerprint ?? '').trim();
           if (storedFp && reqFp && storedFp !== reqFp) {
-            console.warn('[Withdraw] idempotency mismatch', { userId, idempotencyKey });
+            console.warn('[Withdraw][error] idempotency mismatch', { userId, idempotencyKey });
             throw new RoletaAppError('Mesma chave de idempotência com pedido diferente.', 409);
           }
           await client.query('COMMIT');
@@ -160,7 +171,59 @@ export async function runWithdrawRequestIdempotent(
     );
     const coin = coinRes.rows[0];
     if (!coin) {
-      throw new RoletaAppError('Moeda não encontrada.', 404);
+      console.warn('[Withdraw][validation] moeda inexistente', { coinId });
+      throw new RoletaAppError('Moeda não encontrada ou inativa.', 400);
+    }
+
+    const sym = coin.symbol || coin.name || coin.id;
+    const usdcRate = Number(coin.usdc_rate) || 0;
+
+    const withdrawTokensRaw = await getSettingValue('web3_withdraw_tokens');
+    const withdrawTokens = parseWithdrawTokens(withdrawTokensRaw != null ? String(withdrawTokensRaw) : null);
+    const tokenCfg = findWithdrawTokenCfg(withdrawTokens, coin);
+    console.log('[Withdraw][config]', {
+      coinId: coin.id,
+      symbol: sym,
+      matched: !!tokenCfg,
+      disabled: !!tokenCfg?.disabled
+    });
+
+    if (!tokenCfg) {
+      throw new RoletaAppError(
+        `${sym} não está configurado para saque no painel administrativo.`,
+        400
+      );
+    }
+    if (tokenCfg.disabled) {
+      throw new RoletaAppError(`Saques para ${sym} estão desativados no momento.`, 400);
+    }
+
+    const feePercent = Math.max(0, Math.min(100, Number(tokenCfg.feePercent) || 0));
+    const feeAmount = amount * (feePercent / 100);
+    const netAmount = Math.max(0, amount - feeAmount);
+    const amountUsdc = amount * usdcRate;
+
+    const minAmountRaw = Number(tokenCfg.minAmount);
+    const minByCoin = Number.isFinite(minAmountRaw) && minAmountRaw > 0 ? minAmountRaw : 0;
+    const minUsdcRaw = Number(tokenCfg.minWithdrawalUsdc);
+    const minByUsdc =
+      Number.isFinite(minUsdcRaw) && minUsdcRaw > 0 && usdcRate > 0 ? minUsdcRaw / usdcRate : 0;
+    const minimumRequired = Math.max(minByCoin, minByUsdc);
+
+    console.log('[Withdraw][validation]', {
+      minimumRequired,
+      minByCoin,
+      minByUsdc,
+      usdcRate,
+      feePercent
+    });
+
+    if (minimumRequired > 0 && amount + 1e-9 < minimumRequired) {
+      const minStr = minimumRequired.toLocaleString('en-US', { maximumFractionDigits: 8 });
+      throw new RoletaAppError(
+        `O valor mínimo para saque de ${sym} é ${minStr} ${sym} (valor bruto a debitar do saldo minerado).`,
+        400
+      );
     }
 
     const balRes = await client.query<{ amount: string }>(
@@ -168,40 +231,25 @@ export async function runWithdrawRequestIdempotent(
       [userId, coinId]
     );
     const balance = Number(balRes.rows[0]?.amount) || 0;
-    if (balance < amount) {
-      throw new RoletaAppError('Saldo insuficiente.', 400);
-    }
+    console.log('[Withdraw][balance]', { balance, amount, coinId });
 
-    const withdrawTokensRaw = await getSettingValue('web3_withdraw_tokens');
-    const withdrawTokens = parseWithdrawTokens(withdrawTokensRaw != null ? String(withdrawTokensRaw) : null);
-    const tokenCfg = findWithdrawTokenCfg(withdrawTokens, coin);
-    if (!tokenCfg) {
+    if (balance + 1e-9 < amount) {
+      const balStr = balance.toLocaleString('en-US', { maximumFractionDigits: 8 });
       throw new RoletaAppError(
-        `A moeda ${coin.symbol || coin.name || coin.id} não está configurada para saques no painel administrativo.`,
+        `Saldo insuficiente. Tens ${balStr} ${sym} disponível; este saque requer ${sym} em valor bruto.`,
         400
       );
     }
-    if (tokenCfg.disabled) {
-      throw new RoletaAppError(
-        `Saques de ${coin.symbol || coin.name || coin.id} estão temporariamente desativados.`,
-        400
-      );
-    }
-
-    const feePercent = Math.max(0, Math.min(100, Number(tokenCfg.feePercent) || 0));
-    const feeAmount = amount * (feePercent / 100);
-    const netAmount = Math.max(0, amount - feeAmount);
-    const usdcRate = Number(coin.usdc_rate) || 0;
-    const amountUsdc = amount * usdcRate;
 
     const upd = await client.query(
       'UPDATE coin_balances SET amount = amount - $1 WHERE user_id = $2 AND coin_id = $3 AND amount >= $1',
       [amount, userId, coinId]
     );
     if (upd.rowCount === 0) {
-      /** Race com outro saque/débito concorrente: o `FOR UPDATE` lê o saldo, mas se outro fluxo apanhar o lock
-       *  primeiro o `UPDATE` condicional aqui não atinge 1 linha — devolver 400 estável. */
-      throw new RoletaAppError('Saldo insuficiente.', 400);
+      throw new RoletaAppError(
+        `Saldo insuficiente. Tens ${balance.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${sym} disponível.`,
+        400
+      );
     }
 
     const requestId = crypto.randomUUID();
@@ -214,7 +262,7 @@ export async function runWithdrawRequestIdempotent(
     const out: WithdrawRequestOk = {
       ok: true,
       requestId,
-      message: 'Solicitação de saque enviada com sucesso!'
+      message: 'Solicitação de saque enviada com sucesso. O saque será confirmado em até 24 horas.'
     };
 
     const fp =
@@ -228,9 +276,12 @@ export async function runWithdrawRequestIdempotent(
     );
 
     await client.query('COMMIT');
-    console.log('[Withdraw] pending criada', { userId, coinId: coin.id, amount, feeAmount, netAmount, requestId });
+    console.log('[Withdraw][request_created]', { userId, coinId: coin.id, amount, feeAmount, netAmount, requestId });
     return out;
   } catch (e) {
+    if (!(e instanceof RoletaAppError)) {
+      console.error('[Withdraw][error]', e instanceof Error ? e.message : e);
+    }
     try {
       await client.query('ROLLBACK');
     } catch {

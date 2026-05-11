@@ -9474,7 +9474,7 @@ async function handleWithdrawRequest(req: any, res: any) {
     return res.status(400).json({ error: 'Valor de saque inválido.' });
   }
   if (!walletAddress) {
-    return res.status(400).json({ error: 'Endereço da carteira é obrigatório.' });
+    return res.status(400).json({ error: 'Informe uma carteira válida.' });
   }
 
   const uid = typeof req.userId === 'number' ? req.userId : parseInt(String(req.userId), 10);
