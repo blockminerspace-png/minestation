@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useId } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Gift } from 'lucide-react';
 import { WheelItem } from '../types';
+import { normalizePublicAssetUrl } from '../utils/publicUrl';
 
 interface WheelProps {
   items: WheelItem[];
@@ -9,9 +10,53 @@ interface WheelProps {
   onStopSpinning: () => void;
 }
 
+/** Duração da animação de giro (ms). Ajustar aqui também muda `setTimeout` abaixo. */
+const SPIN_DURATION_MS = 5000;
+/** Voltas completas extra antes do prémio (sensação de peso/inércia). */
+const SPIN_EXTRA_TURNS = 12;
+/** Easing premium: rápido no início, desacelera devagar no final. */
+const SPIN_EASING = 'cubic-bezier(0.12, 0.75, 0.08, 1)';
+
+/** Pequeno componente de imagem com fallback automático para o ícone do prémio. */
+const PrizeImage: React.FC<{
+  src?: string | null;
+  alt: string;
+  size: number;
+  className?: string;
+}> = ({ src, alt, size, className }) => {
+  const [broken, setBroken] = useState(false);
+  const url = useMemo(() => (src ? normalizePublicAssetUrl(src) || src : undefined), [src]);
+  if (!url || broken) {
+    return (
+      <div
+        className={`flex shrink-0 items-center justify-center rounded-md bg-slate-900/80 ring-1 ring-white/20 ${className ?? ''}`}
+        style={{ width: size, height: size }}
+        aria-hidden
+      >
+        <Gift className="text-amber-300" style={{ width: size * 0.55, height: size * 0.55 }} />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={alt}
+      width={size}
+      height={size}
+      onError={() => setBroken(true)}
+      className={`shrink-0 select-none object-contain ${className ?? ''}`}
+      style={{ width: size, height: size }}
+      draggable={false}
+    />
+  );
+};
+
 const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpinning }) => {
   const ptrGradId = `wp-${useId().replace(/:/g, '')}`;
   const [rotation, setRotation] = useState(0);
+  /** Marca o índice vencedor após o stop, para destacar visualmente o segmento. */
+  const [winnerIdx, setWinnerIdx] = useState<number | null>(null);
+
   const totalWeight = useMemo(
     () => Math.max(1e-9, items.reduce((a, b) => a + Math.max(0, Number(b.weight) || 0), 0)),
     [items]
@@ -33,97 +78,111 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
   const backgroundStyle = `conic-gradient(${gradientParts.join(', ')})`;
   const n = Math.max(1, items.length);
   const sliceDeg = 360 / n;
-  /** Linhas finas entre fatias (girar com o disco). */
   const sliceDividers =
     items.length > 0
-      ? `repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg ${sliceDeg - 0.75}deg, rgba(15,23,42,0.5) ${sliceDeg - 0.75}deg ${sliceDeg}deg)`
+      ? `repeating-conic-gradient(from 0deg at 50% 50%, transparent 0deg ${sliceDeg - 0.75}deg, rgba(15,23,42,0.65) ${sliceDeg - 0.75}deg ${sliceDeg}deg)`
       : undefined;
 
   useEffect(() => {
     if (mustSpin && targetWinner && items.length > 0) {
       let winnerStart = 0;
       let winnerSize = 0;
-      for (const item of items) {
+      let foundIdx = -1;
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i]!;
         const deg = (Math.max(0, Number(item.weight) || 0) / totalWeight) * 360;
         if (item.id === targetWinner.id) {
           winnerSize = deg;
+          foundIdx = i;
           break;
         }
         winnerStart += deg;
       }
 
       const winnerCenter = winnerStart + winnerSize / 2;
-      const extraSpins = 1800;
-      const targetRotation = extraSpins + (360 - winnerCenter);
+      const extraDeg = SPIN_EXTRA_TURNS * 360;
+      const targetRotation = extraDeg + (360 - winnerCenter);
 
       const currentMod = rotation % 360;
       const dist = targetRotation - currentMod;
       const finalRotation = rotation + dist + (dist < 0 ? 360 : 0);
 
+      setWinnerIdx(null);
       setRotation(finalRotation);
 
       const timer = setTimeout(() => {
+        setWinnerIdx(foundIdx >= 0 ? foundIdx : null);
         onStopSpinning();
-      }, 3000);
+      }, SPIN_DURATION_MS);
       return () => clearTimeout(timer);
     }
-    // rotation omitido de propósito: só reage a novo giro (mustSpin/targetWinner/items).
+    if (!mustSpin && !targetWinner) {
+      setWinnerIdx(null);
+    }
+    // `rotation` omitido de propósito: só reage a novo giro (mustSpin/targetWinner/items).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mustSpin, targetWinner, items, onStopSpinning, totalWeight]);
 
   return (
     <div
-      className="relative mx-auto aspect-square w-[min(25rem,calc(100vw-1rem))] max-w-md flex items-center justify-center font-sans transition-all sm:w-[min(26rem,calc(100vw-2rem))]"
+      className="relative mx-auto aspect-square w-[min(28rem,calc(100vw-1rem))] max-w-lg flex items-center justify-center font-sans transition-all sm:w-[min(30rem,calc(100vw-2rem))]"
       role="img"
       aria-label="Roleta de prémios"
     >
-      {/* Brilho exterior */}
+      {/* Halos exteriores cyber */}
       <div
-        className="pointer-events-none absolute -inset-3 rounded-full bg-gradient-to-b from-amber-500/20 via-orange-600/10 to-transparent blur-2xl sm:-inset-4"
+        className={`pointer-events-none absolute -inset-6 rounded-full bg-gradient-to-br from-amber-500/30 via-orange-600/15 to-transparent blur-3xl transition-opacity duration-1000 ${mustSpin ? 'opacity-100' : 'opacity-50'}`}
+        aria-hidden
+      />
+      <div
+        className={`pointer-events-none absolute -inset-2 rounded-full bg-gradient-to-tr from-orange-500/20 via-amber-300/10 to-transparent blur-2xl transition-opacity duration-1000 ${winnerIdx != null ? 'opacity-100' : 'opacity-60'}`}
         aria-hidden
       />
 
-      {/* Ponteiro (SVG único por instância para evitar colisão de gradient id) */}
+      {/* Ponteiro fixo no topo */}
       <div
-        className="absolute left-1/2 z-30 -translate-x-1/2 drop-shadow-[0_6px_16px_rgba(0,0,0,0.7)]"
-        style={{ top: 'clamp(-1.75rem, -5vw, -1.1rem)' }}
+        className="absolute left-1/2 z-30 -translate-x-1/2 drop-shadow-[0_8px_20px_rgba(0,0,0,0.75)]"
+        style={{ top: 'clamp(-2rem, -5.5vw, -1.25rem)' }}
         aria-hidden
       >
-        <svg width="44" height="48" viewBox="0 0 44 48" className="mx-auto block">
+        <svg width="52" height="58" viewBox="0 0 52 58" className="mx-auto block">
           <defs>
             <linearGradient id={ptrGradId} x1="0%" y1="0%" x2="0%" y2="100%">
-              <stop offset="0%" stopColor="#fef08a" />
-              <stop offset="40%" stopColor="#f59e0b" />
-              <stop offset="100%" stopColor="#92400e" />
+              <stop offset="0%" stopColor="#fef3c7" />
+              <stop offset="35%" stopColor="#fbbf24" />
+              <stop offset="70%" stopColor="#d97706" />
+              <stop offset="100%" stopColor="#78350f" />
             </linearGradient>
           </defs>
           <path
-            d="M22 2 L40 42 Q22 36 4 42 Z"
+            d="M26 2 L48 50 Q26 42 4 50 Z"
             fill={`url(#${ptrGradId})`}
-            stroke="rgba(15,23,42,0.7)"
-            strokeWidth="1.35"
+            stroke="rgba(15,23,42,0.85)"
+            strokeWidth="1.75"
             strokeLinejoin="round"
           />
-          <circle cx="22" cy="36" r="4" fill="#0f172a" stroke="#fcd34d" strokeWidth="1" />
+          <circle cx="26" cy="42" r="5" fill="#0f172a" stroke="#fcd34d" strokeWidth="1.5" />
+          <circle cx="26" cy="42" r="2" fill="#fef3c7" />
         </svg>
       </div>
 
-      {/* Moldura dupla */}
+      {/* Moldura metálica dupla */}
       <div
-        className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-400/50 via-amber-700/35 to-slate-950 p-[7px] shadow-[0_20px_50px_rgba(0,0,0,0.55),inset_0_1px_0_rgba(255,255,255,0.12)] ring-1 ring-black/50 sm:p-[8px]"
+        className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-300/60 via-amber-600/40 to-slate-950 p-[8px] shadow-[0_24px_60px_rgba(0,0,0,0.6),inset_0_1px_0_rgba(255,255,255,0.18)] ring-1 ring-black/50 sm:p-[10px]"
         aria-hidden
       >
-        <div className="h-full w-full rounded-full bg-gradient-to-b from-slate-900 via-slate-950 to-black p-[3px] shadow-inner">
+        <div className="h-full w-full rounded-full bg-gradient-to-b from-slate-900 via-slate-950 to-black p-[4px] shadow-inner">
           <div
             className="relative h-full w-full rounded-full border border-slate-800/90 shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
             style={{
               transform: `rotate(${rotation}deg)`,
-              transition: 'transform 4000ms cubic-bezier(0.2, 0.82, 0.15, 1)',
+              transition: `transform ${SPIN_DURATION_MS}ms ${SPIN_EASING}`,
               willChange: 'transform'
             }}
           >
             {/* Disco de cor */}
             <div
-              className="absolute inset-0 z-0 overflow-hidden rounded-full shadow-[inset_0_0_36px_rgba(0,0,0,0.5)]"
+              className="absolute inset-0 z-0 overflow-hidden rounded-full shadow-[inset_0_0_40px_rgba(0,0,0,0.6)]"
               style={{
                 background: items.length > 0 ? backgroundStyle : '#1e293b'
               }}
@@ -133,7 +192,7 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
               className="pointer-events-none absolute inset-0 z-[1] rounded-full"
               style={{
                 background:
-                  'radial-gradient(circle at 35% 28%, rgba(255,255,255,0.14) 0%, transparent 42%), radial-gradient(circle at 50% 50%, transparent 48%, rgba(0,0,0,0.35) 100%)'
+                  'radial-gradient(circle at 32% 24%, rgba(255,255,255,0.18) 0%, transparent 44%), radial-gradient(circle at 50% 50%, transparent 46%, rgba(0,0,0,0.45) 100%)'
               }}
             />
             {/* Divisores */}
@@ -155,7 +214,10 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
               const midDeg = startDeg + sliceAngle / 2;
               const halfSlice = Math.min(sliceAngle / 2, 89);
               const chordFactor = Math.sin((halfSlice * Math.PI) / 180);
-              const maxLabelPx = Math.min(220, Math.max(104, 72 + chordFactor * 165));
+              /** Largura útil do «cartão» do prémio em pixels (limitada pela corda do segmento). */
+              const cardWidth = Math.min(180, Math.max(96, 70 + chordFactor * 150));
+              const isWinner = winnerIdx === index;
+              const imgSize = items.length <= 6 ? 38 : items.length <= 10 ? 32 : 26;
 
               return (
                 <div
@@ -164,32 +226,44 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
                   style={{
                     left: '50%',
                     bottom: '50%',
-                    width: `${maxLabelPx}px`,
+                    width: `${cardWidth}px`,
                     height: '50%',
                     transformOrigin: '50% 100%',
-                    /** Um único transform: pivô no centro da roda (base do braço). */
                     transform: `translateX(-50%) rotate(${midDeg}deg)`
                   }}
                 >
-                  {/*
-                    Braço vai do centro (base) à borda (topo). Rótulo junto à borda: top % baixo.
-                  */}
-                  <div className="absolute left-0 right-0 top-[5%] flex justify-center sm:top-[4%]">
-                    <span
+                  <div className="absolute left-0 right-0 top-[4%] flex justify-center sm:top-[3%]">
+                    <div
                       title={item.label}
-                      className="line-clamp-2 max-h-[3.6rem] rounded-lg border border-white/25 bg-slate-950/90 px-2.5 py-1.5 text-center font-sans text-[10px] font-semibold leading-snug tracking-tight text-white shadow-[0_4px_16px_rgba(0,0,0,0.5)] backdrop-blur-md sm:max-h-[4rem] sm:px-3 sm:py-2 sm:text-[11px] sm:leading-snug"
+                      className={`flex max-w-full flex-col items-center gap-1 rounded-xl border bg-slate-950/85 px-2 py-1.5 text-center backdrop-blur-md transition-all duration-500 sm:px-2.5 sm:py-2 ${
+                        isWinner
+                          ? 'border-amber-300 shadow-[0_0_24px_rgba(251,191,36,0.65)] ring-2 ring-amber-300/70'
+                          : 'border-white/25 shadow-[0_4px_18px_rgba(0,0,0,0.55)]'
+                      }`}
                       style={{
-                        width: `${maxLabelPx}px`,
-                        minWidth: `${maxLabelPx}px`,
-                        maxWidth: `${maxLabelPx}px`,
-                        transform: `rotate(${-midDeg}deg)`,
-                        textShadow: '0 1px 3px rgba(0,0,0,0.92)',
-                        overflowWrap: 'break-word',
-                        wordBreak: 'normal'
+                        width: `${cardWidth}px`,
+                        minWidth: `${cardWidth}px`,
+                        maxWidth: `${cardWidth}px`,
+                        transform: `rotate(${-midDeg}deg)`
                       }}
                     >
-                      {item.label}
-                    </span>
+                      <PrizeImage
+                        src={item.image}
+                        alt={item.label}
+                        size={imgSize}
+                        className={isWinner ? 'drop-shadow-[0_0_10px_rgba(251,191,36,0.6)]' : undefined}
+                      />
+                      <span
+                        className="line-clamp-2 font-sans text-[10px] font-bold leading-tight tracking-tight text-white sm:text-[11px]"
+                        style={{
+                          textShadow: '0 1px 3px rgba(0,0,0,0.95)',
+                          overflowWrap: 'break-word',
+                          wordBreak: 'normal'
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                    </div>
                   </div>
                 </div>
               );
@@ -198,15 +272,17 @@ const Wheel: React.FC<WheelProps> = ({ items, mustSpin, targetWinner, onStopSpin
         </div>
       </div>
 
-      {/* Centro */}
-      <div className="pointer-events-none absolute z-20 flex h-[4.75rem] w-[4.75rem] items-center justify-center sm:h-[5.25rem] sm:w-[5.25rem]">
+      {/* Centro com logótipo Genesis */}
+      <div className="pointer-events-none absolute z-20 flex h-[5.5rem] w-[5.5rem] items-center justify-center sm:h-[6rem] sm:w-[6rem]">
         <div
-          className="absolute inset-0 rounded-full bg-gradient-to-br from-amber-500/25 to-orange-600/10 blur-md"
+          className={`absolute inset-0 rounded-full bg-gradient-to-br from-amber-500/35 to-orange-600/15 blur-md transition-opacity duration-700 ${mustSpin ? 'opacity-100' : winnerIdx != null ? 'opacity-100' : 'opacity-70'}`}
           aria-hidden
         />
-        <div className="relative flex h-full w-full items-center justify-center rounded-full border-2 border-amber-500/35 bg-gradient-to-br from-slate-600 via-slate-800 to-slate-950 shadow-[inset_0_2px_14px_rgba(0,0,0,0.55),0_10px_28px_rgba(0,0,0,0.55),0_0_0_1px_rgba(251,191,36,0.2)] ring-2 ring-slate-950/80">
+        <div
+          className={`relative flex h-full w-full items-center justify-center rounded-full border-2 border-amber-400/45 bg-gradient-to-br from-slate-500 via-slate-800 to-slate-950 shadow-[inset_0_2px_18px_rgba(0,0,0,0.6),0_12px_32px_rgba(0,0,0,0.6),0_0_0_1px_rgba(251,191,36,0.28)] ring-2 ring-slate-950/85 transition-transform duration-700 ${winnerIdx != null ? 'scale-110' : ''}`}
+        >
           <Sparkles
-            className="h-8 w-8 text-amber-200 drop-shadow-[0_0_10px_rgba(251,191,36,0.45)] sm:h-9 sm:w-9"
+            className={`h-9 w-9 text-amber-200 drop-shadow-[0_0_12px_rgba(251,191,36,0.55)] sm:h-10 sm:w-10 ${mustSpin ? 'animate-pulse' : ''}`}
             strokeWidth={2}
             aria-hidden
           />

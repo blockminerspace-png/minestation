@@ -25,6 +25,8 @@ export type WheelPrizeRow = {
   weight: number;
   color: string | null;
   item_id: string;
+  /** Caminho relativo do asset do upgrade (`upgrades.image`) — UI usa `normalizePublicAssetUrl`. */
+  image: string | null;
 };
 
 /** `label` exibido: nome atual do upgrade quando `item_id` existe; senão etiqueta em `wheel_prizes`. */
@@ -33,12 +35,16 @@ function mapWheelPrizeJoinedRow(row: Record<string, unknown>): WheelPrizeRow {
   const live =
     un != null && typeof un === 'string' && String(un).trim().length > 0 ? String(un).trim() : null;
   const stored = row.stored_label != null ? String(row.stored_label) : String(row.label ?? '');
+  const img = row.upgrade_image;
+  const imageStr =
+    img != null && typeof img === 'string' && String(img).trim().length > 0 ? String(img).trim() : null;
   return {
     id: String(row.id ?? ''),
     label: live ?? stored,
     weight: Number(row.weight),
     color: row.color != null ? String(row.color) : null,
-    item_id: row.item_id != null ? String(row.item_id) : ''
+    item_id: row.item_id != null ? String(row.item_id) : '',
+    image: imageStr
   };
 }
 
@@ -50,7 +56,8 @@ export async function queryAllWheelPrizesJoined(tx: RoletaDbTx): Promise<WheelPr
            wp.weight,
            wp.color,
            wp.item_id,
-           u.name AS upgrade_name
+           u.name AS upgrade_name,
+           u.image AS upgrade_image
     FROM wheel_prizes wp
     LEFT JOIN upgrades u ON u.id = wp.item_id
     ORDER BY wp.id ASC
@@ -66,7 +73,8 @@ export async function queryWheelPrizesEligibleForRoll(tx: RoletaDbTx): Promise<W
            wp.weight,
            wp.color,
            wp.item_id,
-           u.name AS upgrade_name
+           u.name AS upgrade_name,
+           u.image AS upgrade_image
     FROM wheel_prizes wp
     LEFT JOIN upgrades u ON u.id = wp.item_id
     WHERE COALESCE(wp.is_active, 1) = 1
@@ -84,7 +92,8 @@ export async function queryWheelPrizeByItemIdJoined(tx: RoletaDbTx, itemId: stri
            wp.weight,
            wp.color,
            wp.item_id,
-           u.name AS upgrade_name
+           u.name AS upgrade_name,
+           u.image AS upgrade_image
     FROM wheel_prizes wp
     LEFT JOIN upgrades u ON u.id = wp.item_id
     WHERE wp.item_id = ${itemId}
@@ -96,7 +105,7 @@ export async function queryWheelPrizeByItemIdJoined(tx: RoletaDbTx, itemId: stri
 
 /** Resposta JSON pública `/api/wheel/config` — só prémios ativos básicos; peso uniforme (UI). */
 export async function fetchWheelPrizesForApiConfig(): Promise<
-  Array<{ id: string; label: string; color: string | null; weight: number; itemId: string }>
+  Array<{ id: string; label: string; color: string | null; weight: number; itemId: string; image: string | null }>
 > {
   const rows = await queryWheelPrizesEligibleForRoll(prisma);
   return rows.map((row) => ({
@@ -104,7 +113,8 @@ export async function fetchWheelPrizesForApiConfig(): Promise<
     label: row.label,
     color: row.color,
     weight: 1,
-    itemId: row.item_id
+    itemId: row.item_id,
+    image: row.image
   }));
 }
 
@@ -466,14 +476,22 @@ export async function paidWheelSpinAtomicInTransaction(
     throw new RoletaAppError('A roleta paga já terminou.', 422);
   }
 
+  /**
+   * Auto-cura: o fluxo legado deixava linhas em `wheel_paid_pending` à espera de um claim manual
+   * que produzia o erro "Não há prémio pendente" no UI. Aqui drenamos a linha (concedendo o
+   * prémio e apagando-a) **antes** do novo giro, para o jogador nunca ficar bloqueado e nunca
+   * ver o botão "Resgatar prémio" da UX anterior. O custo é zero (já foi cobrado no giro antigo)
+   * e o resultado é totalmente idempotente: se a linha não existe, este bloco é no-op.
+   */
   const pendRows = await tx.$queryRaw<Array<{ won_item_id: string }>>`
     SELECT won_item_id FROM wheel_paid_pending WHERE user_id = ${userId} FOR UPDATE
   `;
   if (pendRows.length > 0) {
-    throw new RoletaAppError(
-      'Tens um prémio de giro pago pendente. Resgata-o na roleta (fluxo anterior) antes de um novo giro.',
-      422
-    );
+    const legacyWon = String(pendRows[0]!.won_item_id || '').trim();
+    if (legacyWon) {
+      await grantWheelPrizeUnopenedBox(tx, userId, legacyWon);
+    }
+    await tx.wheel_paid_pending.deleteMany({ where: { user_id: userId } });
   }
 
   const priceDec = await getWheelPaidSpinPriceDecimal(tx, serverNowMs);
@@ -811,6 +829,17 @@ export async function paidWheelRollInTransaction(
   };
 }
 
+/**
+ * Endpoint legado de resgate manual do giro pago. Mantido para compatibilidade com clientes
+ * antigos: o frontend atual já não chama esta rota. O fluxo atómico (`POST /api/wheel/spin`)
+ * concede a caixa na mesma transação do débito USDC.
+ *
+ * Comportamento atualizado:
+ *  - Se existir linha em `wheel_paid_pending` com o mesmo `wonItemId`, drena (concede caixa e apaga).
+ *  - Se a linha já não existir (auto-curada pelo próximo giro), responde de forma idempotente
+ *    com a caixa correspondente ao prémio — em vez do erro "Não há prémio pendente" que
+ *    confundia jogadores na UX anterior.
+ */
 export async function paidWheelClaimInTransaction(
   tx: RoletaDbTx,
   args: { userId: number; wonItemId: string }
@@ -820,23 +849,34 @@ export async function paidWheelClaimInTransaction(
   const pendRows = await tx.$queryRaw<Array<{ won_item_id: string }>>`
     SELECT won_item_id FROM wheel_paid_pending WHERE user_id = ${userId} FOR UPDATE
   `;
-  if (pendRows.length === 0) {
-    throw new RoletaAppError('Não há prémio pendente. Gire a roleta paga primeiro.', 400);
-  }
-  const rowWon = String(pendRows[0]!.won_item_id || '');
-  if (rowWon !== String(wonItemId)) {
-    throw new RoletaAppError(
-      'Integridade do sorteio violada. O item reivindicado não corresponde ao sorteado.',
-      403
-    );
-  }
 
-  const granted = await grantWheelPrizeUnopenedBox(tx, userId, wonItemId);
-
-  const del = await tx.wheel_paid_pending.deleteMany({ where: { user_id: userId } });
-  if (del.count === 0) {
-    throw new RoletaAppError('Estado da roleta paga alterado. Recarregue a página.', 409);
+  if (pendRows.length > 0) {
+    const rowWon = String(pendRows[0]!.won_item_id || '');
+    if (rowWon !== String(wonItemId)) {
+      throw new RoletaAppError(
+        'Integridade do sorteio violada. O item reivindicado não corresponde ao sorteado.',
+        403
+      );
+    }
+    const granted = await grantWheelPrizeUnopenedBox(tx, userId, wonItemId);
+    await tx.wheel_paid_pending.deleteMany({ where: { user_id: userId } });
+    return granted;
   }
 
-  return granted;
+  /**
+   * Não há pendente: o fluxo atómico já concedeu a caixa. Em vez de errar (UX antiga
+   * "Não há prémio pendente"), devolvemos os dados da caixa de recompensa do mesmo item
+   * **sem creditar de novo**, mantendo a resposta idempotente para clientes legados.
+   */
+  const existingBox = await tx.loot_boxes.findFirst({
+    where: { trigger: 'roleta_reward', description: `reward_for_${wonItemId}` },
+    select: { id: true, name: true }
+  });
+  if (existingBox?.id) {
+    return {
+      boxId: String(existingBox.id),
+      boxName: sanitizeDisplayName(String(existingBox.name ?? 'Prêmio'), 200)
+    };
+  }
+  throw new RoletaAppError('Prémio não encontrado para resgate.', 404);
 }

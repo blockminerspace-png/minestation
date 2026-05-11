@@ -2965,6 +2965,7 @@ export default function App() {
                           onBootstrapConsumed={clearRoletaBootstrap}
                           usdcBalance={gameState.usdc}
                           onReloadGameState={handleReloadGameState}
+                          onGoToLuckyBoxes={() => setCurrentView('lucky_store')}
                         />
                       </Suspense>
                     </div>

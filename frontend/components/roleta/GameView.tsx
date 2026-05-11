@@ -1,10 +1,10 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
-import { Wallet } from 'lucide-react';
+import { Wallet, RotateCcw, PackageOpen, Loader2, Gift } from 'lucide-react';
 import Wheel from '../Wheel';
 import { WheelItem, Upgrade } from '../../types';
+import { normalizePublicAssetUrl } from '../../utils/publicUrl';
 import {
   rollWheel,
-  claimWheelPaid,
   getWheelState,
   postWheelSpin,
   newWheelIdempotencyKey
@@ -21,7 +21,46 @@ interface GameViewProps {
   usdcBalance?: number;
   /** Após cobrar o giro ou resgatar o prémio (atualizar saldo/caixas). */
   onPaidBalanceRefresh?: () => void | Promise<void>;
+  /** Navegação para "Caixas da Sorte" — exibe botão no modal de resultado. */
+  onGoToLuckyBoxes?: () => void;
 }
+
+/**
+ * Combina prémios do servidor com o catálogo local de upgrades para garantir imagem real
+ * quando existe — evita depender só do nome textual do prémio na BD.
+ */
+function mergePrizeImages(items: WheelItem[], upgrades?: Upgrade[]): WheelItem[] {
+  if (!Array.isArray(items)) return [];
+  return items.map((item) => {
+    if (item.image && String(item.image).trim()) return item;
+    if (!item.itemId || !upgrades) return item;
+    const u = upgrades.find((up) => up.id === item.itemId);
+    if (u?.image) return { ...item, image: u.image };
+    return item;
+  });
+}
+
+/** Imagem grande do prémio no modal de resultado, com fallback bonito quando falta. */
+const ResultPrizeImage: React.FC<{ src?: string | null; alt: string }> = ({ src, alt }) => {
+  const [broken, setBroken] = useState(false);
+  const url = useMemo(() => (src ? normalizePublicAssetUrl(src) || src : undefined), [src]);
+  if (!url || broken) {
+    return (
+      <div className="flex h-32 w-32 items-center justify-center rounded-2xl bg-gradient-to-br from-amber-500/25 to-orange-700/15 ring-1 ring-amber-400/40 sm:h-36 sm:w-36">
+        <Gift className="h-16 w-16 text-amber-300 sm:h-20 sm:w-20" aria-hidden />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={url}
+      alt={alt}
+      onError={() => setBroken(true)}
+      className="h-32 w-32 select-none rounded-2xl object-contain ring-1 ring-amber-400/30 sm:h-36 sm:w-36"
+      draggable={false}
+    />
+  );
+};
 
 const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete?: () => void }> = ({
   items: initialItems,
@@ -31,7 +70,8 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
   upgrades,
   paidSpin = false,
   usdcBalance = 0,
-  onPaidBalanceRefresh
+  onPaidBalanceRefresh,
+  onGoToLuckyBoxes
 }) => {
   const [items, setItems] = useState<WheelItem[]>(initialItems);
   const [isSpinning, setIsSpinning] = useState(false);
@@ -44,9 +84,6 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
   const [notice, setNotice] = useState<UiNotice | null>(null);
   const afterNoticeClose = useRef<(() => void) | null>(null);
   const [spinPriceUsdc, setSpinPriceUsdc] = useState(1);
-  const [legacyPaidWonItemId, setLegacyPaidWonItemId] = useState<string | null>(null);
-  /** Prémio já na conta: fluxo atómico (`POST /api/wheel/spin` devolve `boxId`) — não chamar `paid-claim`. */
-  const [paidPrizeOnServer, setPaidPrizeOnServer] = useState(false);
   const [paidSpinBusy, setPaidSpinBusy] = useState(false);
   const paidSpinIdemRef = useRef<string | null>(null);
 
@@ -62,15 +99,18 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
     fn?.();
   }, []);
 
-  // Roleta paga: estado consolidado (preço, prémios, legado pendente).
+  /**
+   * Roleta paga: estado consolidado (preço, prémios).
+   * Não tratamos mais `legacyPaidPending` aqui — o backend auto-cura na próxima chamada a
+   * `/api/wheel/spin` (drena a linha legada e concede a caixa antes de cobrar o novo giro),
+   * por isso a UX antiga «Resgatar prémio» com erro «Não há prémio pendente» foi removida.
+   */
   React.useEffect(() => {
     if (!paidSpin) return;
     let cancelled = false;
     setConfigLoading(true);
     setConfigError(null);
     setItems([]);
-    setLegacyPaidWonItemId(null);
-    setPaidPrizeOnServer(false);
     void (async () => {
       const st = await getWheelState();
       if (cancelled) return;
@@ -80,19 +120,9 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
         return;
       }
       setSpinPriceUsdc(st.data.spinPriceUsdc > 0 ? st.data.spinPriceUsdc : 1);
-      setLegacyPaidWonItemId(st.data.legacyPaidPending?.wonItemId ?? null);
       const list = st.data.prizes;
       if (Array.isArray(list) && list.length > 0) {
-        const mapped = list.map((item) => {
-          if (item.itemId && upgrades) {
-            const u = upgrades.find((up) => up.id === item.itemId);
-            if (u && u.image) {
-              return { ...item, image: u.image };
-            }
-          }
-          return item;
-        });
-        setItems(mapped);
+        setItems(mergePrizeImages(list, upgrades));
       } else {
         setConfigError('A roleta ainda não tem prémios configurados.');
       }
@@ -126,16 +156,7 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       .then((data: WheelItem[]) => {
         if (cancelled) return;
         if (Array.isArray(data) && data.length > 0) {
-          const mapped = data.map((item) => {
-            if (item.itemId && upgrades) {
-              const u = upgrades.find((up) => up.id === item.itemId);
-              if (u && u.image) {
-                return { ...item, image: u.image };
-              }
-            }
-            return item;
-          });
-          setItems(mapped);
+          setItems(mergePrizeImages(data, upgrades));
         } else {
           setConfigError('A roleta ainda não tem prémios configurados.');
         }
@@ -154,28 +175,13 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
     };
   }, [redeemCode, paidSpin, upgrades, configRetryKey]);
 
-  /** Retomar prémio pago legado (fluxo antigo com `wheel_paid_pending`). */
-  React.useEffect(() => {
-    if (!paidSpin || items.length === 0 || !legacyPaidWonItemId) return;
-    const w =
-      items.find((i) => (i.itemId && i.itemId === legacyPaidWonItemId) || i.id === legacyPaidWonItemId) || null;
-    if (w) {
-      setTargetWinner(w);
-      setShowResult(true);
-      setIsSpinning(false);
-      setPaidPrizeOnServer(false);
-    }
-  }, [paidSpin, items, legacyPaidWonItemId]);
+  const resetForNewSpin = useCallback(() => {
+    setShowResult(false);
+    setTargetWinner(null);
+  }, []);
 
   const handleStartSpin = async () => {
     if (isSpinning || configLoading || items.length === 0 || paidSpinBusy) return;
-    if (paidSpin && legacyPaidWonItemId) {
-      setNotice({
-        variant: 'info',
-        message: 'Tens um giro pago antigo por concluir: usa «Resgatar prémio» abaixo.'
-      });
-      return;
-    }
 
     let selected: WheelItem | null = null;
 
@@ -183,12 +189,13 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       if (!paidSpinIdemRef.current) paidSpinIdemRef.current = newWheelIdempotencyKey();
       const idem = paidSpinIdemRef.current;
       setPaidSpinBusy(true);
-      let res: Awaited<ReturnType<typeof postWheelSpin>>;
-      try {
-        res = await postWheelSpin(idem);
-      } finally {
-        setPaidSpinBusy(false);
-      }
+      const res = await (async () => {
+        try {
+          return await postWheelSpin(idem);
+        } finally {
+          setPaidSpinBusy(false);
+        }
+      })();
       if (res.ok === false) {
         paidSpinIdemRef.current = null;
         const st = res.status;
@@ -204,28 +211,21 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       }
       void onPaidBalanceRefresh?.();
       paidSpinIdemRef.current = null;
-      setLegacyPaidWonItemId(null);
-      /** Giro atómico: o prémio (caixa) é creditado na mesma transação que o spin — não existe `paid-claim` após OK. */
-      setPaidPrizeOnServer(true);
-      selected =
-        items.find((i) => (i.itemId && i.itemId === res.wonItemId) || i.id === res.wonItemId) || null;
+      const wonId = res.wonItemId;
+      selected = items.find((i) => (i.itemId && i.itemId === wonId) || i.id === wonId) || null;
       if (!selected) {
-        console.warn(`[GameView] Paid won item ${res.wonItemId} not found in local list. Falling back.`);
+        console.warn(`[GameView] Paid won item ${wonId} not found in local list. Falling back.`);
         selected = items[0];
       }
     } else if (redeemCode) {
-      // SERVER-SIDE ROLL FOR SECURITY
       const res = await rollWheel(redeemCode);
       if (!res.ok) {
         setNotice({ variant: 'error', message: res.error || 'Erro ao iniciar o sorteio.' });
         return;
       }
-
-      // Find the item in our local list by itemId or id
       selected = items.find(i => (i.itemId && i.itemId === res.wonItemId) || i.id === res.wonItemId) || null;
-
       if (!selected) {
-        console.warn(`[GameView] Won item ${res.wonItemId} not found in local items list. Falling back to first item.`);
+        console.warn(`[GameView] Won item ${res.wonItemId} not found in local items list. Falling back.`);
         selected = items[0];
       }
     } else {
@@ -233,7 +233,6 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       const totalWeight = items.reduce((sum, item) => sum + item.weight, 0);
       let random = Math.random() * totalWeight;
       selected = items[0];
-
       for (const item of items) {
         if (random < item.weight) {
           selected = item;
@@ -248,18 +247,27 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
     setShowResult(false);
   };
 
-  // Create visual items with equal weight for display
-  const visualItems = React.useMemo(() => {
-    return items.map(i => ({ ...i, weight: 1 }));
-  }, [items]);
+  const visualItems = React.useMemo(() => items.map(i => ({ ...i, weight: 1 })), [items]);
 
   const handleStopSpinning = useCallback(async () => {
     setIsSpinning(false);
     setShowResult(true);
   }, []);
 
-  const handleClaim = async () => {
-    if ((!redeemCode && !paidSpin) || !targetWinner || claiming) return;
+  /** Botão «Girar novamente» — fecha resultado e mantém na página da roleta. */
+  const handleSpinAgain = useCallback(() => {
+    resetForNewSpin();
+  }, [resetForNewSpin]);
+
+  /** Botão «Ir para Caixas da Sorte» — navega via callback do App. */
+  const handleGoToBoxes = useCallback(() => {
+    resetForNewSpin();
+    void onRedeemComplete?.();
+    onGoToLuckyBoxes?.();
+  }, [resetForNewSpin, onRedeemComplete, onGoToLuckyBoxes]);
+
+  const handleClaimByCode = useCallback(async () => {
+    if (!redeemCode || !targetWinner || claiming) return;
     setClaiming(true);
     try {
       const wonItemId = String(targetWinner.itemId || targetWinner.id || '').trim();
@@ -268,63 +276,31 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
         setClaiming(false);
         return;
       }
-      if (paidSpin) {
-        if (paidPrizeOnServer) {
-          setNotice({
-            variant: 'success',
-            title: 'Prémio na conta',
-            message: `O prémio já foi adicionado às tuas caixas: ${targetWinner.label}`
-          });
-          afterNoticeClose.current = () => {
-            setShowResult(false);
-            setTargetWinner(null);
-            setPaidPrizeOnServer(false);
-            void onRedeemComplete?.();
-          };
-        } else {
-          const res = await claimWheelPaid(wonItemId);
-          if (res.ok) {
-            afterNoticeClose.current = () => {
-              setShowResult(false);
-              setTargetWinner(null);
-              void onRedeemComplete?.();
-            };
-            setNotice({
-              variant: 'success',
-              title: 'Prémio resgatado',
-              message: `Parabéns! Você resgatou: ${targetWinner.label}`
-            });
-          } else {
-            setNotice({ variant: 'error', message: res.error || 'Erro ao resgatar' });
-          }
-        }
-      } else {
-        const res = await fetch('/api/roleta/claim', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            code: redeemCode,
-            wonItemId
-          })
+      const res = await fetch('/api/roleta/claim', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ code: redeemCode, wonItemId })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        afterNoticeClose.current = () => onRedeemComplete?.();
+        setNotice({
+          variant: 'success',
+          title: 'Prémio resgatado',
+          message: `Parabéns! Você resgatou: ${targetWinner.label}`
         });
-        const data = await res.json();
-        if (res.ok) {
-          afterNoticeClose.current = () => onRedeemComplete?.();
-          setNotice({
-            variant: 'success',
-            title: 'Prémio resgatado',
-            message: `Parabéns! Você resgatou: ${targetWinner.label}`
-          });
-        } else {
-          setNotice({ variant: 'error', message: data.error || 'Erro ao resgatar' });
-        }
+      } else {
+        setNotice({ variant: 'error', message: data.error || 'Erro ao resgatar' });
       }
-    } catch (e) {
+    } catch {
       setNotice({ variant: 'error', message: 'Erro de conexão' });
     }
     setClaiming(false);
-  };
+  }, [redeemCode, targetWinner, claiming, onRedeemComplete]);
+
+  const resultImage = targetWinner?.image ?? null;
+  const resultLabel = targetWinner?.label ?? '';
 
   return (
     <div
@@ -356,7 +332,8 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
             <span className="font-bold text-slate-300">
               {spinPriceUsdc.toFixed(2)} USDC
             </span>{' '}
-            do teu saldo no jogo. Apenas recompensas básicas de baixo impacto; o sorteio é no servidor.
+            do teu saldo no jogo. O prémio vai direto para{' '}
+            <span className="font-semibold text-orange-300">Caixas da Sorte</span>.
           </p>
           <div className="mt-3 flex justify-center">
             <div className="inline-flex items-center gap-2 rounded-full border border-emerald-500/35 bg-slate-950/80 px-3 py-1.5 shadow-[0_0_24px_rgba(16,185,129,0.12)] backdrop-blur-sm sm:px-4 sm:py-2">
@@ -383,12 +360,8 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
       )}
 
       <div className="relative w-full flex flex-col items-center">
-        <div
-          className={`pointer-events-none absolute inset-0 -m-3 rounded-full bg-gradient-to-r from-amber-500/30 to-orange-600/25 blur-2xl transition duration-1000 ${isSpinning ? 'opacity-70' : 'opacity-30'}`}
-          aria-hidden
-        />
         {(redeemCode || paidSpin) && configLoading && (
-          <div className="flex min-h-[min(18rem,calc(100vw-1.5rem))] w-full max-w-sm flex-col items-center justify-center gap-3 rounded-full border border-slate-700/80 bg-slate-900/50 p-6 text-center sm:min-h-[min(22rem,calc(100vw-2.5rem))] sm:p-8">
+          <div className="flex min-h-[min(20rem,calc(100vw-1.5rem))] w-full max-w-sm flex-col items-center justify-center gap-3 rounded-full border border-slate-700/80 bg-slate-900/50 p-6 text-center sm:min-h-[min(24rem,calc(100vw-2.5rem))] sm:p-8">
             <div className="h-10 w-10 animate-spin rounded-full border-2 border-orange-500 border-t-transparent" aria-hidden />
             <p className="text-sm font-semibold text-slate-300">A carregar prémios…</p>
           </div>
@@ -420,54 +393,101 @@ const GameView: React.FC<GameViewProps & { redeemCode?: string; onRedeemComplete
             configLoading ||
             Boolean(configError) ||
             paidSpinBusy ||
-            (paidSpin && Boolean(legacyPaidWonItemId)) ||
             (paidSpin && usdcBalance + 1e-9 < spinPriceUsdc)
           }
-          className={`w-full max-w-[min(20rem,calc(100vw-2rem))] rounded-xl px-5 py-3.5 text-sm font-black uppercase tracking-widest text-white shadow-lg transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 sm:max-w-xs sm:px-8 sm:py-4 sm:text-base md:text-lg ${
+          className={`w-full max-w-[min(22rem,calc(100vw-2rem))] rounded-2xl px-5 py-3.5 text-sm font-black uppercase tracking-widest text-white shadow-lg transition active:scale-[0.98] disabled:pointer-events-none disabled:opacity-40 sm:max-w-sm sm:px-8 sm:py-4 sm:text-base md:text-lg ${
             paidSpin
               ? 'bg-gradient-to-r from-emerald-700 to-teal-600 shadow-emerald-900/40 hover:from-emerald-600 hover:to-teal-500'
-              : 'bg-gradient-to-r from-orange-600 to-amber-600 shadow-orange-900/40 hover:from-orange-500 hover:to-amber-500 hover:shadow-orange-500/25'
+              : 'bg-gradient-to-r from-orange-600 to-amber-600 shadow-orange-900/40 hover:from-orange-500 hover:to-amber-500'
           }`}
         >
-          {paidSpin
-            ? `Girar (US$${spinPriceUsdc.toFixed(2)})`
+          {paidSpinBusy ? (
+            <span className="inline-flex items-center justify-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> A iniciar…
+            </span>
+          ) : paidSpin
+            ? `Girar por US$${spinPriceUsdc.toFixed(2)}`
             : redeemCode
               ? 'Girar agora'
               : 'Girar roleta'}
         </button>
       )}
+      {paidSpin && !isSpinning && !showResult && usdcBalance + 1e-9 < spinPriceUsdc && (
+        <p className="text-center text-xs font-semibold text-rose-300">
+          Saldo USDC insuficiente para girar.
+        </p>
+      )}
+      {isSpinning && (
+        <div className="inline-flex items-center gap-2 rounded-full bg-slate-900/80 px-4 py-2 text-xs font-bold uppercase tracking-widest text-orange-200 ring-1 ring-orange-500/40">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+          Girando…
+        </div>
+      )}
 
       {showResult && targetWinner && (
-        <div className="mt-2 w-full min-w-0 max-w-[min(24rem,calc(100vw-1.5rem))] animate-fade-in text-center sm:max-w-md">
-          <div className="rounded-2xl border border-orange-500/35 bg-slate-800/90 p-4 shadow-[0_20px_50px_rgba(0,0,0,0.45)] backdrop-blur-sm sm:p-6">
-            <h3 className="mb-1 text-[10px] font-bold uppercase tracking-widest text-slate-500">Resultado</h3>
-            <p className="mb-5 text-xl font-black text-white sm:text-2xl" style={{ color: targetWinner.color }}>
-              {targetWinner.label}
+        <div className="mt-2 w-full min-w-0 max-w-[min(28rem,calc(100vw-1.5rem))] animate-fade-in text-center sm:max-w-md">
+          <div className="rounded-3xl border border-amber-400/40 bg-gradient-to-b from-slate-900/95 to-slate-950 p-5 shadow-[0_24px_60px_rgba(0,0,0,0.55),0_0_60px_rgba(251,191,36,0.18)] backdrop-blur-sm sm:p-6">
+            <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-amber-300">
+              Você ganhou
             </p>
-
-            {redeemCode || paidSpin ? (
-              <button
-                type="button"
-                onClick={paidSpin && paidPrizeOnServer ? () => {
-                  setShowResult(false);
-                  setTargetWinner(null);
-                  setPaidPrizeOnServer(false);
-                  void onRedeemComplete?.();
-                } : handleClaim}
-                disabled={claiming}
-                className="w-full rounded-xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-50 sm:py-3.5 sm:text-sm"
+            <div className="mt-3 flex flex-col items-center gap-3">
+              <ResultPrizeImage src={resultImage} alt={resultLabel} />
+              <p
+                className="text-xl font-black leading-tight tracking-tight text-white sm:text-2xl"
+                style={targetWinner.color ? { color: targetWinner.color } : undefined}
               >
-                {paidSpin && paidPrizeOnServer
-                  ? 'OK'
-                  : claiming
-                    ? 'A resgatar…'
-                    : 'Resgatar prémio'}
-              </button>
+                {resultLabel}
+              </p>
+            </div>
+            {(redeemCode || paidSpin) ? (
+              <>
+                <p className="mt-3 text-xs text-slate-300 sm:text-sm">
+                  Seu prémio foi enviado para{' '}
+                  <span className="font-bold text-orange-300">Caixas da Sorte</span>.
+                </p>
+
+                {redeemCode ? (
+                  <div className="mt-5 flex flex-col gap-2">
+                    <button
+                      type="button"
+                      onClick={handleClaimByCode}
+                      disabled={claiming}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:opacity-50 sm:py-3.5 sm:text-sm"
+                    >
+                      {claiming ? (
+                        <>
+                          <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> A resgatar…
+                        </>
+                      ) : (
+                        'Resgatar prémio'
+                      )}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-5 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <button
+                      type="button"
+                      onClick={handleSpinAgain}
+                      disabled={usdcBalance + 1e-9 < spinPriceUsdc}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-500 disabled:pointer-events-none disabled:opacity-40 sm:py-3.5 sm:text-sm"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" aria-hidden /> Girar novamente
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleGoToBoxes}
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-amber-600 py-3 text-xs font-black uppercase tracking-widest text-white shadow-lg shadow-orange-900/30 transition hover:from-orange-500 hover:to-amber-500 sm:py-3.5 sm:text-sm"
+                    >
+                      <PackageOpen className="h-3.5 w-3.5" aria-hidden /> Ir para Caixas
+                    </button>
+                  </div>
+                )}
+              </>
             ) : (
               <button
                 type="button"
                 onClick={handleStartSpin}
-                className="w-full rounded-xl bg-slate-700 py-3 text-sm font-bold text-white transition hover:bg-slate-600"
+                className="mt-5 w-full rounded-xl bg-slate-700 py-3 text-sm font-bold text-white transition hover:bg-slate-600"
               >
                 Girar novamente
               </button>
