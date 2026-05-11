@@ -135,24 +135,38 @@ export async function buildReferralOverview(input: {
 
   const [referredRows, commissionRows] = await Promise.all([
     prisma.$queryRawUnsafe<ReferredRow[]>(
+      // Subqueries independentes para evitar duplicação se houver mais de uma linha
+      // em `referrals` para o mesmo (user_id, referred_username) — caso contrário
+      // o JOIN no MESMO SELECT multiplica SUM(commission_usdc) e SUM(base_amount_usdc).
       `
       SELECT
-        u.id                                            AS referred_user_id,
-        u.username                                      AS username,
-        u.email                                         AS email,
-        MIN(r.id)                                       AS link_id,
-        MIN(l.created_at)                               AS first_commission_at,
-        COALESCE(SUM(l.base_amount_usdc), 0)::float8    AS total_deposit_usdc,
-        COALESCE(SUM(l.commission_usdc), 0)::float8     AS total_commission_usdc,
-        COALESCE(COUNT(l.id), 0)                        AS commissions_count
+        u.id                                AS referred_user_id,
+        u.username                          AS username,
+        u.email                             AS email,
+        rl.link_id                          AS link_id,
+        cm.first_commission_at              AS first_commission_at,
+        COALESCE(cm.total_deposit, 0)::float8    AS total_deposit_usdc,
+        COALESCE(cm.total_commission, 0)::float8 AS total_commission_usdc,
+        COALESCE(cm.commissions_count, 0)        AS commissions_count
       FROM users u
-      JOIN referrals r
-        ON r.referred_username = u.username
-       AND r.user_id = $1
-      LEFT JOIN referral_commission_ledger l
-        ON l.referred_user_id = u.id AND l.referrer_user_id = $1
-      GROUP BY u.id, u.username, u.email
-      ORDER BY MIN(r.id) DESC
+      JOIN (
+        SELECT referred_username, MIN(id) AS link_id
+        FROM referrals
+        WHERE user_id = $1
+        GROUP BY referred_username
+      ) rl ON rl.referred_username = u.username
+      LEFT JOIN (
+        SELECT
+          referred_user_id,
+          MIN(created_at)                         AS first_commission_at,
+          SUM(base_amount_usdc)                   AS total_deposit,
+          SUM(commission_usdc)                    AS total_commission,
+          COUNT(id)                               AS commissions_count
+        FROM referral_commission_ledger
+        WHERE referrer_user_id = $1
+        GROUP BY referred_user_id
+      ) cm ON cm.referred_user_id = u.id
+      ORDER BY rl.link_id DESC
       `,
       uid
     ),

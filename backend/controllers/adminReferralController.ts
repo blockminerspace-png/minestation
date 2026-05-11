@@ -104,17 +104,28 @@ export function registerAdminReferralRoutes(app: Express, deps: AdminReferralDep
             commission_total: number | string | null;
           }>
         >(
+          // ATENÇÃO: não fazer `LEFT JOIN referrals + LEFT JOIN referral_commission_ledger`
+          // no mesmo SELECT — gera produto cartesiano e infla `SUM(commission_usdc)` por N
+          // (já causou bug onde Marinho com 800 vínculos parecia ter recebido $440).
+          // Usamos subqueries agregadas independentes por user_id.
           `SELECT
               u.id                                            AS referrer_user_id,
               u.username                                      AS username,
               u.email                                         AS email,
-              COUNT(DISTINCT r.referred_username)             AS invited_count,
-              COALESCE(SUM(l.commission_usdc), 0)::float8     AS commission_total
+              COALESCE(inv.invited_count, 0)                  AS invited_count,
+              COALESCE(cm.commission_total, 0)::float8        AS commission_total
             FROM users u
-            LEFT JOIN referrals r ON r.user_id = u.id
-            LEFT JOIN referral_commission_ledger l ON l.referrer_user_id = u.id
-            GROUP BY u.id, u.username, u.email
-            HAVING COUNT(DISTINCT r.referred_username) > 0
+            JOIN (
+              SELECT user_id, COUNT(DISTINCT referred_username) AS invited_count
+              FROM referrals
+              GROUP BY user_id
+            ) inv ON inv.user_id = u.id
+            LEFT JOIN (
+              SELECT referrer_user_id, SUM(commission_usdc) AS commission_total
+              FROM referral_commission_ledger
+              GROUP BY referrer_user_id
+            ) cm ON cm.referrer_user_id = u.id
+            WHERE COALESCE(inv.invited_count, 0) > 0
             ORDER BY commission_total DESC NULLS LAST, invited_count DESC NULLS LAST
             LIMIT 10`
         )
