@@ -261,7 +261,7 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
       onShopNotice?.({
         variant: 'success',
         title: 'Lojinha Miner',
-        message: `Compra concluída.${orderBit} O teu estoque foi actualizado.`
+        message: `Compra concluída.${orderBit} Seu estoque foi atualizado.`
       });
       return;
     }
@@ -269,9 +269,9 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
       await refreshShop();
       const mismatch =
         res.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH'
-          ? 'Esta confirmação já foi tratada ou a chave de idempotência não corresponde ao carrinho actual. Os dados foram actualizados.'
+          ? 'Esta confirmação já foi tratada ou a chave de idempotência não corresponde ao carrinho atual. Os dados foram atualizados.'
           : res.error ||
-            'O carrinho ou o saldo mudou no servidor. Os dados foram actualizados — reverifica antes de confirmar.';
+            'O carrinho ou o saldo mudou no servidor. Os dados foram atualizados — verifique novamente antes de confirmar.';
       onShopNotice?.({
         variant: 'error',
         title: 'Lojinha Miner',

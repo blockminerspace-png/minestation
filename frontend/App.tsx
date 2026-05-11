@@ -2531,7 +2531,7 @@ export default function App() {
       setLuckyBoxNotice({
         variant: 'success',
         title: 'Caixas da Sorte',
-        message: 'Caixa comprada com sucesso! O inventário de caixas foi actualizado.'
+        message: 'Caixa comprada com sucesso! Seu inventário de caixas foi atualizado.'
       });
     } else {
       setLuckyBoxNotice({

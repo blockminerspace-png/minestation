@@ -887,7 +887,7 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                     setNotice({
                       variant: 'error',
                       title: 'Não foi possível resgatar',
-                      message: r?.error || 'Tenta de novo dentro de momentos.'
+                      message: r?.error || 'Tente novamente em instantes.'
                     });
                   }
                 } finally {
@@ -960,13 +960,13 @@ export const BlackMarket: React.FC<BlackMarketProps> = ({ gameState, onBuyListin
                             setNotice({
                               variant: 'success',
                               title: 'Item resgatado',
-                              message: `${item.name} foi transferido para o teu estoque.`
+                              message: `${item.name} foi transferido para o seu estoque.`
                             });
                           } else {
                             setNotice({
                               variant: 'error',
                               title: 'Não foi possível resgatar',
-                              message: r?.error || 'Tenta de novo dentro de momentos.'
+                              message: r?.error || 'Tente novamente em instantes.'
                             });
                           }
                         } finally {
