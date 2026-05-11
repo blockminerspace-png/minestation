@@ -16,7 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import db, { connectPrisma, disconnectPrisma, prisma } from './dist/config/db.js';
 import { Prisma } from '@prisma/client';
-import { startMiningYieldCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
+import { startMiningYieldCron, startWorkshopChargingCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
 import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
 import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisStack/init.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
@@ -24,7 +24,7 @@ import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './li
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
 import { recoverOrphanRackBatteryStorageRows } from './dist/modules/batteries/batteries.recovery.js';
 import { ensureStoredBatteriesIntegrity } from './dist/modules/batteries/batteries.integrity.js';
-import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from './dist/modules/batteries/batteries.catalog.js';
+import { CANONICAL_1000WH_BATTERY_ID, isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from './dist/modules/batteries/batteries.catalog.js';
 import { orphanRackBatteryAutoRecoverEnabled } from './dist/lib/orphanRackBatteryRecoveryGate.js';
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
@@ -67,7 +67,9 @@ import { registerRoletaPlayerRoutes } from './dist/controllers/roletaController.
 import { registerWheelPlayerRoutes } from './dist/modules/wheel/wheelPlayerController.js';
 import { registerWalletPlayerRoutes } from './dist/modules/wallet/walletPlayerController.js';
 import { runExchangeLiquidation } from './dist/modules/wallet/walletExchangeLiquidation.js';
-import { runWithdrawRequestIdempotent, withdrawRequestFingerprint } from './dist/modules/wallet/walletWithdrawRequest.js';
+import { executeWithdrawRequest } from './dist/modules/wallet/walletWithdrawRequest.js';
+import { ensureWalletWithdrawSchema } from './dist/modules/wallet/walletWithdrawSchema.js';
+import { ensureCriticalIdempotencySchema } from './dist/lib/criticalIdempotencySchemaEnsure.js';
 import { registerUpgradesPlayerRoutes } from './dist/modules/upgrades/upgradesPlayer.controller.js';
 import { runUpgradePackagePurchase } from './dist/modules/upgrades/upgradesPurchase.service.js';
 import { RoletaAppError, parseIdempotencyKey } from './dist/validation/roletaValidation.js';
@@ -97,6 +99,7 @@ import { registerSupportMutationRoutes } from './dist/controllers/supportMutatio
 import { registerSupportPlayerRoutes } from './dist/modules/support/supportPlayer.controller.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { registerPartnersPlayerRoutes } from './dist/modules/partners/partnersPlayer.controller.js';
+import { registerDashboardModuleRoutes } from './dist/modules/dashboard/dashboard.controller.js';
 import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
 import { registerWorkshopIntentRoutes } from './dist/controllers/workshopIntent.controller.js';
 import { registerInventoryRoutes } from './dist/controllers/inventoryController.js';
@@ -1511,6 +1514,7 @@ registerPartnersPlayerRoutes(app, {
     authenticateToken,
     appendGameActivityLog
 });
+registerDashboardModuleRoutes(app, { authenticateToken });
 registerProfilePlayerRoutes(app, {
     authenticateToken,
     getClientIp,
@@ -1626,6 +1630,7 @@ app.post('/api/player-activity-log', async (req, res) => {
 // CACHE REMOVIDO CONFORME SOLICITADO
 // --- Ranking / hashrates: um único tick em miningYieldCron + getGlobalNetworkStats() ---
 startMiningYieldCron(db);
+startWorkshopChargingCron(db);
 // --- CHARGING HISTORY ENDPOINTS ---
 app.get('/api/charging-history', authenticateToken, async (req, res) => {
     try {
@@ -1909,6 +1914,7 @@ app.post('/api/admin/users/:userId/save-game-override', isAdmin, async (req, res
             ts: new Date().toISOString()
         }));
         const te = String(target.email).trim().toLowerCase();
+        // `{...req}` não copia `headers` (getter / não enumerável no IncomingMessage) — handleSaveGamePost precisa dele.
         const syntheticReq = {
             ...req,
             headers: req.headers ?? {},
@@ -5795,7 +5801,8 @@ app.get('/api/load-game', async (req, res) => {
         stockRows.forEach((r) => {
             if (!isValidSaveGameItemId(r.item_id))
                 return;
-            stock[r.item_id] = r.qty;
+            const itemId = normalizeKnown1000WhBatteryCatalogId(r.item_id);
+            stock[itemId] = (stock[itemId] || 0) + (Number(r.qty) || 0);
         });
         const unopenedBoxes = {};
         boxRows.forEach((r) => {
@@ -5803,7 +5810,7 @@ app.get('/api/load-game', async (req, res) => {
         });
         const storedBatteries = batRows.map((r) => ({
             id: r.id,
-            itemId: r.item_id,
+            itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
             currentCharge: r.current_charge,
             powerCapacityWh: r.power_capacity_wh != null
                 ? Number(r.power_capacity_wh)
@@ -6489,7 +6496,8 @@ app.get('/api/game-state/:email', async (req, res) => {
         stockRows.forEach((r) => {
             if (!isValidSaveGameItemId(r.item_id))
                 return;
-            stock[r.item_id] = r.qty;
+            const itemId = normalizeKnown1000WhBatteryCatalogId(r.item_id);
+            stock[itemId] = (stock[itemId] || 0) + (Number(r.qty) || 0);
         });
         const unopenedBoxes = {};
         unopenedRows.forEach((r) => {
@@ -6497,7 +6505,7 @@ app.get('/api/game-state/:email', async (req, res) => {
         });
         const storedBatteries = storedBatRows.map((r) => ({
             id: r.id,
-            itemId: r.item_id,
+            itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
             currentCharge: r.current_charge,
             powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
             displayName: r.display_name != null ? String(r.display_name) : null,
@@ -6737,7 +6745,7 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
         select: { id: true }
     });
     const catalogBatteryIds = new Set(catalogBatteryRows.map((x) => x.id));
-    const fallbackBatteryCatalogId = String(catalogBatteryRows.find((x) => x.id === 'small_battery')?.id ||
+    const fallbackBatteryCatalogId = String(catalogBatteryRows.find((x) => x.id === CANONICAL_1000WH_BATTERY_ID)?.id ||
         catalogBatteryRows[0]?.id ||
         '').trim();
     const refreshOwnedStoredBatteryIds = async () => {
@@ -6760,7 +6768,7 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
         const iid = String(row.id ?? '').trim();
         if (!iid)
             return;
-        const rawItem = String(row.item_id ?? '').trim();
+        const rawItem = normalizeKnown1000WhBatteryCatalogId(row.item_id);
         if (rawItem && catalogBatteryIds.has(rawItem)) {
             storedBattCatalogByInstanceId.set(iid, rawItem);
             return;
@@ -6861,9 +6869,9 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
                     upgradeIds.add(fallbackBatteryCatalogId);
                 }
             }
-            else if (catalogBatteryIds.has(bidRaw)) {
+            else if (catalogBatteryIds.has(normalizeKnown1000WhBatteryCatalogId(bidRaw))) {
                 // Legado: `placed_racks.battery_id` = id de catálogo (pré UUID-only no cliente).
-                upgradeIds.add(bidRaw);
+                upgradeIds.add(normalizeKnown1000WhBatteryCatalogId(bidRaw));
             }
             else if (isRackBatteryInstanceUuid(bidRaw) && fallbackBatteryCatalogId) {
                 upgradeIds.add(fallbackBatteryCatalogId);
@@ -7020,8 +7028,54 @@ async function handleSaveGamePost(req, res) {
             // they committed.
             const dbGsRes = await client.query('SELECT server_updated_at FROM game_states WHERE user_id = $1', [uid]);
             const dbServerUpdatedAt = Number(dbGsRes.rows[0]?.server_updated_at || 0);
-            if (!effectiveAdminOverride && changes.lastLoadTime && dbServerUpdatedAt > Number(changes.lastLoadTime)) {
-                throw new HttpControlledError(200, { forceReload: true });
+            const clientLastLoadTimeRaw = changes.lastLoadTime;
+            const clientLastLoadTime = Number(clientLastLoadTimeRaw);
+            const clientLastLoadTimeValid = clientLastLoadTimeRaw != null && Number.isFinite(clientLastLoadTime) && clientLastLoadTime > 0;
+            const hasCriticalSliceFields = saveDomain !== '' ||
+                changes.placedRacks !== undefined ||
+                changes.stock !== undefined ||
+                changes.storedBatteries !== undefined ||
+                changes.workshopSlots !== undefined ||
+                changes.unopenedBoxes !== undefined;
+            if (!effectiveAdminOverride && hasCriticalSliceFields && !clientLastLoadTimeValid) {
+                // Save legado sem versão verificável → estado anterior pode reintroduzir slots já libertados
+                // por mutação autoritativa (regressão de unequip → duplicação infinita no cliente).
+                if (process.env.GPU_DUP_DEBUG === '1') {
+                    console.warn(JSON.stringify({
+                        event: '[GPU_DUP_DEBUG][save_game_rejected_stale]',
+                        reason: 'missing_lastLoadTime',
+                        userId: Number(uid),
+                        saveDomain,
+                        dbServerUpdatedAt,
+                        clientLastLoadTime: clientLastLoadTimeRaw ?? null
+                    }));
+                }
+                throw new HttpControlledError(409, {
+                    ok: false,
+                    code: 'STATE_VERSION_CONFLICT',
+                    forceReload: true,
+                    error: 'O estado do jogo foi atualizado. Recarregue e tente novamente.',
+                    serverStateVersion: dbServerUpdatedAt
+                });
+            }
+            if (!effectiveAdminOverride && clientLastLoadTimeValid && dbServerUpdatedAt > clientLastLoadTime) {
+                if (process.env.GPU_DUP_DEBUG === '1') {
+                    console.warn(JSON.stringify({
+                        event: '[GPU_DUP_DEBUG][save_game_rejected_stale]',
+                        reason: 'stale_clientLastLoadTime',
+                        userId: Number(uid),
+                        saveDomain,
+                        dbServerUpdatedAt,
+                        clientLastLoadTime
+                    }));
+                }
+                throw new HttpControlledError(409, {
+                    ok: false,
+                    code: 'STATE_VERSION_CONFLICT',
+                    forceReload: true,
+                    error: 'O estado do jogo foi atualizado. Recarregue e tente novamente.',
+                    serverStateVersion: dbServerUpdatedAt
+                });
             }
             nftAutoSanitized = false;
             if (changes.placedRacks) {
@@ -7166,7 +7220,7 @@ async function handleSaveGamePost(req, res) {
                 await deleteWarehouseStoredBatteriesExceptKeepIds(client, Number(uid), incomingIds);
                 if (changes.storedBatteries.length > 0) {
                     const bIds = changes.storedBatteries.map(b => b.id);
-                    const bItemIds = changes.storedBatteries.map(b => b.itemId);
+                    const bItemIds = changes.storedBatteries.map((b) => normalizeKnown1000WhBatteryCatalogId(b.itemId));
                     const bCharges = changes.storedBatteries.map(b => b.currentCharge || 0);
                     const upStoredSave = await fetchBatteryUpgradeRowsByIds(client, bItemIds);
                     const bPowers = bItemIds.map((cid) => {
@@ -7304,13 +7358,16 @@ async function handleSaveGamePost(req, res) {
                         let cat = null;
                         if (isRackBatteryInstanceUuid(bid)) {
                             const inst = preMountBatterySnapSave.get(bid);
-                            cat = inst?.item_id != null ? String(inst.item_id).trim() : null;
+                            cat = inst?.item_id != null ? normalizeKnown1000WhBatteryCatalogId(inst.item_id) : null;
                             if (!cat && prow && String(prow.battery_id || '') === bid) {
-                                cat = prow.battery_catalog_item_id != null ? String(prow.battery_catalog_item_id).trim() : null;
+                                cat =
+                                    prow.battery_catalog_item_id != null
+                                        ? normalizeKnown1000WhBatteryCatalogId(prow.battery_catalog_item_id)
+                                        : null;
                             }
                         }
                         else {
-                            cat = bid;
+                            cat = normalizeKnown1000WhBatteryCatalogId(bid);
                         }
                         if (cat)
                             catalogIdsForUpgradesSave.add(cat);
@@ -7319,7 +7376,12 @@ async function handleSaveGamePost(req, res) {
                     const rIds = changes.placedRacks.map(r => r.id);
                     const rItems = changes.placedRacks.map(r => r.itemId);
                     const rWirings = changes.placedRacks.map(r => r.wiringId || null);
-                    const rBatteries = changes.placedRacks.map(r => r.batteryId || null);
+                    const rBatteries = changes.placedRacks.map((r) => {
+                        const bid = r.batteryId != null ? String(r.batteryId).trim() : '';
+                        if (!bid || isRackBatteryInstanceUuid(bid))
+                            return r.batteryId || null;
+                        return normalizeKnown1000WhBatteryCatalogId(bid);
+                    });
                     const rCharges = changes.placedRacks.map(r => r.currentCharge || 0);
                     const rOns = changes.placedRacks.map(r => r.isOn ? 1 : 0);
                     const rCoins = changes.placedRacks.map(r => r.selectedCoinId || null);
@@ -7341,7 +7403,9 @@ async function handleSaveGamePost(req, res) {
                             }
                             : null;
                         const snap = buildRackBatteryPersistSnapshot(r.batteryId, preMountBatterySnapSave, upgradeByCatalogSave, prevBatt);
-                        rBatCats.push(snap.catalogItemId);
+                        rBatCats.push(snap.catalogItemId != null && String(snap.catalogItemId).trim() !== ''
+                            ? normalizeKnown1000WhBatteryCatalogId(snap.catalogItemId)
+                            : null);
                         rBatPows.push(snap.powerWh);
                         rBatNames.push(snap.displayName != null && snap.displayName.trim() !== '' ? snap.displayName.trim().slice(0, 500) : null);
                         rBatImgs.push(snap.imageUrl != null && snap.imageUrl.trim() !== '' ? snap.imageUrl.trim().slice(0, 2048) : null);
@@ -7625,12 +7689,13 @@ async function handleSaveGamePost(req, res) {
                 const stockRows = await client.query('SELECT item_id, qty FROM stock WHERE user_id = $1', [uid]);
                 const stockObj = {};
                 stockRows.rows.forEach((r) => {
-                    stockObj[r.item_id] = r.qty;
+                    const itemId = normalizeKnown1000WhBatteryCatalogId(r.item_id);
+                    stockObj[itemId] = (stockObj[itemId] || 0) + (Number(r.qty) || 0);
                 });
                 const batRows = await client.query('SELECT id, item_id, current_charge, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1', [uid]);
                 const bats = batRows.rows.map((r) => ({
                     id: r.id,
-                    itemId: r.item_id,
+                    itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
                     currentCharge: Number(r.current_charge) || 0,
                     workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
                     workshopComponentSlotId: r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
@@ -8725,11 +8790,11 @@ app.use((req, res, next) => {
     }
     next();
 });
-// `no-transform`: com proxy Cloudflare (DNS “laranja”), evita injeção JavaScript Detections no HTML da SPA.
+// `no-transform`: com proxy Cloudflare (DNS “laranja”), evita que a CF injete JavaScript Detections no HTML
+// da SPA — essa injeção costuma partir o bundle React (ecrã escuro). Assets hashed em `/assets/` não são afectados.
 app.use(express.static(path.join(__dirname, '../frontend/dist'), {
     setHeaders(res, absPath) {
-        const base = path.basename(absPath);
-        if (base === 'index.html') {
+        if (path.basename(absPath) === 'index.html') {
             res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private, no-transform');
         }
     }
@@ -8836,40 +8901,48 @@ app.post('/api/exchange/sell', async (req, res) => {
     }
 });
 // --- WITHDRAWALS ---
-app.post('/api/withdraw', async (req, res) => {
+/**
+ * Handler partilhado pelo endpoint legado `/api/withdraw` e pelo alias canónico `/api/wallet/withdraw`.
+ * Toda a transação (BEGIN/COMMIT/ROLLBACK, FOR UPDATE em coin_balances, INSERT em withdrawal_requests,
+ * idempotência em wallet_idempotency) fica em `executeWithdrawRequest` (modules/wallet/walletWithdrawRequest).
+ */
+async function handleWithdrawRequest(req, res) {
     const body = req.body || {};
     const coinId = typeof body.coinId === 'string' ? body.coinId.trim() : '';
     const amount = Number(body.amount);
     const walletAddress = typeof body.walletAddress === 'string' ? body.walletAddress.trim() : '';
     const idem = parseIdempotencyKey(body.idempotencyKey);
     if (!req.userId)
-        return res.status(401).json({ error: 'Não autenticado' });
+        return res.status(401).json({ error: 'Não autenticado.' });
     if (!idem) {
         return res.status(400).json({
             error: 'idempotencyKey inválido ou ausente (8–128 caracteres seguros).',
             code: 'IDEMPOTENCY_KEY_REQUIRED'
         });
     }
-    if (!coinId || !Number.isFinite(amount) || amount <= 0 || !walletAddress) {
-        return res.status(400).json({ error: 'Dados incompletos' });
+    if (!coinId) {
+        return res.status(400).json({ error: 'Moeda inválida.' });
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ error: 'Valor de saque inválido.' });
+    }
+    if (!walletAddress) {
+        return res.status(400).json({ error: 'Informe uma carteira válida.' });
     }
     const uid = typeof req.userId === 'number' ? req.userId : parseInt(String(req.userId), 10);
     if (!Number.isFinite(uid) || uid <= 0) {
-        return res.status(401).json({ error: 'Não autenticado' });
+        return res.status(401).json({ error: 'Não autenticado.' });
     }
-    const client = await db.connect();
     try {
-        const fp = withdrawRequestFingerprint({ coinId, amount, walletAddress });
-        const out = await runWithdrawRequestIdempotent(client, {
+        const out = await executeWithdrawRequest(db, {
             userId: uid,
             coinId,
             amount,
             walletAddress,
             idempotencyKey: idem,
-            requestFingerprint: fp,
             serverNowMs: Date.now()
         });
-        res.json({
+        return res.json({
             ok: true,
             requestId: out.requestId,
             message: out.message,
@@ -8887,14 +8960,18 @@ app.post('/api/withdraw', async (req, res) => {
             }
             return res.status(e.statusCode >= 400 && e.statusCode < 600 ? e.statusCode : 400).json({ error: e.message });
         }
-        console.error('[Withdraw] Error:', e);
-        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
+        console.error('[Withdraw] erro 500 inesperado', {
+            userId: uid,
+            coinId,
+            amount,
+            err: e instanceof Error ? `${e.name}: ${e.message}` : String(e)
+        });
+        return sendInternalErrorOrPrisma(res, req.originalUrl || '/api/withdraw', e);
     }
-    finally {
-        if (client)
-            client.release();
-    }
-});
+}
+app.post('/api/withdraw', handleWithdrawRequest);
+/** Alias canónico no namespace `wallet` (frontend novo pode chamar este; o antigo continua a funcionar). */
+app.post('/api/wallet/withdraw', handleWithdrawRequest);
 app.get('/api/admin/withdrawals', isAdmin, async (req, res) => {
     try {
         const query = `
@@ -9082,6 +9159,23 @@ const startServer = async () => {
         await ensureSecurityThreatObserverSchema();
         await ensureSupportTicketSchema();
         await ensurePartnerYoutubeSchema();
+        /** Saque cripto: precisa correr em TODOS os workers (API + BACKGROUND) porque `initDb` só roda em BACKGROUND
+         *  e a migration `request_fingerprint` (wallet_idempotency) podia não estar aplicada na BD do utilizador. */
+        try {
+            await ensureWalletWithdrawSchema(db);
+        }
+        catch (e) {
+            console.warn('[Withdraw] ensureWalletWithdrawSchema (boot) falhou:', e instanceof Error ? e.message : e);
+        }
+        /** Caixas/Loja/Upgrades: idem ao saque — colunas `request_fingerprint` exigidas pelos INSERT/SELECT
+         *  podiam estar em falta apesar de `_prisma_migrations` marcar a migration como aplicada
+         *  (rollback acidental). Sem isto, abrir uma Caixa da Sorte rebenta com 500 e o botão fica preso em "ABRINDO...". */
+        try {
+            await ensureCriticalIdempotencySchema(db);
+        }
+        catch (e) {
+            console.warn('[CriticalIdempotencySchema] (boot) falhou:', e instanceof Error ? e.message : e);
+        }
     }
     catch (e) {
         console.error('[DB] Failed to initialize PostgreSQL:', e);

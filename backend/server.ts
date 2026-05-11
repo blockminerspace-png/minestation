@@ -178,6 +178,7 @@ import { registerSupportMutationRoutes } from './dist/controllers/supportMutatio
 import { registerSupportPlayerRoutes } from './dist/modules/support/supportPlayer.controller.js';
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { registerPartnersPlayerRoutes } from './dist/modules/partners/partnersPlayer.controller.js';
+import { registerDashboardModuleRoutes } from './dist/modules/dashboard/dashboard.controller.js';
 import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
 import { registerWorkshopIntentRoutes } from './dist/controllers/workshopIntent.controller.js';
 import { registerInventoryRoutes } from './dist/controllers/inventoryController.js';
@@ -1693,6 +1694,7 @@ registerPartnersPlayerRoutes(app, {
   authenticateToken,
   appendGameActivityLog
 });
+registerDashboardModuleRoutes(app, { authenticateToken });
 registerProfilePlayerRoutes(app, {
   authenticateToken,
   getClientIp,

@@ -22,7 +22,8 @@ export type GamePathView =
   | 'support'
   | 'partners'
   | 'profile'
-  | 'calculator';
+  | 'calculator'
+  | 'dashboard';
 
 export const GAME_PATH_VIEWS: readonly GamePathView[] = [
   'servers',
@@ -40,7 +41,8 @@ export const GAME_PATH_VIEWS: readonly GamePathView[] = [
   'support',
   'partners',
   'profile',
-  'calculator'
+  'calculator',
+  'dashboard'
 ];
 
 export function isGamePathView(s: string): s is GamePathView {
@@ -64,7 +66,8 @@ export const ENGLISH_PATH_TO_VIEW: Record<string, GamePathView> = {
   support: 'support',
   partners: 'partners',
   profile: 'profile',
-  calculator: 'calculator'
+  calculator: 'calculator',
+  dashboard: 'dashboard'
 };
 
 const VIEW_TO_ENGLISH_PATH: Record<GamePathView, string> = {
@@ -83,7 +86,8 @@ const VIEW_TO_ENGLISH_PATH: Record<GamePathView, string> = {
   support: '/support',
   partners: '/partners',
   profile: '/profile',
-  calculator: '/calculator'
+  calculator: '/calculator',
+  dashboard: '/dashboard'
 };
 
 /** Slugs conhecidos (para fallback dev / verificação). */

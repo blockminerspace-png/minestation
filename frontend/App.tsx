@@ -99,6 +99,7 @@ const LuckyBoxStore = lazyWithReload(() => import('./components/LuckyBoxStore').
 const RoletaPage = lazyWithReload(() => import('./components/RoletaPage').then((m) => ({ default: m.RoletaPage })));
 const SupportPage = lazyWithReload(() => import('./components/SupportPage').then((m) => ({ default: m.SupportPage })));
 const PartnersPage = lazyWithReload(() => import('./components/PartnersPage').then((m) => ({ default: m.PartnersPage })));
+const DashboardPage = lazyWithReload(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
 const BlackMarket = lazyWithReload(() => import('./components/BlackMarket').then((m) => ({ default: m.BlackMarket })));
 const Exchange = lazyWithReload(() => import('./components/Exchange').then((m) => ({ default: m.Exchange })));
 const WalletActions = lazyWithReload(() => import('./components/WalletActions').then((m) => ({ default: m.WalletActions })));
@@ -324,7 +325,7 @@ function applyNftAutoSanitizedClientSync(
   setGameState(next);
 }
 
-type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support' | 'partners';
+type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support' | 'partners' | 'dashboard';
 type GlobalView = 'home' | 'docs' | 'auth' | 'game' | 'admin';
 
 const VALID_GAME_VIEWS: readonly View[] = [
@@ -344,6 +345,7 @@ const VALID_GAME_VIEWS: readonly View[] = [
   'transparency',
   'support',
   'partners',
+  'dashboard',
 ] as const;
 
 function parseSavedGameView(raw: string | null | undefined): View {
@@ -860,7 +862,8 @@ export default function App() {
       const fromUrl = gameViewFromEnglishPathname(window.location.pathname);
       const allowed = getAllowedPages();
       const calcOk = !isOperatorAdminOnly;
-      const ok = (v: View) => (v === 'calculator' ? calcOk : v === 'support' ? true : allowed.includes(v));
+      const ok = (v: View) =>
+        v === 'calculator' ? calcOk : v === 'support' || v === 'dashboard' ? true : allowed.includes(v);
       if (fromUrl && ok(fromUrl)) {
         setCurrentView((prev) => (fromUrl !== prev ? fromUrl : prev));
         return;
@@ -889,7 +892,8 @@ export default function App() {
     const fromUrl = gameViewFromEnglishPathname(window.location.pathname);
     const allowed = getAllowedPages();
     const calcOk = !isOperatorAdminOnly;
-    const ok = (v: View) => (v === 'calculator' ? calcOk : v === 'support' ? true : allowed.includes(v));
+    const ok = (v: View) =>
+      v === 'calculator' ? calcOk : v === 'support' || v === 'dashboard' ? true : allowed.includes(v);
     if (fromUrl && ok(fromUrl)) {
       setCurrentView((prev) => (fromUrl !== prev ? fromUrl : prev));
       return;
@@ -3170,6 +3174,16 @@ export default function App() {
                       <div className="flex-1">
                         <Suspense fallback={<LazyRouteFallback />}>
                           <ProfilePage user={user} onUpdateProfile={handleUpdateUser} onUpdateGameState={(next) => setGameState(next)} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'dashboard' && user && (
+                    <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <DashboardPage onNavigate={(v) => goToGameView(v as View)} />
                         </Suspense>
                       </div>
                       <Footer />
