@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Upgrade } from '../types';
-import { List, Cpu, Server, Battery, Plug, Zap, PlusCircle, Wrench } from 'lucide-react';
+import { List, Cpu, Server, Battery, Plug, Zap, PlusCircle, Wrench, Hexagon } from 'lucide-react';
 
 interface AdminEditorProps {
     gameUpgrades: Upgrade[];
@@ -70,13 +70,15 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
 
     const handleNewItem = () => {
         setEditItemMode(true);
-        const defaultType = editorFilter === 'all' ? 'machine' : editorFilter;
+        const nftTab = editorFilter === 'nft';
+        const defaultType = editorFilter === 'all' || nftTab ? 'machine' : editorFilter;
         setItemForm({
             id: '', name: '', category: 'Nova Categoria',
-            type: defaultType as any,
+            type: defaultType as Upgrade['type'],
             baseCost: 0.001, baseProduction: 0, description: '',
             status: 'normal', compatibleRacks: [], image: '', icon: '🧩',
-            sellInHardwareMarket: true, sellInBlackMarket: true, isActive: true
+            sellInHardwareMarket: true, sellInBlackMarket: true, isActive: true,
+            isNft: nftTab
         });
     }
 
@@ -118,8 +120,9 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
         }
     };
 
-    const filteredItems = gameUpgrades.filter(u => {
+    const filteredItems = gameUpgrades.filter((u) => {
         if (editorFilter === 'all') return true;
+        if (editorFilter === 'nft') return !!u.isNft;
         return u.type === editorFilter;
     });
 
@@ -135,12 +138,19 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                 <button onClick={() => setEditorFilter('wiring')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'wiring' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Plug size={14} /> Circuito</button>
                 <button onClick={() => setEditorFilter('multiplier')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'multiplier' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Zap size={14} /> Chips IA</button>
                 <button onClick={() => setEditorFilter('charger')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'charger' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Wrench size={14} /> Carregadores</button>
+                <button onClick={() => setEditorFilter('nft')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'nft' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Hexagon size={14} /> NFT</button>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                 <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 flex flex-col h-[70vh]">
                     <div className="flex justify-between items-center mb-4">
-                        <h3 className="font-bold text-white">{editorFilter === 'all' ? 'Catálogo Completo' : `Editando: ${editorFilter.toUpperCase()}`}</h3>
+                        <h3 className="font-bold text-white">
+                            {editorFilter === 'all'
+                                ? 'Catálogo Completo'
+                                : editorFilter === 'nft'
+                                  ? 'Itens NFT'
+                                  : `Editando: ${editorFilter.toUpperCase()}`}
+                        </h3>
                         <button onClick={handleNewItem} className="bg-green-600 hover:bg-green-500 text-white text-xs px-2 py-1 rounded flex items-center gap-1"><PlusCircle size={12} /> NOVO</button>
                     </div>
                     <div className="flex-1 overflow-y-auto custom-scrollbar space-y-2">
@@ -149,8 +159,13 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                                 <div className="flex justify-between items-center">
                                     <div>
                                         <span className="font-bold text-sm text-white">{u.name}</span>
-                                        <div className="flex gap-2 mt-1">
+                                        <div className="flex gap-2 mt-1 items-center flex-wrap">
                                             <span className="text-xs text-slate-500">{u.id}</span>
+                                            {u.isNft && (
+                                                <span className="text-[9px] uppercase font-bold text-orange-400 border border-orange-700/60 rounded px-1 py-0.5 flex items-center gap-0.5">
+                                                    <Hexagon size={8} /> NFT
+                                                </span>
+                                            )}
                                         </div>
                                     </div>
                                     {u.image && <div className={`w-8 ${u.type === 'infrastructure' ? 'h-10' : 'h-8'} rounded bg-slate-800 overflow-hidden shrink-0`}><img src={u.image} className={`w-full h-full ${u.type === 'infrastructure' ? 'object-contain' : 'object-cover'}`} /></div>}
@@ -256,6 +271,16 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                                     <div className="flex items-center gap-2">
                                         <label className="text-xs font-bold text-green-500">ATIVO</label>
                                         <input type="checkbox" checked={itemForm.isActive !== false} onChange={e => setItemForm({ ...itemForm, isActive: e.target.checked })} />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <label className="text-xs font-bold text-orange-400 flex items-center gap-1">
+                                            <Hexagon size={12} /> Item NFT (on-chain)
+                                        </label>
+                                        <input
+                                            type="checkbox"
+                                            checked={!!itemForm.isNft}
+                                            onChange={(e) => setItemForm({ ...itemForm, isNft: e.target.checked })}
+                                        />
                                     </div>
                                 </div>
 
