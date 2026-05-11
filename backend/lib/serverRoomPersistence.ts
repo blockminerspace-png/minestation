@@ -173,6 +173,15 @@ export type GameStateChanges = {
   placedRacks?: PlacedRackLoaded[];
   /** Opcional: usado pela validação de remoções seguras em `stored_batteries`. */
   workshopSlots?: unknown;
+  /**
+   * Como interpretar `stock` na persistência:
+   * - `'snapshot'`: o objeto representa o estoque livre completo do utilizador; linhas em
+   *   `stock` ausentes do snapshot são apagadas (corrige duplicação infinita quando um item
+   *   chega a qty 0 ao equipar no rack).
+   * - `'partial'` (default): comportamento legado — apenas UPSERT das chaves presentes.
+   *   Usado pelos saves legados / sanitizers que constroem stock parcial.
+   */
+  stockMode?: 'snapshot' | 'partial';
 };
 
 export type ActivityLogEntry = { action: string; meta: Record<string, unknown> };
@@ -374,15 +383,52 @@ export async function persistStockStoredBatteriesPlacedRacks(
   }
 
   if (stock) {
+    const stockMode: 'snapshot' | 'partial' = changes.stockMode === 'snapshot' ? 'snapshot' : 'partial';
     const stockNorm = new Map<string, number>();
     for (const [rawId, rawQty] of Object.entries(stock)) {
       const itemId = normalizeKnown1000WhBatteryCatalogId(rawId);
       if (!itemId) continue;
-      stockNorm.set(itemId, (stockNorm.get(itemId) || 0) + (Number(rawQty) || 0));
+      const qty = Math.floor(Number(rawQty) || 0);
+      if (qty <= 0) continue;
+      stockNorm.set(itemId, (stockNorm.get(itemId) || 0) + qty);
     }
     const itemIds = [...stockNorm.keys()];
     const qtys = itemIds.map((id) => stockNorm.get(id) || 0);
-    if (itemIds.length > 0) {
+
+    if (process.env.GPU_DUP_DEBUG === '1') {
+      console.log(
+        JSON.stringify({
+          event: '[GPU_DUP_DEBUG][persist_stock_snapshot]',
+          userId: uid,
+          stockMode,
+          incomingKeys: Object.keys(stock).length,
+          normItems: itemIds.length,
+          normSample: itemIds.slice(0, 10).map((id) => ({ id, qty: stockNorm.get(id) || 0 }))
+        })
+      );
+    }
+
+    if (stockMode === 'snapshot') {
+      // O snapshot é a verdade absoluta do estoque livre: linhas em `stock` ausentes
+      // (item chegou a qty 0 ao equipar) têm de ser apagadas, senão regressam ao montar/desmontar.
+      if (itemIds.length > 0) {
+        await client.query(
+          'DELETE FROM stock WHERE user_id = $1 AND NOT (item_id = ANY($2::text[]))',
+          [uid, itemIds]
+        );
+        await client.query(
+          `
+            INSERT INTO stock (user_id, item_id, qty)
+            SELECT $1, unnest($2::text[]), unnest($3::int[])
+            ON CONFLICT (user_id, item_id) DO UPDATE SET qty = EXCLUDED.qty`,
+          [uid, itemIds, qtys]
+        );
+      } else {
+        await client.query('DELETE FROM stock WHERE user_id = $1', [uid]);
+      }
+      // Defensivo: nunca deixar linhas com qty <= 0 (caso outro caminho tenha gravado).
+      await client.query('DELETE FROM stock WHERE user_id = $1 AND qty <= 0', [uid]);
+    } else if (itemIds.length > 0) {
       await client.query(
         `
           INSERT INTO stock (user_id, item_id, qty) 
@@ -390,6 +436,28 @@ export async function persistStockStoredBatteriesPlacedRacks(
           ON CONFLICT (user_id, item_id) DO UPDATE SET qty = EXCLUDED.qty`,
         [uid, itemIds, qtys]
       );
+    }
+
+    if (process.env.GPU_DUP_DEBUG === '1') {
+      try {
+        const after = await client.query(
+          'SELECT item_id, qty FROM stock WHERE user_id = $1 ORDER BY item_id LIMIT 50',
+          [uid]
+        );
+        console.log(
+          JSON.stringify({
+            event: '[GPU_DUP_DEBUG][persist_stock_db_after]',
+            userId: uid,
+            stockMode,
+            rows: (after.rows as { item_id: string; qty: number }[]).map((r) => ({
+              item_id: r.item_id,
+              qty: Number(r.qty)
+            }))
+          })
+        );
+      } catch {
+        /* logs nunca abortam o save */
+      }
     }
   }
 

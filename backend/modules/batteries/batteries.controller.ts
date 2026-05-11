@@ -195,7 +195,8 @@ export function registerBatteriesServerRoomRoutes(app: Application, deps: Batter
         {
           stock: out.next!.stock,
           storedBatteries: out.next!.storedBatteries,
-          placedRacks: out.next!.placedRacks as PlacedRackLoaded[]
+          placedRacks: out.next!.placedRacks as PlacedRackLoaded[],
+          stockMode: 'snapshot'
         },
         saveActivityLogs
       );

@@ -312,7 +312,8 @@ async function runRackAuxMutation(
     await persistStockStoredBatteriesPlacedRacks(client, userId, {
       stock: out.stock,
       storedBatteries: out.storedBatteries,
-      placedRacks: out.placedRacks
+      placedRacks: out.placedRacks,
+      stockMode: 'snapshot'
     }, saveActivityLogs);
 
     const finalServerUpdatedAt = Date.now();
