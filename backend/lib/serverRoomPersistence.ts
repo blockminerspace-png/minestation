@@ -399,7 +399,19 @@ export async function persistStockStoredBatteriesPlacedRacks(
   }
 
   if (storedBatteriesNorm) {
-    const incomingIds = storedBatteriesNorm.map((b) => b.id);
+    // `incomingIds` (saneado) NUNCA inclui UUIDs equipados em `placedRacks` (sanitize remove-os).
+    // `placed_racks` na BD ainda reflete o estado VELHO; é actualizado mais à frente neste
+    // mesmo método. Sem proteger explicitamente, equipar uma bateria UUID de armazém faria
+    // o DELETE apagar a instância antes do INSERT placed_racks → rig fica com `battery_id`
+    // órfão (foi exactamente este o bug que gerou os 92 racks fantasmas pós-explode UUID).
+    const mountedIdsFromIncomingRacks = collectMountedBatteryInstanceIdsFromPlacedRacks(
+      Array.isArray(changes.placedRacks)
+        ? (changes.placedRacks as unknown as Array<{ batteryId?: unknown }>)
+        : []
+    );
+    const incomingIds = [
+      ...new Set([...storedBatteriesNorm.map((b) => b.id), ...mountedIdsFromIncomingRacks])
+    ];
     await deleteWarehouseStoredBatteriesExceptKeepIds(client, Number(uid), incomingIds);
     if (storedBatteriesNorm.length > 0) {
       const bIds = storedBatteriesNorm.map((b) => b.id);

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { applyRackAuxEquip, applyRackAuxUnequip } from '../modules/servers/servers.rackAuxIntent.service.js';
+import {
+  applyRackAuxEquip,
+  applyRackAuxUnequip,
+  applyRemoveRackToStock
+} from '../modules/servers/servers.rackAuxIntent.service.js';
 import type { PlacedRackLoaded } from '../lib/serverRoomPersistence.js';
 
 const upgrades = [
@@ -67,6 +71,54 @@ describe('servers.rackAuxIntent.service', () => {
     expect(out.storedBatteries[0]?.id).toBe(bid);
     expect(out.storedBatteries[0]?.itemId).toBe('bat1');
     expect(out.stock.bat1 ?? 0).toBe(0);
+  });
+
+  it('regressão: desequipar bateria UUID não duplica entrada quando ela já estava em prev.storedBatteries (loaded como EQUIPPED)', () => {
+    // `loadUserStoredBatteries` traz TODAS as instâncias do jogador (INVENTORY + EQUIPPED).
+    // Ao chamar `returnBatteryInstanceToWarehouse`, sem dedup defensivo o array de saída
+    // ficava com a mesma UUID 2 vezes — visível como 2 cards no inventário.
+    const bid = 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee';
+    const rack: PlacedRackLoaded = {
+      ...baseRack(),
+      batteryId: bid,
+      batteryCatalogItemId: 'bat1',
+      isOn: true
+    };
+    const prev = {
+      stock: {},
+      storedBatteries: [{ id: bid, itemId: 'bat1' }],
+      placedRacks: [rack]
+    };
+    const out = applyRackAuxUnequip(prev, 'rack1', { kind: 'battery' }, upgrades, new Map([[bid, 'bat1']]));
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.storedBatteries.filter((b) => b.id === bid)).toHaveLength(1);
+  });
+
+  it('regressão: desmontar rig com bateria EQUIPPED não duplica a UUID na resposta', () => {
+    const bid = 'bbbbbbbb-cccc-4ddd-eeee-ffffffffffff';
+    const rack: PlacedRackLoaded = {
+      ...baseRack(),
+      batteryId: bid,
+      batteryCatalogItemId: 'bat1',
+      slots: ['gpu1'],
+      wiringId: 'wire1',
+      isOn: true
+    };
+    const prev = {
+      stock: {},
+      storedBatteries: [{ id: bid, itemId: 'bat1' }],
+      placedRacks: [rack]
+    };
+    const out = applyRemoveRackToStock(prev, 'rack1', upgrades, new Map([[bid, 'bat1']]));
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.placedRacks).toHaveLength(0);
+    expect(out.storedBatteries.filter((b) => b.id === bid)).toHaveLength(1);
+    // chassis + wiring + 1 GPU + 0 multi (slot vazio) devolvidos ao stock
+    expect(out.stock.chassis).toBe(1);
+    expect(out.stock.wire1).toBe(1);
+    expect(out.stock.gpu1).toBe(1);
   });
 
   it('double equip com mesma lógica: segundo sem stock falha', () => {

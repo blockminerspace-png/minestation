@@ -124,8 +124,16 @@ function returnBatteryInstanceToWarehouse(
   upgrades: RackAuxUpgradeRow[]
 ): void {
   const upg = upgrades.find((u) => u.id === catalogId && u.type === 'battery');
+  const id = batteryId && batteryId.trim() !== '' ? batteryId.trim() : newBatteryInstanceId();
+  // Dedup defensivo: `loadUserStoredBatteries` carrega TODAS as instâncias do
+  // jogador (INVENTORY + EQUIPPED). Ao desequipar, a instância já existe no array
+  // como EQUIPPED. PUSH cego duplicaria o UUID na resposta ao cliente (DB fica
+  // íntegro pelo PK, mas a UI mostra 2 cards do mesmo UUID).
+  for (let i = storedBatteries.length - 1; i >= 0; i--) {
+    if (storedBatteries[i] && storedBatteries[i].id === id) storedBatteries.splice(i, 1);
+  }
   storedBatteries.push({
-    id: batteryId && batteryId.trim() !== '' ? batteryId.trim() : newBatteryInstanceId(),
+    id,
     itemId: catalogId,
     displayName: upg?.name ?? null,
     imageUrl: upg?.image ?? null
