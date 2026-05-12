@@ -15,6 +15,8 @@ import { computePlayerGameHeaderSnapshot } from '../../lib/playerGameHeaderSnaps
 import { getPublicMiningRankingPayload } from '../../lib/miningRankingPrisma.js';
 import { buildWalletStatePayload } from '../wallet/walletPlayerController.js';
 import { isKnownInfiniteBatteryCatalogId } from '../batteries/batteries.catalog.js';
+import fs from 'node:fs';
+import path from 'node:path';
 import type {
   DashboardEcosystemModule,
   DashboardEvent,
@@ -79,6 +81,26 @@ const ECOSYSTEM_MODULES: readonly DashboardEcosystemModule[] = [
     status: 'coming_soon'
   }
 ];
+
+/**
+ * Cache-bust do banner BlockMiner: mesmo path `/img/...` fica preso em browser/CDN.
+ * `process.cwd()` = raiz do backend em Docker (`/app/backend`), alinhado com `img/` no repo.
+ */
+function blockminerDashboardImageUrl(): string {
+  const abs = path.join(process.cwd(), 'img', 'parceiros', 'blockminer.png');
+  try {
+    const v = Math.floor(fs.statSync(abs).mtimeMs);
+    return `/img/parceiros/blockminer.png?v=${v}`;
+  } catch {
+    return '/img/parceiros/blockminer.png';
+  }
+}
+
+function ecosystemModulesForResponse(): DashboardEcosystemModule[] {
+  return ECOSYSTEM_MODULES.map((m) =>
+    m.id === 'blockminer' ? { ...m, imageUrl: blockminerDashboardImageUrl() } : m
+  );
+}
 
 /** Atalhos exibidos no rodapé (mapeiam para views internas do SPA). */
 const QUICK_ACCESS: readonly DashboardQuickAccessItem[] = [
@@ -370,7 +392,7 @@ export async function buildDashboardStatePayload(userId: number): Promise<Dashbo
     serverTime: Date.now(),
     miner,
     wallet,
-    ecosystemModules: [...ECOSYSTEM_MODULES],
+    ecosystemModules: ecosystemModulesForResponse(),
     notifications,
     events,
     ranking,
