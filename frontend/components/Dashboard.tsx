@@ -273,12 +273,12 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
             const canGo = m.status === 'available';
             const imgClass =
               m.id === 'blockminer'
-                ? 'block h-full w-full object-cover object-[50%_4%] [image-rendering:auto]'
+                ? 'block h-full w-full object-cover object-[50%_18%] [image-rendering:auto]'
                 : 'block h-full w-full object-contain object-center [image-rendering:auto]';
             return (
               <div
                 key={m.id}
-                className={`group relative snap-start shrink-0 overflow-visible rounded-xl h-[148px] w-[min(88vw,308px)] sm:h-[168px] sm:w-[min(42vw,360px)] max-w-[380px] ${th.frame} ${th.glow} ${
+                className={`group relative snap-start shrink-0 overflow-visible rounded-xl h-[176px] w-[min(92vw,336px)] sm:h-[200px] sm:w-[min(52vw,420px)] max-w-[440px] ${th.frame} ${th.glow} ${
                   canGo ? '' : 'opacity-[0.88]'
                 }`}
               >
@@ -304,10 +304,10 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                     href={m.href}
                     target={m.external ? '_blank' : undefined}
                     rel={m.external ? 'noopener noreferrer' : undefined}
-                    className={`pointer-events-auto absolute left-1/2 bottom-2 z-[100] -translate-x-1/2 flex items-center gap-1 rounded-full border-2 border-white/35 bg-slate-950 px-4 py-1.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-wide text-white shadow-lg shadow-black/70 ring-2 ring-black/50 backdrop-blur-md transition-all hover:scale-[1.03] hover:border-white/55 hover:bg-slate-900 ${th.btn}`}
+                    className="pointer-events-auto absolute left-1/2 bottom-3 z-[200] -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
                   >
                     Entrar
-                    <ChevronRight size={13} strokeWidth={2.5} className="opacity-95" />
+                    <ChevronRight size={16} strokeWidth={2.75} className="opacity-90" />
                   </a>
                 ) : null}
               </div>

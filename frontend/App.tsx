@@ -2607,6 +2607,9 @@ export default function App() {
   const formatMoney = (val: number) => val < 0.01 && val > 0 ? val.toFixed(3) : val.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const formatHash = (val: number) => val === 0 ? "0 H/s" : (val < 0.0001 ? val.toFixed(8) + " H/s" : Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 2 }).format(val) + " H/s");
 
+  /** Dashboard: menos altura no header + menu para dar espaço ao conteúdo. */
+  const compactGameChrome = Boolean(user && globalView === 'game' && currentView === 'dashboard');
+
   return (
     <div className="h-screen min-h-0 w-full min-w-0 max-w-full flex flex-col bg-slate-50 dark:bg-[#0f0c08] text-slate-800 dark:text-slate-200 font-sans selection:bg-amber-500/30 overflow-hidden transition-colors duration-300">
       <a
@@ -2617,7 +2620,11 @@ export default function App() {
       </a>
       {/* GLOBAL NAVIGATION HEADER */}
       <header className="bg-white/90 dark:bg-slate-900/90 border-b border-slate-200 dark:border-amber-900/30 shrink-0 backdrop-blur-md z-50 shadow-sm transition-colors duration-300">
-        <div className="max-w-7xl mx-auto min-w-0 w-full px-4 py-2 md:py-2.5 flex flex-col md:flex-row justify-between items-center gap-2 md:gap-3">
+        <div
+          className={`max-w-7xl mx-auto min-w-0 w-full px-3 sm:px-4 flex flex-col md:flex-row justify-between items-center ${
+            compactGameChrome ? 'py-1 md:py-1.5 gap-1 md:gap-2' : 'py-2 md:py-2.5 gap-2 md:gap-3'
+          }`}
+        >
           {/* Logo */}
           <div
             className="flex items-center gap-3 cursor-pointer"
@@ -2632,18 +2639,46 @@ export default function App() {
               }
             }}
           >
-            <div className="w-10 h-10 rounded-full overflow-hidden shrink-0 ring-2 ring-amber-500/50 shadow-lg shadow-amber-600/25 bg-slate-900">
-              <img src="/img/favicon/genesis-miner-logo.png" alt="" className="w-full h-full object-cover" width={40} height={40} fetchPriority="high" aria-hidden />
+            <div
+              className={`rounded-full overflow-hidden shrink-0 ring-2 ring-amber-500/50 shadow-lg shadow-amber-600/25 bg-slate-900 ${
+                compactGameChrome ? 'w-9 h-9' : 'w-10 h-10'
+              }`}
+            >
+              <img
+                src="/img/favicon/genesis-miner-logo.png"
+                alt=""
+                className="w-full h-full object-cover"
+                width={40}
+                height={40}
+                fetchPriority="high"
+                aria-hidden
+              />
             </div>
             <div>
-              <p className="text-xl font-bold bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Genesis Miner</p>
-              <span className="text-[10px] font-semibold tracking-wider bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent">Ecossistema online V0.5 — Genesis DAO</span>
+              <p
+                className={`font-bold bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent ${
+                  compactGameChrome ? 'text-lg leading-tight' : 'text-xl'
+                }`}
+              >
+                Genesis Miner
+              </p>
+              <span
+                className={`font-semibold tracking-wider bg-gradient-to-r from-amber-600 to-orange-600 dark:from-amber-400 dark:to-orange-400 bg-clip-text text-transparent ${
+                  compactGameChrome ? 'text-[9px] leading-tight' : 'text-[10px]'
+                }`}
+              >
+                Ecossistema online V0.5 — Genesis DAO
+              </span>
             </div>
           </div>
 
           {/* In-Game Stats */}
           {user && globalView === 'game' && (
-            <div className="flex items-center gap-3 bg-slate-100 dark:bg-slate-800/50 p-1.5 rounded-lg border border-slate-200 dark:border-slate-700/50 text-xs md:text-sm shadow-inner">
+            <div
+              className={`flex items-center gap-3 bg-slate-100 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700/50 text-xs md:text-sm shadow-inner ${
+                compactGameChrome ? 'p-1 gap-2' : 'p-1.5 gap-3'
+              }`}
+            >
               <div className="flex flex-col items-end px-3 border-r border-slate-300 dark:border-slate-700">
                 <span className="text-[10px] text-amber-600 dark:text-amber-500 uppercase tracking-wider flex gap-1 items-center"><Coins size={10} /> Tokens <button onClick={() => setCoinsExpanded(e => !e)} className="ml-1 p-0.5 rounded text-slate-500 hover:text-slate-800 dark:hover:text-white">{coinsExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}</button></span>
                 <div className="flex flex-col gap-0.5 items-end">
@@ -2848,7 +2883,11 @@ export default function App() {
           <>
             {/* GAME NAVIGATION */}
             <nav className="min-w-0 w-full bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 shrink-0 transition-colors duration-300">
-              <div className="max-w-7xl mx-auto md:hidden px-4 py-2 flex items-center justify-between">
+              <div
+                className={`max-w-7xl mx-auto md:hidden px-3 sm:px-4 flex items-center justify-between ${
+                  compactGameChrome ? 'py-1' : 'py-2'
+                }`}
+              >
                 <div className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Menu</div>
                 <button onClick={() => setGameMenuOpen(v => !v)} className="p-2 rounded-lg text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">{gameMenuOpen ? <X size={18} /> : <Menu size={18} />}</button>
               </div>
@@ -2870,7 +2909,11 @@ export default function App() {
                   {getAllowedPages().includes('partners') && (<button onClick={() => { goToGameView('partners'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Clapperboard size={16} /> {gameNav('partners')}</button>)}
                 </div>
               )}
-              <div className="max-w-7xl mx-auto hidden md:flex w-full min-w-0 max-w-full flex-nowrap justify-start gap-x-0 overflow-x-auto overflow-y-hidden overscroll-x-contain px-2 py-1 touch-pan-x sm:px-3 [scrollbar-width:thin]">
+              <div
+                className={`max-w-7xl mx-auto hidden md:flex w-full min-w-0 max-w-full flex-nowrap justify-start gap-x-0 overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x sm:px-3 [scrollbar-width:thin] ${
+                  compactGameChrome ? 'px-2 py-0 [&>button]:!py-1.5' : 'px-2 py-1'
+                }`}
+              >
                 {getAllowedPages().includes('servers') && (<button type="button" onClick={() => { goToGameView('servers'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={15} className="shrink-0" /> {gameNav('servers')}</button>)}
                 {getAllowedPages().includes('inventory') && (<button type="button" onClick={() => { goToGameView('inventory'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={15} className="shrink-0" /> {gameNav('inventory')}</button>)}
                 {getAllowedPages().includes('oficina') && (<button type="button" onClick={() => { goToGameView('oficina'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={15} className="shrink-0" /> {gameNav('oficina')}</button>)}
