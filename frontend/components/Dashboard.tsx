@@ -249,7 +249,7 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
   if (!modules.length) return null;
 
   const stripScrollClass =
-    'flex min-w-0 flex-1 gap-2.5 sm:gap-3 overflow-x-auto overflow-y-visible snap-x snap-mandatory py-0 scroll-pl-0.5 sm:scroll-pl-1 ' +
+    'flex min-w-0 flex-1 gap-2.5 sm:gap-3 overflow-x-auto overflow-y-visible snap-x snap-mandatory pt-0 pb-3 scroll-pl-0.5 sm:scroll-pl-1 ' +
     '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
 
   return (
@@ -304,7 +304,7 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                     href={m.href}
                     target={m.external ? '_blank' : undefined}
                     rel={m.external ? 'noopener noreferrer' : undefined}
-                    className="pointer-events-auto absolute left-1/2 bottom-3 z-[200] -translate-x-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
+                    className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
                   >
                     Entrar
                     <ChevronRight size={16} strokeWidth={2.75} className="opacity-90" />
