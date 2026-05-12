@@ -27,14 +27,11 @@ import {
   Compass,
   Crown,
   Eye,
-  Flame,
   Gift,
   Server as ServerIcon,
   ShoppingCart,
   Skull,
   Sparkles,
-  LayoutGrid,
-  Leaf,
   Trophy,
   Wallet as WalletIcon,
   Wrench,
@@ -179,26 +176,8 @@ function SectionCard({
 }
 
 // =====================================================================
-// Header + Módulos do ecossistema
+// Módulos do ecossistema (strip)
 // =====================================================================
-
-function ecosystemModuleIcon(id: string, size = 18) {
-  const sw = size >= 22 ? 2 : 2.25;
-  switch (id) {
-    case 'workerrealm':
-      return <Flame size={size} strokeWidth={sw} />;
-    case 'blockminer':
-      return <LayoutGrid size={size} strokeWidth={sw} />;
-    case 'minecore':
-      return <Leaf size={size} strokeWidth={sw} />;
-    case 'masterleague':
-      return <Trophy size={size} strokeWidth={sw} />;
-    case 'reworth':
-      return <Skull size={size} strokeWidth={sw} />;
-    default:
-      return <Sparkles size={size} strokeWidth={sw} />;
-  }
-}
 
 function ecosystemThemeClasses(id: string): {
   frame: string;
@@ -292,53 +271,43 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
           {modules.map((m) => {
             const th = ecosystemThemeClasses(m.id);
             const canGo = m.status === 'available';
-            const mediaFrame =
-              'relative z-[1] h-[118px] w-[248px] sm:h-[128px] sm:w-[276px] shrink-0 my-0.5 rounded-xl overflow-hidden border border-white/10 bg-slate-950/90';
             const imgClass =
               m.id === 'blockminer'
-                ? 'block h-full w-full object-cover object-[50%_14%] [image-rendering:auto]'
-                : 'block h-full w-full max-h-full max-w-full object-contain object-center [image-rendering:auto]';
+                ? 'block h-full w-full object-cover object-[50%_8%] [image-rendering:auto]'
+                : 'block h-full w-full object-contain object-center [image-rendering:auto]';
             return (
               <div
                 key={m.id}
-                className={`group relative flex snap-start shrink-0 flex-row items-center gap-2.5 sm:gap-3 rounded-xl overflow-visible bg-slate-950/50 backdrop-blur-sm py-2 pl-2 pr-1.5 sm:pl-2.5 transition-all duration-200 hover:bg-slate-900/55 ${th.frame} ${
-                  canGo ? '' : 'opacity-[0.9]'
+                className={`group relative snap-start shrink-0 overflow-hidden rounded-xl bg-slate-950/95 h-[120px] w-[272px] sm:h-[128px] sm:w-[300px] ${th.frame} ${th.glow} ${
+                  canGo ? '' : 'opacity-[0.88]'
                 }`}
               >
-                <div className="relative z-[1] flex shrink-0 flex-col items-center justify-center border-r border-white/[0.06] bg-transparent px-1.5 py-1 w-[52px] sm:w-14">
-                  <span
-                    className={`flex h-11 w-11 sm:h-[52px] sm:w-[52px] shrink-0 items-center justify-center rounded-2xl border ${th.iconWrap}`}
-                  >
-                    {ecosystemModuleIcon(m.id, 24)}
-                  </span>
-                </div>
-
-                <div className={`${mediaFrame} ${th.glow} flex items-center justify-center`}>
-                  {m.imageUrl ? (
-                    <img src={m.imageUrl} alt="" className={imgClass} loading="lazy" />
-                  ) : (
-                    <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder} flex items-center justify-center`}>
+                {m.imageUrl ? (
+                  <img src={m.imageUrl} alt="" className={imgClass} loading="lazy" />
+                ) : (
+                  <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder}`}>
+                    <div className="absolute inset-0 flex items-center justify-center">
                       <Sparkles className="h-7 w-7 text-white/18" strokeWidth={1.35} aria-hidden />
                     </div>
-                  )}
-                  {m.status === 'coming_soon' ? (
-                    <span className="absolute top-2 right-2 text-[7px] font-semibold uppercase tracking-wider bg-black/65 border border-white/10 text-slate-300 px-1.5 py-0.5 rounded-md z-10">
-                      Em breve
-                    </span>
-                  ) : null}
+                  </div>
+                )}
+                {m.status === 'coming_soon' ? (
+                  <span className="absolute top-2 right-2 text-[7px] font-semibold uppercase tracking-wider bg-black/70 border border-white/10 text-slate-300 px-1.5 py-0.5 rounded-md z-10">
+                    Em breve
+                  </span>
+                ) : null}
 
-                  {canGo ? (
-                    <a
-                      href={m.href}
-                      target={m.external ? '_blank' : undefined}
-                      rel={m.external ? 'noopener noreferrer' : undefined}
-                      className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-0.5 rounded-full border bg-slate-950/90 px-3 py-1 text-[8px] sm:text-[9px] font-semibold uppercase tracking-wider shadow-md shadow-black/40 backdrop-blur-sm transition-colors hover:bg-slate-900 ${th.btn}`}
-                    >
-                      Entrar
-                      <ChevronRight size={11} strokeWidth={2.25} className="opacity-90" />
-                    </a>
-                  ) : null}
-                </div>
+                {canGo ? (
+                  <a
+                    href={m.href}
+                    target={m.external ? '_blank' : undefined}
+                    rel={m.external ? 'noopener noreferrer' : undefined}
+                    className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-0.5 rounded-full border bg-slate-950/92 px-3 py-1 text-[8px] sm:text-[9px] font-semibold uppercase tracking-wider shadow-md shadow-black/40 backdrop-blur-sm transition-colors hover:bg-slate-900 ${th.btn}`}
+                  >
+                    Entrar
+                    <ChevronRight size={11} strokeWidth={2.25} className="opacity-90" />
+                  </a>
+                ) : null}
               </div>
             );
           })}
