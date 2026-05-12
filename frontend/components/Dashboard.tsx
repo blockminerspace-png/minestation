@@ -249,22 +249,22 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
   if (!modules.length) return null;
 
   const stripScrollClass =
-    'flex min-w-0 flex-1 gap-3 sm:gap-4 overflow-x-auto overflow-y-visible snap-x snap-mandatory py-1 scroll-pl-1 sm:scroll-pl-2 ' +
+    'flex min-w-0 flex-1 gap-2.5 sm:gap-3 overflow-x-auto overflow-y-visible snap-x snap-mandatory py-0 scroll-pl-0.5 sm:scroll-pl-1 ' +
     '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
 
   return (
     <section
       aria-label="Módulos e parceiros do ecossistema"
-      className="relative w-full rounded-2xl border border-slate-700/40 bg-slate-900/40 py-3.5 sm:py-4 px-2 sm:px-3 backdrop-blur-md shadow-sm shadow-black/20 ring-1 ring-white/[0.04]"
+      className="relative w-full rounded-xl border border-slate-700/30 bg-slate-900/25 py-0.5 px-0.5 sm:px-1.5 backdrop-blur-sm ring-1 ring-white/[0.03]"
     >
-      <div className="relative flex items-center gap-2 sm:gap-3">
+      <div className="relative flex items-center gap-1 sm:gap-2">
         <button
           type="button"
           onClick={() => scrollStrip(-1)}
-          className="hidden sm:inline-flex shrink-0 h-10 w-10 items-center justify-center rounded-xl border border-slate-600/50 bg-slate-900/80 text-slate-300 hover:bg-slate-800/90 hover:text-white transition-colors"
+          className="hidden sm:inline-flex shrink-0 h-9 w-9 items-center justify-center rounded-lg border border-slate-600/45 bg-slate-900/70 text-slate-400 hover:bg-slate-800/90 hover:text-white transition-colors"
           aria-label="Anterior"
         >
-          <ChevronLeft size={20} strokeWidth={2} />
+          <ChevronLeft size={18} strokeWidth={2} />
         </button>
 
         <div ref={stripRef} className={stripScrollClass}>
@@ -273,12 +273,12 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
             const canGo = m.status === 'available';
             const imgClass =
               m.id === 'blockminer'
-                ? 'block h-full w-full object-cover object-[50%_8%] [image-rendering:auto]'
+                ? 'block h-full w-full object-cover object-[50%_4%] [image-rendering:auto]'
                 : 'block h-full w-full object-contain object-center [image-rendering:auto]';
             return (
               <div
                 key={m.id}
-                className={`group relative snap-start shrink-0 overflow-hidden rounded-xl bg-slate-950/95 h-[120px] w-[272px] sm:h-[128px] sm:w-[300px] ${th.frame} ${th.glow} ${
+                className={`group relative snap-start shrink-0 overflow-hidden rounded-xl bg-slate-950/95 h-[148px] w-[min(88vw,308px)] sm:h-[168px] sm:w-[min(42vw,360px)] max-w-[380px] ${th.frame} ${th.glow} ${
                   canGo ? '' : 'opacity-[0.88]'
                 }`}
               >
@@ -287,7 +287,7 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                 ) : (
                   <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder}`}>
                     <div className="absolute inset-0 flex items-center justify-center">
-                      <Sparkles className="h-7 w-7 text-white/18" strokeWidth={1.35} aria-hidden />
+                      <Sparkles className="h-9 w-9 text-white/16" strokeWidth={1.25} aria-hidden />
                     </div>
                   </div>
                 )}
@@ -316,10 +316,10 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
         <button
           type="button"
           onClick={() => scrollStrip(1)}
-          className="hidden sm:inline-flex shrink-0 h-10 w-10 items-center justify-center rounded-xl border border-slate-600/50 bg-slate-900/80 text-slate-300 hover:bg-slate-800/90 hover:text-white transition-colors"
+          className="hidden sm:inline-flex shrink-0 h-9 w-9 items-center justify-center rounded-lg border border-slate-600/45 bg-slate-900/70 text-slate-400 hover:bg-slate-800/90 hover:text-white transition-colors"
           aria-label="Seguinte"
         >
-          <ChevronRight size={20} strokeWidth={2} />
+          <ChevronRight size={18} strokeWidth={2} />
         </button>
       </div>
     </section>
@@ -778,7 +778,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     const { miner, wallet, ecosystemModules, notifications, events, ranking, quickAccess } = state;
 
     return (
-      <div className="space-y-4">
+      <div className="flex flex-col gap-2 sm:gap-3">
         <EcosystemModulesStrip modules={ecosystemModules} />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
@@ -829,7 +829,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   }, [loading, error, state, onNavigate]);
 
   return (
-    <div className="min-h-full w-full max-w-none bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-1.5 sm:px-3 md:px-5 py-4 sm:py-6 text-slate-100 antialiased">
+    <div className="min-h-full w-full max-w-none bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-1.5 sm:px-3 md:px-5 py-3 sm:py-4 text-slate-100 antialiased">
       <div className="w-full max-w-none mx-auto">
         {content}
         <div className="mt-6 text-center text-[10px] text-slate-600 flex items-center justify-center gap-2">
