@@ -288,47 +288,46 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
 
         <div
           ref={stripRef}
-          className="flex min-w-0 flex-1 gap-3 sm:gap-4 overflow-x-auto overflow-y-visible snap-x snap-mandatory pb-3 pt-1 custom-scrollbar scroll-pl-1 sm:scroll-pl-2"
+          className="flex min-w-0 flex-1 gap-3 sm:gap-4 overflow-x-auto overflow-y-visible snap-x snap-mandatory pb-4 pt-1 custom-scrollbar scroll-pl-1 sm:scroll-pl-2"
         >
           {modules.map((m) => {
             const th = ecosystemThemeClasses(m.id);
             const canGo = m.status === 'available';
-            const imgBox = 'h-[76px] sm:h-[84px]';
+            /** Frame fixo: evita `flex-1` + pouca altura (faixa “pancake”) que faz o arte parecer esticado. */
+            const mediaFrame =
+              'relative z-[1] h-[96px] w-[200px] sm:h-[104px] sm:w-[228px] shrink-0 my-1 mr-2 sm:mr-2.5 rounded-lg overflow-hidden border border-white/10 bg-slate-950/95';
+            const imgClass =
+              m.id === 'blockminer'
+                ? 'block h-full w-full object-cover object-[50%_14%] [image-rendering:auto]'
+                : 'block h-full w-full max-h-full max-w-full object-contain object-center [image-rendering:auto]';
             return (
               <div
                 key={m.id}
-                className={`group relative flex snap-start shrink-0 flex-row items-stretch w-[min(92vw,620px)] sm:w-[min(88vw,680px)] max-w-[720px] rounded-lg overflow-visible bg-slate-950/90 backdrop-blur-sm transition-transform duration-300 hover:-translate-y-px ${th.frame} ${
+                className={`group relative flex snap-start shrink-0 flex-row items-center gap-2 rounded-lg overflow-visible bg-slate-950/90 backdrop-blur-sm py-1.5 pl-2 pr-1 sm:pl-2.5 transition-transform duration-300 hover:-translate-y-px ${th.frame} ${
                   canGo ? '' : 'opacity-[0.92]'
                 }`}
               >
-                <div className="relative z-[1] flex shrink-0 flex-col justify-center gap-1.5 border-r border-white/5 bg-slate-950/95 px-2.5 py-2 sm:px-3 sm:w-[132px] w-[108px]">
+                <div className="relative z-[1] flex shrink-0 flex-col justify-center gap-1 border-r border-white/5 bg-slate-950/95 px-2 py-2 min-w-[96px] max-w-[112px] sm:min-w-[104px] sm:max-w-[120px]">
                   <span
                     className={`flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full border ${th.iconWrap}`}
                   >
                     {ecosystemModuleIcon(m.id)}
                   </span>
-                  <div className="text-[11px] sm:text-xs font-black uppercase tracking-wide text-white leading-tight line-clamp-2">
+                  <div className="text-[10px] sm:text-[11px] font-black uppercase tracking-wide text-white leading-tight line-clamp-3">
                     {m.title}
                   </div>
                 </div>
 
-                <div
-                  className={`relative z-[1] min-w-0 flex-1 ${imgBox} self-center my-1 mr-1 sm:mr-1.5 rounded-md overflow-hidden border border-white/10 bg-slate-950/90 ${th.glow} flex items-center justify-center`}
-                >
+                <div className={`${mediaFrame} ${th.glow} flex items-center justify-center`}>
                   {m.imageUrl ? (
-                    <img
-                      src={m.imageUrl}
-                      alt=""
-                      className="max-h-full max-w-full object-contain object-center"
-                      loading="lazy"
-                    />
+                    <img src={m.imageUrl} alt="" className={imgClass} loading="lazy" />
                   ) : (
                     <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder} flex items-center justify-center`}>
-                      <span className="text-2xl font-black text-white/10">{m.title.charAt(0)}</span>
+                      <span className="text-3xl font-black text-white/15 select-none">{m.title.charAt(0)}</span>
                     </div>
                   )}
                   {m.status === 'coming_soon' ? (
-                    <span className="absolute top-1.5 right-1.5 text-[8px] font-black uppercase tracking-widest bg-black/70 border border-white/15 text-slate-200 px-1.5 py-0.5 rounded-sm">
+                    <span className="absolute top-1.5 right-1.5 text-[8px] font-black uppercase tracking-widest bg-black/70 border border-white/15 text-slate-200 px-1.5 py-0.5 rounded-sm z-10">
                       Em breve
                     </span>
                   ) : null}
@@ -338,18 +337,12 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                       href={m.href}
                       target={m.external ? '_blank' : undefined}
                       rel={m.external ? 'noopener noreferrer' : undefined}
-                      className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-1 rounded-full border bg-slate-950/95 px-3.5 py-1 text-[9px] sm:text-[10px] font-black uppercase tracking-[0.18em] shadow-lg shadow-black/50 backdrop-blur-sm transition-colors hover:brightness-110 ${th.btn}`}
+                      className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-1 rounded-full border bg-slate-950/95 px-3 py-0.5 text-[8px] sm:text-[9px] font-black uppercase tracking-[0.16em] shadow-lg shadow-black/50 backdrop-blur-sm transition-colors hover:brightness-110 ${th.btn}`}
                     >
                       Entrar
-                      <ChevronRight size={12} strokeWidth={2.5} className="opacity-90" />
+                      <ChevronRight size={11} strokeWidth={2.5} className="opacity-90" />
                     </a>
-                  ) : (
-                    <span
-                      className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-1 rounded-full border border-slate-600/80 bg-slate-950/90 px-3 py-1 text-[9px] font-black uppercase tracking-[0.18em] text-slate-500 cursor-not-allowed`}
-                    >
-                      Em breve
-                    </span>
-                  )}
+                  ) : null}
                 </div>
               </div>
             );
@@ -872,7 +865,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   }, [loading, error, state, onNavigate]);
 
   return (
-    <div className="min-h-full w-full max-w-none bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-2 sm:px-4 md:px-6 py-4 sm:py-6 text-slate-100">
+    <div className="min-h-full w-full max-w-none bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-1.5 sm:px-3 md:px-5 py-4 sm:py-6 text-slate-100">
       <div className="w-full max-w-none mx-auto">
         {content}
         <div className="mt-6 text-center text-[10px] text-slate-600 flex items-center justify-center gap-2">

@@ -2889,7 +2889,11 @@ export default function App() {
             </nav>
 
             {/* GAME CONTENT WRAPPER WITH SIDEBARS */}
-            <div className="flex-1 min-w-0 flex justify-center overflow-hidden relative w-full h-full">
+            <div
+              className={`flex-1 min-w-0 flex overflow-hidden relative w-full h-full ${
+                currentView === 'dashboard' || currentView === 'partners' ? 'justify-start' : 'justify-center'
+              }`}
+            >
 
               {/* Laterais — escondidas na Dashboard (layout limpo) e em Parceiros (vitrine full-width). */}
               {currentView !== 'dashboard' && currentView !== 'partners' && (
