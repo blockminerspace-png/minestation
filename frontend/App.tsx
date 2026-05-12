@@ -3259,7 +3259,7 @@ export default function App() {
                     <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
                       <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <PartnersPage onOpenPartnerGames={() => goToGameView('partner_games')} />
+                          <PartnersPage />
                         </Suspense>
                       </div>
                       <Footer />

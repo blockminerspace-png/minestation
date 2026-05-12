@@ -9,8 +9,7 @@ import {
   User,
   ThumbsUp,
   Youtube,
-  Play,
-  Gamepad2
+  Play
 } from 'lucide-react';
 import {
   getPartnersState,
@@ -80,12 +79,7 @@ function PartnerShowcaseAvatar({ name, imageUrl }: { name: string; imageUrl: str
   );
 }
 
-export type PartnersPageProps = {
-  /** Abre o ecrã dedicado ao iframe / jogos BlockMiner (`/partner-games`). */
-  onOpenPartnerGames: () => void;
-};
-
-export const PartnersPage: React.FC<PartnersPageProps> = ({ onOpenPartnerGames }) => {
+export const PartnersPage: React.FC = () => {
   const [videos, setVideos] = useState<PartnersShowcaseVideoDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -198,23 +192,6 @@ export const PartnersPage: React.FC<PartnersPageProps> = ({ onOpenPartnerGames }
 
   return (
     <div className="w-full flex flex-col gap-8 text-slate-100 pb-8">
-      <div className="w-full px-2 sm:px-4 pt-1">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-violet-500/30 bg-slate-900/70 px-4 py-3 ring-1 ring-violet-500/10">
-          <p className="text-sm text-slate-400 max-w-2xl">
-            Esta página é só a <strong className="text-slate-200">vitrine YouTube</strong> e envios. Os jogos BlockMiner (iframe e link para o site) estão no separador{' '}
-            <strong className="text-violet-200">Parceiro · Jogos</strong>.
-          </p>
-          <button
-            type="button"
-            onClick={onOpenPartnerGames}
-            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-violet-400/45 bg-violet-600/25 px-3 py-2 text-xs font-bold text-violet-100 hover:bg-violet-600/40 transition-colors"
-          >
-            <Gamepad2 size={16} className="shrink-0" />
-            Abrir jogos BlockMiner
-          </button>
-        </div>
-      </div>
-
       <div id="parceiros-youtube" className="scroll-mt-6 max-w-7xl mx-auto w-full px-3 sm:px-4 space-y-8">
       <div className="rounded-2xl border border-slate-700/80 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-amber-950/20 px-4 sm:px-6 py-5 sm:py-6 space-y-2">
         <div className="text-[11px] uppercase tracking-widest text-amber-500/90 font-bold">Painel / Parceiros</div>
