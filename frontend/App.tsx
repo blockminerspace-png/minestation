@@ -363,6 +363,32 @@ function gameSaveDomainFromView(v: View): 'full' | 'inventory' | 'servers' | 'wo
   return 'full';
 }
 
+/** Acento por separador — alinhado ao resto da UI (âmbar base + cores por módulo). */
+type GameNavTabAccent = 'amber' | 'yellow' | 'red' | 'orange' | 'rose' | 'emerald' | 'sky' | 'violet';
+
+function gameNavTabClass(isActive: boolean, accent: GameNavTabAccent): string {
+  const base =
+    'flex items-center gap-1.5 px-2.5 sm:px-3 py-2 rounded-lg text-[11px] sm:text-xs font-bold normal-case tracking-wide border transition-all duration-200 shrink-0';
+  const inactive =
+    'border-transparent text-slate-600 dark:text-slate-400 bg-white/70 dark:bg-slate-950/50 hover:bg-amber-50 dark:hover:bg-amber-950/40 hover:border-amber-200/70 dark:hover:border-amber-500/35 hover:text-amber-900 dark:hover:text-amber-200';
+  const active: Record<GameNavTabAccent, string> = {
+    amber:
+      'border-amber-400/65 text-amber-950 dark:text-amber-200 bg-gradient-to-b from-amber-100 to-amber-50/95 dark:from-amber-950/75 dark:to-[#0f0c08]/90 shadow-[inset_0_1px_0_rgba(253,230,138,0.55)] dark:shadow-[inset_0_1px_0_rgba(245,158,11,0.14)] ring-1 ring-amber-400/30 dark:ring-amber-500/25',
+    yellow:
+      'border-yellow-500/60 text-yellow-950 dark:text-yellow-200 bg-gradient-to-b from-yellow-100 to-amber-50/90 dark:from-yellow-950/60 dark:to-[#0f0c08]/90 ring-1 ring-yellow-400/30 dark:ring-yellow-500/20',
+    red: 'border-red-400/60 text-red-950 dark:text-red-200 bg-gradient-to-b from-red-100 to-red-50/90 dark:from-red-950/55 dark:to-[#0f0c08]/90 ring-1 ring-red-400/25',
+    orange:
+      'border-orange-400/60 text-orange-950 dark:text-orange-200 bg-gradient-to-b from-orange-100 to-amber-50/90 dark:from-orange-950/50 dark:to-[#0f0c08]/90 ring-1 ring-orange-400/25',
+    rose: 'border-rose-400/60 text-rose-950 dark:text-rose-200 bg-gradient-to-b from-rose-100 to-rose-50/90 dark:from-rose-950/50 dark:to-[#0f0c08]/90 ring-1 ring-rose-400/25',
+    emerald:
+      'border-emerald-400/60 text-emerald-950 dark:text-emerald-200 bg-gradient-to-b from-emerald-100 to-emerald-50/90 dark:from-emerald-950/50 dark:to-[#0f0c08]/90 ring-1 ring-emerald-400/25',
+    sky: 'border-sky-400/60 text-sky-950 dark:text-sky-200 bg-gradient-to-b from-sky-100 to-sky-50/90 dark:from-sky-950/50 dark:to-[#0f0c08]/90 ring-1 ring-sky-400/25',
+    violet:
+      'border-violet-400/60 text-violet-950 dark:text-violet-200 bg-gradient-to-b from-violet-100 to-violet-50/90 dark:from-violet-950/50 dark:to-[#0f0c08]/90 ring-1 ring-violet-400/25'
+  };
+  return `${base} ${isActive ? active[accent] : inactive}`;
+}
+
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   /** Admin operador (não super): sem calculadora mining no jogo; Relatórios/Web3 já restringidos no painel. */
@@ -2888,17 +2914,17 @@ export default function App() {
         {globalView === 'game' && user && (
           <>
             {/* GAME NAVIGATION */}
-            <nav className="min-w-0 w-full bg-slate-100 dark:bg-slate-950 border-b border-slate-200 dark:border-slate-800 shrink-0 transition-colors duration-300">
+            <nav className="min-w-0 w-full shrink-0 border-b border-slate-200 dark:border-amber-900/30 bg-gradient-to-b from-white to-slate-100 dark:from-slate-900/95 dark:to-[#0a0805] backdrop-blur-md shadow-[0_8px_28px_-14px_rgba(0,0,0,0.35)] dark:shadow-[0_12px_36px_-18px_rgba(245,158,11,0.07)] transition-colors duration-300">
               <div
                 className={`max-w-7xl mx-auto md:hidden px-3 sm:px-4 flex items-center justify-between ${
                   compactGameChrome ? 'py-1' : 'py-2'
                 }`}
               >
-                <div className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">Menu</div>
+                <div className="text-[10px] font-black uppercase tracking-[0.2em] text-amber-700/90 dark:text-amber-500/90">Operação</div>
                 <button onClick={() => setGameMenuOpen(v => !v)} className="p-2 rounded-lg text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors">{gameMenuOpen ? <X size={18} /> : <Menu size={18} />}</button>
               </div>
               {gameMenuOpen && (
-                <div className="max-w-7xl mx-auto md:hidden px-4 pb-3 grid grid-cols-1 gap-2">
+                <div className="max-w-7xl mx-auto md:hidden px-4 pb-3 pt-2 grid grid-cols-1 gap-2 border-t border-amber-200/50 dark:border-amber-900/25 bg-slate-50/90 dark:bg-[#0a0805]/80">
                   {getAllowedPages().includes('servers') && (<button onClick={() => { goToGameView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> {gameNav('servers')}</button>)}
                   {getAllowedPages().includes('inventory') && (<button onClick={() => { goToGameView('inventory'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'inventory' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Package size={16} /> {gameNav('inventory')}</button>)}
                   {getAllowedPages().includes('oficina') && (<button onClick={() => { goToGameView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> {gameNav('oficina')}</button>)}
@@ -2916,24 +2942,24 @@ export default function App() {
                 </div>
               )}
               <div
-                className={`max-w-7xl mx-auto hidden md:flex w-full min-w-0 max-w-full flex-nowrap justify-start gap-x-0 overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x sm:px-3 [scrollbar-width:thin] ${
-                  compactGameChrome ? 'px-2 py-0 [&>button]:!py-1.5' : 'px-2 py-1'
+                className={`max-w-7xl mx-auto hidden md:flex w-full min-w-0 flex-nowrap justify-start items-center gap-1 sm:gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x scroll-pl-1 [scrollbar-width:thin] ${
+                  compactGameChrome ? 'px-3 py-1.5' : 'px-3 sm:px-4 py-2'
                 }`}
               >
-                {getAllowedPages().includes('servers') && (<button type="button" onClick={() => { goToGameView('servers'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Server size={15} className="shrink-0" /> {gameNav('servers')}</button>)}
-                {getAllowedPages().includes('inventory') && (<button type="button" onClick={() => { goToGameView('inventory'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'inventory' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Package size={15} className="shrink-0" /> {gameNav('inventory')}</button>)}
-                {getAllowedPages().includes('oficina') && (<button type="button" onClick={() => { goToGameView('oficina'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wrench size={15} className="shrink-0" /> {gameNav('oficina')}</button>)}
-                {getAllowedPages().includes('hardware_store') && (<button type="button" onClick={() => { goToGameView('hardware_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold tracking-wide normal-case border-b-2 transition-all duration-300 shrink-0 ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><ShoppingCart size={15} className="shrink-0" /> {gameNav('hardware_store')}</button>)}
-                {getAllowedPages().includes('black_market') && (<button type="button" onClick={() => { goToGameView('black_market'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Skull size={15} className="shrink-0" /> {gameNav('black_market')}</button>)}
-                {getAllowedPages().includes('arcade') && (<button type="button" onClick={() => { goToGameView('arcade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gamepad2 size={15} className="shrink-0" /> {gameNav('arcade')}</button>)}
-                {getAllowedPages().includes('lucky_store') && (<button type="button" onClick={() => { goToGameView('lucky_store'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'lucky_store' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Gift size={15} className="shrink-0" /> {gameNav('lucky_store')}</button>)}
-                {getAllowedPages().includes('lucky_store') && (<button type="button" onClick={() => { goToGameView('roleta'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'roleta' ? 'border-rose-500 text-rose-600 dark:text-rose-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Sparkles size={15} className="shrink-0" /> {gameNav('roleta')}</button>)}
-                {getAllowedPages().includes('wallet') && (<button type="button" onClick={() => { goToGameView('wallet'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'wallet' ? 'border-orange-500 text-orange-600 dark:text-orange-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Wallet size={15} className="shrink-0" /> {gameNav('wallet')}</button>)}
-                {getAllowedPages().includes('ranking') && (<button type="button" onClick={() => { goToGameView('ranking'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'ranking' ? 'border-yellow-600 text-yellow-600 dark:text-yellow-500 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Trophy size={15} className="shrink-0" /> {gameNav('ranking')}</button>)}
-                {getAllowedPages().includes('upgrade') && (<button type="button" onClick={() => { goToGameView('upgrade'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'upgrade' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Crown size={15} className="shrink-0" /> {gameNav('upgrade')}</button>)}
-                {getAllowedPages().includes('transparency') && (<button type="button" onClick={() => { goToGameView('transparency'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Scale size={15} className="shrink-0" /> {gameNav('transparency')}</button>)}
-                {getAllowedPages().includes('support') && (<button type="button" onClick={() => { goToGameView('support'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><LifeBuoy size={15} className="shrink-0" /> {gameNav('support')}</button>)}
-                {getAllowedPages().includes('partners') && (<button type="button" onClick={() => { goToGameView('partners'); }} className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-2 text-[11px] sm:text-xs font-bold normal-case tracking-wide border-b-2 transition-all duration-300 shrink-0 ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400 bg-white dark:bg-slate-900/50' : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'}`}><Clapperboard size={15} className="shrink-0" /> {gameNav('partners')}</button>)}
+                {getAllowedPages().includes('servers') && (<button type="button" onClick={() => { goToGameView('servers'); }} className={gameNavTabClass(currentView === 'servers', 'amber')}><Server size={15} className="shrink-0 opacity-90" /> {gameNav('servers')}</button>)}
+                {getAllowedPages().includes('inventory') && (<button type="button" onClick={() => { goToGameView('inventory'); }} className={gameNavTabClass(currentView === 'inventory', 'yellow')}><Package size={15} className="shrink-0 opacity-90" /> {gameNav('inventory')}</button>)}
+                {getAllowedPages().includes('oficina') && (<button type="button" onClick={() => { goToGameView('oficina'); }} className={gameNavTabClass(currentView === 'oficina', 'amber')}><Wrench size={15} className="shrink-0 opacity-90" /> {gameNav('oficina')}</button>)}
+                {getAllowedPages().includes('hardware_store') && (<button type="button" onClick={() => { goToGameView('hardware_store'); }} className={gameNavTabClass(currentView === 'hardware_store', 'amber')}><ShoppingCart size={15} className="shrink-0 opacity-90" /> {gameNav('hardware_store')}</button>)}
+                {getAllowedPages().includes('black_market') && (<button type="button" onClick={() => { goToGameView('black_market'); }} className={gameNavTabClass(currentView === 'black_market', 'red')}><Skull size={15} className="shrink-0 opacity-90" /> {gameNav('black_market')}</button>)}
+                {getAllowedPages().includes('arcade') && (<button type="button" onClick={() => { goToGameView('arcade'); }} className={gameNavTabClass(currentView === 'arcade', 'amber')}><Gamepad2 size={15} className="shrink-0 opacity-90" /> {gameNav('arcade')}</button>)}
+                {getAllowedPages().includes('lucky_store') && (<button type="button" onClick={() => { goToGameView('lucky_store'); }} className={gameNavTabClass(currentView === 'lucky_store', 'orange')}><Gift size={15} className="shrink-0 opacity-90" /> {gameNav('lucky_store')}</button>)}
+                {getAllowedPages().includes('lucky_store') && (<button type="button" onClick={() => { goToGameView('roleta'); }} className={gameNavTabClass(currentView === 'roleta', 'rose')}><Sparkles size={15} className="shrink-0 opacity-90" /> {gameNav('roleta')}</button>)}
+                {getAllowedPages().includes('wallet') && (<button type="button" onClick={() => { goToGameView('wallet'); }} className={gameNavTabClass(currentView === 'wallet', 'orange')}><Wallet size={15} className="shrink-0 opacity-90" /> {gameNav('wallet')}</button>)}
+                {getAllowedPages().includes('ranking') && (<button type="button" onClick={() => { goToGameView('ranking'); }} className={gameNavTabClass(currentView === 'ranking', 'yellow')}><Trophy size={15} className="shrink-0 opacity-90" /> {gameNav('ranking')}</button>)}
+                {getAllowedPages().includes('upgrade') && (<button type="button" onClick={() => { goToGameView('upgrade'); }} className={gameNavTabClass(currentView === 'upgrade', 'yellow')}><Crown size={15} className="shrink-0 opacity-90" /> {gameNav('upgrade')}</button>)}
+                {getAllowedPages().includes('transparency') && (<button type="button" onClick={() => { goToGameView('transparency'); }} className={gameNavTabClass(currentView === 'transparency', 'emerald')}><Scale size={15} className="shrink-0 opacity-90" /> {gameNav('transparency')}</button>)}
+                {getAllowedPages().includes('support') && (<button type="button" onClick={() => { goToGameView('support'); }} className={gameNavTabClass(currentView === 'support', 'sky')}><LifeBuoy size={15} className="shrink-0 opacity-90" /> {gameNav('support')}</button>)}
+                {getAllowedPages().includes('partners') && (<button type="button" onClick={() => { goToGameView('partners'); }} className={gameNavTabClass(currentView === 'partners', 'violet')}><Clapperboard size={15} className="shrink-0 opacity-90" /> {gameNav('partners')}</button>)}
               </div>
             </nav>
 
