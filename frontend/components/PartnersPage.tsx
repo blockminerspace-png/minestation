@@ -9,7 +9,8 @@ import {
   User,
   ThumbsUp,
   Youtube,
-  Play
+  Play,
+  ExternalLink
 } from 'lucide-react';
 import {
   getPartnersState,
@@ -23,6 +24,9 @@ import {
   PARTNER_VIDEO_TITLE_MAX,
   PARTNER_VIDEO_YOUTUBE_URL_MAX
 } from '../constants/formLimits';
+
+/** URL canónica do site do parceiro (iframe + link externo). Alinhar com `dashboard.service` / cartão do dashboard. */
+const BLOCKMINER_EMBED_URL = 'https://blockminer.io/';
 
 function thumbUrl(videoId: string): string {
   const v = String(videoId || '').trim();
@@ -191,7 +195,46 @@ export const PartnersPage: React.FC = () => {
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-3 sm:px-4 py-6 space-y-8 text-slate-100">
+    <div className="w-full flex flex-col gap-8 text-slate-100 pb-8">
+      <section aria-label="BlockMiner" className="w-full px-2 sm:px-4 pt-1 space-y-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-violet-500/35 bg-gradient-to-r from-slate-900/95 via-violet-950/25 to-slate-900/90 px-4 py-3.5 ring-1 ring-violet-500/10">
+          <div className="min-w-0 space-y-0.5">
+            <div className="text-[10px] uppercase tracking-widest text-violet-300/90 font-bold">Parceiro oficial</div>
+            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">BlockMiner</h2>
+            <p className="text-xs sm:text-sm text-slate-400 max-w-xl">
+              Usa o site do parceiro aqui dentro. Se não carregar (bloqueio do browser ou do parceiro), abre numa nova janela.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 shrink-0">
+            <a
+              href={BLOCKMINER_EMBED_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-400/40 bg-violet-600/20 px-3 py-2 text-xs font-bold text-violet-100 hover:bg-violet-600/35 transition-colors"
+            >
+              <ExternalLink size={14} className="shrink-0" />
+              Abrir em nova janela
+            </a>
+            <a
+              href="#parceiros-youtube"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/80 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-800 transition-colors"
+            >
+              Vitrine YouTube
+            </a>
+          </div>
+        </div>
+        <div className="relative w-full min-h-[min(78dvh,820px)] h-[min(78dvh,820px)] rounded-2xl border border-slate-700/90 bg-black overflow-hidden shadow-2xl shadow-black/40">
+          <iframe
+            title="BlockMiner"
+            src={BLOCKMINER_EMBED_URL}
+            className="absolute inset-0 h-full w-full border-0 bg-slate-950"
+            allow="fullscreen; clipboard-read; clipboard-write; payment"
+            referrerPolicy="strict-origin-when-cross-origin"
+          />
+        </div>
+      </section>
+
+      <div id="parceiros-youtube" className="scroll-mt-6 max-w-7xl mx-auto w-full px-3 sm:px-4 space-y-8">
       <div className="rounded-2xl border border-slate-700/80 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-amber-950/20 px-4 sm:px-6 py-5 sm:py-6 space-y-2">
         <div className="text-[11px] uppercase tracking-widest text-amber-500/90 font-bold">Painel / Parceiros</div>
         <h1 className="text-2xl sm:text-4xl font-black tracking-tight flex flex-wrap items-center gap-3">
@@ -439,6 +482,7 @@ export const PartnersPage: React.FC = () => {
           </div>
         </section>
       )}
+      </div>
     </div>
   );
 };

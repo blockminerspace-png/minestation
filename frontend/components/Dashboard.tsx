@@ -236,7 +236,13 @@ function ecosystemThemeClasses(id: string): {
   }
 }
 
-function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[] }) {
+function EcosystemModulesStrip({
+  modules,
+  onNavigate
+}: {
+  modules: DashboardEcosystemModule[];
+  onNavigate: (viewId: string) => void;
+}) {
   const stripRef = useRef<HTMLDivElement>(null);
 
   const scrollStrip = useCallback((dir: -1 | 1) => {
@@ -300,15 +306,26 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                 </div>
 
                 {canGo ? (
-                  <a
-                    href={m.href}
-                    target={m.external ? '_blank' : undefined}
-                    rel={m.external ? 'noopener noreferrer' : undefined}
-                    className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
-                  >
-                    Entrar
-                    <ChevronRight size={16} strokeWidth={2.75} className="opacity-90" />
-                  </a>
+                  m.id === 'blockminer' ? (
+                    <button
+                      type="button"
+                      onClick={() => onNavigate('partners')}
+                      className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
+                    >
+                      Entrar
+                      <ChevronRight size={16} strokeWidth={2.75} className="opacity-90" />
+                    </button>
+                  ) : (
+                    <a
+                      href={m.href}
+                      target={m.external ? '_blank' : undefined}
+                      rel={m.external ? 'noopener noreferrer' : undefined}
+                      className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
+                    >
+                      Entrar
+                      <ChevronRight size={16} strokeWidth={2.75} className="opacity-90" />
+                    </a>
+                  )
                 ) : null}
               </div>
             );
@@ -781,7 +798,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
     return (
       <div className="flex flex-col gap-2 sm:gap-3">
-        <EcosystemModulesStrip modules={ecosystemModules} />
+        <EcosystemModulesStrip modules={ecosystemModules} onNavigate={onNavigate} />
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           <div className="lg:col-span-3 space-y-4 order-2 lg:order-1">

@@ -790,6 +790,10 @@ export default function App() {
     if (user && !pages.includes('support')) {
       pages = [...pages, 'support'];
     }
+    // Parceiros (/partners — BlockMiner embebido + vitrine YouTube): sempre no menu com sessão ativa.
+    if (user && !pages.includes('partners')) {
+      pages = [...pages, 'partners'];
+    }
     return pages;
   };
 
@@ -2607,8 +2611,10 @@ export default function App() {
   const formatMoney = (val: number) => val < 0.01 && val > 0 ? val.toFixed(3) : val.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const formatHash = (val: number) => val === 0 ? "0 H/s" : (val < 0.0001 ? val.toFixed(8) + " H/s" : Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 2 }).format(val) + " H/s");
 
-  /** Dashboard: menos altura no header + menu para dar espaço ao conteúdo. */
-  const compactGameChrome = Boolean(user && globalView === 'game' && currentView === 'dashboard');
+  /** Dashboard / Parceiros: menos altura no header + menu para dar espaço ao conteúdo (iframe). */
+  const compactGameChrome = Boolean(
+    user && globalView === 'game' && (currentView === 'dashboard' || currentView === 'partners')
+  );
 
   return (
     <div className="h-screen min-h-0 w-full min-w-0 max-w-full flex flex-col bg-slate-50 dark:bg-[#0f0c08] text-slate-800 dark:text-slate-200 font-sans selection:bg-amber-500/30 overflow-hidden transition-colors duration-300">
