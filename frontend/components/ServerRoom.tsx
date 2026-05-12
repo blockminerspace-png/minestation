@@ -190,6 +190,55 @@ const AnimatedMiner = ({ src, isOperational, className, style, item }: { src: st
     return <div className={className} style={finalStyle} />;
 };
 
+/**
+ * Miniatura na lista de equipamento: `upgrades.icon` no catálogo é string slug (ex. "battery"),
+ * não componente React — nunca renderizar como texto cru (ficava cortado tipo ".tte").
+ */
+function UpgradeSelectionThumb({
+    upgrade,
+    normalizedImage,
+    iconSize = 22
+}: {
+    upgrade: Upgrade;
+    normalizedImage: string;
+    iconSize?: number;
+}) {
+    const [broken, setBroken] = useState(false);
+    const src = (normalizedImage || '').trim();
+    if (src && !broken) {
+        return (
+            <img
+                src={src}
+                alt=""
+                className="h-full w-full object-contain"
+                onError={() => setBroken(true)}
+            />
+        );
+    }
+    const ic = iconSize;
+    const t = upgrade.type;
+    if (t === 'battery' || t === 'charger') {
+        return <Battery className="text-amber-600 dark:text-amber-400" size={ic} aria-hidden />;
+    }
+    if (t === 'machine') {
+        return <Activity className="text-green-600 dark:text-green-400" size={ic} aria-hidden />;
+    }
+    if (t === 'wiring') {
+        return <Zap className="text-sky-500 dark:text-sky-400" size={ic} aria-hidden />;
+    }
+    if (t === 'multiplier') {
+        return <LayoutGrid className="text-orange-600 dark:text-orange-400" size={ic} aria-hidden />;
+    }
+    if (t === 'infrastructure') {
+        return <Server className="text-slate-600 dark:text-slate-300" size={ic} aria-hidden />;
+    }
+    const raw = String(upgrade.icon || '').trim();
+    if (raw && /^\p{Extended_Pictographic}+$/u.test(raw)) {
+        return <span className="text-xl leading-none select-none">{raw}</span>;
+    }
+    return <Box className="text-slate-500 dark:text-slate-400" size={ic} aria-hidden />;
+}
+
 function BatteryOptionRow({
     upgrade,
     selected,
@@ -204,7 +253,6 @@ function BatteryOptionRow({
     onPick: () => void;
 }) {
     const src = normalizePublicAssetUrl(upgrade.image);
-    const [broken, setBroken] = useState(false);
     return (
         <button
             type="button"
@@ -217,16 +265,7 @@ function BatteryOptionRow({
             } ${disabled ? 'cursor-not-allowed opacity-50' : ''}`}
         >
             <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 dark:bg-slate-800">
-                {src && !broken ? (
-                    <img
-                        src={src}
-                        alt=""
-                        className="h-full w-full object-contain"
-                        onError={() => setBroken(true)}
-                    />
-                ) : (
-                    <Battery className="text-amber-600 dark:text-amber-400" size={22} aria-hidden />
-                )}
+                <UpgradeSelectionThumb upgrade={upgrade} normalizedImage={src || ''} iconSize={22} />
             </div>
             <div className="min-w-0 flex-1">
                 <div className="truncate font-semibold">{upgrade.name}</div>
@@ -1479,12 +1518,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         onClick={() => handleItemSelect(stored.itemId, stored.id)}
                                                         className="w-full flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50 hover:bg-white dark:hover:bg-slate-800 hover:border-yellow-500/30 transition-all text-left group mb-2"
                                                     >
-                                                        <div className="text-xl bg-white dark:bg-slate-900 w-10 h-10 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 text-yellow-600 dark:text-yellow-500 overflow-hidden">
-                                                            {defImg ? (
-                                                                <img src={defImg} alt={def.name} className="w-full h-full object-cover" />
-                                                            ) : (
-                                                                def.icon
-                                                            )}
+                                                        <div className="flex shrink-0 items-center justify-center overflow-hidden rounded border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 w-10 h-10">
+                                                            <UpgradeSelectionThumb upgrade={def} normalizedImage={defImg} iconSize={22} />
                                                         </div>
                                                         <div className="flex-1 min-w-0">
                                                             <div className="font-bold text-slate-700 dark:text-slate-300 text-sm flex justify-between items-center gap-2">
@@ -1533,10 +1568,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                 onClick={() => handleItemSelect(item.id)}
                                                 className="flex items-center gap-4 p-3 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-white dark:hover:bg-slate-750 hover:border-amber-500/50 transition-all text-left group"
                                             >
-                                                <div className="text-2xl bg-white dark:bg-slate-900 w-12 h-12 flex items-center justify-center rounded border border-slate-200 dark:border-slate-800 group-hover:border-amber-500/30 overflow-hidden">
-                                                    {listImg ? (
-                                                        <img src={listImg} className="w-full h-full object-cover" />
-                                                    ) : item.icon}
+                                                <div className="flex shrink-0 items-center justify-center overflow-hidden rounded border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 w-12 h-12 group-hover:border-amber-500/30">
+                                                    <UpgradeSelectionThumb upgrade={item} normalizedImage={listImg} iconSize={26} />
                                                 </div>
                                                 <div className="flex-1 min-w-0">
                                                     <div className="font-bold text-slate-800 dark:text-slate-200 text-sm">{item.name}</div>
@@ -1548,7 +1581,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                             </>
                                                         )}
                                                         {item.type === 'battery' && (
-                                                            <span className="text-yellow-600 dark:text-yellow-400">{item.powerCapacity === -1 ? '∞ Cap' : `${item.powerCapacity} Wh`}</span>
+                                                            <span className="text-yellow-600 dark:text-yellow-400">
+                                                                {item.powerCapacity === -1 ? 'Ilimitada (∞ Wh)' : `${item.powerCapacity} Wh`}
+                                                            </span>
                                                         )}
                                                         {item.type === 'multiplier' && (
                                                             <>
@@ -1714,12 +1749,12 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                             </div>
                             <div className="p-4 space-y-3">
                                 <div className="flex items-center gap-3">
-                                    <div className="w-14 h-14 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 overflow-hidden flex items-center justify-center text-2xl">
-                                        {detailImg ? (
-                                            <img src={detailImg} className="w-full h-full object-cover" />
-                                        ) : (
-                                            detailContext.item.icon
-                                        )}
+                                    <div className="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded border border-slate-200 bg-slate-100 dark:border-slate-700 dark:bg-slate-800">
+                                        <UpgradeSelectionThumb
+                                            upgrade={detailContext.item}
+                                            normalizedImage={detailImg}
+                                            iconSize={28}
+                                        />
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="text-xs text-slate-500 dark:text-slate-400">{detailContext.item.category}</div>
