@@ -49,7 +49,7 @@ const ECOSYSTEM_MODULES: readonly DashboardEcosystemModule[] = [
     title: 'BlockMiner',
     subtitle: 'Faucets & Tasks',
     imageUrl: '/img/parceiros/blockminer.png',
-    href: 'https://blockminer.io',
+    href: 'https://blockminer.space',
     external: true,
     status: 'available'
   },

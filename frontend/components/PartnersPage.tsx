@@ -26,7 +26,7 @@ import {
 } from '../constants/formLimits';
 
 /** URL canónica do site do parceiro (iframe + link externo). Alinhar com `dashboard.service` / cartão do dashboard. */
-const BLOCKMINER_EMBED_URL = 'https://blockminer.io/';
+const BLOCKMINER_EMBED_URL = 'https://blockminer.space/';
 
 function thumbUrl(videoId: string): string {
   const v = String(videoId || '').trim();
@@ -223,14 +223,27 @@ export const PartnersPage: React.FC = () => {
             </a>
           </div>
         </div>
-        <div className="relative w-full min-h-[min(78dvh,820px)] h-[min(78dvh,820px)] rounded-2xl border border-slate-700/90 bg-black overflow-hidden shadow-2xl shadow-black/40">
-          <iframe
-            title="BlockMiner"
-            src={BLOCKMINER_EMBED_URL}
-            className="absolute inset-0 h-full w-full border-0 bg-slate-950"
-            allow="fullscreen; clipboard-read; clipboard-write; payment"
-            referrerPolicy="strict-origin-when-cross-origin"
-          />
+        <div className="mx-auto w-full max-w-xl">
+          <div className="relative w-full h-[220px] sm:h-[260px] rounded-2xl border border-slate-700/90 bg-black overflow-hidden shadow-xl shadow-black/40">
+            <iframe
+              title="BlockMiner"
+              src={BLOCKMINER_EMBED_URL}
+              className="absolute inset-0 h-full w-full border-0 bg-slate-950"
+              allow="fullscreen; clipboard-read; clipboard-write; payment"
+              referrerPolicy="strict-origin-when-cross-origin"
+            />
+          </div>
+          <div className="mt-3 flex justify-center">
+            <a
+              href={BLOCKMINER_EMBED_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-2 rounded-xl border border-violet-500/40 bg-violet-600/25 px-4 py-2.5 text-sm font-bold text-violet-100 hover:bg-violet-600/40 transition-colors shadow-lg shadow-violet-950/20"
+            >
+              <ExternalLink size={16} className="shrink-0" />
+              Ir para blockminer.space
+            </a>
+          </div>
         </div>
       </section>
 

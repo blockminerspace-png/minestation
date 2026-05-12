@@ -269,7 +269,7 @@ export async function validateStoredBatteriesForSave(
   try {
     const fbRes = await client.query<{ id: string }>(
       `SELECT id::text FROM upgrades
-       WHERE LOWER(COALESCE(type::text, '')) = 'battery'
+       WHERE (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
          AND COALESCE(is_active, 1) <> 0
          AND COALESCE(power_capacity, 0) <> -1
        ORDER BY COALESCE(base_cost, 0) ASC NULLS LAST,
@@ -280,7 +280,7 @@ export async function validateStoredBatteriesForSave(
     if (!fallbackCatalogId) {
       const fbAny = await client.query<{ id: string }>(
         `SELECT id::text FROM upgrades
-         WHERE LOWER(COALESCE(type::text, '')) = 'battery'
+         WHERE (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
            AND COALESCE(is_active, 1) <> 0
          ORDER BY COALESCE(base_cost, 0) ASC NULLS LAST,
                   id ASC
@@ -382,7 +382,10 @@ export async function validateStoredBatteriesForSave(
   let validBattery = new Set<string>();
   try {
     const chk = await client.query<{ id: string }>(
-      `SELECT id::text FROM upgrades WHERE id = ANY($1::text[]) AND LOWER(COALESCE(type::text, '')) = 'battery'`,
+      `SELECT id::text FROM upgrades WHERE id = ANY($1::text[]) AND (
+         LOWER(COALESCE(type::text, '')) = 'battery'
+         OR LOWER(COALESCE(category::text, '')) = 'battery'
+       )`,
       [uniqResolved]
     );
     validBattery = new Set((chk.rows || []).map((x) => String(x.id)));
@@ -393,17 +396,51 @@ export async function validateStoredBatteriesForSave(
     );
   }
 
+  /** Catálogo explícito de equipamento que não é bateria (miners/GPUs/etc.) — não converter para `fallbackCatalogId`. */
+  let nonBatteryCatalogIds = new Set<string>();
+  if (uniqResolved.length > 0) {
+    try {
+      const nb = await client.query<{ id: string }>(
+        `SELECT id::text FROM upgrades WHERE id = ANY($1::text[])
+          AND NOT (
+            LOWER(COALESCE(type::text, '')) = 'battery'
+            OR LOWER(COALESCE(category::text, '')) = 'battery'
+          )`,
+        [uniqResolved]
+      );
+      nonBatteryCatalogIds = new Set((nb.rows || []).map((x) => String(x.id)));
+    } catch (e) {
+      console.warn(
+        '[validateStoredBatteriesForSave] upgrades non-battery check:',
+        e instanceof Error ? e.message : String(e)
+      );
+    }
+  }
+
   for (let i = 0; i < rows.length; i++) {
     let it = resolvedIds[i]!;
-    if (!validBattery.has(it)) {
-      console.warn(
-        '[validateStoredBatteriesForSave] item_id normalizado (legado ou catálogo alterado) inst=%s was=%s',
-        rows[i]!.id,
-        it
-      );
-      it = fallbackCatalogId;
+    if (validBattery.has(it)) {
+      rows[i]!.obj.itemId = it;
+      continue;
     }
-    rows[i]!.obj.itemId = it;
+    const dbPrior = normalizeKnown1000WhBatteryCatalogId((dbMap.get(rows[i]!.id) || '').trim());
+    if (dbPrior && validBattery.has(dbPrior)) {
+      rows[i]!.obj.itemId = dbPrior;
+      continue;
+    }
+    if (nonBatteryCatalogIds.has(it)) {
+      return {
+        ok: false,
+        error:
+          'O armazém de baterias contém `item_id` de equipamento que não é bateria (ex.: GPU/miner). Isto evita converter tudo para a mesma bateria do catálogo. Recarrega (F5); se persistir, contacta o suporte para corrigir instâncias na base de dados.'
+      };
+    }
+    console.warn(
+      '[validateStoredBatteriesForSave] item_id sem bateria válida no catálogo; fallback inst=%s was=%s',
+      rows[i]!.id,
+      it
+    );
+    rows[i]!.obj.itemId = fallbackCatalogId;
   }
 
   return { ok: true };

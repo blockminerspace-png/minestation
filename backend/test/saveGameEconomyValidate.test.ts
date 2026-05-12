@@ -203,25 +203,64 @@ describe('saveGameEconomyValidate', () => {
       currentCharge: 5
     };
     const client = {
-      query: vi.fn().mockImplementation((sql: string, params: unknown[]) => {
-        if (String(sql).includes('FROM upgrades') && String(sql).includes('LIMIT 1')) {
+      query: vi.fn().mockImplementation((sql: string) => {
+        const s = String(sql);
+        if (s.includes('FROM upgrades') && s.includes('LIMIT 1')) {
           return Promise.resolve({ rows: [{ id: 'small_battery' }] });
         }
-        if (String(sql).includes('stored_batteries') && String(sql).includes('IS DISTINCT FROM')) {
+        if (s.includes('stored_batteries') && s.includes('IS DISTINCT FROM')) {
           return Promise.resolve({ rowCount: 0 });
         }
-        if (String(sql).includes('stored_batteries') && String(sql).includes('id = ANY')) {
+        if (s.includes('stored_batteries') && s.includes('user_id') && s.includes('id = ANY')) {
           return Promise.resolve({ rows: [] });
         }
-        if (String(sql).includes('upgrades') && String(sql).includes('ANY')) {
-          return Promise.resolve({ rows: [{ id: 'small_battery' }] });
+        if (s.includes('upgrades') && s.includes('ANY') && s.includes('NOT (')) {
+          return Promise.resolve({ rows: [] });
+        }
+        if (s.includes('upgrades') && s.includes('ANY') && !s.includes('NOT (')) {
+          return Promise.resolve({ rows: [{ id: 'battery_protostar' }] });
         }
         return Promise.resolve({ rows: [], rowCount: 0 });
       })
     };
     const r = await validateStoredBatteriesForSave(client as never, 1, [bat]);
     expect(r).toEqual({ ok: true });
-    expect(bat.itemId).toBe('small_battery');
+    expect(bat.itemId).toBe('battery_protostar');
+  });
+
+  it('validateStoredBatteriesForSave rejeita item_id de miner/GPU no armazém (não reescreve para bateria barata)', async () => {
+    const bat = {
+      id: 'ffffffff-bbbb-4ccc-dddd-eeeeeeeeeeee',
+      itemId: 'some_gpu_catalog',
+      currentCharge: 0
+    };
+    const client = {
+      query: vi.fn().mockImplementation((sql: string) => {
+        const s = String(sql);
+        if (s.includes('FROM upgrades') && s.includes('LIMIT 1')) {
+          return Promise.resolve({ rows: [{ id: 'battery_protostar' }] });
+        }
+        if (s.includes('stored_batteries') && s.includes('IS DISTINCT FROM')) {
+          return Promise.resolve({ rowCount: 0 });
+        }
+        if (s.includes('stored_batteries') && s.includes('user_id') && s.includes('id = ANY')) {
+          return Promise.resolve({ rows: [{ id: bat.id, item_id: 'some_gpu_catalog' }] });
+        }
+        if (s.includes('upgrades') && s.includes('ANY') && s.includes('NOT (')) {
+          return Promise.resolve({ rows: [{ id: 'some_gpu_catalog' }] });
+        }
+        if (s.includes('upgrades') && s.includes('ANY')) {
+          return Promise.resolve({ rows: [] });
+        }
+        return Promise.resolve({ rows: [], rowCount: 0 });
+      })
+    };
+    const r = await validateStoredBatteriesForSave(client as never, 1, [bat]);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toMatch(/não é bateria/);
+    }
+    expect(bat.itemId).toBe('some_gpu_catalog');
   });
 
   it('validateWorkshopSlotsPayloadForSave retorna erro amigável quando a query upgrades falha', async () => {
