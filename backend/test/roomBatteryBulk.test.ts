@@ -12,7 +12,10 @@ const upgrades: GameUpgrade[] = [
 ];
 
 describe('roomBatteryBulk instance UUID on rack', () => {
-  it('unload + remove all batteries in room keeps stored_batteries consistent (no orphan ids)', () => {
+  it('unload + remove all batteries: bateria infinita volta para o stock (não fica órfã em storedBatteries)', () => {
+    // Sistema de baterias é infinito por design: ao desmontar, a instância
+    // é considerada "cheia" (∞) e converge para o stock como uma unidade
+    // do catálogo, em vez de continuar como instância em armazém.
     const instId = 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee';
     const prev: BulkBatteryPrev = {
       stock: {},
@@ -33,8 +36,9 @@ describe('roomBatteryBulk instance UUID on rack', () => {
     };
     const out = applyBulkRoomBatteryChange(prev, 'room_initial', '', upgrades, { rigSort: 'slot_asc' });
     expect(out.ok).toBe(true);
-    expect(out.next?.storedBatteries?.some((b) => b.id === instId)).toBe(true);
     expect(out.next?.placedRacks?.[0]?.batteryId).toBeNull();
+    expect(out.next?.storedBatteries?.some((b) => b.id === instId)).toBe(false);
+    expect(out.next?.stock?.small_battery).toBe(1);
   });
 
   it('bulk equip from stock sets rack batteryId to a new instance UUID (not catalog id)', () => {

@@ -45,7 +45,9 @@ describe('servers.rackAuxIntent.service', () => {
     expect(out.placedRacks[0].batteryCatalogItemId).toBe('bat1');
   });
 
-  it('remover bateria parcial cria uma instância no armazém', () => {
+  it('remover bateria infinita devolve unidade ao stock (não cria instância órfã)', () => {
+    // Sistema de baterias é infinito por design: ao desmontar, qualquer bateria
+    // é considerada "cheia" e converge para o stock como unidade do catálogo.
     const bid = 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee';
     const rack: PlacedRackLoaded = {
       ...baseRack(),
@@ -63,7 +65,8 @@ describe('servers.rackAuxIntent.service', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.placedRacks[0].batteryId).toBeNull();
-    expect(out.storedBatteries.length).toBe(1);
+    expect(out.storedBatteries.length).toBe(0);
+    expect(out.stock.bat1).toBe(1);
   });
 
   it('double equip com mesma lógica: segundo sem stock falha', () => {

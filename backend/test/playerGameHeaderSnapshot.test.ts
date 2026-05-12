@@ -238,7 +238,11 @@ describe('computePlayerGameHeaderSnapshot', () => {
     expect(out.totalHash).toBeCloseTo(25);
   });
 
-  it('bateria finita com carga zero não produz', async () => {
+  it('rig com bateria produz mesmo com snapshot indicando carga zero (sistema infinito)', async () => {
+    // Sistema de baterias é infinito por design: qualquer rig montada com bateria
+    // (independente de `current_charge` ou `power_capacity` do snapshot legado)
+    // contribui para o hash global, porque `isKnownInfiniteBatteryCatalogId`
+    // trata todo id de bateria como ilimitado.
     attachPrismaMocks({
       gameState: { rowCount: 1, rows: [{ usdc: 0, server_updated_at: '1' }] },
       balances: { rows: [] },
@@ -265,7 +269,7 @@ describe('computePlayerGameHeaderSnapshot', () => {
       mults: { rows: [] }
     });
     const out = await computePlayerGameHeaderSnapshot(1);
-    expect(out.totalHash).toBe(0);
+    expect(out.totalHash).toBe(99);
   });
 
   it('bateria finita com carga > 0 produz', async () => {

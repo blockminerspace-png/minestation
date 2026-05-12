@@ -104,7 +104,7 @@ function ecosystemModulesForResponse(): DashboardEcosystemModule[] {
 
 /** Atalhos exibidos no rodapé (mapeiam para views internas do SPA). */
 const QUICK_ACCESS: readonly DashboardQuickAccessItem[] = [
-  { id: 'workshop',        title: 'Oficina',        viewId: 'oficina',         href: '/workshop',     icon: 'wrench' },
+  // Atalho `oficina` removido: sistema de baterias é infinito, ecrã foi descontinuado.
   { id: 'miner-shop',      title: 'Lojinha Miner',  viewId: 'hardware_store',  href: '/miner-shop',   icon: 'shop' },
   { id: 'black-market',    title: 'Mercado Negro',  viewId: 'black_market',    href: '/black-market', icon: 'mask' },
   { id: 'lucky-boxes',     title: 'Caixas da Sorte',viewId: 'lucky_store',     href: '/lucky-boxes',  icon: 'gift' },

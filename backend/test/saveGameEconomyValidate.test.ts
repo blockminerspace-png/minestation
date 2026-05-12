@@ -197,6 +197,8 @@ describe('saveGameEconomyValidate', () => {
   });
 
   it('validateStoredBatteriesForSave normaliza itemId pendente com fallback do catálogo', async () => {
+    // Catálogo canónico passou a ser `battery_estelar` (infinita); aliases legados
+    // (`small_battery`, `battery_protostar`, `battery_stellar`) normalizam para Estelar.
     const bat = {
       id: 'eeeeeeee-bbbb-4ccc-dddd-eeeeeeeeeeee',
       itemId: STORED_BATTERY_CATALOG_PENDING_ID,
@@ -206,7 +208,7 @@ describe('saveGameEconomyValidate', () => {
       query: vi.fn().mockImplementation((sql: string) => {
         const s = String(sql);
         if (s.includes('FROM upgrades') && s.includes('LIMIT 1')) {
-          return Promise.resolve({ rows: [{ id: 'small_battery' }] });
+          return Promise.resolve({ rows: [{ id: 'battery_estelar' }] });
         }
         if (s.includes('stored_batteries') && s.includes('IS DISTINCT FROM')) {
           return Promise.resolve({ rowCount: 0 });
@@ -218,14 +220,14 @@ describe('saveGameEconomyValidate', () => {
           return Promise.resolve({ rows: [] });
         }
         if (s.includes('upgrades') && s.includes('ANY') && !s.includes('NOT (')) {
-          return Promise.resolve({ rows: [{ id: 'battery_protostar' }] });
+          return Promise.resolve({ rows: [{ id: 'battery_estelar' }] });
         }
         return Promise.resolve({ rows: [], rowCount: 0 });
       })
     };
     const r = await validateStoredBatteriesForSave(client as never, 1, [bat]);
     expect(r).toEqual({ ok: true });
-    expect(bat.itemId).toBe('battery_protostar');
+    expect(bat.itemId).toBe('battery_estelar');
   });
 
   it('validateStoredBatteriesForSave rejeita item_id de miner/GPU no armazém (não reescreve para bateria barata)', async () => {

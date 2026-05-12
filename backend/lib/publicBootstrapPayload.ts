@@ -12,7 +12,6 @@ import { normalizePublicAssetUrl } from './publicAssetUrl.js';
 const GAME_NAV_SHORT_KEYS = [
   'servers',
   'inventory',
-  'oficina',
   'hardware_store',
   'black_market',
   'arcade',

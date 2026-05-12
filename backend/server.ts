@@ -958,10 +958,11 @@ const ensureUpgrades = async () => {
         sell_in_hardware_market: 1, sell_in_black_market: 0, is_active: 1
       },
       {
-        id: 'small_battery', name: 'Bateria Pequena', category: 'battery', type: 'battery',
-        base_cost: 50, base_production: 0, power_consumption: 0, power_capacity: 1000,
+        id: 'battery_estelar', name: 'Estelar', category: 'ENERGIA & CABEAMENTO', type: 'battery',
+        base_cost: 50, base_production: 0, power_consumption: 0, power_capacity: -1,
         multiplier: 0, slots_capacity: 0, ai_slots_capacity: 0,
-        description: 'Bateria de 1kWh.', icon: 'battery', status: 'common',
+        description: 'Bateria estelar — protoestrela aprisionada que fornece energia infinita à rig sem necessidade de recarga.',
+        icon: 'battery', status: 'available',
         is_nft: 0, max_global_stock: -1, image: '', reward_wh: 0, layout: '',
         sell_in_hardware_market: 1, sell_in_black_market: 0, is_active: 1
       },

@@ -24,7 +24,9 @@ describe('enrichWorkshopSlotsSlotItemIdsFromChargingHistory', () => {
     );
     const ws = workshopSlots[1] as { slotItemIds: Record<string, string> };
     expect(ws.slotItemIds.battery_0).toBe('battery_test_item');
-    expect(client.query).toHaveBeenCalledTimes(1);
+    // Função consulta `stored_batteries` primeiro e cai em `charging_history`
+    // quando a instância não tem `item_id` resolvido — daí 2 queries.
+    expect(client.query).toHaveBeenCalledTimes(2);
   });
 
   it('ignora email vazio', async () => {
