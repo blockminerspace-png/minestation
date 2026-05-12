@@ -278,34 +278,36 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
             return (
               <div
                 key={m.id}
-                className={`group relative snap-start shrink-0 overflow-hidden rounded-xl bg-slate-950/95 h-[148px] w-[min(88vw,308px)] sm:h-[168px] sm:w-[min(42vw,360px)] max-w-[380px] ${th.frame} ${th.glow} ${
+                className={`group relative snap-start shrink-0 overflow-visible rounded-xl h-[148px] w-[min(88vw,308px)] sm:h-[168px] sm:w-[min(42vw,360px)] max-w-[380px] ${th.frame} ${th.glow} ${
                   canGo ? '' : 'opacity-[0.88]'
                 }`}
               >
-                {m.imageUrl ? (
-                  <img src={m.imageUrl} alt="" className={imgClass} loading="lazy" />
-                ) : (
-                  <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder}`}>
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <Sparkles className="h-9 w-9 text-white/16" strokeWidth={1.25} aria-hidden />
+                <div className="absolute inset-0 overflow-hidden rounded-xl bg-slate-950/95">
+                  {m.imageUrl ? (
+                    <img src={m.imageUrl} alt="" className={imgClass} loading="lazy" />
+                  ) : (
+                    <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder}`}>
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Sparkles className="h-9 w-9 text-white/16" strokeWidth={1.25} aria-hidden />
+                      </div>
                     </div>
-                  </div>
-                )}
-                {m.status === 'coming_soon' ? (
-                  <span className="absolute top-2 right-2 text-[7px] font-semibold uppercase tracking-wider bg-black/70 border border-white/10 text-slate-300 px-1.5 py-0.5 rounded-md z-10">
-                    Em breve
-                  </span>
-                ) : null}
+                  )}
+                  {m.status === 'coming_soon' ? (
+                    <span className="absolute top-2 right-2 text-[7px] font-semibold uppercase tracking-wider bg-black/70 border border-white/10 text-slate-300 px-1.5 py-0.5 rounded-md z-10">
+                      Em breve
+                    </span>
+                  ) : null}
+                </div>
 
                 {canGo ? (
                   <a
                     href={m.href}
                     target={m.external ? '_blank' : undefined}
                     rel={m.external ? 'noopener noreferrer' : undefined}
-                    className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-0.5 rounded-full border bg-slate-950/92 px-3 py-1 text-[8px] sm:text-[9px] font-semibold uppercase tracking-wider shadow-md shadow-black/40 backdrop-blur-sm transition-colors hover:bg-slate-900 ${th.btn}`}
+                    className={`pointer-events-auto absolute left-1/2 bottom-2 z-[100] -translate-x-1/2 flex items-center gap-1 rounded-full border-2 border-white/35 bg-slate-950 px-4 py-1.5 text-[10px] sm:text-[11px] font-bold uppercase tracking-wide text-white shadow-lg shadow-black/70 ring-2 ring-black/50 backdrop-blur-md transition-all hover:scale-[1.03] hover:border-white/55 hover:bg-slate-900 ${th.btn}`}
                   >
                     Entrar
-                    <ChevronRight size={11} strokeWidth={2.25} className="opacity-90" />
+                    <ChevronRight size={13} strokeWidth={2.5} className="opacity-95" />
                   </a>
                 ) : null}
               </div>
