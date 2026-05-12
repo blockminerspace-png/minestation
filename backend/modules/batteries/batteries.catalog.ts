@@ -14,11 +14,24 @@ export function resolvePlacedRackBatteryCatalogId(
   return storedInstanceIdToCatalogId.get(s) || s;
 }
 
-export const CANONICAL_1000WH_BATTERY_ID = 'battery_protostar';
-export const LEGACY_1000WH_BATTERY_IDS = new Set(['small_battery']);
-export const KNOWN_INFINITE_BATTERY_IDS = new Set([
+/**
+ * Catálogo canónico único: toda bateria do sistema é `battery_estelar`, infinita
+ * por design. Migração `20260516120000_all_batteries_become_estelar` colapsa todas
+ * as instâncias e o stock para este id; o normalizador abaixo cobre referências
+ * em código / payloads enviados por clientes antigos.
+ */
+export const CANONICAL_1000WH_BATTERY_ID = 'battery_estelar';
+
+/** Ids legados conhecidos que devem ser tratados como `battery_estelar`. */
+export const LEGACY_1000WH_BATTERY_IDS = new Set([
+  'small_battery',
   'battery_protostar',
+  'battery_stellar'
+]);
+
+export const KNOWN_INFINITE_BATTERY_IDS = new Set([
   'battery_estelar',
+  'battery_protostar',
   'battery_stellar'
 ]);
 
@@ -28,13 +41,13 @@ export function normalizeKnown1000WhBatteryCatalogId(itemIdRaw: unknown): string
   return LEGACY_1000WH_BATTERY_IDS.has(itemId) ? CANONICAL_1000WH_BATTERY_ID : itemId;
 }
 
+/**
+ * Sistema de baterias é infinito por design: qualquer bateria existente é tratada
+ * como ilimitada, sem necessidade de carregar. Mantemos guard para id vazio para
+ * preservar semântica "sem bateria equipada" nos chamadores.
+ */
 export function isKnownInfiniteBatteryCatalogId(itemIdRaw: unknown): boolean {
   const itemId = normalizeKnown1000WhBatteryCatalogId(itemIdRaw).toLowerCase();
   if (!itemId) return false;
-  return (
-    KNOWN_INFINITE_BATTERY_IDS.has(itemId) ||
-    itemId.includes('protostar') ||
-    itemId.includes('estelar') ||
-    itemId.includes('stellar')
-  );
+  return true;
 }

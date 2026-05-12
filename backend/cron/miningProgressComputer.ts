@@ -19,10 +19,6 @@ import {
   tryAcquireDistributedLock,
   type LockHandle
 } from '../lib/redisDistributedLock.js';
-import {
-  isWorkshopBatteryChargeFull,
-  snapWorkshopBatteryChargeWh
-} from '../lib/workshopBatteryCharge.js';
 import { miningRuntimeStats } from './miningRuntimeStats.js';
 
 const LOG_PREFIX = '[MiningProgress]';
@@ -472,12 +468,6 @@ export async function computeProgressForUser(
           ? (ws.internal_state as Record<string, unknown>)
           : null) ??
         {};
-      const slotItemIds =
-        safeParseJsonRecord(ws.slot_item_ids, 200_000, 'workshop.slot_item_ids') ??
-        (ws.slot_item_ids && typeof ws.slot_item_ids === 'object'
-          ? (ws.slot_item_ids as Record<string, unknown>)
-          : null) ??
-        {};
       const slotCharges =
         safeParseJsonRecord(ws.slot_charges, 200_000, 'workshop.slot_charges') ??
         (ws.slot_charges && typeof ws.slot_charges === 'object'
@@ -494,10 +484,6 @@ export async function computeProgressForUser(
 
       if (wiringSlot?.id && !getSlotVal(internalSlots, wiringSlot.id)) continue;
 
-      let internalWh = parseFiniteNumberLenient(ws.current_charge, 'workshop.internal_wh');
-      if (internalWh <= 0) continue;
-
-      const speedWhPerSec = parseFiniteNumberLenient(def.base_production, 'workshop.speed') || 0.5;
       let anyUpdate = false;
 
       for (let layoutIdx = 0; layoutIdx < layoutSlots.length; layoutIdx++) {
@@ -510,74 +496,16 @@ export async function computeProgressForUser(
         const batteryInstanceId = readWorkshopBatterySlotField(internalSlots, layoutSlots, layoutIdx);
         if (!batteryInstanceId) continue;
 
-        let batteryDef = upgradesMap.get(String(readWorkshopBatterySlotField(slotItemIds, layoutSlots, layoutIdx) ?? ''));
-        let storedBatteryChargeWh: number | null = null;
-        let storedBatteryCapacityWh: number | null = null;
-        {
-          const batRes = await client.query(
-            'SELECT item_id, current_charge, power_capacity_wh FROM stored_batteries WHERE id = $1 AND user_id = $2',
-            [batteryInstanceId, userId]
-          );
-          const row = batRes.rows[0] as { item_id?: unknown; current_charge?: unknown; power_capacity_wh?: unknown } | undefined;
-          if (!batteryDef && row?.item_id != null) batteryDef = upgradesMap.get(String(row.item_id));
-          if (row) {
-            const rowCharge = parseFiniteNumberLenient(row.current_charge, 'bat.stored_wh');
-            if (Number.isFinite(rowCharge)) storedBatteryChargeWh = rowCharge;
-            const rowCap = parseFiniteNumberLenient(row.power_capacity_wh, 'bat.stored_cap_wh');
-            if (Number.isFinite(rowCap) && rowCap !== 0) storedBatteryCapacityWh = rowCap;
-          }
-        }
-        if (!batteryDef) continue;
-
-        const catalogCapacityWh = parseFiniteNumberLenient(batteryDef.power_capacity, 'bat.max_wh') || 0;
-        const maxBatteryWh = catalogCapacityWh !== 0 ? catalogCapacityWh : storedBatteryCapacityWh || 0;
-        const slotChargeWh = parseFiniteNumberLenient(
-          readWorkshopBatterySlotField(slotCharges, layoutSlots, layoutIdx),
-          'bat.wh'
-        );
-        let batteryWh = Math.max(
-          Number.isFinite(slotChargeWh) ? slotChargeWh : 0,
-          storedBatteryChargeWh != null && Number.isFinite(storedBatteryChargeWh) ? storedBatteryChargeWh : 0
-        );
-
-        if (maxBatteryWh === -1) {
-          if (slotCharges[storageKey] !== -1) {
-            slotCharges[storageKey] = -1;
-            if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
-              delete slotCharges[legacyId];
-            }
-            batteryUpdates.push({ id: String(batteryInstanceId), charge: -1 });
-            anyUpdate = true;
-          }
-          continue;
-        }
-
-        if (!(maxBatteryWh > 0)) continue;
-
-        const snappedBeforeTransfer = snapWorkshopBatteryChargeWh(batteryWh, maxBatteryWh);
-        if (snappedBeforeTransfer !== batteryWh) {
-          batteryWh = snappedBeforeTransfer;
-          slotCharges[storageKey] = batteryWh;
+        // Sistema de baterias agora é infinito por design: normaliza qualquer
+        // bateria antiga em slot de oficina para charge = -1 (sentinel "ilimitado")
+        // e não transfere Wh do tanque interno do carregador.
+        if (slotCharges[storageKey] !== -1) {
+          slotCharges[storageKey] = -1;
           if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
             delete slotCharges[legacyId];
           }
-          batteryUpdates.push({ id: String(batteryInstanceId), charge: batteryWh });
+          batteryUpdates.push({ id: String(batteryInstanceId), charge: -1 });
           anyUpdate = true;
-        }
-
-        if (!isWorkshopBatteryChargeFull(batteryWh, maxBatteryWh) && batteryWh < maxBatteryWh && internalWh > 0) {
-          const actualTransferWh = Math.min(speedWhPerSec * dtSec, internalWh, maxBatteryWh - batteryWh);
-
-          if (actualTransferWh > 0) {
-            batteryWh = snapWorkshopBatteryChargeWh(batteryWh + actualTransferWh, maxBatteryWh);
-            internalWh -= actualTransferWh;
-            slotCharges[storageKey] = batteryWh;
-            if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
-              delete slotCharges[legacyId];
-            }
-            batteryUpdates.push({ id: String(batteryInstanceId), charge: batteryWh });
-            anyUpdate = true;
-          }
         }
       }
 
@@ -585,7 +513,7 @@ export async function computeProgressForUser(
         workshopUpdates.push({
           uid: userId,
           slot_index: parseFiniteNumberLenient(ws.slot_index, 'ws.slot_index'),
-          charge: internalWh,
+          charge: parseFiniteNumberLenient(ws.current_charge, 'workshop.internal_wh'),
           slot_charges: JSON.stringify(slotCharges)
         });
       }

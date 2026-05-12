@@ -1663,7 +1663,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                     {battery ? (
                                                         <>
                                                             <div className="text-xs text-slate-600 dark:text-slate-300"><span className="font-bold text-slate-700 dark:text-white">{battery.name}</span> — {battery.description}</div>
-                                                            <div className="text-[10px] text-yellow-600 dark:text-yellow-400">Capacidade: {battery.powerCapacity} Wh</div>
+                                                            <div className="text-[10px] text-yellow-600 dark:text-yellow-400">
+                                                                Capacidade: {isInfiniteConf || battery.powerCapacity === -1 ? 'Ilimitada (∞ Wh)' : `${battery.powerCapacity} Wh`}
+                                                            </div>
                                                             <div className="w-full h-2 bg-slate-300 dark:bg-black rounded-sm border border-slate-400 dark:border-slate-700 relative overflow-hidden mt-1">
                                                                 <div className="h-full bg-yellow-500" style={{ width: `${chargePercent}%` }}></div>
                                                             </div>

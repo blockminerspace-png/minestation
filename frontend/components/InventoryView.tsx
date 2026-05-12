@@ -135,15 +135,9 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                                             <h4 className="font-bold text-slate-800 dark:text-slate-200 truncate text-sm mb-2">{def.name}</h4>
                                             <div className="flex-1 overflow-y-auto custom-scrollbar max-h-32 pr-1 space-y-2">
                                                 {groupBats.map((battery) => {
-                                                    const cap = def.powerCapacity;
-                                                    const isInf = cap === -1;
-                                                    const fromServer =
-                                                        battery.chargePercent != null && Number.isFinite(battery.chargePercent);
-                                                    const chargePct = fromServer
-                                                        ? Number(battery.chargePercent)
-                                                        : isInf
-                                                          ? 100
-                                                          : (battery.currentCharge / (cap || 1)) * 100;
+                                                    // Sistema de baterias é infinito por design: armazém mostra sempre ∞.
+                                                    const isInf = true;
+                                                    const chargePct = 100;
                                                     const refLabel =
                                                         battery.publicRef && battery.publicRef.trim()
                                                             ? battery.publicRef

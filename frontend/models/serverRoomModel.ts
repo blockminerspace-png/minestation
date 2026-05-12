@@ -16,10 +16,15 @@ function isBatteryUpgrade(upgrade: Upgrade | undefined | null): upgrade is Upgra
   return upgrade.type === 'battery' || String(upgrade.category || '').toLowerCase() === 'battery';
 }
 
+/**
+ * Sistema de baterias é infinito por design: qualquer bateria existente é tratada
+ * como ilimitada. Mantemos o guard para id vazio para preservar a semântica
+ * "sem bateria equipada" nos chamadores.
+ */
 export function isKnownInfiniteBatteryItem(itemId: unknown): boolean {
   const id = itemId == null ? '' : String(itemId).trim().toLowerCase();
   if (!id) return false;
-  return id === 'battery_protostar' || id === 'battery_estelar' || id === 'battery_stellar' || id.includes('protostar') || id.includes('estelar') || id.includes('stellar');
+  return true;
 }
 
 function normalizedStoredChargeWh(sb: StoredBattery): number {

@@ -5471,11 +5471,9 @@ async function computeAdminDashboardStatsUncached() {
         FROM placed_racks r
         JOIN rack_slots rs ON r.id = rs.rack_id
         LEFT JOIN upgrades u ON rs.machine_item_id = u.id
-        LEFT JOIN upgrades b ON r.battery_id = b.id
         WHERE r.is_on = 1 
           AND r.wiring_id IS NOT NULL 
           AND r.battery_id IS NOT NULL
-          AND (b.power_capacity = -1 OR r.current_charge > 0)
         GROUP BY r.id, r.user_id
       ),
       rack_mult AS (
@@ -5627,11 +5625,9 @@ app.get('/api/leaderboard', async (req, res) => {
         FROM placed_racks r
         JOIN rack_slots rs ON r.id = rs.rack_id
         LEFT JOIN upgrades u ON rs.machine_item_id = u.id
-        LEFT JOIN upgrades b ON r.battery_id = b.id
         WHERE r.is_on = 1 
           AND r.wiring_id IS NOT NULL 
           AND r.battery_id IS NOT NULL
-          AND (b.power_capacity = -1 OR r.current_charge > 0)
         GROUP BY r.id, r.user_id
       ),
       rack_mult AS (

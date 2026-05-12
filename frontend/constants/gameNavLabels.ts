@@ -2,7 +2,6 @@
 export const GAME_NAV_LABEL_KEYS = [
   'servers',
   'inventory',
-  'oficina',
   'hardware_store',
   'black_market',
   'arcade',
@@ -23,7 +22,6 @@ export type GameNavLabelKey = (typeof GAME_NAV_LABEL_KEYS)[number];
 export const DEFAULT_GAME_NAV_LABELS: Record<GameNavLabelKey, string> = {
   servers: 'Servidores',
   inventory: 'Estoque',
-  oficina: 'Oficina',
   hardware_store: 'Lojinha Miner',
   black_market: 'P2P',
   arcade: 'Arcade',

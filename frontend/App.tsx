@@ -145,10 +145,15 @@ function resolveEquippedBatteryCatalogId(
   return null;
 }
 
+/**
+ * Sistema de baterias é infinito por design: qualquer bateria existente é tratada
+ * como ilimitada. Mantemos guard para id vazio para preservar a semântica
+ * "sem bateria equipada" nos chamadores.
+ */
 function isKnownInfiniteBatteryItem(itemId: unknown): boolean {
   const id = itemId == null ? '' : String(itemId).trim().toLowerCase();
   if (!id) return false;
-  return id === 'battery_protostar' || id === 'battery_estelar' || id === 'battery_stellar' || id.includes('protostar') || id.includes('estelar') || id.includes('stellar');
+  return true;
 }
 
 const calculateProduction = (placedRacks: PlacedRack[], upgradesList: Upgrade[]) => {
@@ -518,6 +523,14 @@ export default function App() {
     }
   }, [isOperatorAdminOnly, currentView]);
 
+  // Aba `oficina` foi descontinuada (sistema de baterias é infinito por design).
+  // Redireciona qualquer acesso por URL antiga (`/workshop`) ou sessionStorage para `servers`.
+  useEffect(() => {
+    if (currentView === 'oficina') {
+      setCurrentView('servers');
+    }
+  }, [currentView]);
+
   // Dynamic Data
   const [gameUpgrades, setGameUpgrades] = useState<Upgrade[]>([]);
   const isReady = saveLoaded && gameUpgrades.length > 0;
@@ -796,7 +809,7 @@ export default function App() {
       const defaultLvl = accessLevels.find(l => l.id === (user?.accessLevelId || ''));
       pages =
         defaultLvl?.allowedPages ||
-        ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency', 'support', 'partners'];
+        ['servers', 'inventory', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency', 'support', 'partners'];
     } else {
       const allAllowed = new Set<string>();
       userLvls.forEach((lid) => {
@@ -808,8 +821,11 @@ export default function App() {
       pages =
         allAllowed.size > 0
           ? Array.from(allAllowed)
-          : ['servers', 'inventory', 'oficina', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency', 'support', 'partners'];
+          : ['servers', 'inventory', 'arcade', 'ranking', 'hardware_store', 'black_market', 'lucky_store', 'wallet', 'upgrade', 'profile', 'transparency', 'support', 'partners'];
     }
+    // `oficina` foi descontinuada: nunca expor mesmo se algum allowedPages legado
+    // ainda contiver o id (níveis antigos / cache no servidor).
+    pages = pages.filter((p) => p !== 'oficina');
     // Níveis antigos podem não incluir `black_market` em allowedPages; se o P2P está ligado na economia, mostrar o separador.
     if (economySettings.blackMarketEnabled && !pages.includes('black_market')) {
       pages = [...pages, 'black_market'];
@@ -2934,7 +2950,6 @@ export default function App() {
                 <div className="max-w-7xl mx-auto md:hidden px-4 pb-3 pt-2 grid grid-cols-1 gap-2 border-t border-amber-200/50 dark:border-amber-900/25 bg-slate-50/90 dark:bg-[#0a0805]/80">
                   {getAllowedPages().includes('servers') && (<button onClick={() => { goToGameView('servers'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'servers' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Server size={16} /> {gameNav('servers')}</button>)}
                   {getAllowedPages().includes('inventory') && (<button onClick={() => { goToGameView('inventory'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'inventory' ? 'border-yellow-500 text-yellow-600 dark:text-yellow-500' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Package size={16} /> {gameNav('inventory')}</button>)}
-                  {getAllowedPages().includes('oficina') && (<button onClick={() => { goToGameView('oficina'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'oficina' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Wrench size={16} /> {gameNav('oficina')}</button>)}
                   {getAllowedPages().includes('hardware_store') && (<button onClick={() => { goToGameView('hardware_store'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'hardware_store' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><ShoppingCart size={16} /> {gameNav('hardware_store')}</button>)}
                   {getAllowedPages().includes('black_market') && (<button onClick={() => { goToGameView('black_market'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'black_market' ? 'border-red-500 text-red-600 dark:text-red-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Skull size={16} /> {gameNav('black_market')}</button>)}
                   {getAllowedPages().includes('arcade') && (<button onClick={() => { goToGameView('arcade'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'arcade' ? 'border-amber-500 text-amber-600 dark:text-amber-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Gamepad2 size={16} /> {gameNav('arcade')}</button>)}
@@ -2956,7 +2971,6 @@ export default function App() {
               >
                 {getAllowedPages().includes('servers') && (<button type="button" onClick={() => { goToGameView('servers'); }} className={gameNavTabClass(currentView === 'servers', 'amber')}><Server size={15} className="shrink-0 opacity-90" /> {gameNav('servers')}</button>)}
                 {getAllowedPages().includes('inventory') && (<button type="button" onClick={() => { goToGameView('inventory'); }} className={gameNavTabClass(currentView === 'inventory', 'yellow')}><Package size={15} className="shrink-0 opacity-90" /> {gameNav('inventory')}</button>)}
-                {getAllowedPages().includes('oficina') && (<button type="button" onClick={() => { goToGameView('oficina'); }} className={gameNavTabClass(currentView === 'oficina', 'amber')}><Wrench size={15} className="shrink-0 opacity-90" /> {gameNav('oficina')}</button>)}
                 {getAllowedPages().includes('hardware_store') && (<button type="button" onClick={() => { goToGameView('hardware_store'); }} className={gameNavTabClass(currentView === 'hardware_store', 'amber')}><ShoppingCart size={15} className="shrink-0 opacity-90" /> {gameNav('hardware_store')}</button>)}
                 {getAllowedPages().includes('black_market') && (<button type="button" onClick={() => { goToGameView('black_market'); }} className={gameNavTabClass(currentView === 'black_market', 'red')}><Skull size={15} className="shrink-0 opacity-90" /> {gameNav('black_market')}</button>)}
                 {getAllowedPages().includes('arcade') && (<button type="button" onClick={() => { goToGameView('arcade'); }} className={gameNavTabClass(currentView === 'arcade', 'amber')}><Gamepad2 size={15} className="shrink-0 opacity-90" /> {gameNav('arcade')}</button>)}
@@ -3076,16 +3090,8 @@ export default function App() {
                   )}
 
 
-                  {saveLoaded && currentView === 'oficina' && (
-                    <div className="flex-1 p-6 space-y-6 animate-in fade-in zoom-in-95 duration-300 flex flex-col">
-                      <div className="flex-1">
-                        <Suspense fallback={<LazyRouteFallback />}>
-                          <WorkshopRoom slots={gameState.workshopSlots || [null, null, null, null, null, null]} stock={gameState.stock} upgrades={gameUpgrades} onEquip={handleEquipWorkshop} onUnequip={handleUnequipWorkshop} onEquipComponent={handleEquipWorkshopComponent} onUnequipComponent={handleUnequipWorkshopComponent} storedBatteries={gameState.storedBatteries} onInstantRecharge={handleWorkshopInstantRecharge} onRewardedAd={handleRewardedAd} onDailyBoost={handleDailyBoost} timeOffset={timeOffset} dailyActions={gameState.dailyActions} />
-                        </Suspense>
-                      </div>
-                      <Footer />
-                    </div>
-                  )}
+                  {/* Aba Oficina removida: sistema de carregamento foi descontinuado e
+                      todas as baterias passaram a ser Estelar (infinitas). */}
                   {saveLoaded && currentView === 'arcade' && (
                     <div className="flex-1 flex flex-col items-center justify-center gap-4 text-slate-500 py-20">
                       <Gamepad2 size={48} className="animate-bounce" />

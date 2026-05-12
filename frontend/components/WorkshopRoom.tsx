@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Wrench, Plus, X, Box, Power, Cog, Terminal, Zap, RefreshCw, PlayCircle, History, AlertTriangle } from 'lucide-react';
+import { Wrench, Plus, X, Box, Power, Cog, Terminal, Zap, History, AlertTriangle } from 'lucide-react';
 import { Upgrade, SlotLayout, WorkshopStructure, StoredBattery } from '../types';
 import { orphanCatalogUpgrade } from '../models/orphanCatalogItem';
 import { resolveBatteryLayoutIndexForBatteryBar } from '../lib/workshopBatteryBarMap';
@@ -42,12 +42,7 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
     onEquip,
     onUnequip,
     onEquipComponent,
-    onUnequipComponent,
-    onInstantRecharge,
-    onRewardedAd,
-    onDailyBoost,
-    timeOffset,
-    dailyActions
+    onUnequipComponent
 }) => {
     const [selectingIndex, setSelectingIndex] = useState<number | null>(null);
     const [selectingComponent, setSelectingComponent] = useState<{
@@ -83,16 +78,6 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
     const availableItems = upgrades.filter(u =>
         (u.category === 'Oficina' || u.type === 'charger') && (stock[u.id] || 0) > 0
     );
-
-    const isUsedToday = (key: string) => {
-        const lastPerformedAt = dailyActions?.[key];
-        if (!lastPerformedAt) return false;
-
-        const serverNow = Date.now() + timeOffset;
-        const now = new Date(serverNow);
-        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
-        return lastPerformedAt >= startOfDay;
-    };
 
     const activeBenches = slots.filter(Boolean).length;
     const activeBenchesLabel =
@@ -437,59 +422,15 @@ export const WorkshopRoom: React.FC<WorkshopRoomProps> = ({
                                                                 </button>
                                                             );
                                                         }
-                                                        if (slot.type === 'instant_recharge') {
-                                                            const instantUsed = isUsedToday(`instant_recharge_slot_${idx}`);
-                                                            return (
-                                                                <button
-                                                                    key={slotKey}
-                                                                    disabled={instantUsed}
-                                                                    onClick={() => onInstantRecharge(idx)}
-                                                                    className={`absolute overflow-hidden rounded-full flex items-center justify-center border z-30 transition-transform shadow-[0_0_10px_rgba(245,158,11,0.3)] ${instantUsed
-                                                                        ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 grayscale'
-                                                                        : 'border-amber-500/50 bg-amber-950/80 text-amber-400 hover:scale-110 active:scale-95 hover:bg-amber-900'
-                                                                        }`}
-                                                                    style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
-                                                                    title={instantUsed ? 'Limite diário de recarga instantânea (UTC) já usado nesta bancada.' : 'Recarga instantânea (1× por dia por bancada, UTC)'}
-                                                                >
-                                                                    <RefreshCw size={slot.w > 10 ? 12 : 8} className={instantUsed ? '' : 'animate-pulse'} />
-                                                                </button>
-                                                            );
-                                                        }
-                                                        if (slot.type === 'rewarded_ad') {
-                                                            const used = isUsedToday(`reward_ad_slot_${idx}`);
-                                                            return (
-                                                                <button
-                                                                    key={slotKey}
-                                                                    disabled={used}
-                                                                    onClick={() => onRewardedAd(idx)}
-                                                                    className={`absolute overflow-hidden rounded-md flex items-center justify-center border z-30 transition-all shadow-[0_0_15px_rgba(34,197,94,0.4)] group ${used
-                                                                        ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 grayscale'
-                                                                        : 'border-green-500/50 bg-green-950/80 text-green-400 hover:scale-110 active:scale-95 hover:bg-green-900'
-                                                                        }`}
-                                                                    style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
-                                                                    title={used ? "Limite diário atingido (ADS)" : "Assistir Anúncio (Recompensa 100%)"}
-                                                                >
-                                                                    <PlayCircle size={slot.w > 10 ? 16 : 10} className={used ? "" : "group-hover:text-white transition-colors"} />
-                                                                </button>
-                                                            );
-                                                        }
-                                                        if (slot.type === 'daily_boost') {
-                                                            const used = isUsedToday(`daily_boost_slot_${idx}`);
-                                                            return (
-                                                                <button
-                                                                    key={slotKey}
-                                                                    disabled={used}
-                                                                    onClick={() => onDailyBoost(idx)}
-                                                                    className={`absolute overflow-hidden rounded-md flex items-center justify-center border z-30 transition-all shadow-[0_0_15px_rgba(245,158,11,0.4)] group ${used
-                                                                        ? 'border-slate-700 bg-slate-800 text-slate-500 cursor-not-allowed opacity-60 grayscale'
-                                                                        : 'border-amber-500/50 bg-amber-950/80 text-amber-400 hover:scale-110 active:scale-95 hover:bg-amber-900'
-                                                                        }`}
-                                                                    style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
-                                                                    title={used ? "Ação Diária já realizada" : "Daily Boost (Refill 100%)"}
-                                                                >
-                                                                    <Zap size={slot.w > 10 ? 16 : 10} className={used ? "" : "group-hover:text-white transition-colors"} />
-                                                                </button>
-                                                            );
+                                                        // Sistema de recarga descontinuado: baterias passaram a ser infinitas.
+                                                        // Botões de recarga instantânea, anúncio recompensado e daily boost
+                                                        // ficam ocultos para evitar acções sem efeito.
+                                                        if (
+                                                            slot.type === 'instant_recharge' ||
+                                                            slot.type === 'rewarded_ad' ||
+                                                            slot.type === 'daily_boost'
+                                                        ) {
+                                                            return null;
                                                         }
                                                         if (slot.type === 'stat_monitor') {
                                                             const attachedCount = Object.values(wsGroup.internalSlots).filter(v => v !== null).length;
