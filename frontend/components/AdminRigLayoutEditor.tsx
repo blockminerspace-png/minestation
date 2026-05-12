@@ -10,7 +10,7 @@ const IMG_UPLOAD_FOLDERS = [
     { id: 'baterias', label: 'baterias' },
     { id: 'favicon', label: 'favicon' }
 ] as const;
-import { Move, Plus, Trash2, Cpu, Battery, Plug, Zap, Save, AlertCircle, Power, Cog, Coins, Activity, BarChart3, Terminal, RefreshCw, PlayCircle } from 'lucide-react';
+import { Move, Plus, Trash2, Cpu, Battery, Plug, Zap, Save, AlertCircle, Power, Cog, Coins, Activity, BarChart3, Terminal } from 'lucide-react';
 
 interface AdminRigLayoutEditorProps {
     gameUpgrades: Upgrade[];
@@ -28,7 +28,7 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
     const [imageUploadFolder, setImageUploadFolder] = useState<string>('miner');
     const canvasRef = useRef<HTMLDivElement>(null);
 
-    const racks = gameUpgrades.filter(u => u.type === 'infrastructure' || u.type === 'charger');
+    const racks = gameUpgrades.filter(u => u.type === 'infrastructure');
     const selectedRack = racks.find(r => r.id === selectedRackId);
 
     // Skin: re-sincroniza quando o catálogo (gameUpgrades) ganha `image` depois do primeiro render.
@@ -248,8 +248,8 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                         onChange={(e) => setSelectedRackId(e.target.value)}
                         className="bg-slate-900 border border-slate-600 text-white px-3 py-2 rounded-lg text-sm"
                     >
-                        <option value="">Selecione um Item (Rig ou Carregador)...</option>
-                        {racks.map(r => <option key={r.id} value={r.id}>{r.name} ({r.id}) - {r.type === 'charger' ? 'Carregador' : 'Rig'}</option>)}
+                        <option value="">Selecione uma Rig...</option>
+                        {racks.map(r => <option key={r.id} value={r.id}>{r.name} ({r.id})</option>)}
                     </select>
                 </div>
                 {selectedRackId && (
@@ -313,16 +313,12 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                     <div className="bg-slate-800 border border-slate-700 rounded-xl p-4 space-y-4 shadow-xl">
                         <h3 className="font-bold text-slate-400 text-xs uppercase tracking-wider">Ferramentas</h3>
                         <div className="grid grid-cols-1 gap-2">
-                            {selectedRack?.type !== 'charger' && (
-                                <button onClick={() => addNewSlot('machine')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                    <Cpu size={18} className="text-amber-500" /> <span className="text-sm">Adicionar Slot GPU</span>
-                                </button>
-                            )}
-                            {selectedRack?.type !== 'charger' && (
-                                <button onClick={() => addNewSlot('multiplier')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                    <Zap size={18} className="text-yellow-500" /> <span className="text-sm">Adicionar Slot IA</span>
-                                </button>
-                            )}
+                            <button onClick={() => addNewSlot('machine')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
+                                <Cpu size={18} className="text-amber-500" /> <span className="text-sm">Adicionar Slot GPU</span>
+                            </button>
+                            <button onClick={() => addNewSlot('multiplier')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
+                                <Zap size={18} className="text-yellow-500" /> <span className="text-sm">Adicionar Slot IA</span>
+                            </button>
                             <button onClick={() => addNewSlot('battery')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
                                 <Battery size={18} className="text-green-500" /> <span className="text-sm">Slot Bateria</span>
                             </button>
@@ -343,19 +339,6 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 <button onClick={() => addNewSlot('coin_selector')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
                                     <Coins size={18} className="text-amber-500" /> <span className="text-sm">Seletor de Moeda</span>
                                 </button>
-                                {selectedRack?.type === 'charger' && (
-                                    <>
-                                        <button onClick={() => addNewSlot('instant_recharge')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                            <RefreshCw size={18} className="text-amber-400" /> <span className="text-sm">Botão Recarga Inst.</span>
-                                        </button>
-                                        <button onClick={() => addNewSlot('rewarded_ad')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                            <PlayCircle size={18} className="text-green-400" /> <span className="text-sm">Botão Assistir ADS (Play)</span>
-                                        </button>
-                                        <button onClick={() => addNewSlot('daily_boost')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                            <Zap size={18} className="text-amber-400" /> <span className="text-sm">Botão Daily Boost</span>
-                                        </button>
-                                    </>
-                                )}
                             </div>
                         </div>
 
@@ -365,11 +348,6 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                 <button onClick={() => addNewSlot('battery_bar')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
                                     <BarChart3 size={18} className="text-emerald-400" /> <span className="text-sm">Barra de Bateria</span>
                                 </button>
-                                {selectedRack?.type === 'charger' && (
-                                    <button onClick={() => addNewSlot('charger_bar')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
-                                        <Activity size={18} className="text-orange-400" /> <span className="text-sm">Barra de Energia Interna</span>
-                                    </button>
-                                )}
                                 <button onClick={() => addNewSlot('production_display')} className="w-full bg-slate-900 hover:bg-slate-700 p-3 rounded-lg border border-slate-700 text-left flex items-center gap-3 transition-colors">
                                     <Activity size={18} className="text-amber-400" /> <span className="text-sm">Display de Produção</span>
                                 </button>
@@ -539,10 +517,8 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                                 s.type === 'multiplier' ? 'bg-yellow-600/20' :
                                                     s.type === 'battery' ? 'bg-green-600/20' :
                                                         s.type === 'battery_bar' ? 'bg-emerald-600/20' :
-                                                            s.type === 'charger_bar' ? 'bg-orange-600/20' :
-                                                                s.type === 'rewarded_ad' ? 'bg-green-600/30 border-green-500' :
-                                                                    s.type === 'stat_monitor' ? 'bg-slate-800/60' :
-                                                                        s.type === 'production_display' ? 'bg-amber-600/20' : 'bg-amber-600/20'}
+                                                            s.type === 'stat_monitor' ? 'bg-slate-800/60' :
+                                                                s.type === 'production_display' ? 'bg-amber-600/20' : 'bg-amber-600/20'}
                                         `}
                                         style={{
                                             left: `${s.x}%`,
@@ -566,12 +542,8 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                                             {s.type === 'config' && <Cog size={8} className="text-slate-400" />}
                                             {s.type === 'coin_selector' && <Coins size={8} className="text-amber-500" />}
                                             {s.type === 'battery_bar' && <BarChart3 size={8} className="text-emerald-400" />}
-                                            {s.type === 'charger_bar' && <Activity size={8} className="text-orange-400" />}
                                             {s.type === 'production_display' && <Activity size={8} className="text-amber-400" />}
                                             {s.type === 'stat_monitor' && <Terminal size={8} className="text-slate-400" />}
-                                            {s.type === 'instant_recharge' && <RefreshCw size={8} className="text-amber-400" />}
-                                            {s.type === 'rewarded_ad' && <PlayCircle size={8} className="text-green-400" />}
-                                            {s.type === 'daily_boost' && <Zap size={8} className="text-amber-400" />}
                                             <span className="text-[7px] text-white font-mono">{s.id}</span>
                                         </div>
                                     </div>
@@ -582,16 +554,12 @@ export const AdminRigLayoutEditor: React.FC<AdminRigLayoutEditorProps> = ({ game
                             <div className="absolute bottom-6 left-6 right-6 flex justify-between items-center pointer-events-none">
                                 <span className="bg-black/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 border border-slate-700">Arraste os slots para posicionar sobre a arte.</span>
                                 <div className="flex gap-4">
-                                    {selectedRack?.type !== 'charger' && (
-                                        <div className="flex items-center gap-2 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 border border-slate-700">
-                                            <span className="w-2 h-2 rounded bg-amber-600"></span> GPU
-                                        </div>
-                                    )}
-                                    {selectedRack?.type !== 'charger' && (
-                                        <div className="flex items-center gap-2 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 border border-slate-700">
-                                            <span className="w-2 h-2 rounded bg-yellow-600"></span> IA
-                                        </div>
-                                    )}
+                                    <div className="flex items-center gap-2 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 border border-slate-700">
+                                        <span className="w-2 h-2 rounded bg-amber-600"></span> GPU
+                                    </div>
+                                    <div className="flex items-center gap-2 bg-black/60 backdrop-blur px-3 py-1 rounded-full text-[10px] text-slate-400 border border-slate-700">
+                                        <span className="w-2 h-2 rounded bg-yellow-600"></span> IA
+                                    </div>
                                 </div>
                             </div>
                         </div>

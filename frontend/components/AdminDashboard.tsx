@@ -13,7 +13,7 @@ const calculateUserProduction = (placedRacks: PlacedRack[], upgradesList: Upgrad
     let total = 0;
     if (!placedRacks || !Array.isArray(placedRacks)) return 0;
     placedRacks.forEach(rack => {
-        if (rack.isOn && rack.wiringId && rack.currentCharge > 0) {
+        if (rack.isOn && rack.wiringId && rack.batteryId) {
             let rackBaseProd = 0;
             rack.slots.forEach(slotItemId => {
                 if (slotItemId) {

@@ -1,4 +1,4 @@
-import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog, PlacedRack, StoredBattery, P2PMarketTradeHistory, P2PMarketTradeHistoryEntry, WorkshopStructure, WheelItem } from '../types';
+import { AccessLevel, GameState, LootBox, SystemNews, Upgrade, User, Web3Settings, MiningCoin, SeasonPass, SeasonPurchase, AdminUpgrade, MarketListing, RigRoom, MonetizationSettings, EconomySettings, SecurityStats, ReferralModel, GameUserActivityEntry, TransparencyEntry, TransparencyCategory, DeviceFingerprintPayload, AdminDeviceFingerprintLog, PlacedRack, StoredBattery, P2PMarketTradeHistory, P2PMarketTradeHistoryEntry, WheelItem } from '../types';
 import { GAME_NAV_LABEL_KEYS } from '../constants/gameNavLabels';
 import type { DashboardState, DashboardStateResult } from '../types/dashboard';
 
@@ -1168,7 +1168,6 @@ export type ServersStatePayload = {
   stock: Record<string, number>;
   storedBatteries: StoredBattery[];
   placedRacks: PlacedRack[];
-  workshopSlots: (WorkshopStructure | null)[];
   rigRooms: RigRoom[];
   miningCoins: MiningCoin[];
   upgrades: Upgrade[];
@@ -1192,9 +1191,6 @@ export async function getServersState(): Promise<ServersStatePayload | null> {
       stock: j.stock && typeof j.stock === 'object' && !Array.isArray(j.stock) ? (j.stock as Record<string, number>) : {},
       storedBatteries: Array.isArray(j.storedBatteries) ? (j.storedBatteries as StoredBattery[]) : [],
       placedRacks: Array.isArray(j.placedRacks) ? (j.placedRacks as PlacedRack[]) : [],
-      workshopSlots: Array.isArray(j.workshopSlots)
-        ? (j.workshopSlots as (WorkshopStructure | null)[])
-        : [null, null, null, null, null, null],
       rigRooms: j.rigRooms as RigRoom[],
       miningCoins: Array.isArray(j.miningCoins) ? (j.miningCoins as MiningCoin[]) : [],
       upgrades: Array.isArray(j.upgrades) ? (j.upgrades as Upgrade[]) : []
@@ -1695,12 +1691,11 @@ export async function getGameState(
   }
 }
 
-/** Resposta canónica GET `/api/inventory/me` (stock + baterias cheias vs parciais). */
+/** Resposta canónica GET `/api/inventory/me` (stock + baterias UUID infinitas). */
 export type PlayerInventoryMeOk = {
   ok: true;
   stock: Record<string, number>;
-  storedBatteriesFull: StoredBattery[];
-  storedBatteriesPartial: StoredBattery[];
+  storedBatteries: StoredBattery[];
   serverUpdatedAt: number;
 };
 
@@ -1717,18 +1712,12 @@ function parseStoredBatteryRows(raw: unknown): StoredBattery[] {
         : typeof o.item_id === 'string'
           ? o.item_id.trim()
           : '';
-    const chRaw = o.currentCharge ?? o.current_charge;
-    const ch = typeof chRaw === 'number' ? chRaw : Number(chRaw);
-    if (!id || !itemId || !Number.isFinite(ch)) continue;
-    const pwhRaw = o.powerCapacityWh ?? o.power_capacity_wh;
-    const pwh = pwhRaw == null ? null : Number(pwhRaw);
+    if (!id || !itemId) continue;
     const dn = o.displayName ?? o.display_name;
     const iu = o.imageUrl ?? o.image_url;
     out.push({
       id,
       itemId,
-      currentCharge: ch,
-      powerCapacityWh: pwh != null && Number.isFinite(pwh) ? pwh : null,
       displayName: typeof dn === 'string' && dn.trim() ? dn.trim() : null,
       imageUrl: typeof iu === 'string' && iu.trim() ? iu.trim() : null
     });
@@ -1785,12 +1774,11 @@ export async function getPlayerInventoryMe(): Promise<
             )
           ) as Record<string, number>
         : {};
-    const storedBatteriesFull = parseStoredBatteryRows(body.storedBatteriesFull);
-    const storedBatteriesPartial = parseStoredBatteryRows(body.storedBatteriesPartial);
+    const storedBatteries = parseStoredBatteryRows(body.storedBatteries);
     const su = Number(body.serverUpdatedAt);
     const serverUpdatedAt = Number.isFinite(su) ? su : 0;
     if (serverUpdatedAt > 0) globalLastLoadTime = serverUpdatedAt;
-    return { ok: true, stock, storedBatteriesFull, storedBatteriesPartial, serverUpdatedAt };
+    return { ok: true, stock, storedBatteries, serverUpdatedAt };
   } catch (e) {
     console.error('[APIService] getPlayerInventoryMe failed', e);
     return { ok: false, status: 500, error: 'Erro de rede ao carregar o inventário.' };
@@ -1828,8 +1816,7 @@ export type PlayerInventoryStateOk = {
   serverUpdatedAt: number;
   stateVersion: number;
   stock: Record<string, number>;
-  partialChargeBatteries: StoredBattery[];
-  fullChargeBatteries: StoredBattery[];
+  storedBatteries: StoredBattery[];
   stackableCategories: InventoryStackableCategoryApi[];
 };
 
@@ -1838,23 +1825,14 @@ function parseInventoryBatteryInstance(raw: unknown): StoredBattery | null {
   const o = raw as Record<string, unknown>;
   const id = typeof o.id === 'string' ? o.id.trim() : '';
   const itemId = typeof o.itemId === 'string' ? o.itemId.trim() : '';
-  const chRaw = o.currentCharge;
-  const ch = typeof chRaw === 'number' ? chRaw : Number(chRaw);
-  if (!id || !itemId || !Number.isFinite(ch)) return null;
-  const pwhRaw = o.powerCapacityWh;
-  const pwh = pwhRaw == null ? null : Number(pwhRaw);
+  if (!id || !itemId) return null;
   const dn = o.displayName;
   const iu = o.imageUrl;
-  const cpRaw = o.chargePercent;
-  const cp = typeof cpRaw === 'number' ? cpRaw : Number(cpRaw);
   const pr = o.publicRef;
   return {
     id,
     itemId,
-    currentCharge: ch,
-    chargePercent: Number.isFinite(cp) ? cp : null,
     publicRef: typeof pr === 'string' && pr.trim() ? pr.trim() : null,
-    powerCapacityWh: pwh != null && Number.isFinite(pwh) ? pwh : null,
     displayName: typeof dn === 'string' && dn.trim() ? dn.trim() : null,
     imageUrl: typeof iu === 'string' && iu.trim() ? iu.trim() : null
   };
@@ -1951,18 +1929,11 @@ export async function getPlayerInventoryState(): Promise<
             )
           ) as Record<string, number>
         : {};
-    const partial: StoredBattery[] = [];
-    const full: StoredBattery[] = [];
-    if (Array.isArray(body.partialChargeBatteries)) {
-      for (const x of body.partialChargeBatteries) {
+    const storedBatteries: StoredBattery[] = [];
+    if (Array.isArray(body.storedBatteries)) {
+      for (const x of body.storedBatteries) {
         const b = parseInventoryBatteryInstance(x);
-        if (b) partial.push(b);
-      }
-    }
-    if (Array.isArray(body.fullChargeBatteries)) {
-      for (const x of body.fullChargeBatteries) {
-        const b = parseInventoryBatteryInstance(x);
-        if (b) full.push(b);
+        if (b) storedBatteries.push(b);
       }
     }
     const su = Number(body.serverUpdatedAt);
@@ -1976,8 +1947,7 @@ export async function getPlayerInventoryState(): Promise<
       serverUpdatedAt,
       stateVersion,
       stock,
-      partialChargeBatteries: partial,
-      fullChargeBatteries: full,
+      storedBatteries,
       stackableCategories: parseStackableCategories(body.stackableCategories)
     };
   } catch (e) {
@@ -2029,7 +1999,7 @@ export type ShopStateV1Ok = {
   cart: { cartId: string; lines: ShopCartLineApi[]; totalUsdc: number };
 };
 
-const SHOP_UPGRADE_TYPES = new Set(['machine', 'infrastructure', 'battery', 'wiring', 'multiplier', 'charger']);
+const SHOP_UPGRADE_TYPES = new Set(['machine', 'infrastructure', 'battery', 'wiring', 'multiplier']);
 
 function parseShopProduct(raw: unknown): ShopProductApi | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -3448,152 +3418,6 @@ export function newServerIntentIdempotencyKey(): string {
   return `srv_${Date.now()}_${Math.random().toString(36).slice(2, 14)}`;
 }
 
-export type WorkshopMutateAction = 'equip_bench' | 'unequip_bench' | 'equip_component' | 'unequip_component';
-
-/** Chave idempotência para mutações de intenção na Oficina (8–128 chars seguros). */
-export function newWorkshopIntentIdempotencyKey(): string {
-  return newServerIntentIdempotencyKey();
-}
-
-export type WorkshopIntentOk = {
-  ok: true;
-  serverUpdatedAt: number;
-  stateVersion?: number;
-  workshopSlots: unknown[];
-  stock: Record<string, number>;
-  storedBatteries: StoredBattery[];
-  idempotentReplay?: boolean;
-};
-
-export type WorkshopIntentErr = {
-  ok: false;
-  error: string;
-  status?: number;
-  code?: string;
-  forceReload?: boolean;
-};
-
-export type WorkshopIntentResult = WorkshopIntentOk | WorkshopIntentErr;
-
-async function postWorkshopIntent(path: string, body: Record<string, unknown>): Promise<WorkshopIntentResult> {
-  try {
-    const res = await apiFetch(`${base}${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    if (!res.ok) {
-      const err = typeof data.error === 'string' ? data.error : `HTTP ${res.status}`;
-      const code = typeof data.code === 'string' ? data.code : undefined;
-      return {
-        ok: false as const,
-        error: err,
-        status: res.status,
-        code,
-        forceReload: data.forceReload === true
-      };
-    }
-    const su = Number(data.serverUpdatedAt);
-    if (Number.isFinite(su) && su > 0) globalLastLoadTime = su;
-    const sv = Number(data.stateVersion);
-    return {
-      ok: true as const,
-      serverUpdatedAt: su,
-      stateVersion: Number.isFinite(sv) ? sv : undefined,
-      workshopSlots: Array.isArray(data.workshopSlots) ? data.workshopSlots : [],
-      stock: (data.stock as Record<string, number>) || {},
-      storedBatteries: Array.isArray(data.storedBatteries) ? (data.storedBatteries as StoredBattery[]) : [],
-      idempotentReplay: data.idempotentReplay === true
-    };
-  } catch {
-    return { ok: false as const, error: 'Network error' };
-  }
-}
-
-/** Instalar estrutura na bancada `slotIndex` (stock → workshop_slots). */
-export async function postWorkshopSlotEquip(payload: {
-  slotIndex: number;
-  itemId: string;
-  idempotencyKey: string;
-  clientStateVersion?: number;
-}): Promise<WorkshopIntentResult> {
-  const { slotIndex, itemId, idempotencyKey, clientStateVersion } = payload;
-  return postWorkshopIntent(`/workshop/slots/${slotIndex}/equip`, {
-    itemId,
-    idempotencyKey,
-    clientStateVersion
-  });
-}
-
-/** Remover estrutura da bancada (devolve ao stock quando permitido). */
-export async function postWorkshopSlotUnequip(payload: {
-  slotIndex: number;
-  idempotencyKey: string;
-  clientStateVersion?: number;
-}): Promise<WorkshopIntentResult> {
-  const { slotIndex, idempotencyKey, clientStateVersion } = payload;
-  return postWorkshopIntent(`/workshop/slots/${slotIndex}/unequip`, { idempotencyKey, clientStateVersion });
-}
-
-/** Montar bateria/peça no carregador (armazém ou stock → slot interno). */
-export async function postWorkshopBatteryChargeStart(payload: {
-  batteryId: string;
-  benchSlotIndex: number;
-  componentSlotId: string;
-  componentSlotLayoutIndex?: number;
-  idempotencyKey: string;
-  clientStateVersion?: number;
-}): Promise<WorkshopIntentResult> {
-  const bid = encodeURIComponent(String(payload.batteryId || '').trim());
-  const b: Record<string, unknown> = {
-    benchSlotIndex: payload.benchSlotIndex,
-    componentSlotId: payload.componentSlotId,
-    idempotencyKey: payload.idempotencyKey
-  };
-  if (payload.clientStateVersion != null) b.clientStateVersion = payload.clientStateVersion;
-  if (payload.componentSlotLayoutIndex != null) b.componentSlotLayoutIndex = payload.componentSlotLayoutIndex;
-  return postWorkshopIntent(`/workshop/batteries/${bid}/charge/start`, b);
-}
-
-/** Retirar bateria/peça do carregador. */
-export async function postWorkshopBatteryChargeStop(payload: {
-  batteryId: string;
-  benchSlotIndex: number;
-  componentSlotId: string;
-  componentSlotLayoutIndex?: number;
-  idempotencyKey: string;
-  clientStateVersion?: number;
-}): Promise<WorkshopIntentResult> {
-  const bid = encodeURIComponent(String(payload.batteryId || '').trim());
-  const b: Record<string, unknown> = {
-    benchSlotIndex: payload.benchSlotIndex,
-    componentSlotId: payload.componentSlotId,
-    idempotencyKey: payload.idempotencyKey
-  };
-  if (payload.clientStateVersion != null) b.clientStateVersion = payload.clientStateVersion;
-  if (payload.componentSlotLayoutIndex != null) b.componentSlotLayoutIndex = payload.componentSlotLayoutIndex;
-  return postWorkshopIntent(`/workshop/batteries/${bid}/charge/stop`, b);
-}
-
-/**
- * Oficina: mutação legada `POST /api/workshop/mutate` (preferir rotas granulares acima).
- * Requer `idempotencyKey` no payload.
- */
-export async function postWorkshopMutate(payload: {
-  action: WorkshopMutateAction;
-  slotIndex: number;
-  itemId?: string;
-  componentSlotId?: string;
-  componentSlotLayoutIndex?: number;
-  storedBatteryId?: string;
-  expectedServerUpdatedAt?: number;
-  clientStateVersion?: number;
-  idempotencyKey: string;
-}): Promise<WorkshopIntentResult> {
-  return postWorkshopIntent('/workshop/mutate', { ...payload });
-}
-
 // fetchGameState removida em favor de getGameState unificada
 
 /** Bateria em massa na sala (Servidores) — servidor aplica regras e persiste. */
@@ -3736,7 +3560,7 @@ export async function postServerRoomRoomCoins(
 /** fetch + keepalive: corpos grandes falham no browser (~64 KiB). */
 const SAVE_GAME_KEEPALIVE_MAX_BYTES = 61440;
 
-export type GameSaveDomainHeader = 'inventory' | 'servers' | 'workshop';
+export type GameSaveDomainHeader = 'inventory' | 'servers';
 
 export async function saveGameState(
   email: string,
@@ -3764,11 +3588,6 @@ export async function saveGameState(
   } else if (domain === 'servers') {
     url = `${base}/game/save-servers`;
     payload = { lastLoadTime: globalLastLoadTime, placedRacks: state.placedRacks };
-    if (state.stock != null) (payload as Record<string, unknown>).stock = state.stock;
-    if (state.storedBatteries != null) (payload as Record<string, unknown>).storedBatteries = state.storedBatteries;
-  } else if (domain === 'workshop') {
-    url = `${base}/game/save-workshop`;
-    payload = { lastLoadTime: globalLastLoadTime, workshopSlots: state.workshopSlots };
     if (state.stock != null) (payload as Record<string, unknown>).stock = state.stock;
     if (state.storedBatteries != null) (payload as Record<string, unknown>).storedBatteries = state.storedBatteries;
   } else {
@@ -4106,38 +3925,6 @@ export async function setMonetizationSettings(settings: MonetizationSettings): P
     throw new Error(text || `Erro ao salvar monetização: ${res.status}`);
   }
 }
-export async function claimAdReward(email: string, wsIdx: number): Promise<{ ok: boolean; newCharge?: number; rewardMsg?: string; error?: string }> {
-  try {
-    const res = await apiFetch(`${base}/reward-ad`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wsIdx })
-    });
-    if (!res.ok) {
-      try { return await res.json(); } catch { return { ok: false, error: 'Failed to claim reward' }; }
-    }
-    try { return await res.json(); } catch { return { ok: true }; }
-  } catch {
-    return { ok: false, error: 'Network error' };
-  }
-}
-
-export async function performWorkshopInstantRecharge(email: string, wsIdx: number): Promise<{ ok: boolean; newCharge?: number; error?: string }> {
-  try {
-    const res = await apiFetch(`${base}/workshop/recharge`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ wsIdx })
-    });
-    if (!res.ok) {
-      try { return await res.json(); } catch { return { ok: false, error: 'Recharge failed' }; }
-    }
-    return await res.json();
-  } catch {
-    return { ok: false, error: 'Network error' };
-  }
-}
-
 export async function getServerTime(): Promise<{ serverTime: number }> {
   try {
     const res = await apiFetch(`${base}/system/time`);
@@ -4145,22 +3932,6 @@ export async function getServerTime(): Promise<{ serverTime: number }> {
     return await res.json();
   } catch {
     return { serverTime: Date.now() };
-  }
-}
-
-export async function performDailyBoost(email: string, slotIndex: number): Promise<{ ok: boolean; newCharge?: number; boostAmount?: number; error?: string }> {
-  try {
-    const res = await apiFetch(`${base}/daily-boost`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slotIndex })
-    });
-    if (!res.ok) {
-      try { return await res.json(); } catch { return { ok: false, error: 'Boost failed' }; }
-    }
-    return await res.json();
-  } catch {
-    return { ok: false, error: 'Network error' };
   }
 }
 
@@ -4676,6 +4447,104 @@ export async function getDashboardState(): Promise<DashboardStateResult> {
     return { ok: true, data: data as DashboardState };
   } catch {
     return { ok: false, status: 0, error: 'Não foi possível conectar ao servidor.' };
+  }
+}
+
+/** Resposta de GET /api/checkin/status e campos comuns ao POST /api/checkin */
+export type CheckinStatusPayload = {
+  today: string;
+  timezone: string;
+  lastCheckinDay: string | null;
+  streak: number;
+  todayCheckedIn: boolean;
+  frozen: boolean;
+  nextResetMs: number;
+  rewardCycleProgress: number;
+  rewardCycleSize: number;
+};
+
+export type CheckinPerformPayload = CheckinStatusPayload & {
+  performed: boolean;
+  rewardGranted: number;
+  streakReset: boolean;
+};
+
+function parseCheckinStatusPayload(raw: Record<string, unknown>): CheckinStatusPayload | null {
+  if (raw.ok !== true) return null;
+  const today = typeof raw.today === 'string' ? raw.today : '';
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(today)) return null;
+  const streak = typeof raw.streak === 'number' && Number.isFinite(raw.streak) ? Math.max(0, Math.floor(raw.streak)) : 0;
+  const nextResetMs =
+    typeof raw.nextResetMs === 'number' && Number.isFinite(raw.nextResetMs) ? raw.nextResetMs : Date.now();
+  return {
+    today,
+    timezone: typeof raw.timezone === 'string' ? raw.timezone : 'America/Sao_Paulo',
+    lastCheckinDay: (() => {
+      const v = raw.lastCheckinDay;
+      if (v == null || v === '') return null;
+      const s = String(v).trim();
+      return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+    })(),
+    streak,
+    todayCheckedIn: raw.todayCheckedIn === true,
+    frozen: raw.frozen === true,
+    nextResetMs,
+    rewardCycleProgress:
+      typeof raw.rewardCycleProgress === 'number' && Number.isFinite(raw.rewardCycleProgress)
+        ? Math.max(0, Math.floor(raw.rewardCycleProgress))
+        : 0,
+    rewardCycleSize:
+      typeof raw.rewardCycleSize === 'number' && Number.isFinite(raw.rewardCycleSize)
+        ? Math.max(1, Math.floor(raw.rewardCycleSize))
+        : 7
+  };
+}
+
+/** GET /api/checkin/status */
+export async function getCheckinStatus(): Promise<{ ok: true; data: CheckinStatusPayload } | { ok: false; error: string }> {
+  try {
+    const res = await apiFetch(`${base}/checkin/status`);
+    if (res.status === 401) return { ok: false, error: 'Sessão expirada.' };
+    const raw = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      const err = typeof raw.error === 'string' && raw.error.trim() ? raw.error.trim() : 'Erro ao ler check-in.';
+      return { ok: false, error: err };
+    }
+    const data = parseCheckinStatusPayload(raw);
+    if (!data) return { ok: false, error: 'Resposta inválida do servidor.' };
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'Não foi possível conectar ao servidor.' };
+  }
+}
+
+/** POST /api/checkin — idempotente por dia BRT */
+export async function postCheckin(): Promise<
+  { ok: true; data: CheckinPerformPayload } | { ok: false; error: string; code?: string }
+> {
+  try {
+    const res = await apiFetch(`${base}/checkin`, { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+    if (res.status === 401) return { ok: false, error: 'Sessão expirada.' };
+    const raw = (await res.json()) as Record<string, unknown>;
+    if (!res.ok) {
+      const code = typeof raw.code === 'string' ? raw.code : undefined;
+      const err = typeof raw.error === 'string' && raw.error.trim() ? raw.error.trim() : 'Erro ao registar check-in.';
+      return { ok: false, error: err, code };
+    }
+    const baseFields = parseCheckinStatusPayload(raw);
+    if (!baseFields) return { ok: false, error: 'Resposta inválida do servidor.' };
+    const data: CheckinPerformPayload = {
+      ...baseFields,
+      performed: raw.performed === true,
+      rewardGranted:
+        typeof raw.rewardGranted === 'number' && Number.isFinite(raw.rewardGranted)
+          ? Math.max(0, Math.floor(raw.rewardGranted))
+          : 0,
+      streakReset: raw.streakReset === true
+    };
+    return { ok: true, data };
+  } catch {
+    return { ok: false, error: 'Não foi possível conectar ao servidor.' };
   }
 }
 

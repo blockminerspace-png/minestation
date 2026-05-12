@@ -51,15 +51,13 @@ export function registerInventoryRoutes(app: Express, deps: InventoryControllerD
       const snap = await loadPlayerInventorySnapshot(pool, userId);
       console.info('[inventory/me]', {
         userId,
-        nFull: snap.storedBatteriesFull.length,
-        nPartial: snap.storedBatteriesPartial.length
+        nBatteries: snap.storedBatteries.length
       });
 
       return res.json({
         ok: true,
         stock: snap.stock,
-        storedBatteriesFull: snap.storedBatteriesFull,
-        storedBatteriesPartial: snap.storedBatteriesPartial,
+        storedBatteries: snap.storedBatteries,
         serverUpdatedAt: snap.serverUpdatedAt
       });
     } catch (e) {

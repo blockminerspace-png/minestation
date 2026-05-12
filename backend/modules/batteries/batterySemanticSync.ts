@@ -1,7 +1,11 @@
 /**
- * Alinha `stored_batteries.status/location/rack_id/...` com `placed_racks` e oficina
- * após persistência de sala (`persistStockStoredBatteriesPlacedRacks`).
+ * Alinha `stored_batteries.status/location/rack_id/...` com `placed_racks` após
+ * persistência de sala (`persistStockStoredBatteriesPlacedRacks`).
  * Só incrementa `version` quando o estado semântico muda de facto.
+ *
+ * Sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: já não há `workshop_slot_index`
+ * em `stored_batteries`; só os estados EQUIPPED (em rig) e INVENTORY restam.
  */
 import type { PoolClient } from 'pg';
 import { PG_BATTERY_INSTANCE_UUID } from './batteryInvariant.service.js';
@@ -14,52 +18,11 @@ export async function syncStoredBatterySemanticsForUser(client: PoolClient, user
   await client.query(
     `
     UPDATE stored_batteries sb
-       SET status = 'CHARGING',
-           location = 'WORKSHOP_CHARGER',
-           rack_id = NULL,
-           slot_id = NULL,
-           room_id = NULL,
-           version = CASE
-             WHEN sb.status IS DISTINCT FROM 'CHARGING'::text
-               OR sb.location IS DISTINCT FROM 'WORKSHOP_CHARGER'::text
-               OR sb.rack_id IS NOT NULL
-               OR sb.slot_id IS NOT NULL
-               OR sb.room_id IS NOT NULL
-             THEN COALESCE(sb.version, 0) + 1
-             ELSE COALESCE(sb.version, 0)
-           END,
-           last_moved_at = CASE
-             WHEN sb.status IS DISTINCT FROM 'CHARGING'::text
-               OR sb.location IS DISTINCT FROM 'WORKSHOP_CHARGER'::text
-               OR sb.rack_id IS NOT NULL
-             THEN NOW()
-             ELSE sb.last_moved_at
-           END,
-           updated_at = NOW()
-     WHERE sb.user_id = $1
-       AND sb.workshop_slot_index IS NOT NULL
-       AND NOT EXISTS (
-             SELECT 1 FROM placed_racks pr
-              WHERE pr.user_id = sb.user_id
-                AND pr.battery_id IS NOT NULL
-                AND btrim(pr.battery_id::text) <> ''
-                AND btrim(pr.battery_id::text) = btrim(sb.id::text)
-                AND pr.battery_id::text ~* $2::text
-           )
-  `,
-    [uid, uuidRe]
-  );
-
-  await client.query(
-    `
-    UPDATE stored_batteries sb
        SET status = 'EQUIPPED',
            location = 'RACK',
            rack_id = pr.id,
            slot_id = COALESCE(pr.slot_index, 0),
            room_id = COALESCE(nullif(btrim(pr.room_id::text), ''), 'room_initial'),
-           workshop_slot_index = NULL,
-           workshop_component_slot_id = NULL,
            version = CASE
              WHEN sb.status IS DISTINCT FROM 'EQUIPPED'::text
                OR sb.location IS DISTINCT FROM 'RACK'::text
@@ -114,7 +77,6 @@ export async function syncStoredBatterySemanticsForUser(client: PoolClient, user
            END,
            updated_at = NOW()
      WHERE sb.user_id = $1
-       AND sb.workshop_slot_index IS NULL
        AND COALESCE(nullif(btrim(sb.status::text), ''), '') NOT IN ('BROKEN', 'CONSUMED', 'LOCKED')
        AND NOT EXISTS (
              SELECT 1 FROM placed_racks pr

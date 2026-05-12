@@ -7,6 +7,5 @@ export {
 export type {
   ServersAuthoritativeStateDto,
   ServersStatePlacedRackDto,
-  ServersStateStoredBatteryDto,
-  ServersStateWorkshopSlotDto
+  ServersStateStoredBatteryDto
 } from './servers.types.js';

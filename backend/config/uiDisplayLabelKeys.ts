@@ -40,14 +40,12 @@ export const UI_DISPLAY_LABEL_KEYS = [
   'shop.filter.battery',
   'shop.filter.wiring',
   'shop.filter.multiplier',
-  'shop.filter.charger',
   'p2p.type.all',
   'p2p.type.machine',
   'p2p.type.infrastructure',
   'p2p.type.battery',
   'p2p.type.wiring',
-  'p2p.type.multiplier',
-  'p2p.type.charger'
+  'p2p.type.multiplier'
 ] as const;
 
 export type UiDisplayLabelKey = (typeof UI_DISPLAY_LABEL_KEYS)[number];

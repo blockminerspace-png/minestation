@@ -5,7 +5,6 @@ import {
     Upgrade,
     RigRoom,
     MiningCoin,
-    WorkshopStructure,
     normalizePlacedRackRoomId,
     isNftAutoArmario1OnlyRoom,
     NFT_AUTO_ALLOWED_CHASSIS_ID
@@ -19,14 +18,10 @@ import {
   formatHashrateDisplay,
   getDefaultRackLayout,
   mergeBatteryWidgetsIfAbsent,
-  getRackBatteryRuntimeHint,
-  getRackBatteryRuntimeShortLabel,
   resolvePlacedRackBatteryCatalogId,
-  formatRackEnergyWh,
   listInfrastructureInStock,
   listItemsForSelection,
   listStoredBatteriesForSelection,
-  isKnownInfiniteBatteryItem,
   type ServerRoomSelectionContext
 } from '../models/serverRoomModel';
 import { runValidatedItemSelection } from '../controllers/serverRoomController';
@@ -133,7 +128,6 @@ interface ServerRoomProps {
     ) => void | Promise<void>;
     onUnequipAux: (rackId: string, type: 'battery' | 'wiring' | 'multiplier', slotIndex?: number) => void | Promise<void>;
     onTogglePower: (rackId: string) => void;
-    onRecharge: (rackId: string) => void;
     upgrades: Upgrade[];
     miningCoins?: MiningCoin[];
     onSetRackCoin?: (rackId: string, coinId: string) => void;
@@ -148,8 +142,6 @@ interface ServerRoomProps {
     onOpenCalculator?: () => void;
     /** UUID de instância na rig → id de catálogo (bateria do armazém removida do array local). */
     rackBatteryCatalogHints?: Readonly<Record<string, string>>;
-    /** Oficina: carga das baterias nos carregadores está em `slotCharges`, não em `stored_batteries`. */
-    workshopSlots?: (WorkshopStructure | null)[] | null;
 }
 
 const AnimatedMiner = ({ src, isOperational, className, style, item }: { src: string, isOperational: boolean, className: string, style: any, item: Upgrade | undefined }) => {
@@ -217,7 +209,7 @@ function UpgradeSelectionThumb({
     }
     const ic = iconSize;
     const t = upgrade.type;
-    if (t === 'battery' || t === 'charger') {
+    if (t === 'battery') {
         return <Battery className="text-amber-600 dark:text-amber-400" size={ic} aria-hidden />;
     }
     if (t === 'machine') {
@@ -286,7 +278,6 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     onEquipAux,
     onUnequipAux,
     onTogglePower,
-    onRecharge,
     upgrades,
     miningCoins = [],
     onSetRackCoin,
@@ -297,7 +288,6 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
     onRoomPurchase,
     onOpenCalculator,
     rackBatteryCatalogHints,
-    workshopSlots
 }) => {
     const batteryCatalogHints = rackBatteryCatalogHints ?? NO_BATTERY_CATALOG_HINTS;
     const [selectionContext, setSelectionContext] = useState<ServerRoomSelectionContext | null>(null);
@@ -542,7 +532,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
     const getAvailableStoredBatteries = () => {
         if (!selectionContext) return [];
-        return listStoredBatteriesForSelection(selectionContext, placedRacks, storedBatteries, upgrades, workshopSlots);
+        return listStoredBatteriesForSelection(selectionContext, placedRacks, storedBatteries, upgrades);
     };
 
     const openRoomBulkCoinModal = (room: RigRoom) => {
@@ -1095,28 +1085,8 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                         batteryCatalogHints
                     );
                     const battery = batteryCatalogId ? upgrades.find((u) => u.id === batteryCatalogId) : null;
-                    const isInfinite =
-                        rack.currentCharge === -1 ||
-                        rack.batteryPowerCapacityWh === -1 ||
-                        isKnownInfiniteBatteryItem(batteryCatalogId) ||
-                        (battery && battery.powerCapacity === -1);
-                    const chargePercent = battery && battery.powerCapacity && !isInfinite
-                        ? (rack.currentCharge / battery.powerCapacity) * 100
-                        : (isInfinite ? 100 : 0);
 
-                    const isOperational = rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
-                    const batteryRuntimeShort = getRackBatteryRuntimeShortLabel(
-                        rack,
-                        upgrades,
-                        storedBatteries,
-                        batteryCatalogHints
-                    );
-                    const batteryRuntimeHint = getRackBatteryRuntimeHint(
-                        rack,
-                        upgrades,
-                        storedBatteries,
-                        batteryCatalogHints
-                    );
+                    const isOperational = !!(rack.isOn && rack.wiringId && rack.batteryId);
 
                     const layoutToUse = mergeBatteryWidgetsIfAbsent(
                       rackDef?.layout || (rackDef ? getDefaultRackLayout(rackDef) : { canvasWidth: 500, canvasHeight: 600, slots: [] })
@@ -1285,11 +1255,11 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                     key={i}
                                                                     className="pointer-events-none absolute z-30 cursor-help bg-black/40 backdrop-blur-[2px] border border-white/10 rounded-full overflow-hidden p-0.5 shadow-inner"
                                                                     style={{ left: `${slot.x}%`, top: `${slot.y}%`, width: `${slot.w}%`, height: `${slot.h}%` }}
-                                                                    title={batteryRuntimeHint}
+                                                                    title="Bateria infinita"
                                                                 >
                                                                     <div
-                                                                        className={`h-full rounded-full transition-all duration-500 ${isInfinite ? 'bg-amber-400 shadow-[0_0_10px_#f59e0b]' : (chargePercent < 20 ? 'bg-red-500' : 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.3)]')} ${isOperational && chargePercent < 99.9 ? 'animate-super-pulse' : (rack.isOn ? 'animate-pulse opacity-80' : '')}`}
-                                                                        style={{ width: `${Math.min(100, chargePercent)}%` }}
+                                                                        className={`h-full rounded-full transition-all duration-500 bg-amber-400 shadow-[0_0_10px_#f59e0b] ${rack.isOn ? 'animate-pulse opacity-80' : ''}`}
+                                                                        style={{ width: '100%' }}
                                                                     ></div>
                                                                 </div>
                                                             );
@@ -1298,13 +1268,6 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         if (slot.type === 'stat_monitor') {
                                                             if (nftAutoRoomHideEnergyTimerUi) return <React.Fragment key={i} />;
                                                             const selectedCoin = miningCoins?.find(c => c.id === rack.selectedCoinId);
-                                                            const powerStoredLabel = isInfinite
-                                                                ? '∞'
-                                                                : formatRackEnergyWh(rack.currentCharge);
-                                                            const powerCapLabel =
-                                                                !isInfinite && battery?.powerCapacity && battery.powerCapacity > 0
-                                                                    ? formatRackEnergyWh(battery.powerCapacity)
-                                                                    : null;
                                                             return (
                                                                 <div
                                                                     key={i}
@@ -1327,20 +1290,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                                         </div>
                                                                         <div className="flex min-w-0 flex-col">
                                                                             <span className="text-white/35 uppercase text-[5px] font-black tracking-widest">Power</span>
-                                                                            <span
-                                                                                className={`truncate font-black ${isInfinite ? 'text-amber-400' : chargePercent < 20 ? 'text-red-400' : 'text-emerald-400'}`}
-                                                                                title={powerCapLabel ? `${rack.currentCharge.toFixed(0)} Wh / ${battery?.powerCapacity} Wh máx.` : String(rack.currentCharge)}
-                                                                            >
-                                                                                {powerCapLabel ? (
-                                                                                    <>
-                                                                                        {powerStoredLabel}
-                                                                                        <span className="font-normal text-white/35"> / </span>
-                                                                                        {powerCapLabel}
-                                                                                    </>
-                                                                                ) : (
-                                                                                    powerStoredLabel
-                                                                                )}
-                                                                            </span>
+                                                                            <span className="truncate font-black text-amber-400">∞</span>
                                                                         </div>
                                                                         <div className="flex min-w-0 flex-col">
                                                                             <span className="text-white/35 uppercase text-[5px] font-black tracking-widest">Load</span>
@@ -1431,30 +1381,24 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                         }
                                     }}
                                     className="mt-1.5 flex w-full max-w-full shrink-0 cursor-pointer items-stretch gap-2 rounded-lg border border-emerald-600/30 bg-gradient-to-r from-slate-950 via-slate-900 to-slate-950 px-2 py-1.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.05)] outline-none hover:border-emerald-500/50 focus-visible:ring-2 focus-visible:ring-emerald-500/40"
-                                    title={`${batteryRuntimeHint} — Clique para abrir detalhes da bateria.`}
+                                    title="Bateria infinita — Clique para abrir detalhes."
                                 >
                                     <Battery className="self-center shrink-0 text-emerald-400 opacity-90" size={15} strokeWidth={2} />
                                     <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
                                         <div className="h-2 rounded-full border border-white/10 bg-black/50 p-px">
                                             <div
-                                                className={`h-full rounded-full transition-all duration-500 ${isInfinite ? 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)]' : chargePercent < 20 ? 'bg-red-500' : 'bg-gradient-to-r from-emerald-600 to-emerald-400'}`}
-                                                style={{ width: `${Math.min(100, chargePercent)}%` }}
+                                                className="h-full rounded-full transition-all duration-500 bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)]"
+                                                style={{ width: '100%' }}
                                             />
                                         </div>
                                         <div className="flex items-baseline justify-between gap-2 text-[8px]">
-                                            <span className="min-w-0 truncate font-mono text-slate-400" title={batteryRuntimeHint}>
-                                                {isInfinite ? 'Ilimitada' : `${formatRackEnergyWh(rack.currentCharge)} · máx ${formatRackEnergyWh(battery.powerCapacity || 0)}`}
-                                            </span>
-                                            <span className="shrink-0 font-mono text-[9px] font-bold tabular-nums text-emerald-300">
-                                                {isInfinite ? '∞' : batteryRuntimeShort}
-                                            </span>
+                                            <span className="min-w-0 truncate font-mono text-slate-400">Ilimitada</span>
+                                            <span className="shrink-0 font-mono text-[9px] font-bold tabular-nums text-emerald-300">∞</span>
                                         </div>
                                     </div>
                                     <div className="flex flex-col justify-center border-l border-white/10 pl-2 text-right">
                                         <span className="text-[6px] font-bold uppercase tracking-wider text-slate-500">Carga</span>
-                                        <span className="font-mono text-sm font-black tabular-nums leading-none text-white">
-                                            {isInfinite ? '∞' : `${Math.round(Math.min(100, chargePercent))}%`}
-                                        </span>
+                                        <span className="font-mono text-sm font-black tabular-nums leading-none text-white">∞</span>
                                     </div>
                                 </div>
                             ) : null}
@@ -1484,33 +1428,16 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
 
                             <div className="p-4 max-h-[60vh] overflow-y-auto custom-scrollbar">
                                 <div className="flex flex-col gap-2">
-                                    {/* STORED BATTERIES SECTION */}
+                                    {/* STORED BATTERIES SECTION (UUID infinitas) */}
                                     {selectionContext.type === 'battery' && getAvailableStoredBatteries().length > 0 && (
                                         <div className="mb-4">
                                             <div className="text-xs font-bold text-slate-500 uppercase tracking-widest mb-2 flex items-center gap-2">
-                                                <Save size={10} /> Usadas / Carregadas (compatíveis) — mais carga primeiro
+                                                <Save size={10} /> Armazém (compatíveis)
                                             </div>
                                             {getAvailableStoredBatteries().map(stored => {
                                                 const def = upgrades.find(u => u.id === stored.itemId);
                                                 if (!def) return null;
                                                 const defImg = normalizePublicAssetUrl(def.image);
-                                                const isInfiniteStored = def.powerCapacity === -1 || isKnownInfiniteBatteryItem(def.id);
-                                                const capWh =
-                                                    stored.powerCapacityWh != null &&
-                                                    Number.isFinite(stored.powerCapacityWh) &&
-                                                    stored.powerCapacityWh > 0
-                                                        ? stored.powerCapacityWh
-                                                        : def.powerCapacity === -1
-                                                          ? -1
-                                                          : def.powerCapacity || 1;
-                                                const wh = Number(stored.currentCharge);
-                                                const chargeWh = Number.isFinite(wh) ? wh : 0;
-                                                const chargePct =
-                                                    isInfiniteStored || capWh === -1
-                                                        ? 100
-                                                        : capWh > 0
-                                                          ? Math.min(100, Math.max(0, (chargeWh / capWh) * 100))
-                                                          : 0;
 
                                                 return (
                                                     <button
@@ -1524,22 +1451,7 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                         <div className="flex-1 min-w-0">
                                                             <div className="font-bold text-slate-700 dark:text-slate-300 text-sm flex justify-between items-center gap-2">
                                                                 <span className="min-w-0 truncate">{def.name}</span>
-                                                                <span className="flex shrink-0 items-center gap-1.5">
-                                                                    {stored.fromWorkshopSlot ? (
-                                                                        <span className="text-[9px] font-bold uppercase tracking-tight text-emerald-600 dark:text-emerald-400 border border-emerald-500/40 rounded px-1 py-0">
-                                                                            Oficina
-                                                                        </span>
-                                                                    ) : null}
-                                                                    <span className="text-yellow-600 dark:text-yellow-500 font-mono text-xs">
-                                                                        {isInfiniteStored ? '∞' : `${chargePct.toFixed(0)}%`}
-                                                                    </span>
-                                                                </span>
-                                                            </div>
-                                                            <div className="w-full h-1 bg-slate-200 dark:bg-slate-900 rounded-full mt-1 overflow-hidden">
-                                                                <div
-                                                                    className="h-full bg-yellow-500 dark:bg-yellow-600"
-                                                                    style={{ width: `${chargePct}%` }}
-                                                                />
+                                                                <span className="text-yellow-600 dark:text-yellow-500 font-mono text-xs">∞</span>
                                                             </div>
                                                         </div>
                                                     </button>
@@ -1656,13 +1568,6 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                         if (up && up.multiplier) mult += up.multiplier;
                                     });
                                     const totalPower = baseProd * mult;
-                                    const battCap = battery?.powerCapacity || rack.batteryPowerCapacityWh || 1;
-                                    const isInfiniteConf =
-                                        rack.currentCharge === -1 ||
-                                        rack.batteryPowerCapacityWh === -1 ||
-                                        isKnownInfiniteBatteryItem(battCat) ||
-                                        battCap === -1;
-                                    const chargePercent = isInfiniteConf ? 100 : (battery && battery.powerCapacity ? Math.min(100, Math.max(0, (rack.currentCharge / battery.powerCapacity) * 100)) : 0);
 
                                     return (
                                         <>
@@ -1698,11 +1603,9 @@ export const ServerRoom: React.FC<ServerRoomProps> = ({
                                                     {battery ? (
                                                         <>
                                                             <div className="text-xs text-slate-600 dark:text-slate-300"><span className="font-bold text-slate-700 dark:text-white">{battery.name}</span> — {battery.description}</div>
-                                                            <div className="text-[10px] text-yellow-600 dark:text-yellow-400">
-                                                                Capacidade: {isInfiniteConf || battery.powerCapacity === -1 ? 'Ilimitada (∞ Wh)' : `${battery.powerCapacity} Wh`}
-                                                            </div>
+                                                            <div className="text-[10px] text-yellow-600 dark:text-yellow-400">Capacidade: Ilimitada (∞)</div>
                                                             <div className="w-full h-2 bg-slate-300 dark:bg-black rounded-sm border border-slate-400 dark:border-slate-700 relative overflow-hidden mt-1">
-                                                                <div className="h-full bg-yellow-500" style={{ width: `${chargePercent}%` }}></div>
+                                                                <div className="h-full bg-yellow-500" style={{ width: '100%' }}></div>
                                                             </div>
                                                         </>
                                                     ) : (

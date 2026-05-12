@@ -23,7 +23,6 @@ import { prisma } from '../config/prisma.js';
 import { registerServersRackAuxIntentRoutes } from '../modules/servers/servers.rackAuxIntent.controller.js';
 import { registerServersModuleRoutes } from '../modules/servers/servers.controller.js';
 import { registerInventoryModuleRoutes } from '../modules/inventory/inventory.controller.js';
-import { registerWorkshopIntentRoutes } from '../controllers/workshopIntent.controller.js';
 import { registerShopModuleRoutes } from '../modules/shop/shop.controller.js';
 import { registerWalletPlayerRoutes } from '../modules/wallet/walletPlayerController.js';
 import {
@@ -43,7 +42,6 @@ const suffix = crypto.randomUUID().slice(0, 10);
 const IDS = {
   chassis: `pgtest_http_chassis_${suffix}`,
   battery: `pgtest_http_battery_${suffix}`,
-  charger: `pgtest_http_charger_${suffix}`,
   shopItem: `pgtest_http_hwitem_${suffix}`,
   coin: `pgtest_http_coin_${suffix}`,
   rack: `pgtest_http_rack_${suffix}`
@@ -88,7 +86,6 @@ async function startTestApp(pool: pg.Pool): Promise<{ baseUrl: string; close: ()
   });
   registerServersModuleRoutes(app, { prisma, pool });
   registerInventoryModuleRoutes(app, { authenticateToken: authPass, pool });
-  registerWorkshopIntentRoutes(app, { authenticateToken: authPass });
   registerShopModuleRoutes(app, { pool, authenticateToken: authPass });
   registerWalletPlayerRoutes(app, { authenticateToken: authPass, appendGameActivityLog: noopLog });
 
@@ -183,16 +180,9 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
   let baseUrl = '';
   let closeApp: () => Promise<void> = async () => {};
   let prevWithdrawTokens: string | null = null;
-  /** Prisma `workshop_slots.installed_at` exige coluna na BD (migração); ambientes antigos ficam sem teste de oficina HTTP. */
-  let workshopSchemaOk = false;
 
   beforeAll(async () => {
     await prisma.$connect();
-    const colChk = await pool.query(
-      `SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'workshop_slots' AND column_name = 'installed_at' LIMIT 1`
-    );
-    workshopSchemaOk = colChk.rowCount > 0;
     const hash = await bcrypt.hash('pgtest_http_x', 8);
     const u = await prisma.users.create({
       data: {
@@ -269,27 +259,6 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
       update: { is_active: 1 }
     });
 
-    const chargerLayout = JSON.stringify({ slots: [{ type: 'battery', id: 'bat_slot' }] });
-    await prisma.upgrades.upsert({
-      where: { id: IDS.charger },
-      create: {
-        id: IDS.charger,
-        name: 'PG charger',
-        category: 'workshop',
-        type: 'charger',
-        base_cost: 0,
-        base_production: 0,
-        description: 'pg',
-        icon: 'x',
-        status: 'active',
-        is_nft: 0,
-        layout: chargerLayout,
-        sell_in_hardware_market: 0,
-        is_active: 1
-      },
-      update: { layout: chargerLayout, is_active: 1 }
-    });
-
     await prisma.upgrades.upsert({
       where: { id: IDS.shopItem },
       create: {
@@ -326,8 +295,8 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
     });
 
     await pool.query(
-      `INSERT INTO placed_racks (id, user_id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id, room_id, slot_index)
-       VALUES ($1, $2, $3, NULL, NULL, 0, 0, NULL, 'room_initial', 0)`,
+      `INSERT INTO placed_racks (id, user_id, item_id, wiring_id, battery_id, is_on, selected_coin_id, room_id, slot_index)
+       VALUES ($1, $2, $3, NULL, NULL, 0, NULL, 'room_initial', 0)`,
       [IDS.rack, userId, IDS.chassis]
     );
 
@@ -336,22 +305,6 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
       create: { user_id: userId, item_id: IDS.battery, qty: 5 },
       update: { qty: 5 }
     });
-
-    if (workshopSchemaOk) {
-      await pool.query(
-        `
-      INSERT INTO workshop_slots (user_id, slot_index, item_id, internal_state, current_charge, slot_charges, slot_item_ids)
-      VALUES ($1, 0, $2, NULL, 0, NULL, NULL)
-      ON CONFLICT (user_id, slot_index) DO UPDATE SET
-        item_id = EXCLUDED.item_id,
-        internal_state = NULL,
-        current_charge = 0,
-        slot_charges = NULL,
-        slot_item_ids = NULL
-    `,
-        [userId, IDS.charger]
-      );
-    }
 
     await prisma.coin_balances.upsert({
       where: { user_id_coin_id: { user_id: userId, coin_id: IDS.coin } },
@@ -394,13 +347,12 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
       await pool.query('DELETE FROM stored_batteries WHERE user_id = $1', [userId]);
       await pool.query('DELETE FROM rack_slots WHERE rack_id = $1', [IDS.rack]);
       await pool.query('DELETE FROM placed_racks WHERE user_id = $1', [userId]);
-      await pool.query('DELETE FROM workshop_slots WHERE user_id = $1', [userId]);
       await pool.query('DELETE FROM stock WHERE user_id = $1', [userId]);
       await pool.query('DELETE FROM game_states WHERE user_id = $1', [userId]);
       await pool.query('DELETE FROM users WHERE id = $1', [userId]);
       await pool.query('DELETE FROM coin_balances WHERE user_id = $1', [userId]);
       await pool.query('DELETE FROM mining_coins WHERE id = $1', [IDS.coin]);
-      await pool.query('DELETE FROM upgrades WHERE id = ANY($1::text[])', [[IDS.chassis, IDS.battery, IDS.charger, IDS.shopItem]]);
+      await pool.query('DELETE FROM upgrades WHERE id = ANY($1::text[])', [[IDS.chassis, IDS.battery, IDS.shopItem]]);
     } catch {
       /* best-effort */
     }
@@ -412,7 +364,7 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
   }, 120_000);
 
   it('equipa / desequipa bateria + idempotência + inventário', async () => {
-    await pool.query(`UPDATE placed_racks SET battery_id = NULL, current_charge = 0 WHERE id = $1`, [IDS.rack]);
+    await pool.query(`UPDATE placed_racks SET battery_id = NULL WHERE id = $1`, [IDS.rack]);
     await prisma.stock.upsert({
       where: { user_id_item_id: { user_id: userId, item_id: IDS.battery } },
       create: { user_id: userId, item_id: IDS.battery, qty: 3 },
@@ -457,7 +409,7 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
     if (st) expect(st).toBe('EQUIPPED');
     if (sb1?.rack_id) expect(sb1.rack_id).toBe(IDS.rack);
 
-    if (workshopSchemaOk) {
+    {
       const srv = await fetchJson(baseUrl, '/api/servers/state', {
         headers: { 'x-pgtest-user-id': String(userId) }
       });
@@ -471,11 +423,8 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
       headers: { 'x-pgtest-user-id': String(userId) }
     });
     expect(inv.status).toBe(200);
-    const dto = inv.json as {
-      fullChargeBatteries?: { id: string }[];
-      partialChargeBatteries?: { id: string }[];
-    };
-    const all = [...(dto.fullChargeBatteries || []), ...(dto.partialChargeBatteries || [])];
+    const dto = inv.json as { storedBatteries?: { id: string }[] };
+    const all = dto.storedBatteries || [];
     expect(all.some((b) => b.id === mountedBatteryId)).toBe(false);
 
     const rReplay = await fetchJson(baseUrl, `/api/servers/racks/${IDS.rack}/aux/equip`, {
@@ -489,10 +438,6 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
       }
     });
     expect(rReplay.status).toBe(200);
-
-    // Bateria cheia ao desequipar volta ao stock agregado (sem linha em `stored_batteries`);
-    // forçar carga parcial para validar instância no armazém + inventário.
-    await pool.query(`UPDATE placed_racks SET current_charge = $2 WHERE id = $1`, [IDS.rack, 50]);
 
     const idemUnequip = `idem_ue_${suffix}_a`;
     const u1 = await fetchJson(baseUrl, `/api/servers/racks/${IDS.rack}/aux/unequip`, {
@@ -538,93 +483,11 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
       headers: { 'x-pgtest-user-id': String(userId) }
     });
     expect(inv2.status).toBe(200);
-    const dto2 = inv2.json as {
-      fullChargeBatteries?: Array<{ id: string; itemId?: string }>;
-      partialChargeBatteries?: Array<{ id: string; itemId?: string }>;
-    };
-    const all2 = [...(dto2.fullChargeBatteries || []), ...(dto2.partialChargeBatteries || [])];
+    const dto2 = inv2.json as { storedBatteries?: Array<{ id: string; itemId?: string }> };
+    const all2 = dto2.storedBatteries || [];
     const hits = all2.filter((b) => String(b.itemId || '').trim() === IDS.battery);
     expect(hits.length).toBe(1);
     expect(hits[0]?.id).toBe(mountedBatteryId);
-  });
-
-  it.skipIf(!workshopSchemaOk)('oficina charge start/stop + mismatch idempotência', async () => {
-    expect(mountedBatteryId.length).toBeGreaterThan(0);
-    await prisma.stored_batteries.update({
-      where: { id: mountedBatteryId },
-      data: {
-        status: 'INVENTORY',
-        location: 'INVENTORY',
-        rack_id: null,
-        workshop_slot_index: null,
-        workshop_component_slot_id: null
-      }
-    });
-
-    const gs = await prisma.game_states.findUnique({
-      where: { user_id: userId },
-      select: { server_updated_at: true }
-    });
-    const cv = Number(gs?.server_updated_at || 0);
-    const idem = `idem_ws_${suffix}_chg`;
-
-    const st = await fetchJson(baseUrl, `/api/workshop/batteries/${mountedBatteryId}/charge/start`, {
-      method: 'POST',
-      headers: { 'x-pgtest-user-id': String(userId) },
-      body: {
-        benchSlotIndex: 0,
-        componentSlotId: 'bat_slot',
-        idempotencyKey: idem,
-        clientStateVersion: cv
-      }
-    });
-    expect(st.status).toBe(200);
-
-    const sb = await prisma.stored_batteries.findUnique({ where: { id: mountedBatteryId } });
-    expect(String(sb?.status || '').toUpperCase()).toBe('CHARGING');
-
-    const inv = await fetchJson(baseUrl, '/api/inventory/state', {
-      headers: { 'x-pgtest-user-id': String(userId) }
-    });
-    expect(inv.status).toBe(200);
-    const dto = inv.json as { storedBatteriesFull?: { id: string }[]; storedBatteriesPartial?: { id: string }[] };
-    const listed = [...(dto.storedBatteriesFull || []), ...(dto.storedBatteriesPartial || [])];
-    expect(listed.some((b) => b.id === mountedBatteryId)).toBe(false);
-
-    const bad = await fetchJson(baseUrl, `/api/workshop/batteries/${mountedBatteryId}/charge/start`, {
-      method: 'POST',
-      headers: { 'x-pgtest-user-id': String(userId) },
-      body: {
-        benchSlotIndex: 1,
-        componentSlotId: 'bat_slot',
-        idempotencyKey: idem,
-        clientStateVersion: cv
-      }
-    });
-    expect(bad.status).toBe(409);
-    const bj = bad.json as { code?: string };
-    expect(bj.code).toBe('IDEMPOTENCY_PAYLOAD_MISMATCH');
-
-    const gs2 = await prisma.game_states.findUnique({
-      where: { user_id: userId },
-      select: { server_updated_at: true }
-    });
-    const idemStop = `idem_ws_${suffix}_stop`;
-    const sp = await fetchJson(baseUrl, `/api/workshop/batteries/${mountedBatteryId}/charge/stop`, {
-      method: 'POST',
-      headers: { 'x-pgtest-user-id': String(userId) },
-      body: {
-        benchSlotIndex: 0,
-        componentSlotId: 'bat_slot',
-        idempotencyKey: idemStop,
-        clientStateVersion: Number(gs2?.server_updated_at || 0)
-      }
-    });
-    expect(sp.status).toBe(200);
-
-    const sb2 = await prisma.stored_batteries.findUnique({ where: { id: mountedBatteryId } });
-    const stEnd = String(sb2?.status || '').trim().toUpperCase();
-    if (stEnd) expect(stEnd).toBe('INVENTORY');
   });
 
   it('save legado: barreira + slice neutralizado (sem HTTP save-game)', async () => {
@@ -637,7 +500,7 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
 
     const ver0 = await prisma.stored_batteries.findUnique({
       where: { id: mountedBatteryId },
-      select: { version: true, current_charge: true }
+      select: { version: true }
     });
     const client = await pool.connect();
     try {
@@ -650,10 +513,9 @@ describe.skipIf(!RUN || !DATABASE_URL)('PG HTTP flows (RUN_BACKEND_PG_INTEGRATIO
     }
     const ver1 = await prisma.stored_batteries.findUnique({
       where: { id: mountedBatteryId },
-      select: { version: true, current_charge: true }
+      select: { version: true }
     });
     expect(ver1?.version).toBe(ver0?.version);
-    expect(ver1?.current_charge).toBe(ver0?.current_charge);
     process.env.LEGACY_SAVEGAME_PLAYER_POLICY = prev;
   });
 

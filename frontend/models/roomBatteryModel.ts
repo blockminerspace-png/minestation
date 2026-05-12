@@ -1,15 +1,5 @@
 import { normalizePlacedRackRoomId, type GameState, type PlacedRack, type StoredBattery, type Upgrade } from '../types';
 
-/** Alinhado a `serverRoomModel` / backend — evita import circular. */
-const RACK_BATTERY_INSTANCE_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-function isRackBatteryInstanceUuidLocal(batteryId: string | null | undefined): boolean {
-  return RACK_BATTERY_INSTANCE_UUID_RE.test(String(batteryId ?? '').trim());
-}
-
-/** Alinhado a `STORED_BATTERY_CATALOG_PENDING_ID` no backend — `validateStoredBatteriesForSave` normaliza. */
-const LEGACY_BATTERY_MISSING_CATALOG = 'legacy_battery_missing_catalog';
-
 const newStoredId = (): string =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -22,12 +12,7 @@ export type BulkRoomBatteryApplyOptions = {
   rigSort?: BatteryRigSortMode;
 };
 
-function storedBatteryInWarehouseOnly(b: StoredBattery | null | undefined): boolean {
-  if (!b) return false;
-  return b.workshopSlotIndex == null && b.workshopComponentSlotId == null;
-}
-
-/** Unidades disponíveis = caixas no `stock` + instâncias em `storedBatteries` (carga parcial ou cheia). */
+/** Unidades disponíveis = caixas no `stock` + instâncias UUID infinitas em `storedBatteries`. */
 export function totalBatteryInstances(
   batteryItemId: string,
   stock: Record<string, number>,
@@ -35,9 +20,7 @@ export function totalBatteryInstances(
 ): number {
   if (!batteryItemId || typeof batteryItemId !== 'string') return 0;
   const s = Math.max(0, Math.floor(Number(stock[batteryItemId]) || 0));
-  const inStorage = (storedBatteries || []).filter(
-    (b) => b && b.itemId === batteryItemId && storedBatteryInWarehouseOnly(b)
-  ).length;
+  const inStorage = (storedBatteries || []).filter((b) => b && b.itemId === batteryItemId).length;
   return s + inStorage;
 }
 
@@ -101,116 +84,37 @@ export function compatibleRackIndicesForBattery(
   });
 }
 
+/**
+ * Devolve a bateria UUID infinita equipada na rig ao armazém (sem dividir entre cheia/parcial).
+ */
 function unloadRackBatteryToInventory(
   rack: PlacedRack,
-  ns: Record<string, number>,
+  _ns: Record<string, number>,
   nb: StoredBattery[],
-  upgrades: Upgrade[]
+  _upgrades: Upgrade[]
 ): void {
   if (!rack.batteryId) return;
   const id = String(rack.batteryId).trim();
   if (!id) return;
-
-  const instIdx = nb.findIndex((b) => b && String(b.id).trim() === id);
-  if (instIdx >= 0) {
-    const row = nb[instIdx]!;
-    const upg = upgrades.find((u) => u.id === row.itemId && u.type === 'battery');
-    const capacity = upg?.powerCapacity ?? 100;
-    const isInf = capacity === -1;
-    const isFull = isInf || rack.currentCharge >= capacity * 0.999;
-    nb.splice(instIdx, 1);
-    if (isFull) {
-      const cat = String(row.itemId || '').trim();
-      if (cat) ns[cat] = (ns[cat] || 0) + 1;
-    } else {
-      nb.push({ id: row.id, itemId: row.itemId, currentCharge: rack.currentCharge });
-    }
-    return;
-  }
-
-  if (isRackBatteryInstanceUuidLocal(id)) {
-    nb.push({
-      id,
-      itemId: LEGACY_BATTERY_MISSING_CATALOG,
-      currentCharge: typeof rack.currentCharge === 'number' ? rack.currentCharge : 0
-    });
-    return;
-  }
-
-  const upgCat = upgrades.find((u) => u.id === id && u.type === 'battery');
-  if (!upgCat) return;
-  const capacity = upgCat.powerCapacity ?? 100;
-  const isInf = capacity === -1;
-  const isFull = isInf || rack.currentCharge >= capacity * 0.999;
-  if (isFull) ns[id] = (ns[id] || 0) + 1;
-  else nb.push({ id: newStoredId(), itemId: id, currentCharge: rack.currentCharge });
+  const exists = nb.some((b) => b && String(b.id).trim() === id);
+  if (exists) return;
+  nb.push({ id, itemId: rack.batteryCatalogItemId || id });
 }
 
-type PoolEntry = {
-  itemId: string;
-  charge: number;
-  /** Se definido, retirar esta linha de `storedBatteries` por `id`. */
-  storageId?: string;
-};
-
-export function batteryTierScore(def: Upgrade | undefined): number {
-  if (!def || def.type !== 'battery') return 0;
-  const c = def.powerCapacity;
-  if (c === -1) return Number.MAX_SAFE_INTEGER - 1;
-  return Math.max(0, Number(c) || 0);
-}
-
-/** Energia atual na unidade (Wh). Smart fill e listas: priorizar mais Wh antes do tier do modelo. */
-export function poolEntryEnergyWh(charge: number, def: Upgrade | undefined): number {
-  if (!def || def.type !== 'battery') return 0;
-  const cap = def.powerCapacity ?? 0;
-  if (cap === -1) return Number.MAX_SAFE_INTEGER - 1;
-  const q = typeof charge === 'number' && Number.isFinite(charge) ? charge : 0;
-  return Math.max(0, q);
-}
-
-/** Ordena unidades armazenadas do mesmo tipo: mais carga primeiro (baterias “mais fortes” no sentido energético). */
-function sortStoredInstancesForType(list: StoredBattery[], batDef: Upgrade): StoredBattery[] {
-  const cap = batDef.powerCapacity ?? 0;
-  return [...list].sort((a, b) => {
-    if (cap === -1) return 0;
-    return (b.currentCharge || 0) - (a.currentCharge || 0);
-  });
-}
-
-/**
- * Retira uma unidade do armazém (prioriza instância com mais carga) ou do stock (nova cheia).
- */
+/** Retira uma unidade do armazém ou do stock. Tudo é infinito → não há carga residual. */
 function takeOneBatteryUnit(
   batteryItemId: string,
-  batDef: Upgrade,
   ns: Record<string, number>,
   nb: StoredBattery[]
-): { charge: number; instanceId: string } | null {
-  const matching = nb
-    .map((b, idx) => ({ b, idx }))
-    .filter(({ b }) => b.itemId === batteryItemId);
-  const sorted = sortStoredInstancesForType(
-    matching.map((m) => m.b),
-    batDef
-  );
-  if (sorted.length > 0) {
-    const best = sorted[0]!;
-    const idx = nb.findIndex((x) => x.id === best.id);
-    if (idx < 0) return null;
+): { instanceId: string } | null {
+  const idx = nb.findIndex((b) => b && b.itemId === batteryItemId);
+  if (idx >= 0) {
     const [taken] = nb.splice(idx, 1);
-    const cap = batDef.powerCapacity ?? 0;
-    if (cap === -1) return { charge: -1, instanceId: taken.id };
-    return {
-      charge: typeof taken.currentCharge === 'number' ? taken.currentCharge : cap,
-      instanceId: taken.id
-    };
+    return { instanceId: taken.id };
   }
   if ((ns[batteryItemId] || 0) > 0) {
     ns[batteryItemId]--;
-    const capRaw = batDef.powerCapacity;
-    const initCharge = capRaw === -1 ? -1 : capRaw ?? 0;
-    return { charge: initCharge, instanceId: newStoredId() };
+    return { instanceId: newStoredId() };
   }
   return null;
 }
@@ -229,11 +133,16 @@ export function bulkBatteryWillApplyCount(
   return Math.max(0, Math.min(compatibleRackCount, avail));
 }
 
+export function batteryTierScore(def: Upgrade | undefined): number {
+  if (!def || def.type !== 'battery') return 0;
+  const c = def.powerCapacity;
+  if (c === -1) return Number.MAX_SAFE_INTEGER - 1;
+  return Math.max(0, Number(c) || 0);
+}
+
 /**
- * Preenchimento inteligente: esvazia baterias das rigs da sala, reconstrói um “pool” global
- * (tipos compatíveis com pelo menos uma rig), ordena por **energia útil (Wh na unidade)**
- * primeiro (evita equipar Powerwall a 0% quando há Nobreak/Pilhas carregadas), depois por
- * capacidade do modelo como desempate, e reatribui às rigs na ordem pedida.
+ * Smart fill: agora que toda bateria é infinita por design, basta retirar baterias antigas das rigs
+ * e equipar tipos compatíveis disponíveis (stock + armazém UUID), respeitando a ordem das rigs.
  */
 export function applyBulkRoomBatterySmartFill(
   prev: GameState,
@@ -259,9 +168,10 @@ export function applyBulkRoomBatterySmartFill(
     const rack = out[i];
     if (!rack?.batteryId) continue;
     unloadRackBatteryToInventory(rack, ns, nb, upgrades);
-    out[i] = { ...rack, batteryId: null, currentCharge: 0, isOn: false };
+    out[i] = { ...rack, batteryId: null, isOn: false };
   }
 
+  type PoolEntry = { itemId: string; storageId?: string };
   const pool: PoolEntry[] = [];
 
   for (const u of upgrades) {
@@ -277,20 +187,11 @@ export function applyBulkRoomBatterySmartFill(
     });
     if (!usableOnAnyRack) continue;
 
-    const cap = u.powerCapacity ?? 0;
-    for (const s of sortStoredInstancesForType(storedList, u)) {
-      pool.push({
-        itemId: u.id,
-        charge: cap === -1 ? -1 : s.currentCharge,
-        storageId: s.id
-      });
+    for (const s of storedList) {
+      pool.push({ itemId: u.id, storageId: s.id });
     }
     for (let q = 0; q < qtyStock; q++) {
-      pool.push({
-        itemId: u.id,
-        charge: cap === -1 ? -1 : cap,
-        storageId: undefined
-      });
+      pool.push({ itemId: u.id });
     }
   }
 
@@ -301,13 +202,10 @@ export function applyBulkRoomBatterySmartFill(
   pool.sort((a, b) => {
     const da = upgrades.find((x) => x.id === a.itemId);
     const db = upgrades.find((x) => x.id === b.itemId);
-    const ea = poolEntryEnergyWh(a.charge, da);
-    const eb = poolEntryEnergyWh(b.charge, db);
-    if (eb !== ea) return eb - ea;
     const ta = batteryTierScore(da);
     const tb = batteryTierScore(db);
     if (tb !== ta) return tb - ta;
-    return (b.charge || 0) - (a.charge || 0);
+    return 0;
   });
 
   const sortedRacks = sortRackIndicesForAllocation(racksInRoomIdx, out, upgrades, rigSort);
@@ -324,8 +222,6 @@ export function applyBulkRoomBatterySmartFill(
     if (idx === -1) continue;
     const picked = pool[idx]!;
     pool.splice(idx, 1);
-    const def = upgrades.find((x) => x.id === picked.itemId);
-    if (!def) continue;
 
     if (picked.storageId) {
       const sbi = nb.findIndex((x) => x.id === picked.storageId);
@@ -343,7 +239,6 @@ export function applyBulkRoomBatterySmartFill(
     out[ri] = {
       ...rack,
       batteryId: rackBattId,
-      currentCharge: picked.charge,
       isOn: true
     };
     applied++;
@@ -361,7 +256,6 @@ export function applyBulkRoomBatterySmartFill(
 /**
  * Remove todas as baterias das rigs da sala (`batteryUpgradeId` vazio) ou equipa o mesmo tipo
  * em até N rigs compatíveis (N = min(rigs compatíveis, unidades em stock + armazém)).
- * Unidades do armazém: mais carregadas primeiro; rigs: ordem opcional por slot ou hashrate.
  */
 export function applyBulkRoomBatteryChange(
   prev: GameState,
@@ -385,7 +279,7 @@ export function applyBulkRoomBatteryChange(
       const rack = out[i];
       if (!rack?.batteryId) continue;
       unloadRackBatteryToInventory(rack, ns, nb, upgrades);
-      out[i] = { ...rack, batteryId: null, currentCharge: 0, isOn: false };
+      out[i] = { ...rack, batteryId: null, isOn: false };
     }
     return {
       ok: true,
@@ -420,14 +314,13 @@ export function applyBulkRoomBatteryChange(
     const i = compatibleIdx[k]!;
     const rack = { ...out[i] };
     if (rack.batteryId) unloadRackBatteryToInventory(rack, ns, nb, upgrades);
-    const taken = takeOneBatteryUnit(batteryUpgradeId, batDef, ns, nb);
+    const taken = takeOneBatteryUnit(batteryUpgradeId, ns, nb);
     if (!taken || !taken.instanceId) {
       return { ok: false, message: 'Falha ao retirar unidade do estoque/armazém. Tente novamente.' };
     }
     out[i] = {
       ...rack,
       batteryId: taken.instanceId,
-      currentCharge: taken.charge,
       isOn: true
     };
   }

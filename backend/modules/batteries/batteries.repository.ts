@@ -1,6 +1,8 @@
 /**
- * Leituras e snapshots para persistir baterias com energia (Wh) e catálogo
- * sem depender só de joins frágeis após a instância sair do armazém.
+ * Leituras e snapshots para persistir baterias com catálogo (UI) sem depender só de joins
+ * frágeis após a instância sair do armazém. Cada bateria é uma instância UUID infinita
+ * em `stored_batteries`; sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`.
  */
 import type { PoolClient } from 'pg';
 import { normalizeKnown1000WhBatteryCatalogId } from './batteries.catalog.js';
@@ -15,7 +17,6 @@ export function isRackBatteryInstanceUuid(batteryId: string | null | undefined):
 export type StoredBatteryRowSnap = {
   id: string;
   item_id: string;
-  power_capacity_wh: number | null;
   display_name: string | null;
   image_url: string | null;
 };
@@ -28,7 +29,7 @@ export async function loadStoredBatteryRowsForIds(
   const uid = Number(userId);
   if (!Number.isFinite(uid) || uid <= 0 || !Array.isArray(ids) || ids.length === 0) return new Map();
   const res = await client.query(
-    `SELECT id, item_id, power_capacity_wh, display_name, image_url
+    `SELECT id, item_id, display_name, image_url
        FROM stored_batteries WHERE user_id = $1 AND id = ANY($2::text[])`,
     [uid, ids]
   );
@@ -97,7 +98,6 @@ export async function fetchBatteryUpgradeRowsByIds(
 
 export type RackBatteryPersistCols = {
   catalogItemId: string | null;
-  powerWh: number | null;
   displayName: string | null;
   imageUrl: string | null;
 };
@@ -105,7 +105,6 @@ export type RackBatteryPersistCols = {
 export type PrevPlacedRackBattRow = {
   battery_id: string | null;
   battery_catalog_item_id?: string | null;
-  battery_power_capacity_wh?: number | null;
   battery_display_name?: string | null;
   battery_image_url?: string | null;
 };
@@ -118,7 +117,7 @@ export function buildRackBatteryPersistSnapshot(
 ): RackBatteryPersistCols {
   const bid = batteryId != null ? String(batteryId).trim() : '';
   if (!bid) {
-    return { catalogItemId: null, powerWh: null, displayName: null, imageUrl: null };
+    return { catalogItemId: null, displayName: null, imageUrl: null };
   }
 
   let catalogId: string | null = null;
@@ -142,17 +141,15 @@ export function buildRackBatteryPersistSnapshot(
           prevRow.battery_catalog_item_id != null
             ? normalizeKnown1000WhBatteryCatalogId(prevRow.battery_catalog_item_id)
             : null,
-        powerWh: prevRow.battery_power_capacity_wh ?? null,
         displayName: prevRow.battery_display_name ?? null,
         imageUrl: prevRow.battery_image_url ?? null
       };
     }
-    return { catalogItemId: null, powerWh: null, displayName: null, imageUrl: null };
+    return { catalogItemId: null, displayName: null, imageUrl: null };
   }
 
   const u = upgradeByCatalog.get(catalogId);
   const inst = isRackBatteryInstanceUuid(bid) ? instanceSnapshot.get(bid) : undefined;
-  const power = u?.power_capacity ?? (inst?.power_capacity_wh != null ? Number(inst.power_capacity_wh) : null);
   const display =
     (inst?.display_name != null && String(inst.display_name).trim() !== '' ? String(inst.display_name) : null) ||
     (u?.name != null && String(u.name).trim() !== '' ? String(u.name) : null);
@@ -162,7 +159,6 @@ export function buildRackBatteryPersistSnapshot(
   const img = imgRaw && imgRaw.trim() !== '' ? imgRaw.trim() : null;
   return {
     catalogItemId: catalogId,
-    powerWh: power != null && Number.isFinite(Number(power)) ? Number(power) : null,
     displayName: display,
     imageUrl: img
   };
@@ -175,38 +171,25 @@ export async function loadUserStoredBatteries(
   Array<{
     id: string;
     itemId: string;
-    currentCharge: number;
-    powerCapacityWh?: number | null;
     displayName?: string | null;
     imageUrl?: string | null;
-    workshopSlotIndex?: number | null;
-    workshopComponentSlotId?: string | null;
   }>
 > {
   const batRes = await client.query(
-    'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1',
+    'SELECT id, item_id, display_name, image_url FROM stored_batteries WHERE user_id = $1',
     [uid]
   );
   return batRes.rows.map(
     (r: {
       id: string;
       item_id: string;
-      current_charge: number;
-      power_capacity_wh: number | null;
       display_name: string | null;
       image_url: string | null;
-      workshop_slot_index: number | null;
-      workshop_component_slot_id: string | null;
     }) => ({
       id: r.id,
       itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
-      currentCharge: r.current_charge,
-      powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
       displayName: r.display_name != null ? String(r.display_name) : null,
-      imageUrl: r.image_url != null ? String(r.image_url) : null,
-      workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
-      workshopComponentSlotId:
-        r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
+      imageUrl: r.image_url != null ? String(r.image_url) : null
     })
   );
 }

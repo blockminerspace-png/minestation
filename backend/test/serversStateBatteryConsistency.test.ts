@@ -38,12 +38,12 @@ describe('logServerStateBatteryConsistency', () => {
     expect(JSON.parse(String(dup)).event).toBe('server_state_battery_duplicate');
   });
 
-  it('regista mismatch de status (CHARGING na rig)', () => {
+  it('regista mismatch de status (INVENTORY apesar de estar montada na rig)', () => {
     const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const stored = new Map([[BID, { id: BID, status: 'CHARGING' }]]);
+    const stored = new Map([[BID, { id: BID, status: 'INVENTORY' }]]);
     logServerStateBatteryConsistency(3, [{ id: 'rack_z', batteryId: BID }], stored, {});
     const mm = spy.mock.calls.map((c) => c[0]).find((x) => typeof x === 'string' && x.includes('server_state_battery_status_mismatch'));
     expect(mm).toBeTruthy();
-    expect(JSON.parse(String(mm)).storedStatus).toBe('CHARGING');
+    expect(JSON.parse(String(mm)).storedStatus).toBe('INVENTORY');
   });
 });

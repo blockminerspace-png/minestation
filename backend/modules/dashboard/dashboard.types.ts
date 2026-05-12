@@ -9,7 +9,7 @@
  * compatíveis para trás (adicionar campos opcionais; não renomear silenciosamente).
  */
 
-export type DashboardMinerStatus = 'online' | 'idle' | 'offline';
+export type DashboardMinerStatus = 'online' | 'idle' | 'offline' | 'frozen';
 
 export interface DashboardMinerState {
   status: DashboardMinerStatus;

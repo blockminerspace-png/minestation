@@ -14,7 +14,6 @@ import { prisma } from '../../config/prisma.js';
 import { computePlayerGameHeaderSnapshot } from '../../lib/playerGameHeaderSnapshot.js';
 import { getPublicMiningRankingPayload } from '../../lib/miningRankingPrisma.js';
 import { buildWalletStatePayload } from '../wallet/walletPlayerController.js';
-import { isKnownInfiniteBatteryCatalogId } from '../batteries/batteries.catalog.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import type {
@@ -185,8 +184,6 @@ async function buildMinerStateForDashboard(
     }
   }
 
-  let totalCapWh = 0;
-  let totalChargeWh = 0;
   let rigsOnline = 0;
   let rigsTotal = 0;
   try {
@@ -194,45 +191,22 @@ async function buildMinerStateForDashboard(
       where: { user_id: userId },
       select: {
         is_on: true,
-        battery_id: true,
-        battery_catalog_item_id: true,
-        battery_power_capacity_wh: true,
-        current_charge: true
+        battery_id: true
       }
     });
     rigsTotal = racks.length;
     for (const r of racks) {
-      const charge = num(r.current_charge);
-      const cap = num(r.battery_power_capacity_wh);
-      const catalogId =
-        r.battery_catalog_item_id != null && String(r.battery_catalog_item_id).trim() !== ''
-          ? String(r.battery_catalog_item_id)
-          : r.battery_id != null
-            ? String(r.battery_id)
-            : '';
-      const infinite =
-        charge === -1 ||
-        cap === -1 ||
-        isKnownInfiniteBatteryCatalogId(catalogId);
-      if (Number(r.is_on) === 1 && (infinite || charge > 0)) rigsOnline += 1;
-      if (!infinite && cap > 0) {
-        totalCapWh += cap;
-        totalChargeWh += Math.max(0, charge);
-      }
+      // Baterias são instâncias UUID infinitas: rig online se tiver bateria montada e is_on=1.
+      const hasBattery = r.battery_id != null && String(r.battery_id).trim() !== '';
+      if (Number(r.is_on) === 1 && hasBattery) rigsOnline += 1;
     }
   } catch {
     /* fallback: sem dados ainda */
   }
 
-  let energyPercent: number | null = null;
-  let energyCharge: number | null = null;
-  let energyCap: number | null = null;
-  if (totalCapWh > 0) {
-    energyCharge = Math.round(totalChargeWh * 100) / 100;
-    energyCap = Math.round(totalCapWh * 100) / 100;
-    energyPercent = Math.max(0, Math.min(100, (totalChargeWh / totalCapWh) * 100));
-    energyPercent = Math.round(energyPercent * 10) / 10;
-  }
+  const energyPercent: number | null = null;
+  const energyCharge: number | null = null;
+  const energyCap: number | null = null;
 
   const status: DashboardMinerState['status'] =
     hashTotal > 0 ? 'online' : rigsTotal > 0 ? 'idle' : 'offline';

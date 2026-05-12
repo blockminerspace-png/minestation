@@ -1,5 +1,4 @@
 import { prisma } from '../config/db.js';
-import { isKnownInfiniteBatteryCatalogId, resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 type CoinLite = { id: string; name: string; symbol: string };
 
@@ -74,20 +73,6 @@ export async function getPublicMiningRankingPayload(): Promise<{
   const slotsByRack = groupByRackId(allSlots);
   const multByRack = groupByRackId(allMult);
 
-  const storedBattRows =
-    eligibleIds.length === 0
-      ? []
-      : await prisma.stored_batteries.findMany({
-          where: { user_id: { in: eligibleIds } },
-          select: { id: true, item_id: true }
-        });
-  const storedBattCatalogByInstanceId = new Map<string, string>();
-  for (const sb of storedBattRows) {
-    const iid = String(sb.id ?? '').trim();
-    const itemId = String(sb.item_id ?? '').trim();
-    if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
-  }
-
   const rankingData = new Map<number, PublicRankingUser>();
 
   for (const rack of racks) {
@@ -95,21 +80,7 @@ export async function getPublicMiningRankingPayload(): Promise<{
     const coinId = rack.selected_coin_id;
     if (!coinsMap.has(coinId)) continue;
 
-    const battKey = resolvePlacedRackBatteryCatalogId(
-      rack.battery_id,
-      storedBattCatalogByInstanceId,
-      rack.battery_catalog_item_id
-    );
-    const battDef = battKey ? upgradesMap.get(battKey) : undefined;
-    const charge = Number(rack.current_charge);
-    const snapPowerCap = Number(rack.battery_power_capacity_wh);
-    const isInfinite =
-      charge === -1 ||
-      snapPowerCap === -1 ||
-      (battDef && Number(battDef.power_capacity) === -1) ||
-      isKnownInfiniteBatteryCatalogId(battKey);
-    if (!isInfinite && charge <= 0) continue;
-
+    // Baterias são instâncias UUID infinitas: rig opera se já passou os filtros (is_on=1, wiring_id, battery_id).
     const slots = slotsByRack.get(rack.id) || [];
     let rackBaseProd = 0;
     for (const s of slots) {
@@ -212,38 +183,10 @@ export async function getAdminMiningRankingPayload(): Promise<{
   const slotsByRack = groupByRackId(allSlots);
   const multByRack = groupByRackId(allMult);
 
-  const storedBattRowsAdmin =
-    eligibleIds.length === 0
-      ? []
-      : await prisma.stored_batteries.findMany({
-          where: { user_id: { in: eligibleIds } },
-          select: { id: true, item_id: true }
-        });
-  const storedBattCatalogByInstanceIdAdmin = new Map<string, string>();
-  for (const sb of storedBattRowsAdmin) {
-    const iid = String(sb.id ?? '').trim();
-    const itemId = String(sb.item_id ?? '').trim();
-    if (iid && itemId) storedBattCatalogByInstanceIdAdmin.set(iid, itemId);
-  }
-
   for (const rack of racks) {
     if (!rack.selected_coin_id || !coinsMap.has(rack.selected_coin_id)) continue;
 
-    const battKey = resolvePlacedRackBatteryCatalogId(
-      rack.battery_id,
-      storedBattCatalogByInstanceIdAdmin,
-      rack.battery_catalog_item_id
-    );
-    const battDef = battKey ? upgradesMap.get(battKey) : undefined;
-    const charge = Number(rack.current_charge);
-    const snapPowerCap = Number(rack.battery_power_capacity_wh);
-    const isInfinite =
-      charge === -1 ||
-      snapPowerCap === -1 ||
-      (battDef && Number(battDef.power_capacity) === -1) ||
-      isKnownInfiniteBatteryCatalogId(battKey);
-    if (!isInfinite && charge <= 0) continue;
-
+    // Baterias são instâncias UUID infinitas: rig opera se já passou os filtros (is_on=1, wiring_id, battery_id).
     const slots = slotsByRack.get(rack.id) || [];
     let rackBaseProd = 0;
     for (const s of slots) {

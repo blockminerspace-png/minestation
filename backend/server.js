@@ -16,7 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import db, { connectPrisma, disconnectPrisma, prisma } from './dist/config/db.js';
 import { Prisma } from '@prisma/client';
-import { startMiningYieldCron, startWorkshopChargingCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
+import { startMiningYieldCron, computeProgressForUser, sanitizeApiMessage } from './dist/cron/miningScheduler.js';
 import { getGlobalNetworkStats } from './dist/cron/miningGlobalStatsStore.js';
 import { initGenesisStackServices, getGenesisMongo } from './dist/lib/genesisStack/init.js';
 import { miningRuntimeStats } from './dist/cron/miningRuntimeStats.js';
@@ -24,7 +24,7 @@ import { fetchLiveUsdByMiningCoinRowIds, MINING_ECONOMY_PUBLIC_META } from './li
 import { normalizePublicAssetUrl } from './dist/lib/publicAssetUrl.js';
 import { recoverOrphanRackBatteryStorageRows } from './dist/modules/batteries/batteries.recovery.js';
 import { ensureStoredBatteriesIntegrity } from './dist/modules/batteries/batteries.integrity.js';
-import { CANONICAL_1000WH_BATTERY_ID, isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from './dist/modules/batteries/batteries.catalog.js';
+import { normalizeKnown1000WhBatteryCatalogId } from './dist/modules/batteries/batteries.catalog.js';
 import { orphanRackBatteryAutoRecoverEnabled } from './dist/lib/orphanRackBatteryRecoveryGate.js';
 /** Tempo de bloco fixo na economia do simulador (10 minutos) — alinhado ao admin / frontend. */
 const MINING_BLOCK_TIME_SECONDS_FIXED = 600;
@@ -100,8 +100,7 @@ import { registerSupportPlayerRoutes } from './dist/modules/support/supportPlaye
 import { registerPartnerYoutubeRoutes } from './dist/controllers/partnerYoutubeController.js';
 import { registerPartnersPlayerRoutes } from './dist/modules/partners/partnersPlayer.controller.js';
 import { registerDashboardModuleRoutes } from './dist/modules/dashboard/dashboard.controller.js';
-import { registerWorkshopMutationRoutes } from './dist/controllers/workshopMutationController.js';
-import { registerWorkshopIntentRoutes } from './dist/controllers/workshopIntent.controller.js';
+import { registerCheckinModuleRoutes } from './dist/modules/checkin/checkin.controller.js';
 import { registerInventoryRoutes } from './dist/controllers/inventoryController.js';
 import { registerInventoryModuleRoutes } from './dist/modules/inventory/inventory.controller.js';
 import { registerShopModuleRoutes } from './dist/modules/shop/shop.controller.js';
@@ -115,7 +114,7 @@ import { getAdminMiningRankingPayload, getPublicMiningRankingPayload } from './d
 import { computePlayerGameHeaderSnapshot } from './dist/lib/playerGameHeaderSnapshot.js';
 import { ActivityThrottleMaps, resolveActivityThrottleConfig } from './dist/lib/activityThrottle.js';
 import { mountImageStaticMiddleware, registerImageAssetRoutes, runImageRootStartupOrganizeIfEnabled } from './dist/controllers/imageAssetController.js';
-import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, sanitizeStoredBatteriesForSavePayload, validateStoredBatteryWarehouseRemovalAllowed, StoredBatterySaveGuardError, validateWorkshopSlotsPayloadForSave, enrichWorkshopSlotsSlotItemIdsFromChargingHistory, refreshStoredBatteriesWorkshopLinkage } from './dist/lib/saveGameEconomyValidate.js';
+import { SAVE_GAME_ITEM_ID_RE, validateStockForSave, validateUnopenedBoxesForSave, validateDailyActionsForSave, validateStoredBatteriesForSave, sanitizeStoredBatteriesForSavePayload, validateStoredBatteryWarehouseRemovalAllowed, StoredBatterySaveGuardError } from './dist/lib/saveGameEconomyValidate.js';
 import { deleteWarehouseStoredBatteriesExceptKeepIds } from './dist/lib/storedBatteriesWarehouseDelete.js';
 import { validateLoginEmail, validateLoginFieldsPresent, validateLoginPassword, validateSignupPassword, validateSignupUsername, validateOptionalPolygonWallet, validateOptionalAccessLevelId, validateOptionalReferralCodeInput, validateAccessLevelIdsArray, getConflictingUserIdByUsername, EMAIL_ADDRESS_MAX_LENGTH, SIGNUP_EMAIL_MAX_TOTAL } from './dist/models/registrationValidation.js';
 import { isReservedProfileUsername } from './dist/models/profileUsernameReserved.js';
@@ -399,20 +398,6 @@ const ensureTables = async () => {
         key TEXT PRIMARY KEY,
         value JSONB,
         updated_at TIMESTAMP DEFAULT NOW()
-      );
-
-      CREATE TABLE IF NOT EXISTS charging_history (
-        id SERIAL PRIMARY KEY,
-        user_email TEXT NOT NULL,
-        action TEXT NOT NULL,
-        workshop_slot_index INTEGER,
-        component_slot_id TEXT,
-        battery_instance_id TEXT,
-        battery_item_id TEXT,
-        charge_amount DOUBLE PRECISION,
-        timestamp TIMESTAMP DEFAULT NOW(),
-        stock_confirmed BOOLEAN DEFAULT FALSE,
-        details JSONB
       );
 
       CREATE TABLE IF NOT EXISTS p2p_market_trade_history (
@@ -796,10 +781,11 @@ const ensureUpgrades = async () => {
                 sell_in_hardware_market: 1, sell_in_black_market: 0, is_active: 1
             },
             {
-                id: 'small_battery', name: 'Bateria Pequena', category: 'battery', type: 'battery',
-                base_cost: 50, base_production: 0, power_consumption: 0, power_capacity: 1000,
+                id: 'battery_estelar', name: 'Estelar', category: 'ENERGIA & CABEAMENTO', type: 'battery',
+                base_cost: 50, base_production: 0, power_consumption: 0, power_capacity: -1,
                 multiplier: 0, slots_capacity: 0, ai_slots_capacity: 0,
-                description: 'Bateria de 1kWh.', icon: 'battery', status: 'common',
+                description: 'Bateria estelar — protoestrela aprisionada que fornece energia infinita à rig sem necessidade de recarga.',
+                icon: 'battery', status: 'available',
                 is_nft: 0, max_global_stock: -1, image: '', reward_wh: 0, layout: '',
                 sell_in_hardware_market: 1, sell_in_black_market: 0, is_active: 1
             },
@@ -1515,14 +1501,13 @@ registerPartnersPlayerRoutes(app, {
     appendGameActivityLog
 });
 registerDashboardModuleRoutes(app, { authenticateToken });
+registerCheckinModuleRoutes(app, { authenticateToken });
 registerProfilePlayerRoutes(app, {
     authenticateToken,
     getClientIp,
     revokeJwtRefreshForUser,
     referralClaimSensitiveLimiter
 });
-registerWorkshopMutationRoutes(app, { authenticateToken });
-registerWorkshopIntentRoutes(app, { authenticateToken });
 registerInventoryRoutes(app, { authenticateToken, pool: db });
 registerInventoryModuleRoutes(app, { authenticateToken, pool: db });
 registerShopModuleRoutes(app, { pool: db, authenticateToken });
@@ -1630,60 +1615,9 @@ app.post('/api/player-activity-log', async (req, res) => {
 // CACHE REMOVIDO CONFORME SOLICITADO
 // --- Ranking / hashrates: um único tick em miningYieldCron + getGlobalNetworkStats() ---
 startMiningYieldCron(db);
-startWorkshopChargingCron(db);
-// --- CHARGING HISTORY ENDPOINTS ---
-app.get('/api/charging-history', authenticateToken, async (req, res) => {
-    try {
-        const u = await prisma.users.findUnique({ where: { id: req.userId }, select: { email: true } });
-        if (!u)
-            return res.status(404).json({ error: 'User not found' });
-        const rows = await prisma.charging_history.findMany({
-            where: { user_email: u.email },
-            orderBy: { timestamp: 'desc' },
-            take: 100
-        });
-        res.json(rows);
-    }
-    catch (e) {
-        console.error('[ChargingHistory] Error fetching:', e);
-        res.status(500).json({ error: 'Erro ao buscar histórico' });
-    }
-});
-app.post('/api/charging-history/log', authenticateToken, async (req, res) => {
-    const { action, workshop_slot_index, component_slot_id, battery_instance_id, battery_item_id, charge_amount, stock_confirmed, details } = req.body;
-    try {
-        const u = await prisma.users.findUnique({ where: { id: req.userId }, select: { email: true } });
-        if (!u)
-            return res.status(404).json({ error: 'User not found' });
-        const detailsJson = details && typeof details === 'object' && !Array.isArray(details)
-            ? details
-            : {};
-        await prisma.charging_history.create({
-            data: {
-                user_email: u.email,
-                action: String(action ?? ''),
-                workshop_slot_index: workshop_slot_index === undefined || workshop_slot_index === null
-                    ? null
-                    : Number(workshop_slot_index),
-                component_slot_id: component_slot_id === undefined || component_slot_id === null
-                    ? null
-                    : String(component_slot_id),
-                battery_instance_id: battery_instance_id === undefined || battery_instance_id === null
-                    ? null
-                    : String(battery_instance_id),
-                battery_item_id: battery_item_id === undefined || battery_item_id === null ? null : String(battery_item_id),
-                charge_amount: charge_amount === undefined || charge_amount === null ? null : Number(charge_amount),
-                stock_confirmed: !!stock_confirmed,
-                details: detailsJson
-            }
-        });
-        res.json({ ok: true });
-    }
-    catch (e) {
-        console.error('[ChargingHistory] Error logging:', e);
-        res.status(500).json({ error: 'Erro ao registrar histórico' });
-    }
-});
+// Sistema de carregamento de baterias descontinuado em 20260516180000:
+// não há cron, rotas de workshop/recarga, daily-boost ou reward-ad. Baterias
+// são instâncias UUID infinitas, vivem em stored_batteries / placed_racks.
 // --- Moved middlewares below ---
 app.get('/api/admin/wheel/config', isAdmin, async (req, res) => {
     try {
@@ -2020,19 +1954,7 @@ app.get('/api/admin/economy-stats', isAdmin, async (req, res) => {
             const cid = rack.selected_coin_id;
             if (!coinsMap.has(cid))
                 continue;
-            // Battery check
-            const batteryCatalogId = rack.battery_catalog_item_id != null && String(rack.battery_catalog_item_id).trim() !== ''
-                ? normalizeKnown1000WhBatteryCatalogId(rack.battery_catalog_item_id)
-                : normalizeKnown1000WhBatteryCatalogId(rack.battery_id);
-            const battDef = upsMap.get(batteryCatalogId);
-            const batterySnapPowerCap = Number(rack.battery_power_capacity_wh);
-            const rackCurrentCharge = Number(rack.current_charge);
-            const isInfinite = rackCurrentCharge === -1 ||
-                batterySnapPowerCap === -1 ||
-                isKnownInfiniteBatteryCatalogId(batteryCatalogId) ||
-                (battDef && Number(battDef.power_capacity) === -1);
-            if (!isInfinite && rack.current_charge <= 0)
-                continue;
+            // Sistema de carga removido em 20260516180000: rig com bateria atribuída produz sempre.
             // Base Prod
             let base = 0;
             (slotsMap[rack.id] || []).forEach(mid => {
@@ -2664,87 +2586,6 @@ app.post('/api/monetization-settings', isAdmin, async (req, res) => {
 app.get('/api/system/time', (req, res) => {
     res.json({ serverTime: Date.now() });
 });
-app.post('/api/daily-boost', async (req, res) => {
-    const { slotIndex } = req.body;
-    if (!req.userId)
-        return res.status(401).json({ error: 'Não autorizado' });
-    if (slotIndex === undefined)
-        return res.status(400).json({ error: 'slotIndex ausente' });
-    const slotIdx = Number(slotIndex);
-    if (!Number.isInteger(slotIdx) || slotIdx < 0 || slotIdx > 5) {
-        return res.status(400).json({ error: 'Índice de bancada inválido.' });
-    }
-    const uid = req.userId;
-    if (!uid)
-        return res.status(404).json({ error: 'User not found' });
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        const slotRes = await client.query('SELECT * FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, slotIdx]);
-        const slot = slotRes.rows[0];
-        if (!slot || !slot.item_id) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Nenhum carregador equipado neste slot.' });
-        }
-        const now = new Date();
-        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
-        const actionKey = `daily_boost_slot_${slotIdx}`;
-        const actionRes = await client.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [uid, actionKey]);
-        const lastPerformed = actionRes.rows[0]?.last_performed_at;
-        // DETAILED LOGGING for debugging (commented for production)
-        // console.log(`[DailyBoost] User: ${uid}, Slot: ${slotIndex}`);
-        // console.log(`[DailyBoost] ActionKey: ${actionKey}`);
-        // console.log(`[DailyBoost] LastPerformed: ${lastPerformed} (${lastPerformed ? new Date(Number(lastPerformed)).toISOString() : 'NONE'})`);
-        // console.log(`[DailyBoost] StartOfDay (UTC): ${startOfDay} (${new Date(startOfDay).toISOString()})`);
-        // console.log(`[DailyBoost] Can use? ${!lastPerformed || Number(lastPerformed) < startOfDay}`);
-        if (lastPerformed && Number(lastPerformed) >= startOfDay) {
-            await client.query('ROLLBACK');
-            // console.warn(`[DailyBoost] BLOCKED: User ${uid} already used boost for slot ${slotIndex} today`);
-            return res.status(400).json({ error: 'Você já usou o boost para este carregador hoje.' });
-        }
-        const upgRes = await client.query('SELECT power_capacity FROM upgrades WHERE id = $1', [slot.item_id]);
-        const upg = upgRes.rows[0];
-        const maxCap = upg?.power_capacity || 1000;
-        const newCharge = maxCap;
-        const boostAmount = maxCap - (slot.current_charge || 0);
-        await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [uid, actionKey, Date.now()]);
-        await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [newCharge, uid, slotIdx]);
-        await client.query('COMMIT');
-        res.json({ ok: true, newCharge, boostAmount });
-    }
-    catch (e) {
-        await client.query('ROLLBACK');
-        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
-    }
-});
-// ADMIN: Reset Daily Boost for specific user/slot
-app.post('/api/admin/reset-daily-boost', isAdmin, async (req, res) => {
-    const { email, slotIndex } = req.body;
-    if (!email || slotIndex === undefined) {
-        return res.status(400).json({ error: 'Email and slotIndex required' });
-    }
-    try {
-        const userRes = await db.query('SELECT id FROM users WHERE email = $1', [email]);
-        if (userRes.rows.length === 0) {
-            return res.status(404).json({ error: 'User not found' });
-        }
-        const userId = userRes.rows[0].id;
-        const actionKey = `daily_boost_slot_${slotIndex}`;
-        // Delete the daily action record to allow boost again
-        const result = await db.query('DELETE FROM daily_actions WHERE user_id = $1 AND action_key = $2', [userId, actionKey]);
-        res.json({
-            ok: true,
-            message: `Daily boost reset for ${email} slot ${slotIndex}`,
-            deletedRows: result.rowCount
-        });
-    }
-    catch (e) {
-        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-    }
-});
 // ADMIN: Get user's unopened boxes
 app.get('/api/admin/user-boxes', isAdmin, async (req, res) => {
     const { email } = req.query;
@@ -2834,118 +2675,21 @@ app.get('/api/applixir-callback', async (req, res) => {
         const userRes = await db.query('SELECT * FROM users WHERE id = $1', [userIdNum]);
         if (!userRes.rows[0])
             return res.status(404).send('User not found');
-        const wsIdx = Number(req.query.custom);
-        if (Number.isInteger(wsIdx) && wsIdx >= 0 && wsIdx <= 5) {
-            const rowRes = await db.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [userIdNum, wsIdx]);
-            const row = rowRes.rows[0];
-            if (row && row.item_id) {
-                const nowCb = new Date();
-                const startOfDay = new Date(Date.UTC(nowCb.getUTCFullYear(), nowCb.getUTCMonth(), nowCb.getUTCDate())).getTime();
-                const actionKey = `reward_ad_slot_${wsIdx}`;
-                const actionRes = await db.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [userIdNum, actionKey]);
-                const lastPerformed = actionRes.rows[0]?.last_performed_at;
-                if (!lastPerformed || Number(lastPerformed) < startOfDay) {
-                    const upgRes = await db.query('SELECT power_capacity FROM upgrades WHERE id = $1', [row.item_id]);
-                    const maxCap = upgRes.rows[0]?.power_capacity || 1000;
-                    await db.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, userIdNum, wsIdx]);
-                    await db.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [userIdNum, actionKey, Date.now()]);
-                }
-            }
-        }
+        // Sistema de carregamento (oficina + reward-ad) descontinuado: o callback
+        // continua a aceitar a chamada para compatibilidade com a Applixir, mas não
+        // recarrega nada — baterias são infinitas (UUID em stored_batteries).
         res.send('OK');
     }
     catch (e) {
         res.status(500).send('Error');
     }
 });
-app.post('/api/workshop/recharge', async (req, res) => {
-    if (!req.userId)
-        return res.status(401).json({ error: 'Não autenticado' });
-    const wsIdx = Number(req.body?.wsIdx);
-    if (!Number.isInteger(wsIdx) || wsIdx < 0 || wsIdx > 5) {
-        return res.status(400).json({ error: 'Índice de bancada inválido.' });
-    }
-    const uid = req.userId;
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        const slotRes = await client.query('SELECT item_id FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, wsIdx]);
-        const slot = slotRes.rows[0];
-        if (!slot || !slot.item_id) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Nenhum carregador neste slot.' });
-        }
-        const now = new Date();
-        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
-        const actionKey = `instant_recharge_slot_${wsIdx}`;
-        const actionRes = await client.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [uid, actionKey]);
-        const lastPerformed = actionRes.rows[0]?.last_performed_at;
-        if (lastPerformed && Number(lastPerformed) >= startOfDay) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({
-                error: 'O limite diário de recarga instantânea nesta bancada já foi utilizado. Volte amanhã (UTC) ou use o boost diário / anúncio.'
-            });
-        }
-        const upgRes = await client.query('SELECT power_capacity FROM upgrades WHERE id = $1', [slot.item_id]);
-        const maxCap = upgRes.rows[0]?.power_capacity || 1000;
-        await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [uid, actionKey, Date.now()]);
-        await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, uid, wsIdx]);
-        await client.query('COMMIT');
-        res.json({ ok: true, newCharge: maxCap });
-    }
-    catch (e) {
-        await client.query('ROLLBACK');
-        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
-    }
-});
-app.post('/api/reward-ad', async (req, res) => {
-    const { wsIdx: wsIdxRaw } = req.body || {};
-    if (!req.userId || wsIdxRaw === undefined)
-        return res.status(400).json({ error: 'Missing fields' });
-    const wsIdx = Number(wsIdxRaw);
-    if (!Number.isInteger(wsIdx) || wsIdx < 0 || wsIdx > 5) {
-        return res.status(400).json({ error: 'Índice de bancada inválido.' });
-    }
-    const uid = req.userId;
-    if (!uid)
-        return res.status(404).json({ error: 'User not found' });
-    const client = await db.connect();
-    try {
-        await client.query('BEGIN');
-        const slotRes = await client.query('SELECT * FROM workshop_slots WHERE user_id = $1 AND slot_index = $2', [uid, wsIdx]);
-        const slot = slotRes.rows[0];
-        if (!slot || !slot.item_id) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Nenhum carregador equipado neste slot.' });
-        }
-        const now = new Date();
-        const startOfDay = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).getTime();
-        const actionKey = `reward_ad_slot_${wsIdx}`;
-        const actionRes = await client.query('SELECT last_performed_at FROM daily_actions WHERE user_id = $1 AND action_key = $2', [uid, actionKey]);
-        const lastPerformed = actionRes.rows[0]?.last_performed_at;
-        if (lastPerformed && Number(lastPerformed) >= startOfDay) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'Limite diário atingido para este carregador.' });
-        }
-        const upgRes = await client.query('SELECT power_capacity FROM upgrades WHERE id = $1', [slot.item_id]);
-        const maxCap = upgRes.rows[0]?.power_capacity || 1000;
-        await client.query('INSERT INTO daily_actions (user_id, action_key, last_performed_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action_key) DO UPDATE SET last_performed_at = EXCLUDED.last_performed_at', [uid, actionKey, Date.now()]);
-        await client.query('UPDATE workshop_slots SET current_charge = $1 WHERE user_id = $2 AND slot_index = $3', [maxCap, uid, wsIdx]);
-        await client.query('COMMIT');
-        const rewardMsg = (await getSettingValue('applixir_reward_message')) || 'Parabéns! Sua estação foi totalmente carregada.';
-        res.json({ ok: true, newCharge: maxCap, rewardMsg });
-    }
-    catch (e) {
-        await client.query('ROLLBACK');
-        sendInternalErrorOrPrisma(res, req.originalUrl || 'api', e);
-    }
-    finally {
-        client.release();
-    }
-});
+// Endpoints removidos em 20260516180000_battery_uuids_and_purge_charging:
+//   POST /api/workshop/recharge
+//   POST /api/reward-ad
+//   POST /api/daily-boost
+//   POST /api/admin/reset-daily-boost
+// Baterias são UUID infinitas; nada para recarregar.
 // --- WEB3 DEPOSIT VERIFICATION (RPC + Polygonscan/Bscscan/Basescan + fila app_cache) ---
 const POLYGON_USDC_CONTRACTS = [
     '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359', // USDC nativo (Circle) Polygon PoS
@@ -4829,6 +4573,110 @@ app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
     }
 });
 // --- USERS ---
+/**
+ * Contas com `game_states.start_time` há pelo menos `daysMin` dias (proxy da criação),
+ * excl. bloqueados/admins. «Minerar» = existe rig com is_on=1. «Sem carteira» = polygon_wallet vazio.
+ */
+app.get('/api/admin/accounts-dormant-mining', isAdmin, async (req, res) => {
+    try {
+        const rawDays = parseInt(String(req.query.daysMin ?? '30'), 10);
+        const daysMin = Number.isFinite(rawDays) ? Math.min(365, Math.max(30, rawDays)) : 30;
+        const cutoffMs = BigInt(Date.now()) - BigInt(daysMin * 86400000);
+        const cutoffStr = cutoffMs.toString();
+        const limitVal = Math.min(500, Math.max(50, parseInt(String(req.query.limit ?? '500'), 10) || 500));
+        const noMiningPage = Math.max(1, parseInt(String(req.query.noMiningPage ?? '1'), 10) || 1);
+        const miningNoWalletPage = Math.max(1, parseInt(String(req.query.miningNoWalletPage ?? '1'), 10) || 1);
+        const offsetNo = (noMiningPage - 1) * limitVal;
+        const offsetMw = (miningNoWalletPage - 1) * limitVal;
+        const coreJoin = `
+      FROM users u
+      INNER JOIN game_states gs ON gs.user_id = u.id
+      WHERE COALESCE(u.is_blocked, 0) = 0
+        AND COALESCE(u.is_super_admin, 0) = 0
+        AND COALESCE(u.is_admin, 0) = 0
+        AND gs.start_time <= $1::bigint`;
+        const whereNoMining = `
+        AND NOT EXISTS (
+              SELECT 1 FROM placed_racks pr2
+              WHERE pr2.user_id = u.id AND COALESCE(pr2.is_on, 0) = 1
+            )`;
+        const whereMiningNoWallet = `
+        AND EXISTS (
+              SELECT 1 FROM placed_racks pr3
+              WHERE pr3.user_id = u.id AND COALESCE(pr3.is_on, 0) = 1
+            )
+        AND (
+              u.polygon_wallet IS NULL
+           OR btrim(u.polygon_wallet::text) = ''
+           OR lower(btrim(u.polygon_wallet::text)) IN ('0x', 'null')
+            )`;
+        const sqlCountNo = `SELECT COUNT(*)::text AS c ${coreJoin} ${whereNoMining}`;
+        const sqlCountMw = `SELECT COUNT(*)::text AS c ${coreJoin} ${whereMiningNoWallet}`;
+        const sqlListNo = `
+      SELECT u.id,
+             u.username,
+             u.email::text AS email,
+             u.polygon_wallet::text AS polygon_wallet,
+             gs.start_time::text AS start_time,
+             u.last_active_at::text AS last_active_at,
+             u.ranking_excluded::text AS ranking_excluded
+      ${coreJoin}
+      ${whereNoMining}
+      ORDER BY u.id ASC
+      LIMIT $2::int OFFSET $3::int`;
+        const sqlListMw = `
+      SELECT u.id,
+             u.username,
+             u.email::text AS email,
+             u.polygon_wallet::text AS polygon_wallet,
+             gs.start_time::text AS start_time,
+             u.last_active_at::text AS last_active_at,
+             u.ranking_excluded::text AS ranking_excluded
+      ${coreJoin}
+      ${whereMiningNoWallet}
+      ORDER BY u.id ASC
+      LIMIT $2::int OFFSET $3::int`;
+        const [cntNoRes, cntMwRes, noMining, miningNoWallet] = await Promise.all([
+            db.query(sqlCountNo, [cutoffStr]),
+            db.query(sqlCountMw, [cutoffStr]),
+            db.query(sqlListNo, [cutoffStr, limitVal, offsetNo]),
+            db.query(sqlListMw, [cutoffStr, limitVal, offsetMw])
+        ]);
+        const parseTotal = (r) => {
+            const t = r?.rows?.[0]?.c;
+            const n = parseInt(String(t ?? '0'), 10);
+            return Number.isFinite(n) && n >= 0 ? n : 0;
+        };
+        const noMiningTotal = parseTotal(cntNoRes);
+        const miningNoWalletTotal = parseTotal(cntMwRes);
+        const mapRow = (row) => ({
+            id: Number(row.id),
+            username: row.username != null ? String(row.username) : '',
+            email: row.email != null ? String(row.email) : '',
+            polygonWallet: row.polygon_wallet != null ? String(row.polygon_wallet) : null,
+            startTimeMs: row.start_time != null ? String(row.start_time) : null,
+            lastActiveAt: row.last_active_at != null ? String(row.last_active_at) : null,
+            rankingExcluded: Number(row.ranking_excluded) === 1
+        });
+        res.json({
+            daysMin,
+            cutoffMs: cutoffStr,
+            limit: limitVal,
+            limitEach: limitVal,
+            noMiningPage,
+            miningNoWalletPage,
+            noMiningTotal,
+            miningNoWalletTotal,
+            note: 'Data de referência: game_states.start_time (criação do save no registo). «Minerar»: pelo menos uma rig com is_on=1. Carteira: users.polygon_wallet. Paginação: noMiningPage / miningNoWalletPage + limit (50–500).',
+            noMining: (noMining.rows || []).map(mapRow),
+            miningNoWallet: (miningNoWallet.rows || []).map(mapRow)
+        });
+    }
+    catch (e) {
+        console.error('[GET /api/admin/accounts-dormant-mining]', e);
+        res.status(500).json({ error: 'Falha ao carregar contas.' });
+    }
+});
 app.get('/api/users', isAdmin, async (req, res) => {
     try {
         const page = parseInt(String(req.query.page ?? '1'), 10) || 1;
@@ -5117,11 +4965,9 @@ async function computeAdminDashboardStatsUncached() {
         FROM placed_racks r
         JOIN rack_slots rs ON r.id = rs.rack_id
         LEFT JOIN upgrades u ON rs.machine_item_id = u.id
-        LEFT JOIN upgrades b ON r.battery_id = b.id
         WHERE r.is_on = 1 
           AND r.wiring_id IS NOT NULL 
           AND r.battery_id IS NOT NULL
-          AND (b.power_capacity = -1 OR r.current_charge > 0)
         GROUP BY r.id, r.user_id
       ),
       rack_mult AS (
@@ -5262,11 +5108,9 @@ app.get('/api/leaderboard', async (req, res) => {
         FROM placed_racks r
         JOIN rack_slots rs ON r.id = rs.rack_id
         LEFT JOIN upgrades u ON rs.machine_item_id = u.id
-        LEFT JOIN upgrades b ON r.battery_id = b.id
         WHERE r.is_on = 1 
           AND r.wiring_id IS NOT NULL 
           AND r.battery_id IS NOT NULL
-          AND (b.power_capacity = -1 OR r.current_charge > 0)
         GROUP BY r.id, r.user_id
       ),
       rack_mult AS (
@@ -5769,14 +5613,13 @@ app.get('/api/load-game', async (req, res) => {
     try {
         const uid = req.userId;
         await computeProgressForUser(db, uid, Date.now());
-        const [gsRow, stockRows, boxRows, batRows, rackRows, coinRows, workshopRows, dailyRows, claimedRows, u] = await Promise.all([
+        const [gsRow, stockRows, boxRows, batRows, rackRows, coinRows, dailyRows, claimedRows, u] = await Promise.all([
             prisma.game_states.findUnique({ where: { user_id: uid } }),
             prisma.stock.findMany({ where: { user_id: uid } }),
             prisma.unopened_boxes.findMany({ where: { user_id: uid } }),
             prisma.stored_batteries.findMany({ where: { user_id: uid } }),
             prisma.placed_racks.findMany({ where: { user_id: uid } }),
             prisma.coin_balances.findMany({ where: { user_id: uid } }),
-            prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
             prisma.daily_actions.findMany({ where: { user_id: uid } }),
             prisma.player_claimed_boxes.findMany({ where: { user_id: uid }, select: { box_id: true } }),
             prisma.users.findUnique({
@@ -5811,18 +5654,8 @@ app.get('/api/load-game', async (req, res) => {
         const storedBatteries = batRows.map((r) => ({
             id: r.id,
             itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
-            currentCharge: r.current_charge,
-            powerCapacityWh: r.power_capacity_wh != null
-                ? Number(r.power_capacity_wh)
-                : null,
             displayName: r.display_name != null ? String(r.display_name) : null,
-            imageUrl: r.image_url != null ? String(r.image_url) : null,
-            workshopSlotIndex: r.workshop_slot_index != null
-                ? Number(r.workshop_slot_index)
-                : null,
-            workshopComponentSlotId: r.workshop_component_slot_id != null
-                ? String(r.workshop_component_slot_id)
-                : null
+            imageUrl: r.image_url != null ? String(r.image_url) : null
         }));
         const racks = [];
         const rackIds = rackRows.map((r) => r.id);
@@ -5857,38 +5690,15 @@ app.get('/api/load-game', async (req, res) => {
                     multiplierSlots: multipliersMap.get(r.id) || [],
                     wiringId: r.wiring_id,
                     batteryId: r.battery_id,
-                    currentCharge: r.current_charge,
                     isOn: !!r.is_on,
                     selectedCoinId: r.selected_coin_id,
                     roomId: normalizePlacedRackRoomId(r.room_id),
                     slotIndex: r.slot_index || 0,
                     batteryCatalogItemId: r.battery_catalog_item_id ?? null,
-                    batteryPowerCapacityWh: r.battery_power_capacity_wh != null
-                        ? Number(r.battery_power_capacity_wh)
-                        : null,
                     batteryDisplayName: r.battery_display_name ?? null,
                     batteryImageUrl: r.battery_image_url ?? null
                 });
             }
-        }
-        const workshopSlots = [null, null, null, null, null, null];
-        workshopRows.forEach((w) => {
-            if (w.slot_index >= 0 && w.slot_index < 6) {
-                workshopSlots[w.slot_index] = {
-                    id: `ws_${uid}_${w.slot_index}`,
-                    itemId: w.item_id,
-                    internalSlots: safeWorkshopJsonObject(w.internal_state, 'workshop_slots.internal_state', uid),
-                    currentCharge: w.current_charge ?? 0,
-                    slotCharges: safeWorkshopJsonObject(w.slot_charges, 'workshop_slots.slot_charges', uid),
-                    slotItemIds: safeWorkshopJsonObject(w.slot_item_ids, 'workshop_slots.slot_item_ids', uid)
-                };
-            }
-        });
-        try {
-            await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(db, String(u.email || ''), workshopSlots);
-        }
-        catch (e) {
-            console.warn('[load-game] enrich workshop slotItemIds:', e instanceof Error ? e.message : String(e));
         }
         const coinBalances = {};
         coinRows.forEach((c) => {
@@ -5912,7 +5722,6 @@ app.get('/api/load-game', async (req, res) => {
             unopenedBoxes,
             storedBatteries,
             placedRacks: racks,
-            workshopSlots,
             coinBalances,
             claimedBoxes: claimedRows.map((r) => r.box_id)
         });
@@ -6260,7 +6069,7 @@ async function deleteUserByEmail(email, client) {
         await dbClient.query('DELETE FROM rack_multiplier_slots WHERE rack_id IN (SELECT id FROM placed_racks WHERE user_id = $1)', [uid]);
         await dbClient.query('DELETE FROM placed_racks WHERE user_id = $1', [uid]);
         await dbClient.query('DELETE FROM player_listings WHERE user_id = $1', [uid]);
-        await dbClient.query('DELETE FROM workshop_slots WHERE user_id = $1', [uid]);
+        // workshop_slots removida em 20260516180000_battery_uuids_and_purge_charging
         await dbClient.query('DELETE FROM daily_actions WHERE user_id = $1', [uid]);
         await dbClient.query('DELETE FROM promo_code_redemptions WHERE user_id = $1', [uid]);
         await dbClient.query('DELETE FROM player_claimed_boxes WHERE user_id = $1', [uid]);
@@ -6379,23 +6188,6 @@ app.post('/api/admin/bulk-gift', isAdmin, async (req, res) => {
         client.release();
     }
 });
-/** Evita 500 em GET /api/game-state quando JSON da oficina na BD está truncado ou inválido. */
-function safeWorkshopJsonObject(raw, label, userId) {
-    if (raw == null || raw === '')
-        return {};
-    if (typeof raw !== 'string')
-        return {};
-    try {
-        const v = JSON.parse(raw);
-        if (!v || typeof v !== 'object' || Array.isArray(v))
-            return {};
-        return v;
-    }
-    catch {
-        console.warn(`[GameState] JSON inválido em ${label} (user ${userId})`);
-        return {};
-    }
-}
 function normalizeJsonSafeNumbers(value) {
     if (typeof value === 'bigint') {
         const num = Number(value);
@@ -6468,13 +6260,12 @@ app.get('/api/game-state/:email', async (req, res) => {
             offlineMined = progressRes.offlineMined || {};
         }
         console.log(`[GameState] Starting parallel Prisma reads...`);
-        const [gsRow, stockRows, unopenedRows, storedBatRows, rackRows, workshopRows, coinBalRows, dailyRows, listingRows, claimedRows] = await Promise.all([
+        const [gsRow, stockRows, unopenedRows, storedBatRows, rackRows, coinBalRows, dailyRows, listingRows, claimedRows] = await Promise.all([
             prisma.game_states.findUnique({ where: { user_id: uid } }),
             prisma.stock.findMany({ where: { user_id: uid } }),
             prisma.unopened_boxes.findMany({ where: { user_id: uid } }),
             prisma.stored_batteries.findMany({ where: { user_id: uid } }),
             prisma.placed_racks.findMany({ where: { user_id: uid } }),
-            prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
             prisma.coin_balances.findMany({ where: { user_id: uid } }),
             prisma.daily_actions.findMany({ where: { user_id: uid } }),
             prisma.player_listings.findMany({ where: { user_id: uid } }),
@@ -6506,12 +6297,8 @@ app.get('/api/game-state/:email', async (req, res) => {
         const storedBatteries = storedBatRows.map((r) => ({
             id: r.id,
             itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
-            currentCharge: r.current_charge,
-            powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
             displayName: r.display_name != null ? String(r.display_name) : null,
-            imageUrl: r.image_url != null ? String(r.image_url) : null,
-            workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
-            workshopComponentSlotId: r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
+            imageUrl: r.image_url != null ? String(r.image_url) : null
         }));
         const coinBalances = {};
         coinBalRows.forEach((c) => {
@@ -6571,13 +6358,9 @@ app.get('/api/game-state/:email', async (req, res) => {
                     multiplierSlots: multipliersMap.get(r.id) || [],
                     wiringId: r.wiring_id,
                     batteryId: r.battery_id,
-                    currentCharge: r.current_charge,
                     isOn: !!r.is_on,
                     selectedCoinId: r.selected_coin_id,
                     batteryCatalogItemId: r.battery_catalog_item_id ?? null,
-                    batteryPowerCapacityWh: r.battery_power_capacity_wh != null
-                        ? Number(r.battery_power_capacity_wh)
-                        : null,
                     batteryDisplayName: r.battery_display_name ?? null,
                     batteryImageUrl: r.battery_image_url ?? null,
                     roomId: normalizePlacedRackRoomId(r.room_id),
@@ -6598,9 +6381,8 @@ app.get('/api/game-state/:email', async (req, res) => {
                             storedBatteries.push({
                                 id: row.id,
                                 itemId: row.item_id,
-                                currentCharge: row.current_charge,
-                                workshopSlotIndex: null,
-                                workshopComponentSlotId: null
+                                displayName: null,
+                                imageUrl: null
                             });
                         }
                         console.warn(`[GameState] Recuperada(s) ${recovered.length} instância(s) de bateria em armazém (UUID sem linha; carga preservada) uid=${uid}`);
@@ -6627,26 +6409,6 @@ app.get('/api/game-state/:email', async (req, res) => {
                     }));
                 }
             }
-        }
-        const workshopSlots = [null, null, null, null, null, null];
-        workshopRows.forEach((w) => {
-            if (w.slot_index >= 0 && w.slot_index < 6) {
-                workshopSlots[w.slot_index] = {
-                    id: `ws_${uid}_${w.slot_index}`,
-                    itemId: w.item_id,
-                    internalSlots: safeWorkshopJsonObject(w.internal_state, 'workshop_slots.internal_state', uid),
-                    currentCharge: w.current_charge ?? 0,
-                    slotCharges: safeWorkshopJsonObject(w.slot_charges, 'workshop_slots.slot_charges', uid),
-                    slotItemIds: safeWorkshopJsonObject(w.slot_item_ids, 'workshop_slots.slot_item_ids', uid),
-                    installedAt: Number(w.installed_at ?? 0)
-                };
-            }
-        });
-        try {
-            await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(db, String(u.email || ''), workshopSlots);
-        }
-        catch (e) {
-            console.warn('[game-state] enrich workshop slotItemIds:', e instanceof Error ? e.message : String(e));
         }
         const nftRoomIdsForGet = await resolveNftAutoArmario1OnlyRoomIds(db);
         const hadNftAutoViolations = placedRacks.some((r) => nftRoomIdsForGet.has(normalizePlacedRackRoomId(r.roomId)) &&
@@ -6715,11 +6477,10 @@ app.get('/api/game-state/:email', async (req, res) => {
             dailyActions,
             stock,
             unopenedBoxes,
-            storedBatteries,
+            storedBatteries: dedupeStoredBatteriesByIdForGameState(storedBatteries),
             placedRacks,
             coinBalances,
             playerListings,
-            workshopSlots,
             claimedBoxes,
             serverUpdatedAt: Number.isFinite(serverUpdatedAtNum) ? serverUpdatedAtNum : 0,
             offlineMined
@@ -6731,6 +6492,23 @@ app.get('/api/game-state/:email', async (req, res) => {
         sendInternalErrorSafeMessageOrPrisma(res, 'GET /api/game-state', e, 'Erro ao carregar o estado do jogo.');
     }
 });
+/** Primeira ocorrência ganha (ordem da query). Sem `id`, preserva a entrada (evita sumir linhas legadas). */
+function dedupeStoredBatteriesByIdForGameState(list) {
+    const out = [];
+    const seen = new Set();
+    for (const b of list) {
+        const id = String(b?.id ?? '').trim();
+        if (!id) {
+            out.push(b);
+            continue;
+        }
+        if (seen.has(id))
+            continue;
+        seen.add(id);
+        out.push(b);
+    }
+    return out;
+}
 const RACK_ID_RE = /^[a-zA-Z0-9_.-]{1,200}$/;
 async function validatePlacedRacksForSave(dbq, racks, userId) {
     if (!Array.isArray(racks))
@@ -6742,12 +6520,48 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
     const uidNum = Number(userId);
     const catalogBatteryRows = await prisma.upgrades.findMany({
         where: { type: 'battery' },
-        select: { id: true }
+        select: { id: true, power_capacity: true, base_cost: true }
     });
     const catalogBatteryIds = new Set(catalogBatteryRows.map((x) => x.id));
-    const fallbackBatteryCatalogId = String(catalogBatteryRows.find((x) => x.id === CANONICAL_1000WH_BATTERY_ID)?.id ||
-        catalogBatteryRows[0]?.id ||
-        '').trim();
+    const isInfiniteBatteryCapacity = (pc) => pc != null && Number(pc) === -1;
+    const finiteBatteriesSorted = [...catalogBatteryRows]
+        .filter((x) => !isInfiniteBatteryCapacity(x.power_capacity))
+        .sort((a, b) => (a.base_cost ?? 0) - (b.base_cost ?? 0) || a.id.localeCompare(b.id));
+    const fallbackBatteryCatalogId = String(finiteBatteriesSorted[0]?.id ?? catalogBatteryRows[0]?.id ?? '').trim();
+    /** UUID de instância → id de catálogo vindo da rig (`placed_racks` / payload do save). */
+    const placedRackBatteryCatalogByInstanceId = new Map();
+    const ingestRackBatteryCatalogHint = (batteryIdRaw, catalogRaw) => {
+        const bid = String(batteryIdRaw ?? '').trim();
+        if (!bid || !isRackBatteryInstanceUuid(bid))
+            return;
+        const cat = normalizeKnown1000WhBatteryCatalogId(catalogRaw ?? '');
+        if (!cat || !catalogBatteryIds.has(cat))
+            return;
+        placedRackBatteryCatalogByInstanceId.set(bid, cat);
+    };
+    if (Number.isFinite(uidNum) && uidNum > 0) {
+        try {
+            const prCat = await dbq.query(`SELECT battery_id::text AS bid, battery_catalog_item_id::text AS cat
+           FROM placed_racks
+          WHERE user_id = $1::int
+            AND battery_id IS NOT NULL
+            AND battery_catalog_item_id IS NOT NULL`, [uidNum]);
+            for (const row of prCat.rows || []) {
+                ingestRackBatteryCatalogHint(row.bid, row.cat);
+            }
+        }
+        catch (ePr) {
+            console.warn('[validatePlacedRacksForSave] placed_racks battery catalog hints:', ePr instanceof Error ? ePr.message : String(ePr));
+        }
+    }
+    if (Array.isArray(racks)) {
+        for (const rx of racks) {
+            if (!rx || typeof rx !== 'object')
+                continue;
+            const rid = rx;
+            ingestRackBatteryCatalogHint(rid.batteryId, rid.batteryCatalogItemId ?? rid.battery_catalog_item_id);
+        }
+    }
     const refreshOwnedStoredBatteryIds = async () => {
         ownedStoredBatteryIds.clear();
         if (!Number.isFinite(uidNum) || uidNum <= 0)
@@ -6771,6 +6585,12 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
         const rawItem = normalizeKnown1000WhBatteryCatalogId(row.item_id);
         if (rawItem && catalogBatteryIds.has(rawItem)) {
             storedBattCatalogByInstanceId.set(iid, rawItem);
+            return;
+        }
+        const fromRack = placedRackBatteryCatalogByInstanceId.get(iid);
+        const rackCat = fromRack ? normalizeKnown1000WhBatteryCatalogId(fromRack) : '';
+        if (rackCat && catalogBatteryIds.has(rackCat)) {
+            storedBattCatalogByInstanceId.set(iid, rackCat);
             return;
         }
         if (fallbackBatteryCatalogId) {
@@ -6865,16 +6685,30 @@ async function validatePlacedRacksForSave(dbq, racks, userId) {
                 if (fromStore && catalogBatteryIds.has(fromStore)) {
                     upgradeIds.add(fromStore);
                 }
-                else if (fallbackBatteryCatalogId) {
-                    upgradeIds.add(fallbackBatteryCatalogId);
+                else {
+                    const rcOwn = normalizeKnown1000WhBatteryCatalogId(placedRackBatteryCatalogByInstanceId.get(bidRaw) ?? '');
+                    if (rcOwn && catalogBatteryIds.has(rcOwn))
+                        upgradeIds.add(rcOwn);
+                    else if (fallbackBatteryCatalogId)
+                        upgradeIds.add(fallbackBatteryCatalogId);
                 }
             }
             else if (catalogBatteryIds.has(normalizeKnown1000WhBatteryCatalogId(bidRaw))) {
                 // Legado: `placed_racks.battery_id` = id de catálogo (pré UUID-only no cliente).
                 upgradeIds.add(normalizeKnown1000WhBatteryCatalogId(bidRaw));
             }
-            else if (isRackBatteryInstanceUuid(bidRaw) && fallbackBatteryCatalogId) {
-                upgradeIds.add(fallbackBatteryCatalogId);
+            else if (isRackBatteryInstanceUuid(bidRaw)) {
+                const rc = normalizeKnown1000WhBatteryCatalogId(placedRackBatteryCatalogByInstanceId.get(bidRaw) ?? '');
+                if (rc && catalogBatteryIds.has(rc))
+                    upgradeIds.add(rc);
+                else if (fallbackBatteryCatalogId)
+                    upgradeIds.add(fallbackBatteryCatalogId);
+                else {
+                    return {
+                        ok: false,
+                        error: 'Referência de bateria inválida numa rig (dados desatualizados). Recarregue a página (F5) e tente de novo.'
+                    };
+                }
             }
             else {
                 return {
@@ -7000,7 +6834,7 @@ async function handleSaveGamePost(req, res) {
             const saveDomainRaw = String((req.headers && req.headers['x-game-save-domain']) || '')
                 .trim()
                 .toLowerCase();
-            const saveDomain = saveDomainRaw === 'inventory' || saveDomainRaw === 'servers' || saveDomainRaw === 'workshop'
+            const saveDomain = saveDomainRaw === 'inventory' || saveDomainRaw === 'servers'
                 ? saveDomainRaw
                 : '';
             if (saveDomain) {
@@ -7017,9 +6851,7 @@ async function handleSaveGamePost(req, res) {
                 if (saveDomain === 'servers' && changes.placedRacks == null) {
                     throw new HttpControlledError(400, { error: 'Domínio servers: envie placedRacks.' });
                 }
-                if (saveDomain === 'workshop' && changes.workshopSlots == null) {
-                    throw new HttpControlledError(400, { error: 'Domínio workshop: envie workshopSlots.' });
-                }
+                // Domínio 'workshop' descontinuado em 20260516180000_battery_uuids_and_purge_charging.
                 await mergeSaveGameSlicePayload(client, Number(uid), saveDomain, changes);
                 await neutralizeLegacySaveGameSlicePayload(client, Number(uid), saveDomain, changes, req, Number(uid));
             }
@@ -7035,7 +6867,6 @@ async function handleSaveGamePost(req, res) {
                 changes.placedRacks !== undefined ||
                 changes.stock !== undefined ||
                 changes.storedBatteries !== undefined ||
-                changes.workshopSlots !== undefined ||
                 changes.unopenedBoxes !== undefined;
             if (!effectiveAdminOverride && hasCriticalSliceFields && !clientLastLoadTimeValid) {
                 // Save legado sem versão verificável → estado anterior pode reintroduzir slots já libertados
@@ -7199,13 +7030,13 @@ async function handleSaveGamePost(req, res) {
                         error: 'O armazém de baterias foi enviado num formato inválido. Recarregue a página (F5).'
                     });
                 }
-                changes.storedBatteries = sanitizeStoredBatteriesForSavePayload(changes.storedBatteries, changes.workshopSlots, changes.placedRacks);
+                changes.storedBatteries = sanitizeStoredBatteriesForSavePayload(changes.storedBatteries, changes.placedRacks);
                 const batVal = await validateStoredBatteriesForSave(client, uid, changes.storedBatteries);
                 if (!batVal.ok) {
                     throw new HttpControlledError(400, { error: batVal.error });
                 }
                 const incomingIds = changes.storedBatteries.map((b) => b.id);
-                const batRm = await validateStoredBatteryWarehouseRemovalAllowed(client, uid, incomingIds, { placedRacks: changes.placedRacks, workshopSlots: changes.workshopSlots }, effectiveAdminOverride);
+                const batRm = await validateStoredBatteryWarehouseRemovalAllowed(client, uid, incomingIds, { placedRacks: changes.placedRacks }, effectiveAdminOverride);
                 if (!batRm.ok) {
                     throw new StoredBatterySaveGuardError(batRm.error);
                 }
@@ -7221,12 +7052,7 @@ async function handleSaveGamePost(req, res) {
                 if (changes.storedBatteries.length > 0) {
                     const bIds = changes.storedBatteries.map(b => b.id);
                     const bItemIds = changes.storedBatteries.map((b) => normalizeKnown1000WhBatteryCatalogId(b.itemId));
-                    const bCharges = changes.storedBatteries.map(b => b.currentCharge || 0);
                     const upStoredSave = await fetchBatteryUpgradeRowsByIds(client, bItemIds);
-                    const bPowers = bItemIds.map((cid) => {
-                        const u = upStoredSave.get(String(cid));
-                        return u?.power_capacity != null && Number.isFinite(Number(u.power_capacity)) ? Number(u.power_capacity) : null;
-                    });
                     const bNames = bItemIds.map((cid) => {
                         const n = upStoredSave.get(String(cid))?.name;
                         return n != null && String(n).trim() !== '' ? String(n).trim().slice(0, 500) : null;
@@ -7235,24 +7061,21 @@ async function handleSaveGamePost(req, res) {
                         const im = upStoredSave.get(String(cid))?.image;
                         return im != null && String(im).trim() !== '' ? String(im).trim().slice(0, 2048) : null;
                     });
+                    // Bateria infinita por design (UUID em `id`); sem `current_charge`/`power_capacity_wh`/workshop_*.
                     await client.query(`
-          INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id)
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[]), unnest($5::float8[]), unnest($6::text[]), unnest($7::text[]), NULL::int, NULL::text
+          INSERT INTO stored_batteries (id, user_id, item_id, display_name, image_url)
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[])
           ON CONFLICT (id) DO UPDATE SET
-            current_charge = EXCLUDED.current_charge,
             item_id = EXCLUDED.item_id,
-            power_capacity_wh = COALESCE(EXCLUDED.power_capacity_wh, stored_batteries.power_capacity_wh),
             display_name = COALESCE(NULLIF(BTRIM(EXCLUDED.display_name), ''), stored_batteries.display_name),
-            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url),
-            workshop_slot_index = stored_batteries.workshop_slot_index,
-            workshop_component_slot_id = stored_batteries.workshop_component_slot_id`, [uid, bIds, bItemIds, bCharges, bPowers, bNames, bImgs]);
+            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url)`, [uid, bIds, bItemIds, bNames, bImgs]);
                 }
             }
             if (changes.placedRacks) {
                 const ts = new Date().toISOString();
-                const prevRacksRes = await client.query(`SELECT id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id,
+                const prevRacksRes = await client.query(`SELECT id, item_id, wiring_id, battery_id, is_on, selected_coin_id,
                 COALESCE(NULLIF(BTRIM(room_id::text), ''), 'room_initial') AS room_id, slot_index,
-                battery_catalog_item_id, battery_power_capacity_wh, battery_display_name, battery_image_url
+                battery_catalog_item_id, battery_display_name, battery_image_url
          FROM placed_racks WHERE user_id = $1`, [uid]);
                 const prevMap = new Map(prevRacksRes.rows.map((row) => [row.id, row]));
                 const nextIdSet = new Set(changes.placedRacks.map((r) => r.id));
@@ -7316,8 +7139,6 @@ async function handleSaveGamePost(req, res) {
                         changed.push('battery');
                     if (Number(prow.is_on) !== (r.isOn ? 1 : 0))
                         changed.push('power');
-                    if (Number(prow.current_charge || 0) !== Number(r.currentCharge || 0))
-                        changed.push('charge');
                     if (String(prow.selected_coin_id || '') !== String(r.selectedCoinId || ''))
                         changed.push('coin');
                     if (String(prow.room_id || '') !== String(normalizePlacedRackRoomId(r.roomId)))
@@ -7382,13 +7203,11 @@ async function handleSaveGamePost(req, res) {
                             return r.batteryId || null;
                         return normalizeKnown1000WhBatteryCatalogId(bid);
                     });
-                    const rCharges = changes.placedRacks.map(r => r.currentCharge || 0);
                     const rOns = changes.placedRacks.map(r => r.isOn ? 1 : 0);
                     const rCoins = changes.placedRacks.map(r => r.selectedCoinId || null);
                     const rRooms = changes.placedRacks.map((r) => normalizePlacedRackRoomId(r.roomId));
                     const rSlotIdxs = changes.placedRacks.map(r => r.slotIndex || 0);
                     const rBatCats = [];
-                    const rBatPows = [];
                     const rBatNames = [];
                     const rBatImgs = [];
                     for (const r of changes.placedRacks) {
@@ -7397,7 +7216,6 @@ async function handleSaveGamePost(req, res) {
                             ? {
                                 battery_id: prow.battery_id != null ? String(prow.battery_id) : null,
                                 battery_catalog_item_id: prow.battery_catalog_item_id != null ? String(prow.battery_catalog_item_id) : null,
-                                battery_power_capacity_wh: prow.battery_power_capacity_wh != null ? Number(prow.battery_power_capacity_wh) : null,
                                 battery_display_name: prow.battery_display_name != null ? String(prow.battery_display_name) : null,
                                 battery_image_url: prow.battery_image_url != null ? String(prow.battery_image_url) : null
                             }
@@ -7406,23 +7224,21 @@ async function handleSaveGamePost(req, res) {
                         rBatCats.push(snap.catalogItemId != null && String(snap.catalogItemId).trim() !== ''
                             ? normalizeKnown1000WhBatteryCatalogId(snap.catalogItemId)
                             : null);
-                        rBatPows.push(snap.powerWh);
                         rBatNames.push(snap.displayName != null && snap.displayName.trim() !== '' ? snap.displayName.trim().slice(0, 500) : null);
                         rBatImgs.push(snap.imageUrl != null && snap.imageUrl.trim() !== '' ? snap.imageUrl.trim().slice(0, 2048) : null);
                     }
                     await client.query(`
           INSERT INTO placed_racks (
-            id, user_id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id, room_id, slot_index,
-            battery_catalog_item_id, battery_power_capacity_wh, battery_display_name, battery_image_url
+            id, user_id, item_id, wiring_id, battery_id, is_on, selected_coin_id, room_id, slot_index,
+            battery_catalog_item_id, battery_display_name, battery_image_url
           )
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), unnest($6::numeric[]), unnest($7::int[]), unnest($8::text[]), unnest($9::text[]), unnest($10::int[]),
-                 unnest($11::text[]), unnest($12::float8[]), unnest($13::text[]), unnest($14::text[])
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), unnest($6::int[]), unnest($7::text[]), unnest($8::text[]), unnest($9::int[]),
+                 unnest($10::text[]), unnest($11::text[]), unnest($12::text[])
           ON CONFLICT (id) DO UPDATE SET
             item_id = EXCLUDED.item_id, wiring_id = EXCLUDED.wiring_id, battery_id = EXCLUDED.battery_id,
-            current_charge = EXCLUDED.current_charge, is_on = EXCLUDED.is_on, selected_coin_id = EXCLUDED.selected_coin_id,
+            is_on = EXCLUDED.is_on, selected_coin_id = EXCLUDED.selected_coin_id,
             room_id = EXCLUDED.room_id, slot_index = EXCLUDED.slot_index,
             battery_catalog_item_id = EXCLUDED.battery_catalog_item_id,
-            battery_power_capacity_wh = EXCLUDED.battery_power_capacity_wh,
             battery_display_name = EXCLUDED.battery_display_name,
             battery_image_url = EXCLUDED.battery_image_url`, [
                         uid,
@@ -7430,13 +7246,11 @@ async function handleSaveGamePost(req, res) {
                         rItems,
                         rWirings,
                         rBatteries,
-                        rCharges,
                         rOns,
                         rCoins,
                         rRooms,
                         rSlotIdxs,
                         rBatCats,
-                        rBatPows,
                         rBatNames,
                         rBatImgs
                     ]);
@@ -7477,206 +7291,7 @@ async function handleSaveGamePost(req, res) {
                     }
                 }
             }
-            if (changes.workshopSlots) {
-                const wVal = await validateWorkshopSlotsPayloadForSave(client, changes.workshopSlots, {
-                    adminOverride: effectiveAdminOverride
-                });
-                if (!wVal.ok) {
-                    throw new HttpControlledError(400, { error: wVal.error });
-                }
-                const workshopNorm = wVal.normalized;
-                const existingSlotsRes = await client.query('SELECT slot_index, item_id, installed_at, current_charge, slot_charges, slot_item_ids FROM workshop_slots WHERE user_id = $1', [uid]);
-                const existingSlots = {};
-                existingSlotsRes.rows.forEach((r) => {
-                    let parsed_slot_item_ids = {};
-                    if (r.slot_item_ids) {
-                        try {
-                            const raw = r.slot_item_ids;
-                            const o = typeof raw === 'string' ? JSON.parse(raw) : raw;
-                            if (o && typeof o === 'object' && !Array.isArray(o)) {
-                                for (const [k, v] of Object.entries(o)) {
-                                    if (typeof v === 'string' && v.trim())
-                                        parsed_slot_item_ids[k] = v.trim();
-                                }
-                            }
-                        }
-                        catch {
-                            parsed_slot_item_ids = {};
-                        }
-                    }
-                    existingSlots[r.slot_index] = { ...r, parsed_slot_item_ids };
-                });
-                const workshopItemIds = workshopNorm.map((w) => w?.itemId).filter((id) => !!id);
-                const slotRefIds = [];
-                for (const w of workshopNorm) {
-                    if (w?.slotItemIds) {
-                        for (const sid of Object.values(w.slotItemIds)) {
-                            if (typeof sid === 'string' && sid)
-                                slotRefIds.push(sid);
-                        }
-                    }
-                }
-                for (const row of Object.values(existingSlots)) {
-                    const p = row?.parsed_slot_item_ids;
-                    if (!p)
-                        continue;
-                    for (const v of Object.values(p)) {
-                        if (typeof v === 'string' && v.trim())
-                            slotRefIds.push(v.trim());
-                    }
-                }
-                const existingItemIds = Object.values(existingSlots)
-                    .map((s) => s.item_id)
-                    .filter((id) => typeof id === 'string' && !!id);
-                const allWorkshopTargetIds = [...new Set([...workshopItemIds, ...existingItemIds, ...slotRefIds])];
-                const workshopUpgradesMap = new Map();
-                if (allWorkshopTargetIds.length > 0) {
-                    const upRes = await client.query('SELECT id, type, category, base_production, power_capacity FROM upgrades WHERE id = ANY($1::text[])', [allWorkshopTargetIds]);
-                    upRes.rows.forEach((u) => workshopUpgradesMap.set(u.id, u));
-                }
-                const capSlotCharges = (charges, slotItemIds) => {
-                    if (!slotItemIds)
-                        return { ...charges };
-                    const out = { ...charges };
-                    for (const key of Object.keys(out)) {
-                        const iid = slotItemIds[key];
-                        if (!iid)
-                            continue;
-                        const defB = workshopUpgradesMap.get(String(iid));
-                        const maxB = Number(defB?.power_capacity);
-                        if (Number.isFinite(maxB) && maxB >= 0 && out[key] > maxB)
-                            out[key] = maxB;
-                    }
-                    return out;
-                };
-                const wsUserIds = [];
-                const wsSlotIdxs = [];
-                const wsItemIds = [];
-                const wsInternalStates = [];
-                const wsCharges = [];
-                const wsSlotCharges = [];
-                const wsSlotItemIds = [];
-                const wsInstalledAts = [];
-                /** Mesmo estado gravado em `workshop_slots` (merge BD + cliente) — evita zerar carga noutros carregadores ao refrescar `stored_batteries`. */
-                const linkageSlots = [null, null, null, null, null, null];
-                for (let i = 0; i < workshopNorm.length; i++) {
-                    const w = workshopNorm[i];
-                    const existing = existingSlots[i];
-                    if (w && w.itemId) {
-                        const defStruct = workshopUpgradesMap.get(String(w.itemId));
-                        const maxCapStruct = Number(defStruct?.power_capacity);
-                        // Só limpar bancada interna quando o jogador troca o modelo na BD — não quando é a
-                        // primeira persistência (linha inexistente ou slot vazio), senão o save apaga as
-                        // baterias que já vinham no payload do cliente.
-                        const hadItemInDb = !!existing &&
-                            existing.item_id != null &&
-                            String(String(existing.item_id).trim()) !== '';
-                        const structureIdChanged = hadItemInDb && String(existing.item_id) !== String(w.itemId);
-                        const isFirstPersistOfSlot = !hadItemInDb;
-                        let finalCharge = w.currentCharge || 0;
-                        let finalSlotCharges = w.slotCharges ? { ...w.slotCharges } : {};
-                        let internalPayload = w.internalSlots && Object.keys(w.internalSlots).length ? { ...w.internalSlots } : {};
-                        let slotItemIdsPayload = w.slotItemIds && Object.keys(w.slotItemIds).length ? { ...w.slotItemIds } : null;
-                        let validInstalledAt = Date.now();
-                        if (isFirstPersistOfSlot || structureIdChanged) {
-                            console.log(`[WorkshopPlace] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${w.itemId}`);
-                            saveActivityLogs.push({ action: 'workshop_place', meta: { slotIndex: i, itemId: w.itemId } });
-                        }
-                        if (structureIdChanged && !effectiveAdminOverride) {
-                            finalCharge = 0;
-                            finalSlotCharges = {};
-                            internalPayload = {};
-                            slotItemIdsPayload = null;
-                        }
-                        else if (hadItemInDb && String(existing.item_id) === String(w.itemId)) {
-                            if (existing.slot_charges) {
-                                try {
-                                    const dbSlotCharges = typeof existing.slot_charges === 'string'
-                                        ? JSON.parse(existing.slot_charges)
-                                        : existing.slot_charges;
-                                    for (const [sid, dbVal] of Object.entries(dbSlotCharges)) {
-                                        const dbNum = Number(dbVal);
-                                        if (!Number.isFinite(dbNum))
-                                            continue;
-                                        const cur = finalSlotCharges[sid];
-                                        if (cur === undefined) {
-                                            finalSlotCharges[sid] = dbNum;
-                                        }
-                                        else if (dbNum > cur) {
-                                            finalSlotCharges[sid] = dbNum;
-                                        }
-                                    }
-                                }
-                                catch (e) {
-                                    console.warn(`[SaveGame] Error parsing existing slot_charges for slot ${i}:`, e instanceof Error ? e.message : String(e));
-                                }
-                            }
-                            if (Number(existing.current_charge) > finalCharge) {
-                                finalCharge = Number(existing.current_charge);
-                            }
-                            validInstalledAt = Number(existing.installed_at || Date.now());
-                            const dbSlotItemMap = existing
-                                .parsed_slot_item_ids;
-                            if (dbSlotItemMap && Object.keys(dbSlotItemMap).length > 0 && Object.keys(internalPayload).length > 0) {
-                                const merged = { ...(slotItemIdsPayload || {}) };
-                                let touched = false;
-                                for (const k of Object.keys(internalPayload)) {
-                                    if (!merged[k] && dbSlotItemMap[k]) {
-                                        merged[k] = String(dbSlotItemMap[k]);
-                                        touched = true;
-                                    }
-                                }
-                                if (touched && Object.keys(merged).length > 0)
-                                    slotItemIdsPayload = merged;
-                            }
-                        }
-                        if (Number.isFinite(maxCapStruct) && maxCapStruct > 0) {
-                            finalCharge = Math.min(finalCharge, maxCapStruct);
-                        }
-                        finalSlotCharges = capSlotCharges(finalSlotCharges, slotItemIdsPayload);
-                        linkageSlots[i] = {
-                            itemId: w.itemId,
-                            currentCharge: finalCharge,
-                            internalSlots: internalPayload,
-                            slotCharges: finalSlotCharges,
-                            slotItemIds: slotItemIdsPayload
-                        };
-                        wsUserIds.push(uid);
-                        wsSlotIdxs.push(i);
-                        wsItemIds.push(w.itemId);
-                        wsInternalStates.push(Object.keys(internalPayload).length ? JSON.stringify(internalPayload) : null);
-                        wsCharges.push(finalCharge);
-                        wsSlotCharges.push(JSON.stringify(finalSlotCharges));
-                        wsSlotItemIds.push(slotItemIdsPayload ? JSON.stringify(slotItemIdsPayload) : null);
-                        wsInstalledAts.push(validInstalledAt);
-                    }
-                    else {
-                        linkageSlots[i] = null;
-                        if (existing && existing.item_id) {
-                            console.log(`[WorkshopDismantle] ts=${new Date().toISOString()} userId=${uid} slotIndex=${i} itemId=${existing.item_id}`);
-                            saveActivityLogs.push({ action: 'workshop_dismantle', meta: { slotIndex: i, itemId: existing.item_id } });
-                            const itemDef = workshopUpgradesMap.get(String(existing.item_id));
-                            if (itemDef && String(itemDef.type).toLowerCase() === 'charger') {
-                                if (Number(existing.current_charge) > 0.001) {
-                                    throw Object.assign(new Error('Não é possível remover um carregador com carga.'), {
-                                        workshopClientError: true
-                                    });
-                                }
-                            }
-                        }
-                        await client.query('UPDATE workshop_slots SET item_id = NULL, installed_at = 0 WHERE user_id = $1 AND slot_index = $2', [uid, i]);
-                    }
-                }
-                if (wsUserIds.length > 0) {
-                    await client.query(`
-          INSERT INTO workshop_slots (user_id, slot_index, item_id, internal_state, current_charge, slot_charges, slot_item_ids, installed_at)
-          SELECT unnest($1::int[]), unnest($2::int[]), unnest($3::text[]), unnest($4::text[]), unnest($5::numeric[]), unnest($6::text[]), unnest($7::text[]), unnest($8::numeric[])
-          ON CONFLICT (user_id, slot_index) DO UPDATE SET
-            item_id = EXCLUDED.item_id, internal_state = EXCLUDED.internal_state, current_charge = EXCLUDED.current_charge,
-            slot_charges = EXCLUDED.slot_charges, slot_item_ids = EXCLUDED.slot_item_ids, installed_at = EXCLUDED.installed_at`, [wsUserIds, wsSlotIdxs, wsItemIds, wsInternalStates, wsCharges, wsSlotCharges, wsSlotItemIds, wsInstalledAts]);
-                    await refreshStoredBatteriesWorkshopLinkage(client, uid, linkageSlots);
-                }
-            }
+            // changes.workshopSlots: payload ignorado em 20260516180000 (oficina/recarga descontinuadas).
             if (changes.claimedBoxes) {
                 if (changes.claimedBoxes.length > 0) {
                     await client.query(`
@@ -7692,13 +7307,10 @@ async function handleSaveGamePost(req, res) {
                     const itemId = normalizeKnown1000WhBatteryCatalogId(r.item_id);
                     stockObj[itemId] = (stockObj[itemId] || 0) + (Number(r.qty) || 0);
                 });
-                const batRows = await client.query('SELECT id, item_id, current_charge, workshop_slot_index, workshop_component_slot_id FROM stored_batteries WHERE user_id = $1', [uid]);
+                const batRows = await client.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [uid]);
                 const bats = batRows.rows.map((r) => ({
                     id: r.id,
-                    itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
-                    currentCharge: Number(r.current_charge) || 0,
-                    workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
-                    workshopComponentSlotId: r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
+                    itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id)
                 }));
                 nftAutoSyncPayload = { placedRacks: changes.placedRacks, stock: stockObj, storedBatteries: bats };
             }
@@ -7720,10 +7332,6 @@ async function handleSaveGamePost(req, res) {
             return;
         if (e instanceof StoredBatterySaveGuardError) {
             return res.status(409).json({ error: e.message, forceReload: true });
-        }
-        const err = e;
-        if (err && err.workshopClientError && typeof err.message === 'string') {
-            return res.status(400).json({ error: err.message });
         }
         console.error('[SaveGame] CRITICAL ERROR:', e);
         sendInternalErrorSafeMessageOrPrisma(res, req.originalUrl || 'api', e, 'Erro ao guardar.');
@@ -7774,31 +7382,7 @@ app.post('/api/game/save-servers', async (req, res) => {
     };
     return handleSaveGamePost(req, res);
 });
-/** Gravação só da oficina (workshop_slots). */
-app.post('/api/game/save-workshop', async (req, res) => {
-    if (!req.userId)
-        return res.status(401).json({ error: 'Não autenticado', code: 'AUTH_REQUIRED' });
-    const b = req.body && typeof req.body === 'object' ? req.body : {};
-    const nested = b.changes && typeof b.changes === 'object' && !Array.isArray(b.changes) ? b.changes : null;
-    const workshopSlots = nested != null ? nested.workshopSlots : b.workshopSlots;
-    const stock = nested != null ? nested.stock : b.stock;
-    const storedBatteries = nested != null ? nested.storedBatteries : b.storedBatteries;
-    const lastLoadTime = nested != null ? nested.lastLoadTime : b.lastLoadTime;
-    if (workshopSlots == null) {
-        return res.status(400).json({ error: 'Envie workshopSlots (corpo plano ou changes).' });
-    }
-    req.headers['x-game-save-domain'] = 'workshop';
-    const wsChanges = { lastLoadTime, workshopSlots };
-    if (stock !== undefined)
-        wsChanges.stock = stock;
-    if (storedBatteries !== undefined)
-        wsChanges.storedBatteries = storedBatteries;
-    req.body = {
-        changes: wsChanges,
-        adminOverride: false
-    };
-    return handleSaveGamePost(req, res);
-});
+// /api/game/save-workshop removida em 20260516180000_battery_uuids_and_purge_charging.
 // --- BACKUP SETTINGS API ---
 app.get('/api/admin/backup-settings', isAdmin, async (req, res) => {
     try {
@@ -9105,19 +8689,7 @@ const startServer = async () => {
             }
             await ensureMiningCoinsTable();
             await ensureUpgrades();
-            async function ensureWorkshopTimestampColumn() {
-                try {
-                    const res = await db.query("SELECT column_name FROM information_schema.columns WHERE table_name='workshop_slots' AND column_name='installed_at'");
-                    if (res.rowCount === 0) {
-                        console.log("[Migration] Adding 'installed_at' column to workshop_slots...");
-                        await db.query("ALTER TABLE workshop_slots ADD COLUMN installed_at BIGINT DEFAULT 0");
-                    }
-                }
-                catch (e) {
-                    console.warn("[Migration] ensureWorkshopTimestampColumn failed:", e.message);
-                }
-            }
-            await ensureWorkshopTimestampColumn(); // Add schema migration
+            // workshop_slots removida em 20260516180000_battery_uuids_and_purge_charging.
             await ensureMiningCoins(); // Add data seeding
             await ensureTotalSoldColumn();
             await ensureUsdcDefault();

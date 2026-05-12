@@ -8,8 +8,6 @@ import { normalizePublicAssetUrl } from '../utils/publicUrl';
 interface InventoryViewProps {
     stock: Record<string, number>;
     storedBatteries?: StoredBattery[];
-    /** Quando definido (após GET `/api/inventory/me`), separa UI em cheias vs parciais conforme o servidor. */
-    inventoryBatterySplit?: { full: StoredBattery[]; partial: StoredBattery[] } | null;
     upgrades: Upgrade[];
     /** Quando definido (GET `/api/inventory/state`), categorias e linhas vêm do servidor — sem recalcular stock no cliente. */
     inventoryStackableCategories?: InventoryStackableCategoryApi[] | null;
@@ -45,7 +43,6 @@ function groupBatteriesByItemId(bats: StoredBattery[]): Record<string, StoredBat
 export const InventoryView: React.FC<InventoryViewProps> = ({
     stock,
     storedBatteries = [],
-    inventoryBatterySplit = null,
     upgrades,
     inventoryStackableCategories = null
 }) => {
@@ -88,106 +85,76 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                 </div>
                 <div>
                     <h2 className="text-xl font-bold text-slate-800 dark:text-slate-200">Depósito de peças</h2>
-                    <p className="text-sm text-slate-500">Tudo que já comprou e ainda não está em rack ou oficina.</p>
+                    <p className="text-sm text-slate-500">Tudo que já comprou e ainda não está em rack.</p>
                 </div>
             </div>
 
             {(() => {
-                const useSplit = inventoryBatterySplit != null;
-                const partialList = inventoryBatterySplit != null ? inventoryBatterySplit.partial : storedBatteries;
-                const fullList = inventoryBatterySplit != null ? inventoryBatterySplit.full : [];
-                const renderBatteryCards = (bats: StoredBattery[], sectionLabel: string) => {
-                    if (bats.length === 0) return null;
-                    return (
-                        <div className="mb-8">
-                            <h3 className="text-sm font-bold text-yellow-600 uppercase tracking-widest mb-3 flex items-center gap-2">
-                                <span className="w-2 h-2 rounded-full bg-yellow-600"></span>
-                                {sectionLabel}
-                            </h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                                {Object.entries(groupBatteriesByItemId(bats)).map(([itemId, groupBats]) => {
-                                    const def = upgrades.find((u) => u.id === itemId);
-                                    if (!def) return null;
-                                    return (
-                                        <div
-                                            key={`${sectionLabel}-${itemId}`}
-                                            className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 relative overflow-hidden group hover:border-yellow-500/50 transition-all shadow-sm flex flex-col"
-                                        >
-                                            <div className="flex justify-between items-start mb-3">
-                                                <div className="w-10 h-10 bg-slate-50 dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 flex items-center justify-center text-xl text-yellow-500 overflow-hidden">
-                                                    {def.image ? (
-                                                        <img
-                                                            src={normalizePublicAssetUrl(def.image) || def.image}
-                                                            alt={def.name}
-                                                            className="w-full h-full object-cover"
-                                                        />
-                                                    ) : (
-                                                        def.icon
-                                                    )}
-                                                </div>
-                                                <div className="flex flex-col items-end">
-                                                    <span className="text-[10px] text-slate-500 uppercase flex items-center gap-1">
-                                                        <Save size={10} /> Salvo
-                                                    </span>
-                                                    <span className="text-lg font-mono font-bold text-slate-700 dark:text-white">x{groupBats.length}</span>
-                                                </div>
+                if (storedBatteries.length === 0) return null;
+                return (
+                    <div className="mb-8">
+                        <h3 className="text-sm font-bold text-yellow-600 uppercase tracking-widest mb-3 flex items-center gap-2">
+                            <span className="w-2 h-2 rounded-full bg-yellow-600"></span>
+                            Baterias fora de rack (UUID infinitas)
+                        </h3>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                            {Object.entries(groupBatteriesByItemId(storedBatteries)).map(([itemId, groupBats]) => {
+                                const def = upgrades.find((u) => u.id === itemId);
+                                if (!def) return null;
+                                return (
+                                    <div
+                                        key={itemId}
+                                        className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg p-4 relative overflow-hidden group hover:border-yellow-500/50 transition-all shadow-sm flex flex-col"
+                                    >
+                                        <div className="flex justify-between items-start mb-3">
+                                            <div className="w-10 h-10 bg-slate-50 dark:bg-slate-950 rounded border border-slate-200 dark:border-slate-800 flex items-center justify-center text-xl text-yellow-500 overflow-hidden">
+                                                {def.image ? (
+                                                    <img
+                                                        src={normalizePublicAssetUrl(def.image) || def.image}
+                                                        alt={def.name}
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                ) : (
+                                                    def.icon
+                                                )}
                                             </div>
-                                            <h4 className="font-bold text-slate-800 dark:text-slate-200 truncate text-sm mb-2">{def.name}</h4>
-                                            <div className="flex-1 overflow-y-auto custom-scrollbar max-h-32 pr-1 space-y-2">
-                                                {groupBats.map((battery) => {
-                                                    // Sistema de baterias é infinito por design: armazém mostra sempre ∞.
-                                                    const isInf = true;
-                                                    const chargePct = 100;
-                                                    const refLabel =
-                                                        battery.publicRef && battery.publicRef.trim()
-                                                            ? battery.publicRef
-                                                            : battery.id.slice(0, 6);
-                                                    return (
-                                                        <div
-                                                            key={battery.id}
-                                                            className="bg-slate-50 dark:bg-slate-950/50 p-2 rounded border border-slate-100 dark:border-slate-800/50 text-xs"
-                                                        >
-                                                            <div className="flex justify-between text-[10px] text-slate-500 mb-1">
-                                                                <span className="font-mono text-[9px]">{refLabel}</span>
-                                                                <span className="text-yellow-600 dark:text-yellow-400 font-mono">
-                                                                    {isInf ? '∞' : `${chargePct.toFixed(1)}%`}
-                                                                </span>
-                                                            </div>
-                                                            <div className="w-full h-1 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden">
-                                                                <div
-                                                                    className="h-full bg-yellow-500 dark:bg-yellow-600"
-                                                                    style={{ width: `${isInf ? 100 : Math.min(100, chargePct)}%` }}
-                                                                />
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
+                                            <div className="flex flex-col items-end">
+                                                <span className="text-[10px] text-slate-500 uppercase flex items-center gap-1">
+                                                    <Save size={10} /> Salvo
+                                                </span>
+                                                <span className="text-lg font-mono font-bold text-slate-700 dark:text-white">x{groupBats.length}</span>
                                             </div>
                                         </div>
-                                    );
-                                })}
-                            </div>
+                                        <h4 className="font-bold text-slate-800 dark:text-slate-200 truncate text-sm mb-2">{def.name}</h4>
+                                        <div className="flex-1 overflow-y-auto custom-scrollbar max-h-32 pr-1 space-y-2">
+                                            {groupBats.map((battery) => {
+                                                const refLabel =
+                                                    battery.publicRef && battery.publicRef.trim()
+                                                        ? battery.publicRef
+                                                        : battery.id.slice(0, 6);
+                                                return (
+                                                    <div
+                                                        key={battery.id}
+                                                        className="bg-slate-50 dark:bg-slate-950/50 p-2 rounded border border-slate-100 dark:border-slate-800/50 text-xs"
+                                                    >
+                                                        <div className="flex justify-between text-[10px] text-slate-500 mb-1">
+                                                            <span className="font-mono text-[9px]">{refLabel}</span>
+                                                            <span className="text-yellow-600 dark:text-yellow-400 font-mono">∞</span>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
-                    );
-                };
-
-                if (useSplit) {
-                    return (
-                        <>
-                            {renderBatteryCards(partialList, 'Baterias fora de rack — carga parcial')}
-                            {renderBatteryCards(fullList, 'Baterias fora de rack — carga cheia (≥99,9% ou infinito)')}
-                        </>
-                    );
-                }
-
-                return storedBatteries.length > 0
-                    ? renderBatteryCards(storedBatteries, 'Baterias fora de rack (carga preservada)')
-                    : null;
+                    </div>
+                );
             })()}
 
             {sortedCategories.length === 0 &&
             storedBatteries.length === 0 &&
-            !(inventoryBatterySplit && (inventoryBatterySplit.partial.length > 0 || inventoryBatterySplit.full.length > 0)) &&
             !(inventoryStackableCategories && inventoryStackableCategories.length > 0) ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-slate-400 dark:text-slate-600 gap-4">
                     <Package size={64} className="opacity-20" />
@@ -311,14 +278,6 @@ export const InventoryView: React.FC<InventoryViewProps> = ({
                                                 )}
                                                 {row.type === 'wiring' && (
                                                     <div className="col-span-2 text-center text-slate-400">Condutor Elétrico</div>
-                                                )}
-                                                {row.type === 'charger' && (
-                                                    <div className="flex flex-col">
-                                                        <span className="text-slate-500 flex items-center gap-1">
-                                                            <Zap size={10} /> Potência
-                                                        </span>
-                                                        <span className="text-yellow-600 dark:text-yellow-400">{row.baseProduction || 0.5} W</span>
-                                                    </div>
                                                 )}
                                             </div>
                                         </div>

@@ -1,11 +1,15 @@
 /**
  * Quando `placed_racks.battery_id` é UUID de instância mas a linha em `stored_batteries`
  * desapareceu (dessincronização), **não** anular a bateria na rig: recria-se o armazém
- * com o mesmo `id`, preservando `current_charge` e inferindo `item_id` nesta ordem:
+ * com o mesmo `id`, inferindo `item_id` nesta ordem:
  * 1) `battery_catalog_item_id` / `batteryCatalogItemId` na rig (payload ou BD),
  * 2) tipo mais comum noutras linhas `stored_batteries` do jogador,
- * 3) fallback barato no catálogo (1000Wh canónico entre opções válidas).
- * `small_battery` legado normaliza para o canónico 1000Wh.
+ * 3) fallback barato no catálogo (canónico entre opções válidas).
+ * `small_battery` legado normaliza para o canónico.
+ *
+ * Sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: já não há `current_charge`/
+ * `power_capacity_wh` em `stored_batteries`.
  */
 import type { PoolClient } from 'pg';
 import { isRackBatteryInstanceUuid } from './batteries.repository.js';
@@ -16,13 +20,8 @@ type PgLike = Pick<PoolClient, 'query'>;
 export type RecoveredStoredBatteryRow = {
   id: string;
   item_id: string;
-  current_charge: number;
 };
 
-/**
- * Insere linhas em `stored_batteries` para cada UUID órfão nas rigs do payload.
- * @returns linhas inseridas (para fundir no JSON de `storedBatteries` no GET).
- */
 function rackBatteryCatalogHint(r: Record<string, unknown>): string {
   const raw = r.batteryCatalogItemId ?? r.battery_catalog_item_id;
   if (raw == null) return '';
@@ -37,7 +36,7 @@ export async function recoverOrphanRackBatteryStorageRows(
   const uid = Number(userId);
   if (!Number.isFinite(uid) || uid <= 0 || !Array.isArray(racks) || racks.length === 0) return [];
 
-  const cand: Array<{ bid: string; charge: number; catalog_hint: string | null }> = [];
+  const cand: Array<{ bid: string; catalog_hint: string | null }> = [];
   const seen = new Set<string>();
   for (const r of racks) {
     if (!r || typeof r !== 'object') continue;
@@ -47,9 +46,8 @@ export async function recoverOrphanRackBatteryStorageRows(
     const bid = String(raw).trim();
     if (!bid || !isRackBatteryInstanceUuid(bid) || seen.has(bid)) continue;
     seen.add(bid);
-    const ch = typeof ro.currentCharge === 'number' && Number.isFinite(ro.currentCharge) ? ro.currentCharge : 0;
     const hintRaw = rackBatteryCatalogHint(ro);
-    cand.push({ bid, charge: Math.max(0, ch), catalog_hint: hintRaw || null });
+    cand.push({ bid, catalog_hint: hintRaw || null });
   }
   if (cand.length === 0) return [];
 
@@ -82,7 +80,7 @@ export async function recoverOrphanRackBatteryStorageRows(
   }
 
   const payload = JSON.stringify(
-    cand.map((c) => ({ bid: c.bid, charge: c.charge, catalog_hint: c.catalog_hint || null }))
+    cand.map((c) => ({ bid: c.bid, catalog_hint: c.catalog_hint || null }))
   );
 
   const res = await client.query<RecoveredStoredBatteryRow>(
@@ -98,19 +96,15 @@ export async function recoverOrphanRackBatteryStorageRows(
         LIMIT 1
      ),
      cand AS (
-       SELECT * FROM json_to_recordset($2::json) AS x(bid text, charge double precision, catalog_hint text)
+       SELECT * FROM json_to_recordset($2::json) AS x(bid text, catalog_hint text)
      ),
      ins AS (
-       INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id)
+       INSERT INTO stored_batteries (id, user_id, item_id, display_name, image_url)
        SELECT c.bid,
               $1::int,
               COALESCE(rack_hint.hid, dom.item_id, fb.fid),
-              GREATEST(0::double precision, COALESCE(c.charge, 0)::double precision),
-              u.power_capacity,
               u.name,
-              NULLIF(BTRIM(COALESCE(u.image::text, '')), ''),
-              NULL::integer,
-              NULL::text
+              NULLIF(BTRIM(COALESCE(u.image::text, '')), '')
          FROM cand c
          CROSS JOIN fb
          LEFT JOIN LATERAL (
@@ -155,15 +149,14 @@ export async function recoverOrphanRackBatteryStorageRows(
                  WHERE sb.id = c.bid AND sb.user_id = $1
               )
         ON CONFLICT (id) DO NOTHING
-        RETURNING id, item_id, current_charge
+        RETURNING id, item_id
      )
-     SELECT id, item_id, current_charge FROM ins`,
+     SELECT id, item_id FROM ins`,
     [uid, payload, CANONICAL_1000WH_BATTERY_ID]
   );
 
   return (res.rows || []).map((row) => ({
     id: String(row.id),
-    item_id: String(row.item_id),
-    current_charge: Number(row.current_charge) || 0
+    item_id: String(row.item_id)
   }));
 }

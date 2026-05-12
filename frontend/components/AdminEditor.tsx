@@ -1,7 +1,7 @@
 
 import React, { useState } from 'react';
 import { Upgrade } from '../types';
-import { List, Cpu, Server, Battery, Plug, Zap, PlusCircle, Wrench, Hexagon } from 'lucide-react';
+import { List, Cpu, Server, Battery, Plug, Zap, PlusCircle, Hexagon } from 'lucide-react';
 
 interface AdminEditorProps {
     gameUpgrades: Upgrade[];
@@ -126,7 +126,7 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
         return u.type === editorFilter;
     });
 
-    const infrastructureItems = gameUpgrades.filter(u => u.type === 'infrastructure' || u.type === 'charger');
+    const infrastructureItems = gameUpgrades.filter(u => u.type === 'infrastructure');
 
     return (
         <div className="animate-in fade-in slide-in-from-right-4">
@@ -137,7 +137,6 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                 <button onClick={() => setEditorFilter('battery')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'battery' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Battery size={14} /> Baterias</button>
                 <button onClick={() => setEditorFilter('wiring')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'wiring' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Plug size={14} /> Circuito</button>
                 <button onClick={() => setEditorFilter('multiplier')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'multiplier' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Zap size={14} /> Chips IA</button>
-                <button onClick={() => setEditorFilter('charger')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'charger' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Wrench size={14} /> Carregadores</button>
                 <button onClick={() => setEditorFilter('nft')} className={`px-3 py-2 rounded text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors ${editorFilter === 'nft' ? 'bg-amber-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}><Hexagon size={14} /> NFT</button>
             </div>
 
@@ -223,7 +222,7 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                                 <div><label className="text-xs font-bold text-slate-500 block mb-1">ID Único</label><input type="text" value={itemForm.id} onChange={e => setItemForm({ ...itemForm, id: e.target.value })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
                                 <div><label className="text-xs font-bold text-slate-500 block mb-1">Nome</label><input type="text" value={itemForm.name} onChange={e => setItemForm({ ...itemForm, name: e.target.value })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
                                 <div><label className="text-xs font-bold text-slate-500 block mb-1">Categoria</label><input type="text" value={itemForm.category} onChange={e => setItemForm({ ...itemForm, category: e.target.value })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
-                                <div><label className="text-xs font-bold text-slate-500 block mb-1">Tipo</label><select value={itemForm.type} onChange={e => setItemForm({ ...itemForm, type: e.target.value as any })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm"><option value="machine">GPU</option><option value="infrastructure">Rig</option><option value="battery">Bateria</option><option value="wiring">Circuito</option><option value="multiplier">Chip IA</option><option value="charger">Carregador</option></select></div>
+                                <div><label className="text-xs font-bold text-slate-500 block mb-1">Tipo</label><select value={itemForm.type} onChange={e => setItemForm({ ...itemForm, type: e.target.value as any })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm"><option value="machine">GPU</option><option value="infrastructure">Rig</option><option value="battery">Bateria</option><option value="wiring">Circuito</option><option value="multiplier">Chip IA</option></select></div>
                                 <div><label className="text-xs font-bold text-slate-500 block mb-1">Ícone (emoji)</label><input type="text" value={itemForm.icon || ''} onChange={e => setItemForm({ ...itemForm, icon: e.target.value })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
                             </div>
                             <div className="mt-4">
@@ -312,24 +311,16 @@ export const AdminEditor: React.FC<AdminEditorProps> = ({ gameUpgrades, onUpdate
                                     </div>
                                 )}
 
-                                {itemForm.type === 'charger' && (
-                                    <div className="grid grid-cols-2 gap-4 mt-2">
-                                        <div><label className="text-xs font-bold text-slate-500 block mb-1">Velocidade Carga (Wh/s)</label><input type="number" value={itemForm.baseProduction} onChange={e => setItemForm({ ...itemForm, baseProduction: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
-                                        <div><label className="text-xs font-bold text-slate-500 block mb-1">Capacidade Interna (Wh)</label><input type="number" value={itemForm.powerCapacity} onChange={e => setItemForm({ ...itemForm, powerCapacity: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
-                                        <div className="col-span-2"><label className="text-xs font-bold text-amber-500 block mb-1">Recompensa por Anúncio (Wh)</label><input type="number" value={itemForm.rewardWh || 0} onChange={e => setItemForm({ ...itemForm, rewardWh: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-amber-900 rounded p-2 text-white text-sm font-bold" /></div>
-                                    </div>
-                                )}
                             </div>
 
                             {itemForm.type === 'wiring' && (
                                 <div className="grid grid-cols-2 gap-4 mt-2">
                                     <div><label className="text-xs font-bold text-slate-500 block mb-1">Redução de Consumo (0.1 = 10%)</label><input type="number" value={itemForm.energyConsumptionReduction || 0} onChange={e => setItemForm({ ...itemForm, energyConsumptionReduction: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
-                                    <div><label className="text-xs font-bold text-slate-500 block mb-1">Bônus Transferência (0.5 = +50%)</label><input type="number" value={itemForm.energyTransferRateBonus || 0} onChange={e => setItemForm({ ...itemForm, energyTransferRateBonus: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" /></div>
                                 </div>
                             )}
 
                             {/* COMPATIBILITY SELECTION */}
-                            {(itemForm.type === 'battery' || itemForm.type === 'wiring' || itemForm.type === 'multiplier' || itemForm.type === 'machine' || itemForm.type === 'charger') && (
+                            {(itemForm.type === 'battery' || itemForm.type === 'wiring' || itemForm.type === 'multiplier' || itemForm.type === 'machine') && (
                                 <div className="border-t border-slate-700 pt-4 mt-2">
                                     <h4 className="font-bold text-slate-400 text-sm mb-2">Compatibilidade de Rigs (Vazio = Todos)</h4>
                                     <div className="grid grid-cols-2 gap-2">

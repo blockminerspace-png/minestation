@@ -3,15 +3,10 @@
 export type InventoryBatteryInstanceDto = {
   id: string;
   itemId: string;
-  currentCharge: number;
-  powerCapacityWh: number | null;
   displayName: string | null;
   imageUrl: string | null;
-  /** 0–100 para UI; infinito (−1 Wh no catálogo) → 100. */
-  chargePercent: number;
   /** Prefixo seguro do UUID para rótulo visual (não é secreto). */
   publicRef: string;
-  isFull: boolean;
 };
 
 export type InventoryStackableRowDto = {
@@ -42,8 +37,7 @@ export type InventoryStackableCategoryDto = {
 
 export type PlayerInventorySnapshot = {
   stock: Record<string, number>;
-  storedBatteriesFull: Pick<InventoryBatteryInstanceDto, 'id' | 'itemId' | 'currentCharge'>[];
-  storedBatteriesPartial: Pick<InventoryBatteryInstanceDto, 'id' | 'itemId' | 'currentCharge'>[];
+  storedBatteries: Pick<InventoryBatteryInstanceDto, 'id' | 'itemId'>[];
   serverUpdatedAt: number;
 };
 
@@ -53,7 +47,6 @@ export type InventoryStateV1Dto = {
   /** Igual a `serverUpdatedAt` — controlo de versão para mutações futuras. */
   stateVersion: number;
   stock: Record<string, number>;
-  partialChargeBatteries: InventoryBatteryInstanceDto[];
-  fullChargeBatteries: InventoryBatteryInstanceDto[];
+  storedBatteries: InventoryBatteryInstanceDto[];
   stackableCategories: InventoryStackableCategoryDto[];
 };

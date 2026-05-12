@@ -1,10 +1,6 @@
 export interface SlotLayout {
   id: string; // for machines: 'slot_0', 'slot_1'..., for aux: 'battery', 'wiring', 'ai_0'...
   type: 'machine' | 'battery' | 'wiring' | 'multiplier' | 'power' | 'config' | 'coin_selector' | 'battery_bar' | 'production_display'
-  | 'instant_recharge'
-  | 'rewarded_ad'
-  | 'daily_boost'
-  | 'charger_bar'
   | 'stat_monitor';
   x: number; // percentage 0-100
   y: number; // percentage 0-100
@@ -22,7 +18,7 @@ export interface Upgrade {
   id: string;
   name: string;
   category: string;
-  type: 'machine' | 'infrastructure' | 'battery' | 'wiring' | 'multiplier' | 'charger';
+  type: 'machine' | 'infrastructure' | 'battery' | 'wiring' | 'multiplier';
   baseCost: number;
   baseProduction: number; // Production per second
   powerConsumption?: number; // Watts (consumed per second)
@@ -43,7 +39,6 @@ export interface Upgrade {
 
   // Circuit Effects
   energyConsumptionReduction?: number; // 0.1 = 10% reduction for rigs
-  energyTransferRateBonus?: number; // 0.1 = 10% bonus for charger transfer
 
 
   // Compatibility Logic
@@ -51,9 +46,6 @@ export interface Upgrade {
 
   // Custom Layout (for infrastructure/racks)
   layout?: RigLayout;
-
-  // Rewarded Video
-  rewardWh?: number; // Added: reward amount for this específico charger
 
   // Market Availability
   sellInHardwareMarket?: boolean;
@@ -113,50 +105,25 @@ export interface PlacedRack {
   wiringId: string | null; // Slot for wiring
   /** Instância (`stored_batteries.id`); não usar id de catálogo de `upgrades`. */
   batteryId: string | null;
-  /** Snapshot BD: id de catálogo (`upgrades.id`) da bateria montada — energia/UI sem depender só do armazém. */
+  /** Snapshot BD: id de catálogo (`upgrades.id`) da bateria montada — UI sem depender só do armazém. */
   batteryCatalogItemId?: string | null;
-  /** Capacidade máxima em Wh (igual `Upgrade.powerCapacity`); -1 = ilimitada. */
-  batteryPowerCapacityWh?: number | null;
   batteryDisplayName?: string | null;
   batteryImageUrl?: string | null;
 
   // AI System
   multiplierSlots: (string | null)[]; // Slots for AI optimizers
 
-  currentCharge: number; // Current energy stored
   isOn: boolean; // Power switch state
   selectedCoinId?: string; // Mining coin selected for this rack
 }
 
-export interface WorkshopStructure {
-  id: string;
-  itemId: string;
-  // Generic slots for internal items (batteries, components)
-  // Maps to the layout slots by index or id
-  internalSlots: Record<string, string | null>; // slotId -> Instance ID or Item ID
-  currentCharge: number;
-  slotCharges?: Record<string, number>; // slotId -> charge percentage (0-100)
-  slotItemIds?: Record<string, string>; // slotId -> Original Item ID (e.g. 'battery_car')
-  installedAt?: number;
-}
-
 export interface StoredBattery {
-  id: string; // Instance ID
-  itemId: string; // Type ID (e.g. battery_aa)
-  currentCharge: number;
-  /** Quando preenchido pelo servidor (`/api/inventory/state`), percentagem 0–100 para UI. */
-  chargePercent?: number | null;
+  id: string; // Instance UUID infinita (post-purge_charging migration)
+  itemId: string; // Type ID (e.g. battery_estelar)
   /** Rótulo curto derivado do id (servidor). */
   publicRef?: string | null;
-  /** Wh máximo na instância (cópia do catálogo na persistência). */
-  powerCapacityWh?: number | null;
   displayName?: string | null;
   imageUrl?: string | null;
-  /** Provisório: cópia de `stored_batteries` quando a instância está num carregador da oficina. */
-  workshopSlotIndex?: number | null;
-  workshopComponentSlotId?: string | null;
-  /** UI: listada a partir da oficina (`slotCharges`), não da linha `stored_batteries`. */
-  fromWorkshopSlot?: boolean;
 }
 
 export interface MarketListing {
@@ -279,9 +246,6 @@ export interface GameState {
   // Referral State
   claimedReferrals: number;
   referralBonusClaimed: boolean;
-
-  // Workshop State
-  workshopSlots?: (WorkshopStructure | null)[]; // 6 slots for workshop structures
 
   // Daily Actions State (key -> timestamp)
   dailyActions?: Record<string, number>;

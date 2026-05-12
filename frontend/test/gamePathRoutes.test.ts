@@ -12,12 +12,15 @@ describe('gamePathRoutes', () => {
   it('maps English paths to internal views', () => {
     expect(gameViewFromEnglishPathname('/servers')).toBe('servers');
     expect(gameViewFromEnglishPathname('/inventory')).toBe('inventory');
-    expect(gameViewFromEnglishPathname('/workshop')).toBe('oficina');
     expect(gameViewFromEnglishPathname('/miner-shop')).toBe('hardware_store');
     expect(gameViewFromEnglishPathname('/black-market')).toBe('black_market');
     expect(gameViewFromEnglishPathname('/lucky-boxes')).toBe('lucky_store');
     expect(gameViewFromEnglishPathname('/wheel')).toBe('roleta');
     expect(gameViewFromEnglishPathname('/upgrades')).toBe('upgrade');
+  });
+
+  it('legacy /workshop URL is treated as unknown (workshop foi descontinuado)', () => {
+    expect(gameViewFromEnglishPathname('/workshop')).toBeNull();
   });
 
   it('returns null for unknown or root', () => {
@@ -29,7 +32,6 @@ describe('gamePathRoutes', () => {
   it('gamePathFromView is stable', () => {
     expect(gamePathFromView('servers')).toBe('/servers');
     expect(gamePathFromView('inventory')).toBe('/inventory');
-    expect(gamePathFromView('oficina')).toBe('/workshop');
     expect(gamePathFromView('wallet')).toBe('/wallet');
     expect(gamePathFromView('profile')).toBe('/profile');
   });

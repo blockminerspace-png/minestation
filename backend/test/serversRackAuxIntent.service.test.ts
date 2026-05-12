@@ -16,7 +16,6 @@ function baseRack(): PlacedRackLoaded {
     multiplierSlots: [''],
     wiringId: null,
     batteryId: null,
-    currentCharge: 0,
     isOn: false,
     selectedCoinId: null,
     roomId: 'room_initial',
@@ -45,15 +44,14 @@ describe('servers.rackAuxIntent.service', () => {
     expect(out.placedRacks[0].batteryCatalogItemId).toBe('bat1');
   });
 
-  it('remover bateria infinita devolve unidade ao stock (não cria instância órfã)', () => {
-    // Sistema de baterias é infinito por design: ao desmontar, qualquer bateria
-    // é considerada "cheia" e converge para o stock como unidade do catálogo.
+  it('remover bateria UUID devolve a instância ao armazém (não vai para o stock)', () => {
+    // Sistema UUID: a instância individual da bateria é preservada em
+    // `stored_batteries` ao desmontar — `stock` agrega apenas itens sem identidade.
     const bid = 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee';
     const rack: PlacedRackLoaded = {
       ...baseRack(),
       batteryId: bid,
       batteryCatalogItemId: 'bat1',
-      currentCharge: 50,
       isOn: true
     };
     const prev = {
@@ -65,8 +63,10 @@ describe('servers.rackAuxIntent.service', () => {
     expect(out.ok).toBe(true);
     if (!out.ok) return;
     expect(out.placedRacks[0].batteryId).toBeNull();
-    expect(out.storedBatteries.length).toBe(0);
-    expect(out.stock.bat1).toBe(1);
+    expect(out.storedBatteries).toHaveLength(1);
+    expect(out.storedBatteries[0]?.id).toBe(bid);
+    expect(out.storedBatteries[0]?.itemId).toBe('bat1');
+    expect(out.stock.bat1 ?? 0).toBe(0);
   });
 
   it('double equip com mesma lógica: segundo sem stock falha', () => {

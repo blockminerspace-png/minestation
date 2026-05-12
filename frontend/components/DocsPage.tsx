@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Upgrade } from '../types';
-import { BookOpen, Cpu, Battery, Zap, Server, Hexagon, Wallet, RefreshCw, AlertTriangle, Globe, MousePointer, LayoutGrid, Terminal, ArrowRightLeft, Lock, ShoppingCart, Skull, Wrench } from 'lucide-react';
+import { BookOpen, Cpu, Battery, Zap, Server, Hexagon, Wallet, RefreshCw, AlertTriangle, Globe, MousePointer, LayoutGrid, Terminal, ArrowRightLeft, Lock, ShoppingCart, Skull } from 'lucide-react';
 import { getMiningCoins, getUpgrades } from '../services/api';
 
 export const DocsPage: React.FC = () => {
@@ -11,7 +11,6 @@ export const DocsPage: React.FC = () => {
 
     const docSections = useMemo(() => [
         { title: 'Infraestrutura', filter: (u: Upgrade) => u.type === 'infrastructure' },
-        { title: 'Carregador de baterias', filter: (u: Upgrade) => u.type === 'charger' },
         { title: 'GPU Antiga | Gênesis', filter: (u: Upgrade) => u.category === 'GPU Antiga | Gênesis' },
         { title: 'GPU Gamer | Gênesis', filter: (u: Upgrade) => u.category === 'GPU Gamer | Gênesis' },
         { title: 'Farm de Servidores | Gênesis', filter: (u: Upgrade) => u.category === 'Farm de Servidores | Gênesis' },
@@ -232,22 +231,7 @@ export const DocsPage: React.FC = () => {
                         </p>
                         <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
                             <li>Peças recém-adquiridas no Genesis Supply caem direto neste depósito.</li>
-                            <li><strong>Baterias Usadas:</strong> O jogo salva a carga das suas baterias. Se você remover uma bateria com 50% de carga de um rack, ela aparecerá aqui na seção "Usadas". Você pode reinstalá-la depois sem perder a carga.</li>
-                        </ul>
-                    </div>
-
-                    {/* TAB 3: OFICINA */}
-                    <div className="bg-white dark:bg-slate-950 p-5 rounded-lg border border-slate-200 dark:border-slate-800 shadow-sm">
-                        <h3 className="text-orange-600 dark:text-orange-500 font-bold mb-2 flex items-center gap-2">
-                            <Wrench size={18} /> 3. Oficina
-                        </h3>
-                        <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 text-justify">
-                            Laboratório para carregadores, bancadas de serviço e rotinas de recarga.
-                        </p>
-                        <ul className="text-xs space-y-2 text-slate-700 dark:text-slate-300 list-disc pl-4">
-                            <li><strong>Carregador de Baterias:</strong> Já em operação. Permite recarregar de <strong>Baterias</strong> para manter as <strong>Rigs </strong>em operação.</li>
-                            <li><strong>Tipos de Carga:</strong> Existem carregadores que recuperam energia da <strong>Capacidade Interna </strong>através de anúncios (Reward Ad) e outros através de carga diária (Daily Boost).</li>
-                            <li><strong>Manutenção (em breve):</strong> Mesas dedicadas para revisão de GPUs e racks mineradores.</li>
+                            <li><strong>Baterias UUID:</strong> Cada bateria possui um identificador único e fornecimento infinito de energia — pode entrar e sair de qualquer rack sem perder atributos.</li>
                         </ul>
                     </div>
 

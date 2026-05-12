@@ -131,7 +131,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const [editProfileUsernameError, setEditProfileUsernameError] = useState<string | null>(null);
 
     // Save Editor State
-    const [saveTab, setSaveTab] = useState<'stock' | 'racks' | 'balances' | 'workshop' | 'boxes' | 'logs'>('stock');
+    const [saveTab, setSaveTab] = useState<'stock' | 'racks' | 'balances' | 'boxes' | 'logs'>('stock');
     const [userActivityLogs, setUserActivityLogs] = useState<GameUserActivityEntry[]>([]);
     const [userActivityLoading, setUserActivityLoading] = useState(false);
     const [userActivityError, setUserActivityError] = useState<string | null>(null);
@@ -821,38 +821,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         setSelectedUserSave({ ...selectedUserSave, coinBalances: next });
     };
 
-    const handleAddWorkshopItem = (slotIndex: number, itemId: string) => {
-        if (!selectedUserSave || !selectedUser) return;
-        const currentSlots = [...(selectedUserSave.workshopSlots || [null, null, null])];
-
-        // Ensure array size
-        while (currentSlots.length <= slotIndex) currentSlots.push(null);
-
-        if (currentSlots[slotIndex]) {
-            alert("Slot já ocupado!");
-            return;
-        }
-
-        currentSlots[slotIndex] = {
-            id: `ws_${selectedUser.id}_${slotIndex}_${Date.now()}`,
-            itemId: itemId,
-            internalSlots: {},
-            currentCharge: 0,
-            slotCharges: {},
-            slotItemIds: {}
-        };
-        setSelectedUserSave({ ...selectedUserSave, workshopSlots: currentSlots });
-    };
-
-    const handleRemoveWorkshopItem = (slotIndex: number) => {
-        if (!selectedUserSave) return;
-        if (!window.confirm("Remover estrutura deste slot?")) return;
-
-        const currentSlots = [...(selectedUserSave.workshopSlots || [null, null, null])];
-        currentSlots[slotIndex] = null;
-        setSelectedUserSave({ ...selectedUserSave, workshopSlots: currentSlots });
-    };
-
     const handleAddItemToStock = () => {
         if (!selectedUserSave || !newItemId) return;
         const currentQty = (selectedUserSave.stock || {})[newItemId] || 0;
@@ -881,29 +849,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
             alert(`Erro ao salvar: ${err}${code ? ` [${code}]` : ""}${hintGeneric}`);
         }
     };
-
-    const handleResetDailyBoost = async (slotIndex: number) => {
-        if (!selectedUser) return;
-        if (!window.confirm(`Resetar o Daily Boost do slot ${slotIndex + 1} para ${selectedUser.email}?`)) return;
-
-        try {
-            const res = await fetch('/api/admin/reset-daily-boost', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: selectedUser.email, slotIndex })
-            });
-            const data = await res.json();
-
-            if (data.ok) {
-                alert(`Daily boost resetado com sucesso! ${data.message}`);
-            } else {
-                alert(`Erro: ${data.error || 'Falha ao resetar'}`);
-            }
-        } catch (e) {
-            alert('Erro de rede ao resetar daily boost.');
-        }
-    };
-
 
     // --- ACCESS LEVEL LOGIC ---
     const handleNewLevel = () => {
@@ -1242,7 +1187,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                             <button type="button" onClick={() => setSaveTab('stock')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'stock' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Estoque</button>
                             <button type="button" onClick={() => setSaveTab('racks')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'racks' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Rigs</button>
                             <button type="button" onClick={() => setSaveTab('balances')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'balances' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Saldos</button>
-                            <button type="button" onClick={() => setSaveTab('workshop')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'workshop' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Oficina</button>
                             <button type="button" onClick={() => setSaveTab('boxes')} className={`shrink-0 px-3 py-1 rounded text-xs font-bold ${saveTab === 'boxes' ? 'bg-amber-600 text-white' : 'bg-slate-700 text-slate-400'}`}>Caixas</button>
                             <button
                                 type="button"
@@ -1450,7 +1394,7 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                                     <div>
                                                         <div className="text-sm font-bold text-white">{rackDef?.name || 'Rig Desconhecido'}</div>
                                                         <div className="text-[10px] text-slate-500">
-                                                            {rack.isOn ? 'LIGADO' : 'DESLIGADO'} • Bat: {rack.currentCharge.toFixed(0)}Wh
+                                                            {rack.isOn ? 'LIGADO' : 'DESLIGADO'} • Bateria: ∞
                                                         </div>
                                                         <div className="text-[9px] text-slate-400 mt-1 grid grid-cols-2 gap-x-2">
                                                             <div>Slots: {(rack.slots || []).filter(s => s).length > 0 ? (rack.slots || []).filter(s => s).map(s => gameUpgrades.find(u => u.id === s)?.name || s).join(', ') : 'Vazio'}</div>
@@ -1501,81 +1445,6 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                         {miningCoins.length === 0 && (
                                             <div className="text-slate-500 text-center text-sm p-4">Nenhuma moeda configurada.</div>
                                         )}
-                                    </div>
-                                </div>
-                            )}
-
-                            {saveTab === 'workshop' && (
-                                <div className="space-y-4">
-                                    <div className="bg-slate-900/50 p-2 rounded text-xs text-slate-400 mb-2">
-                                        Gerencie as estruturas instaladas na oficina do usuário.
-                                    </div>
-                                    <div className="grid grid-cols-1 gap-3">
-                                        {[0, 1, 2].map(slotIndex => {
-                                            const slot = (selectedUserSave.workshopSlots || [])[slotIndex];
-                                            const itemDef = slot ? gameUpgrades.find(u => u.id === slot.itemId) : null;
-
-                                            return (
-                                                <div key={slotIndex} className="bg-slate-900 p-3 rounded border border-slate-700 flex justify-between items-center group">
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-8 h-8 rounded bg-slate-800 flex items-center justify-center font-bold text-slate-500 border border-slate-700">
-                                                            {slotIndex + 1}
-                                                        </div>
-                                                        {slot ? (
-                                                            <div>
-                                                                <div className="font-bold text-white flex items-center gap-2">
-                                                                    {itemDef?.icon || '🏗️'} {itemDef?.name || slot.itemId}
-                                                                </div>
-                                                                <div className="text-[10px] text-slate-500">
-                                                                    Charge: {slot.currentCharge?.toFixed(0)}Wh
-                                                                </div>
-                                                            </div>
-                                                        ) : (
-                                                            <div className="text-slate-500 italic text-sm">Vazio</div>
-                                                        )}
-                                                    </div>
-
-                                                    {slot ? (
-                                                        <div className="flex items-center gap-2">
-                                                            <button
-                                                                onClick={() => handleResetDailyBoost(slotIndex)}
-                                                                className="text-yellow-500 hover:text-yellow-400 p-2 rounded hover:bg-yellow-900/20"
-                                                                title="Resetar Daily Boost"
-                                                            >
-                                                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /></svg>
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleRemoveWorkshopItem(slotIndex)}
-                                                                className="text-red-500 hover:text-red-400 p-2 rounded hover:bg-red-900/20"
-                                                                title="Remover"
-                                                            >
-                                                                <Trash2 size={16} />
-                                                            </button>
-                                                        </div>
-                                                    ) : (
-                                                        <div className="flex items-center gap-2">
-                                                            <select
-                                                                className="bg-slate-800 border border-slate-600 text-xs text-white rounded p-1 w-32"
-                                                                onChange={(e) => {
-                                                                    if (e.target.value) {
-                                                                        handleAddWorkshopItem(slotIndex, e.target.value);
-                                                                        e.target.value = ''; // Reset select
-                                                                    }
-                                                                }}
-                                                            >
-                                                                <option value="">Adicionar...</option>
-                                                                {gameUpgrades
-                                                                    .filter(u => u.type === 'charger' || u.category === 'Oficina')
-                                                                    .map(u => (
-                                                                        <option key={u.id} value={u.id}>{u.name}</option>
-                                                                    ))
-                                                                }
-                                                            </select>
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
                                     </div>
                                 </div>
                             )}

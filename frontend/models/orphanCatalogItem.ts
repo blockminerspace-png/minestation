@@ -14,11 +14,9 @@ export function orphanCatalogUpgrade(id: string, type: Upgrade['type']): Upgrade
           ? 'Fiação'
           : type === 'multiplier'
             ? 'Multiplicador'
-            : type === 'charger'
-              ? 'Carregador / oficina'
-              : type === 'infrastructure'
-                ? 'Rack / infra'
-                : 'Peça';
+            : type === 'infrastructure'
+              ? 'Rack / infra'
+              : 'Peça';
   return {
     id,
     name: `${label} (catálogo removido)`,

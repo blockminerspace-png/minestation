@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { GameState, Upgrade, User } from '../types';
-import { ShoppingCart, DollarSign, Package, Zap, Battery, Plus, Minus, Trash2, CheckCircle2, X, Hexagon, Clock, List, Cpu, Server, Plug, Wrench, Activity } from 'lucide-react';
+import { ShoppingCart, DollarSign, Package, Zap, Battery, Plus, Minus, Trash2, CheckCircle2, X, Hexagon, Clock, List, Cpu, Server, Plug } from 'lucide-react';
 import { normalizePublicAssetUrl } from '../utils/publicUrl';
 import {
   getShopState,
@@ -15,7 +15,7 @@ import {
 } from '../services/api';
 import type { UiNotice } from './UiNoticeModal';
 
-const UPGRADE_TYPES = new Set(['machine', 'infrastructure', 'battery', 'wiring', 'multiplier', 'charger']);
+const UPGRADE_TYPES = new Set(['machine', 'infrastructure', 'battery', 'wiring', 'multiplier']);
 
 function mapShopProductToUpgrade(p: ShopProductApi, vis?: Upgrade): Upgrade {
   const t = UPGRADE_TYPES.has(p.type) ? (p.type as Upgrade['type']) : 'machine';
@@ -40,7 +40,6 @@ function mapShopProductToUpgrade(p: ShopProductApi, vis?: Upgrade): Upgrade {
     totalSold: p.totalSold,
     image: p.image,
     compatibleRacks: p.compatibleRacks,
-    rewardWh: p.rewardWh,
     sellInHardwareMarket: p.sellInHardwareMarket,
     isActive: p.isActive,
     isNft: p.isNft,
@@ -412,17 +411,6 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
             </button>
             <button
               type="button"
-              onClick={() => setFilterType('charger')}
-              className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${
-                filterType === 'charger'
-                  ? 'bg-amber-100 dark:bg-amber-950 border-amber-500 text-amber-700 dark:text-amber-400'
-                  : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
-              }`}
-            >
-              <Wrench size={14} /> Carregadores
-            </button>
-            <button
-              type="button"
               onClick={() => setFilterType('nft')}
               className={`px-3 py-2 rounded-lg text-xs font-bold uppercase flex items-center gap-2 whitespace-nowrap transition-colors border ${
                 filterType === 'nft'
@@ -559,16 +547,6 @@ export const UpgradeShop: React.FC<UpgradeShopProps> = ({
                         {isBattery && (
                           <div className="text-[10px] text-yellow-600 dark:text-yellow-500/80 font-mono flex items-center gap-1">
                             <Battery size={8} /> {upgrade.powerCapacity === -1 ? '∞' : upgrade.powerCapacity?.toLocaleString()} Wh
-                          </div>
-                        )}
-                        {upgrade.type === 'charger' && (
-                          <div className="text-[10px] text-orange-600 dark:text-orange-500 font-mono flex flex-col gap-0.5">
-                            <span className="flex items-center gap-1">
-                              <Activity size={8} /> Carga: {formatProduction(upgrade.baseProduction)} Wh/s
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <Zap size={8} /> Interno: {upgrade.powerCapacity?.toLocaleString()} Wh
-                            </span>
                           </div>
                         )}
                         {(upgrade.type === 'machine' ||

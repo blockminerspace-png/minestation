@@ -1,12 +1,15 @@
 /**
  * Snapshot autoritativo para a área Servidores — alinhado com leituras de `GET /api/game-state`
- * (subset: stock, baterias, racks, oficina, salas, moedas, upgrades).
+ * (subset: stock, baterias, racks, salas, moedas, upgrades).
+ *
+ * Sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: já não há oficina,
+ * `current_charge`, `power_capacity_wh` ou `workshop_slot_index` em qualquer lado.
  */
 import type { PrismaClient } from '@prisma/client';
 import type { Pool } from 'pg';
 import { computeProgressForUser } from '../../cron/miningProgressComputer.js';
 import { SAVE_GAME_ITEM_ID_RE } from '../../lib/saveGameEconomyValidate.js';
-import { enrichWorkshopSlotsSlotItemIdsFromChargingHistory } from '../../lib/saveGameEconomyValidate.js';
 import { loadMyRigRoomsForUser } from '../../lib/meUpgradeShopBundlePayload.js';
 import { loadMiningCoinsForBootstrap, loadUpgradesForBootstrap } from '../../lib/publicBootstrapPayload.js';
 import { normalizePlacedRackRoomId } from '../batteries/batteries.validation.js';
@@ -23,19 +26,6 @@ function isValidSaveGameItemId(value: unknown): value is string {
   return typeof value === 'string' && SAVE_GAME_ITEM_ID_RE.test(value);
 }
 
-function safeWorkshopJsonObject(raw: unknown, label: string, userId: unknown): Record<string, unknown> {
-  if (raw == null || raw === '') return {};
-  if (typeof raw !== 'string') return {};
-  try {
-    const v = JSON.parse(raw);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-    return v as Record<string, unknown>;
-  } catch {
-    console.warn(`[servers/state] JSON inválido em ${label} (user ${userId})`);
-    return {};
-  }
-}
-
 /** Expõe construção de racks para testes unitários sem Prisma. */
 export function mapPrismaRacksToPlacedRackDtos(
   rackRows: Array<{
@@ -43,13 +33,11 @@ export function mapPrismaRacksToPlacedRackDtos(
     item_id: string;
     wiring_id: string | null;
     battery_id: string | null;
-    current_charge: number;
     is_on: number;
     selected_coin_id: string | null;
     room_id: string | null;
     slot_index: number | null;
     battery_catalog_item_id?: string | null;
-    battery_power_capacity_wh?: number | null;
     battery_display_name?: string | null;
     battery_image_url?: string | null;
   }>,
@@ -80,13 +68,10 @@ export function mapPrismaRacksToPlacedRackDtos(
       multiplierSlots: multipliersMap.get(r.id) || [],
       wiringId: r.wiring_id,
       batteryId: r.battery_id,
-      currentCharge: r.current_charge,
       isOn: !!r.is_on,
       selectedCoinId: r.selected_coin_id,
       batteryCatalogItemId:
         r.battery_catalog_item_id != null ? normalizeKnown1000WhBatteryCatalogId(r.battery_catalog_item_id) : null,
-      batteryPowerCapacityWh:
-        r.battery_power_capacity_wh != null ? Number(r.battery_power_capacity_wh) : null,
       batteryDisplayName: r.battery_display_name ?? null,
       batteryImageUrl: r.battery_image_url ?? null,
       roomId: normalizePlacedRackRoomId(r.room_id),
@@ -147,7 +132,7 @@ export function logServerStateBatteryConsistency(
       continue;
     }
     const st = normalizeBatteryStatus(sb.status);
-    if (st === 'CHARGING' || st === 'INVENTORY') {
+    if (st === 'INVENTORY') {
       base('server_state_battery_status_mismatch', {
         rackId: String(r.id),
         batteryId: bid.slice(0, 12),
@@ -164,6 +149,7 @@ export async function buildServersAuthoritativeStateDto(
   userEmail: string,
   ctx?: ServersStateRequestContext
 ): Promise<ServersAuthoritativeStateDto> {
+  void userEmail;
   const progressRes = await computeProgressForUser(pool, uid, Date.now());
   if (!progressRes.ok) {
     console.warn(
@@ -177,7 +163,6 @@ export async function buildServersAuthoritativeStateDto(
     stockRows,
     storedBatRows,
     rackRows,
-    workshopRows,
     rigRooms,
     miningCoins,
     upgrades
@@ -189,17 +174,12 @@ export async function buildServersAuthoritativeStateDto(
       select: {
         id: true,
         item_id: true,
-        current_charge: true,
-        power_capacity_wh: true,
         display_name: true,
         image_url: true,
-        workshop_slot_index: true,
-        workshop_component_slot_id: true,
         status: true
       }
     }),
     prisma.placed_racks.findMany({ where: { user_id: uid } }),
-    prisma.workshop_slots.findMany({ where: { user_id: uid }, orderBy: { slot_index: 'asc' } }),
     loadMyRigRoomsForUser(uid),
     loadMiningCoinsForBootstrap(),
     loadUpgradesForBootstrap(uid)
@@ -227,13 +207,8 @@ export async function buildServersAuthoritativeStateDto(
   const storedBatteries: ServersStateStoredBatteryDto[] = storedBatRows.map((r) => ({
     id: r.id,
     itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
-    currentCharge: r.current_charge,
-    powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : null,
     displayName: r.display_name != null ? String(r.display_name) : null,
-    imageUrl: r.image_url != null ? String(r.image_url) : null,
-    workshopSlotIndex: r.workshop_slot_index != null ? Number(r.workshop_slot_index) : null,
-    workshopComponentSlotId:
-      r.workshop_component_slot_id != null ? String(r.workshop_component_slot_id) : null
+    imageUrl: r.image_url != null ? String(r.image_url) : null
   }));
 
   let placedRacks: ServersStatePlacedRackDto[] = [];
@@ -254,34 +229,6 @@ export async function buildServersAuthoritativeStateDto(
 
   logServerStateBatteryConsistency(uid, placedRacks, storedById, ctx);
 
-  const workshopSlots: (ServersAuthoritativeStateDto['workshopSlots'][number])[] = [
-    null,
-    null,
-    null,
-    null,
-    null,
-    null
-  ];
-  workshopRows.forEach((w) => {
-    if (w.slot_index >= 0 && w.slot_index < 6) {
-      workshopSlots[w.slot_index] = {
-        id: `ws_${uid}_${w.slot_index}`,
-        itemId: w.item_id,
-        internalSlots: safeWorkshopJsonObject(w.internal_state, 'workshop_slots.internal_state', uid),
-        currentCharge: w.current_charge ?? 0,
-        slotCharges: safeWorkshopJsonObject(w.slot_charges, 'workshop_slots.slot_charges', uid),
-        slotItemIds: safeWorkshopJsonObject(w.slot_item_ids, 'workshop_slots.slot_item_ids', uid),
-        installedAt: Number(w.installed_at ?? 0)
-      };
-    }
-  });
-
-  try {
-    await enrichWorkshopSlotsSlotItemIdsFromChargingHistory(pool, String(userEmail || ''), workshopSlots);
-  } catch (e) {
-    console.warn('[servers/state] enrich workshop slotItemIds:', e instanceof Error ? e.message : String(e));
-  }
-
   const serverUpdatedAtNum = Number(gs.server_updated_at ?? 0);
   const serverUpdatedAt = Number.isFinite(serverUpdatedAtNum) ? serverUpdatedAtNum : 0;
 
@@ -293,7 +240,6 @@ export async function buildServersAuthoritativeStateDto(
     stock,
     storedBatteries,
     placedRacks,
-    workshopSlots,
     rigRooms,
     miningCoins,
     upgrades

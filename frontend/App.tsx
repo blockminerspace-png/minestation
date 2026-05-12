@@ -13,8 +13,6 @@ import {
   discardLootBox,
   impersonateUser,
   stopImpersonate,
-  claimAdReward,
-  performDailyBoost,
   getEconomySettings,
   getMarketListings,
   sellMarketListing,
@@ -35,7 +33,6 @@ import {
   getGameNavLabels,
   getPublicBootstrap,
   getPublicBootstrapLite,
-  performWorkshopInstantRecharge,
   saveGameState as apiSaveGameState,
   postServersRackAuxEquip,
   postServersRackAuxUnequip,
@@ -45,14 +42,8 @@ import {
   postServersRackMinerUnequip,
   postServerRoomBulkBatteries,
   postServerRoomRoomCoins,
-  postWorkshopSlotEquip,
-  postWorkshopSlotUnequip,
-  postWorkshopBatteryChargeStart,
-  postWorkshopBatteryChargeStop,
-  postWorkshopMutate,
   getGlobalLastLoadTime,
   newServerIntentIdempotencyKey,
-  newWorkshopIntentIdempotencyKey,
   setUpgrades as apiSetUpgrades,
   setAccessLevels as apiSetAccessLevels,
   setLootBoxes as apiSetLootBoxes,
@@ -79,6 +70,7 @@ import { useStackSocketStore } from './stores/useStackSocketStore';
 import type { BulkRoomBatteryRunOptions } from './controllers/roomBatteryController';
 import { RemoteBannerImage } from './components/RemoteBannerImage';
 import { UiNoticeModal, type UiNotice } from './components/UiNoticeModal';
+import { DailyCheckinBanner } from './components/DailyCheckinBanner';
 import { gpuDupLog } from './utils/gpuDupDebug';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
@@ -92,7 +84,6 @@ const ProfilePage = lazyWithReload(() => import('./components/ProfilePage').then
 const TransparencyPage = lazyWithReload(() => import('./components/TransparencyPage').then((m) => ({ default: m.TransparencyPage })));
 const ServerRoom = lazyWithReload(() => import('./components/ServerRoom').then((m) => ({ default: m.ServerRoom })));
 const PlayerCalculator = lazyWithReload(() => import('./components/PlayerCalculator').then((m) => ({ default: m.PlayerCalculator })));
-const WorkshopRoom = lazyWithReload(() => import('./components/WorkshopRoom').then((m) => ({ default: m.WorkshopRoom })));
 const InventoryView = lazyWithReload(() => import('./components/InventoryView').then((m) => ({ default: m.InventoryView })));
 const UpgradeShop = lazyWithReload(() => import('./components/UpgradeShop').then((m) => ({ default: m.UpgradeShop })));
 const LuckyBoxStore = lazyWithReload(() => import('./components/LuckyBoxStore').then((m) => ({ default: m.LuckyBoxStore })));
@@ -145,36 +136,10 @@ function resolveEquippedBatteryCatalogId(
   return null;
 }
 
-/**
- * Sistema de baterias é infinito por design: qualquer bateria existente é tratada
- * como ilimitada. Mantemos guard para id vazio para preservar a semântica
- * "sem bateria equipada" nos chamadores.
- */
-function isKnownInfiniteBatteryItem(itemId: unknown): boolean {
-  const id = itemId == null ? '' : String(itemId).trim().toLowerCase();
-  if (!id) return false;
-  return true;
-}
-
 const calculateProduction = (placedRacks: PlacedRack[], upgradesList: Upgrade[]) => {
   let total = 0;
   placedRacks.forEach(rack => {
-    const catBid =
-      rack.batteryCatalogItemId != null && String(rack.batteryCatalogItemId).trim() !== ''
-        ? String(rack.batteryCatalogItemId).trim()
-        : rack.batteryId != null
-          ? String(rack.batteryId).trim()
-          : '';
-    const battery =
-      (catBid && upgradesList.find((u) => u.id === catBid && (u.type === 'battery' || String(u.category || '').toLowerCase() === 'battery'))) ||
-      (rack.batteryId && upgradesList.find((u) => u.id === rack.batteryId && (u.type === 'battery' || String(u.category || '').toLowerCase() === 'battery'))) ||
-      undefined;
-    const isInfinite =
-      rack.currentCharge === -1 ||
-      rack.batteryPowerCapacityWh === -1 ||
-      isKnownInfiniteBatteryItem(catBid) ||
-      (battery && battery.powerCapacity == -1);
-    if (rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0)) {
+    if (rack.isOn && rack.wiringId && rack.batteryId) {
       let rackBaseProd = 0;
       rack.slots.forEach(slotItemId => {
         if (slotItemId) {
@@ -231,15 +196,13 @@ const INITIAL_STATE: GameState = {
   coinBalances: {},
   claimedReferrals: 0,
   referralBonusClaimed: false,
-  workshopSlots: [null, null, null, null, null, null],
   claimedBoxes: [],
   dailyActions: {}
 };
 
-const processLoadedState = (parsed: any, userEmail: string): GameState => {
+const processLoadedState = (parsed: any, _userEmail: string): GameState => {
   const state = { ...INITIAL_STATE, ...parsed };
 
-  // --- MIGRATION LOGIC START ---
   if (!state.storedBatteries) state.storedBatteries = [];
   state.storedBatteries = (state.storedBatteries as unknown[]).map((raw: unknown) => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
@@ -248,16 +211,9 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
     const itemId =
       typeof b.itemId === 'string' ? b.itemId.trim() : typeof b.item_id === 'string' ? String(b.item_id).trim() : '';
     if (!id || !itemId) return null;
-    const chRaw = b.currentCharge ?? b.current_charge;
-    const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
-    const currentCharge = Number.isFinite(ch) ? ch : 0;
-    const pwhRaw = b.powerCapacityWh ?? b.power_capacity_wh;
-    const pwh = pwhRaw == null ? null : Number(pwhRaw);
     return {
       id,
       itemId,
-      currentCharge,
-      powerCapacityWh: pwh != null && Number.isFinite(pwh) ? pwh : null,
       displayName: typeof b.displayName === 'string' ? b.displayName : typeof b.display_name === 'string' ? String(b.display_name) : null,
       imageUrl: typeof b.imageUrl === 'string' ? b.imageUrl : typeof b.image_url === 'string' ? String(b.image_url) : null
     };
@@ -266,23 +222,8 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
   if (!state.unopenedBoxes) state.unopenedBoxes = {};
   if (state.claimedReferrals === undefined) state.claimedReferrals = 0;
   if (state.referralBonusClaimed === undefined) state.referralBonusClaimed = false;
-  if (!state.workshopSlots) {
-    state.workshopSlots = [null, null, null, null, null, null];
-  } else if (state.workshopSlots.length < 6) {
-    const padded = [...state.workshopSlots];
-    while (padded.length < 6) padded.push(null);
-    state.workshopSlots = padded;
-  }
   if (!state.claimedBoxes) state.claimedBoxes = [];
   if (!state.dailyActions) state.dailyActions = {};
-
-  state.workshopSlots = state.workshopSlots.map((s: any, idx: number) => {
-    if (typeof s === 'string') {
-      const structure: any = { id: `ws_${userEmail}_${idx}`, itemId: s, internalSlots: {}, currentCharge: 0 };
-      return structure;
-    }
-    return s;
-  });
 
   if (state.placedRacks) {
     state.placedRacks = state.placedRacks.map((r: any) => {
@@ -296,7 +237,6 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
         wiringId: r.wiringId || null,
         batteryId: r.batteryId || null,
         multiplierSlots: multiSlots,
-        currentCharge: r.currentCharge !== undefined ? r.currentCharge : 0,
         isOn: r.isOn !== undefined ? r.isOn : false,
         roomId: normalizePlacedRackRoomId(r.roomId)
       }
@@ -306,7 +246,6 @@ const processLoadedState = (parsed: any, userEmail: string): GameState => {
     state.stock['rack_10u'] = (state.stock['rack_10u'] || 0) + state.stock['server_rack'];
     delete state.stock['server_rack'];
   }
-  // --- MIGRATION LOGIC END ---
 
   return state;
 };
@@ -331,7 +270,7 @@ function applyNftAutoSanitizedClientSync(
   setGameState(next);
 }
 
-type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support' | 'partners' | 'partner_games' | 'dashboard';
+type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support' | 'partners' | 'partner_games' | 'dashboard';
 type GlobalView = 'home' | 'docs' | 'auth' | 'game' | 'admin';
 
 const VALID_GAME_VIEWS: readonly View[] = [
@@ -344,7 +283,6 @@ const VALID_GAME_VIEWS: readonly View[] = [
   'upgrade',
   'lucky_store',
   'roleta',
-  'oficina',
   'arcade',
   'calculator',
   'ranking',
@@ -362,11 +300,10 @@ function parseSavedGameView(raw: string | null | undefined): View {
 }
 type Theme = 'light' | 'dark';
 
-/** Alinha o save ao domínio da rota canónica (`/servers`, `/inventory`, `/workshop`). */
-function gameSaveDomainFromView(v: View): 'full' | 'inventory' | 'servers' | 'workshop' {
+/** Alinha o save ao domínio da rota canónica (`/servers`, `/inventory`). */
+function gameSaveDomainFromView(v: View): 'full' | 'inventory' | 'servers' {
   if (v === 'servers') return 'servers';
   if (v === 'inventory') return 'inventory';
-  if (v === 'oficina') return 'workshop';
   return 'full';
 }
 
@@ -523,14 +460,6 @@ export default function App() {
     }
   }, [isOperatorAdminOnly, currentView]);
 
-  // Aba `oficina` foi descontinuada (sistema de baterias é infinito por design).
-  // Redireciona qualquer acesso por URL antiga (`/workshop`) ou sessionStorage para `servers`.
-  useEffect(() => {
-    if (currentView === 'oficina') {
-      setCurrentView('servers');
-    }
-  }, [currentView]);
-
   // Dynamic Data
   const [gameUpgrades, setGameUpgrades] = useState<Upgrade[]>([]);
   const isReady = saveLoaded && gameUpgrades.length > 0;
@@ -557,24 +486,19 @@ export default function App() {
   const [saveTrigger, setSaveTrigger] = useState(0);
   const currentViewRef = useRef<View>(currentView);
   const gamePathHydratedRef = useRef(false);
-  const pendingSaveDomainRef = useRef<'full' | 'inventory' | 'servers' | 'workshop'>('full');
+  const pendingSaveDomainRef = useRef<'full' | 'inventory' | 'servers'>('full');
   /**
-   * Geração lógica de mutações autoritativas (Servidores/Oficina). Cada intent bem-sucedida
+   * Geração lógica de mutações autoritativas (Servidores). Cada intent bem-sucedida
    * incrementa este contador para que `runPlayerSaveWithRetries` possa descartar saves legados
    * em voo que capturaram um snapshot anterior (evita reintroduzir GPUs já libertadas do slot).
    */
   const serverIntentMutationGenRef = useRef(0);
   /** Sinaliza ao debounce que não há mais saves legados úteis enquanto não houver nova alteração. */
   const skipNextLegacySaveRef = useRef(false);
-  /** Evita double-click / pedidos em paralelo na oficina (mutações servidor-authoritativas). */
-  const workshopMutationBusyRef = useRef(false);
   /** Geração de pedido GET inventário — descarta respostas atrasadas ao mudar de separador. */
   const inventoryMeRequestGenRef = useRef(0);
-  /** Baterias em armazém conforme o servidor (cheias vs parciais); `null` = ainda não hidratado nesta visita ao Estoque. */
-  const [inventoryBatterySplit, setInventoryBatterySplit] = useState<{
-    full: StoredBattery[];
-    partial: StoredBattery[];
-  } | null>(null);
+  /** Baterias UUID infinitas em armazém conforme o servidor; `null` = ainda não hidratado nesta visita ao Estoque. */
+  const [inventoryBatteries, setInventoryBatteries] = useState<StoredBattery[] | null>(null);
   /** Categorias de itens empilháveis vindas de `GET /api/inventory/state`; `null` = usar derivação local no `InventoryView`. */
   const [inventoryStackableCategories, setInventoryStackableCategories] = useState<InventoryStackableCategoryApi[] | null>(
     null
@@ -586,7 +510,7 @@ export default function App() {
 
   useEffect(() => {
     if (currentView !== 'inventory') {
-      setInventoryBatterySplit(null);
+      setInventoryBatteries(null);
       setInventoryStackableCategories(null);
     }
   }, [currentView]);
@@ -602,11 +526,7 @@ export default function App() {
         const r = await getPlayerInventoryState();
         if (cancelled || gen !== inventoryMeRequestGenRef.current) return;
         if (r.ok === true) {
-          const merged = [...r.partialChargeBatteries, ...r.fullChargeBatteries];
-          setInventoryBatterySplit({
-            full: r.fullChargeBatteries,
-            partial: r.partialChargeBatteries
-          });
+          setInventoryBatteries(r.storedBatteries);
           setInventoryStackableCategories(r.stackableCategories);
           gpuDupLog('inventory_load', {
             stockSnapshot: Object.fromEntries(
@@ -617,7 +537,7 @@ export default function App() {
           setGameState((p) => ({
             ...p,
             stock: { ...r.stock },
-            storedBatteries: merged
+            storedBatteries: r.storedBatteries
           }));
           return;
         }
@@ -628,16 +548,12 @@ export default function App() {
           setInventoryStackableCategories(null);
           return;
         }
-        const merged = [...m.storedBatteriesPartial, ...m.storedBatteriesFull];
-        setInventoryBatterySplit({
-          full: m.storedBatteriesFull,
-          partial: m.storedBatteriesPartial
-        });
+        setInventoryBatteries(m.storedBatteries);
         setInventoryStackableCategories(null);
         setGameState((p) => ({
           ...p,
           stock: { ...m.stock },
-          storedBatteries: merged
+          storedBatteries: m.storedBatteries
         }));
       } catch (e) {
         console.error('[inventory]', e);
@@ -656,7 +572,7 @@ export default function App() {
   /** Passa código à Roleta após resgate em Caixas (consumido pelo `RoletaPage`). */
   const [roletaBootstrap, setRoletaBootstrap] = useState<{ v: number; code: string } | null>(null);
 
-  const requestSave = useCallback((domainOverride?: 'full' | 'inventory' | 'servers' | 'workshop') => {
+  const requestSave = useCallback((domainOverride?: 'full' | 'inventory' | 'servers') => {
     pendingSaveDomainRef.current = domainOverride ?? gameSaveDomainFromView(currentViewRef.current);
     setSaveTrigger((prev) => prev + 1);
   }, []);
@@ -692,22 +608,6 @@ export default function App() {
       setLootBoxDefs(freshLootBoxes);
     }
   }, [user]);
-
-  const applyWorkshopServerSlice = useCallback(
-    (r: { workshopSlots: unknown[]; stock: Record<string, number>; storedBatteries: StoredBattery[] }) => {
-      setGameState((p) => {
-        const next = {
-          ...p,
-          workshopSlots: r.workshopSlots as GameState['workshopSlots'],
-          stock: { ...r.stock },
-          storedBatteries: [...r.storedBatteries]
-        };
-        gameStateRef.current = next;
-        return next;
-      });
-    },
-    []
-  );
 
   /** Save completo + retentativas em falhas transitórias (502/522/rede). Usado pelo debounce e pelo auto-save. */
   const runPlayerSaveWithRetries = useCallback(
@@ -1736,7 +1636,6 @@ export default function App() {
     [user, handleReloadGameState]
   );
 
-  const [adSelection, setAdSelection] = useState<{ wsIdx: number } | null>(null);
   useEffect(() => { (async () => { const s = await getWeb3Settings(); setWeb3SettingsState(s); })(); }, []);
   useEffect(() => {
     if (!saveLoaded || currentView !== 'wallet') return;
@@ -2031,26 +1930,6 @@ export default function App() {
     requestSave();
   }, [requestSave]);
 
-  const handleRecharge = useCallback((rid: string) => {
-    setGameState((p) => {
-      const ri = p.placedRacks.findIndex((r) => r.id === rid);
-      if (ri === -1) return p;
-      const r = p.placedRacks[ri];
-      if (!r.batteryId) return p;
-      const cat = resolveEquippedBatteryCatalogId(
-        r.batteryId,
-        p.storedBatteries,
-        gameUpgrades,
-        Object.fromEntries(rackBatteryFromStockCatalogRef.current)
-      );
-      const cap = (cat && gameUpgrades.find((u) => u.id === cat)?.powerCapacity) || 0;
-      const ur = [...p.placedRacks];
-      ur[ri] = { ...r, currentCharge: cap };
-      return { ...p, placedRacks: ur };
-    });
-    requestSave();
-  }, [gameUpgrades, requestSave]);
-
   const handleSetRackCoin = useCallback((rid: string, coinId: string) => {
     setGameState(prev => {
       const ri = prev.placedRacks.findIndex(r => r.id === rid);
@@ -2122,298 +2001,6 @@ export default function App() {
       bulkBatteryBusyRef.current = false;
     }
   }, [handleReloadGameState]);
-
-  const handleEquipWorkshop = useCallback(
-    async (idx: number, mid: string) => {
-      if (workshopMutationBusyRef.current) return;
-      workshopMutationBusyRef.current = true;
-      try {
-        const r = await postWorkshopSlotEquip({
-          slotIndex: idx,
-          itemId: mid,
-          idempotencyKey: newWorkshopIntentIdempotencyKey(),
-          clientStateVersion: getGlobalLastLoadTime()
-        });
-        if (r.ok === false) {
-          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
-            await handleReloadGameState();
-            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
-            return;
-          }
-          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível instalar a estrutura.' });
-          return;
-        }
-        applyWorkshopServerSlice(r);
-      } finally {
-        workshopMutationBusyRef.current = false;
-      }
-    },
-    [applyWorkshopServerSlice, handleReloadGameState]
-  );
-
-  const handleUnequipWorkshop = useCallback(
-    async (idx: number) => {
-      if (workshopMutationBusyRef.current) return;
-      workshopMutationBusyRef.current = true;
-      try {
-        const r = await postWorkshopSlotUnequip({
-          slotIndex: idx,
-          idempotencyKey: newWorkshopIntentIdempotencyKey(),
-          clientStateVersion: getGlobalLastLoadTime()
-        });
-        if (r.ok === false) {
-          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
-            await handleReloadGameState();
-            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
-            return;
-          }
-          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível remover a estrutura.' });
-          return;
-        }
-        applyWorkshopServerSlice(r);
-      } finally {
-        workshopMutationBusyRef.current = false;
-      }
-    },
-    [applyWorkshopServerSlice, handleReloadGameState]
-  );
-
-  const handleEquipWorkshopComponent = useCallback(
-    async (wsIdx: number, slotId: string, layoutSlotIndex: number, iid: string, sbid?: string) => {
-      if (workshopMutationBusyRef.current) return;
-      workshopMutationBusyRef.current = true;
-      try {
-        const idem = newWorkshopIntentIdempotencyKey();
-        const cv = getGlobalLastLoadTime();
-        const r = sbid
-          ? await postWorkshopBatteryChargeStart({
-              batteryId: sbid,
-              benchSlotIndex: wsIdx,
-              componentSlotId: slotId,
-              componentSlotLayoutIndex: layoutSlotIndex,
-              idempotencyKey: idem,
-              clientStateVersion: cv
-            })
-          : await postWorkshopMutate({
-              action: 'equip_component',
-              slotIndex: wsIdx,
-              componentSlotId: slotId,
-              componentSlotLayoutIndex: layoutSlotIndex,
-              itemId: iid,
-              idempotencyKey: idem,
-              clientStateVersion: cv
-            });
-        if (r.ok === false) {
-          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
-            await handleReloadGameState();
-            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
-            return;
-          }
-          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível montar o componente.' });
-          return;
-        }
-        applyWorkshopServerSlice(r);
-      } finally {
-        workshopMutationBusyRef.current = false;
-      }
-    },
-    [applyWorkshopServerSlice, handleReloadGameState]
-  );
-
-  const handleUnequipWorkshopComponent = useCallback(
-    async (wsIdx: number, slotId: string, layoutSlotIndex: number, batteryInstanceId?: string) => {
-      if (workshopMutationBusyRef.current) return;
-      workshopMutationBusyRef.current = true;
-      try {
-        const idem = newWorkshopIntentIdempotencyKey();
-        const cv = getGlobalLastLoadTime();
-        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-        const r =
-          batteryInstanceId && uuidRe.test(String(batteryInstanceId).trim())
-            ? await postWorkshopBatteryChargeStop({
-                batteryId: String(batteryInstanceId).trim(),
-                benchSlotIndex: wsIdx,
-                componentSlotId: slotId,
-                componentSlotLayoutIndex: layoutSlotIndex,
-                idempotencyKey: idem,
-                clientStateVersion: cv
-              })
-            : await postWorkshopMutate({
-                action: 'unequip_component',
-                slotIndex: wsIdx,
-                componentSlotId: slotId,
-                componentSlotLayoutIndex: layoutSlotIndex,
-                idempotencyKey: idem,
-                clientStateVersion: cv
-              });
-        if (r.ok === false) {
-          if (r.forceReload || r.code === 'STATE_VERSION_CONFLICT' || r.code === 'IDEMPOTENCY_PAYLOAD_MISMATCH') {
-            await handleReloadGameState();
-            setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Estado sincronizado com o servidor.' });
-            return;
-          }
-          setBulkBatteryNotice({ title: 'Oficina', message: r.error || 'Não foi possível remover o componente.' });
-          return;
-        }
-        applyWorkshopServerSlice(r);
-      } finally {
-        workshopMutationBusyRef.current = false;
-      }
-    },
-    [applyWorkshopServerSlice, handleReloadGameState]
-  );
-
-  const handleWorkshopInstantRecharge = useCallback(async (wsIdx: number) => {
-    if (!user?.email) return;
-    try {
-      const res = await performWorkshopInstantRecharge(user.email, wsIdx);
-      if (res.ok && res.newCharge !== undefined) {
-        setGameState(p => {
-          const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-          const item = nw[wsIdx]; if (!item) return p;
-          nw[wsIdx] = { ...item, currentCharge: res.newCharge || 0 };
-          const nextDaily = { ...(p.dailyActions || {}), [`instant_recharge_slot_${wsIdx}`]: Date.now() };
-          return { ...p, workshopSlots: nw, dailyActions: nextDaily };
-        });
-      } else {
-        alert(res.error || "Erro ao recarregar carregador.");
-      }
-    } catch (err) {
-      console.error("[Workshop] Instant recharge failed", err);
-      alert("Erro de rede ao recarregar.");
-    }
-  }, [user, gameUpgrades]);
-
-  const launchApplixir = useCallback(async (wsIdx: number) => {
-    if (!monetizationSettings?.applixirSiteId || !monetizationSettings?.applixirZoneId) {
-      alert("Configuração da Applixir incompleta no painel admin.");
-      return;
-    }
-
-    const adStatusCallback = async (status: string) => {
-      console.log('[Applixir] Status do anúncio recebido:', status);
-      if (status === "completed") {
-        console.log('[Applixir] Vídeo concluído. Aplicando recompensa...');
-        if (user?.email) {
-          const res = await claimAdReward(user.email, wsIdx);
-          if (res.ok && res.newCharge !== undefined) {
-            setGameState(p => {
-              const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-              const item = nw[wsIdx]; if (!item) return p;
-              nw[wsIdx] = { ...item, currentCharge: res.newCharge || 0 };
-              const nextDaily = { ...(p.dailyActions || {}), [`reward_ad_slot_${wsIdx}`]: Date.now() };
-              return { ...p, workshopSlots: nw, dailyActions: nextDaily };
-            });
-            alert(res.rewardMsg || "Parabéns! Você ganhou energia.");
-          } else {
-            alert("Erro ao validar recompensa no servidor.");
-          }
-        }
-      } else if (status === "no_ads") {
-        alert("Não há anúncios disponíveis para Applixir no momento. Tente novamente ou use outro provedor.");
-      }
-    };
-
-    (window as any).adStatusCallback = adStatusCallback;
-
-    if (!document.getElementById('applixir-sdk')) {
-      const script = document.createElement('script');
-      script.id = 'applixir-sdk';
-      script.src = "https://cdn.applixir.com/applixir.sdk3.0.js";
-      script.async = true;
-      document.body.appendChild(script);
-    }
-
-    const options = {
-      zoneId: monetizationSettings.applixirZoneId,
-      accountId: monetizationSettings.applixirAccountId || "8993",
-      siteId: monetizationSettings.applixirSiteId,
-      userId: user?.email || "0",
-      adStatusCallback: "adStatusCallback",
-      test: false,
-      custom: wsIdx.toString()
-    };
-
-    const invoke = () => {
-      if ((window as any).invokeApplixirVideoUnit) {
-        (window as any).invokeApplixirVideoUnit(options);
-      } else {
-        alert("O módulo Applixir ainda está carregando ou foi bloqueado. Desative o AdBlock.");
-      }
-    };
-
-    if ((window as any).invokeApplixirVideoUnit) invoke();
-    else setTimeout(invoke, 1000);
-  }, [monetizationSettings, user]);
-
-  const launchEzoic = useCallback(async (wsIdx: number) => {
-    if (!monetizationSettings?.ezoicPublisherId) {
-      alert("Configuração da Ezoic incompleta no painel admin.");
-      return;
-    }
-
-    // Lógica padrão de carregado de SDK da Ezoic
-    if (!document.getElementById('ezoic-sdk')) {
-      const script = document.createElement('script');
-      script.id = 'ezoic-sdk';
-      script.src = `//g.ezoic.net/ezoic/sa.min.js`;
-      script.async = true;
-      document.body.appendChild(script);
-    }
-
-    alert("Iniciando anúncio via Ezoic... (Aguardando resposta do SDK)");
-
-    // Simulação do fluxo Ezoic (pode precisar de ajuste conforme placeholderId)
-    const handleCompletion = async () => {
-      if (user?.email) {
-        const res = await claimAdReward(user.email, wsIdx);
-        if (res.ok && res.newCharge !== undefined) {
-          setGameState(p => {
-            const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-            const item = nw[wsIdx]; if (!item) return p;
-            nw[wsIdx] = { ...item, currentCharge: res.newCharge || 0 };
-            const nextDaily = { ...(p.dailyActions || {}), [`reward_ad_slot_${wsIdx}`]: Date.now() };
-            return { ...p, workshopSlots: nw, dailyActions: nextDaily };
-          });
-          alert(res.rewardMsg || "Energia Ezoic creditada com sucesso!");
-        }
-      }
-    };
-
-    // Chamada fictícia baseada em padrões de vídeo recompensado
-    console.log('[Ezoic] Placeholder:', monetizationSettings.ezoicPlaceholderId);
-    // setTimeout(handleCompletion, 5000); // Para teste, finge carregar
-
-    // Nota: A integração real depende do ezstandalone.showRewardedAd(placeholderId)
-    if ((window as any).ezstandalone) {
-      (window as any).ezstandalone.showRewardedAd(monetizationSettings.ezoicPlaceholderId);
-      // O SDK da Ezoic costuma disparar eventos globais ou callbacks configurados no dashboard
-    } else {
-      alert("SDK da Ezoic não detectado. Note que anúncios da Ezoic requerem domínio aprovado e scripts ativos.");
-      // Fallback para teste manual se necessário
-    }
-  }, [monetizationSettings, user]);
-
-  const handleRewardedAd = useCallback((wsIdx: number) => {
-    if (!monetizationSettings) return;
-
-    const active = [];
-    if (monetizationSettings.applixirEnabled) active.push('applixir');
-    if (monetizationSettings.ezoicEnabled) active.push('ezoic');
-
-    if (active.length === 0) {
-      alert("Nenhum provedor de recompensas em vídeo está ativo no momento.");
-      return;
-    }
-
-    if (active.length === 1) {
-      if (active[0] === 'applixir') launchApplixir(wsIdx);
-      else launchEzoic(wsIdx);
-      return;
-    }
-
-    setAdSelection({ wsIdx });
-  }, [monetizationSettings, launchApplixir, launchEzoic]);
 
   const handleReset = () => {
     if (user && window.confirm('ATENÇÃO: Isso apagará seu save permanentemente.')) {
@@ -2514,23 +2101,6 @@ export default function App() {
     }
   }, [web3SettingsState, miningCoins, user, gameState.coinBalances, requestSave]);
 
-
-  const handleDailyBoost = useCallback(async (wsIdx: number) => {
-    if (!user?.email) return;
-    const res = await performDailyBoost(user.email, wsIdx);
-    if (res.ok && res.newCharge !== undefined) {
-      setGameState(p => {
-        const nw = [...(p.workshopSlots || [null, null, null, null, null, null])];
-        const item = nw[wsIdx]; if (!item) return p;
-        nw[wsIdx] = { ...item, currentCharge: res.newCharge || 0 };
-        const nextDaily = { ...(p.dailyActions || {}), [`daily_boost_slot_${wsIdx}`]: Date.now() };
-        return { ...p, workshopSlots: nw, dailyActions: nextDaily };
-      });
-      alert(`Boost diário aplicado! Sua estação foi 100% carregada.`);
-    } else {
-      alert(res.error || "Falha ao aplicar boost.");
-    }
-  }, [user]);
 
   // --- LOOT BOX LOGIC ---
   const handleBuyBox = async (boxId: string) => {
@@ -2749,19 +2319,7 @@ export default function App() {
                         }
                         let base = 0;
                         gameState.placedRacks.forEach(r => {
-                          const battId =
-                            r.batteryCatalogItemId != null && String(r.batteryCatalogItemId).trim() !== ''
-                              ? String(r.batteryCatalogItemId).trim()
-                              : r.batteryId;
-                          const batt = gameUpgrades.find(
-                            u => u.id === battId && (u.type === 'battery' || String(u.category || '').toLowerCase() === 'battery')
-                          );
-                          const isInf =
-                            r.currentCharge === -1 ||
-                            r.batteryPowerCapacityWh === -1 ||
-                            isKnownInfiniteBatteryItem(battId) ||
-                            (batt && batt.powerCapacity == -1);
-                          if (!r.isOn || !r.wiringId || !r.batteryId || (!isInf && r.currentCharge <= 0 && r.currentCharge !== undefined)) return;
+                          if (!r.isOn || !r.wiringId || !r.batteryId) return;
                           if (r.selectedCoinId === c.id) {
                             let rbase = 0;
                             r.slots.forEach(sid => { const up = gameUpgrades.find(u => u.id === sid); if (up) rbase += up.baseProduction; });
@@ -2986,6 +2544,8 @@ export default function App() {
               </div>
             </nav>
 
+            <DailyCheckinBanner saveLoaded={saveLoaded} onRewardGranted={() => setGameStateReloadNonce((n) => n + 1)} />
+
             {/* GAME CONTENT WRAPPER WITH SIDEBARS */}
             <div
               className={`flex-1 min-w-0 flex overflow-hidden relative w-full h-full ${
@@ -3065,7 +2625,6 @@ export default function App() {
                             onEquipAux={handleEquipAux}
                             onUnequipAux={handleUnequipAux}
                             onTogglePower={handleTogglePower}
-                            onRecharge={handleRecharge}
                             upgrades={gameUpgrades}
                             miningCoins={miningCoins}
                             onSetRackCoin={handleSetRackCoin}
@@ -3105,8 +2664,7 @@ export default function App() {
                         <Suspense fallback={<LazyRouteFallback />}>
                           <InventoryView
                             stock={gameState.stock}
-                            storedBatteries={gameState.storedBatteries}
-                            inventoryBatterySplit={inventoryBatterySplit}
+                            storedBatteries={inventoryBatteries ?? gameState.storedBatteries}
                             inventoryStackableCategories={inventoryStackableCategories}
                             upgrades={gameUpgrades}
                           />
@@ -3334,55 +2892,6 @@ export default function App() {
 
             </div>
           </>
-        )}
-        {adSelection !== null && (
-          <div className="fixed inset-0 bg-black/90 backdrop-blur-md z-[100] flex items-center justify-center p-6 animate-in fade-in duration-300">
-            <div className="bg-slate-900 border border-slate-700 w-full max-w-md rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-              <div className="absolute top-0 right-0 p-4">
-                <button onClick={() => setAdSelection(null)} className="text-slate-500 hover:text-white transition-colors">
-                  <X size={24} />
-                </button>
-              </div>
-
-              <div className="text-center mb-8">
-                <div className="bg-green-600/20 w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-green-600/30">
-                  <Play className="text-green-500" fill="currentColor" size={28} />
-                </div>
-                <h2 className="text-xl font-bold text-white tracking-widest uppercase">Escolha o Provedor</h2>
-                <p className="text-xs text-slate-400 mt-2">Assista um anúncio para carregar seu dispositivo</p>
-              </div>
-
-              <div className="space-y-4">
-                {monetizationSettings?.applixirEnabled && (
-                  <button
-                    onClick={() => { launchApplixir(adSelection.wsIdx); setAdSelection(null); }}
-                    className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-green-600/50 p-6 rounded-2xl flex items-center justify-between transition-all group active:scale-[0.98]"
-                  >
-                    <div className="text-left">
-                      <div className="text-white font-bold text-sm tracking-widest">APPLIXIR</div>
-                      <div className="text-[10px] text-slate-500 group-hover:text-green-500">Global Rewarded Ads</div>
-                    </div>
-                    <Play size={18} className="text-slate-600 group-hover:text-green-500" />
-                  </button>
-                )}
-
-                {monetizationSettings?.ezoicEnabled && (
-                  <button
-                    onClick={() => { launchEzoic(adSelection.wsIdx); setAdSelection(null); }}
-                    className="w-full bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-amber-600/50 p-6 rounded-2xl flex items-center justify-between transition-all group active:scale-[0.98]"
-                  >
-                    <div className="text-left">
-                      <div className="text-white font-bold text-sm tracking-widest uppercase">Ezoic Ads</div>
-                      <div className="text-[10px] text-slate-500 group-hover:text-amber-500">Premium Video Network</div>
-                    </div>
-                    <Play size={18} className="text-slate-600 group-hover:text-amber-500" />
-                  </button>
-                )}
-              </div>
-
-              <p className="text-center text-[9px] text-slate-600 mt-8 uppercase tracking-widest">A energia será creditada após a conclusão</p>
-            </div>
-          </div>
         )}
         {showRewardModal && (
           <Suspense fallback={<div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/80"><RefreshCw className="animate-spin text-amber-400" size={32} /></div>}>

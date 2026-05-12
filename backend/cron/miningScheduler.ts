@@ -3,7 +3,6 @@
  */
 
 export { startMiningYieldCron, updateMiningYields } from './miningYieldCron.js';
-export { startWorkshopChargingCron, tickWorkshopCharging } from './workshopChargingCron.js';
 export {
   computeProgressForUser,
   calculateIntegratedYield,

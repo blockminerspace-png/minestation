@@ -1,14 +1,12 @@
 /**
- * Fonte de verdade do inventário (stock + baterias em armazém, fora de oficina/rack).
+ * Fonte de verdade do inventário (stock + baterias em armazém, fora de rack).
+ * Sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: cada bateria em
+ * `stored_batteries` é uma instância UUID infinita; já não há cargas parciais.
  */
 import type { Pool } from 'pg';
 import { prisma } from '../../config/prisma.js';
 import { computeProgressForUser } from '../../cron/miningProgressComputer.js';
-import {
-  isStoredBatteryFullyCharged,
-  resolveBatteryNominalCapacityWh,
-  type UpgradeBatteryCapacityRow
-} from '../batteries/batteries.charge.js';
 import type {
   InventoryBatteryInstanceDto,
   InventoryStackableCategoryDto,
@@ -136,39 +134,20 @@ function publicRefFromInstanceId(id: string): string {
   return t.slice(0, 6) || '—';
 }
 
-function batteryDtoFromRow(
-  b: {
-    id: string;
-    item_id: string;
-    current_charge: number;
-    power_capacity_wh: number | null;
-    display_name: string | null;
-    image_url: string | null;
-  },
-  upRow: UpgradeBatteryCapacityRow | undefined
-): InventoryBatteryInstanceDto {
+function batteryDtoFromRow(b: {
+  id: string;
+  item_id: string;
+  display_name: string | null;
+  image_url: string | null;
+}): InventoryBatteryInstanceDto {
   const id = String(b.id || '').trim();
   const itemId = String(b.item_id || '').trim();
-  const charge = Number.isFinite(Number(b.current_charge)) ? Number(b.current_charge) : 0;
-  const capWh =
-    b.power_capacity_wh != null && Number.isFinite(Number(b.power_capacity_wh))
-      ? Number(b.power_capacity_wh)
-      : null;
-  const nominal = resolveBatteryNominalCapacityWh(upRow);
-  let chargePercent = 0;
-  if (nominal === -1) chargePercent = 100;
-  else if (nominal != null && nominal > 0) chargePercent = Math.min(100, (charge / nominal) * 100);
-  const isFull = isStoredBatteryFullyCharged(charge, upRow);
   return {
     id,
     itemId,
-    currentCharge: charge,
-    powerCapacityWh: capWh,
     displayName: b.display_name != null ? String(b.display_name) : null,
     imageUrl: b.image_url != null ? String(b.image_url) : null,
-    chargePercent: Math.round(chargePercent * 10) / 10,
-    publicRef: publicRefFromInstanceId(id),
-    isFull
+    publicRef: publicRefFromInstanceId(id)
   };
 }
 
@@ -179,23 +158,14 @@ export async function loadPlayerInventorySnapshot(pool: Pool, userId: number): P
   const state = await buildInventoryStateV1(pool, userId);
   return {
     stock: state.stock,
-    storedBatteriesFull: state.fullChargeBatteries.map((x) => ({
-      id: x.id,
-      itemId: x.itemId,
-      currentCharge: x.currentCharge
-    })),
-    storedBatteriesPartial: state.partialChargeBatteries.map((x) => ({
-      id: x.id,
-      itemId: x.itemId,
-      currentCharge: x.currentCharge
-    })),
+    storedBatteries: state.storedBatteries.map((x) => ({ id: x.id, itemId: x.itemId })),
     serverUpdatedAt: state.serverUpdatedAt
   };
 }
 
 /**
  * Estado consolidado para `GET /api/inventory/state`.
- * Aplica o mesmo tick de mineração/carga que `GET /api/game-state` (BD como fonte de verdade).
+ * Aplica o mesmo tick de mineração que `GET /api/game-state` (BD como fonte de verdade).
  */
 export async function buildInventoryStateV1(pool: Pool, userId: number): Promise<InventoryStateV1Dto> {
   const progressRes = await computeProgressForUser(pool, userId, Date.now());
@@ -229,17 +199,13 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
       select: {
         id: true,
         item_id: true,
-        current_charge: true,
-        power_capacity_wh: true,
         display_name: true,
         image_url: true,
         status: true,
         location: true,
         rack_id: true,
         slot_id: true,
-        room_id: true,
-        workshop_slot_index: true,
-        workshop_component_slot_id: true
+        room_id: true
       }
     }),
     prisma.game_states.findUnique({
@@ -278,13 +244,7 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
   const upgradeById = new Map<string, UpgradeSelect>();
   for (const u of upgrades) upgradeById.set(u.id, u);
 
-  const upByIdForCharge = new Map<string, UpgradeBatteryCapacityRow>();
-  for (const u of upgrades) {
-    upByIdForCharge.set(u.id, { type: u.type, power_capacity: u.power_capacity });
-  }
-
-  const partialChargeBatteries: InventoryBatteryInstanceDto[] = [];
-  const fullChargeBatteries: InventoryBatteryInstanceDto[] = [];
+  const storedBatteries: InventoryBatteryInstanceDto[] = [];
 
   for (const b of batRowsRaw) {
     const id = typeof b.id === 'string' ? b.id.trim() : '';
@@ -297,10 +257,7 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
         location: b.location != null ? String(b.location) : null,
         rack_id: b.rack_id != null ? String(b.rack_id) : null,
         slot_id: b.slot_id != null ? Number(b.slot_id) : null,
-        room_id: b.room_id != null ? String(b.room_id) : null,
-        workshop_slot_index: b.workshop_slot_index != null ? Number(b.workshop_slot_index) : null,
-        workshop_component_slot_id:
-          b.workshop_component_slot_id != null ? String(b.workshop_component_slot_id) : null
+        room_id: b.room_id != null ? String(b.room_id) : null
       },
       mountedSet
     );
@@ -318,9 +275,7 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
       }
       continue;
     }
-    const dto = batteryDtoFromRow(b, upByIdForCharge.get(itemId));
-    if (dto.isFull) fullChargeBatteries.push(dto);
-    else partialChargeBatteries.push(dto);
+    storedBatteries.push(batteryDtoFromRow(b));
   }
 
   const stackRows = await resolveStackableRowsForStock(stock, upgradeById);
@@ -335,8 +290,7 @@ export async function buildInventoryStateV1(pool: Pool, userId: number): Promise
     serverUpdatedAt,
     stateVersion: serverUpdatedAt,
     stock,
-    partialChargeBatteries,
-    fullChargeBatteries,
+    storedBatteries,
     stackableCategories
   };
 }

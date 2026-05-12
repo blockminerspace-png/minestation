@@ -104,7 +104,6 @@ export const BACKUP_TABLE_NAMES = [
   'player_news_submissions',
   'rig_rooms',
   'user_rig_rooms',
-  'workshop_slots',
   'player_claimed_boxes',
   'daily_actions',
   'promo_codes',

@@ -18,6 +18,9 @@ export type BatteryIntegrityReadonlyReport = {
 
 /**
  * SELECT-only: contagens de problemas que `ensureStoredBatteriesIntegrity` corrigia com mutações.
+ * Sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: já não há `current_charge` em
+ * `placed_racks` nem em `stored_batteries`.
  */
 export async function reportBatteryIntegrityReadonly(client: PoolClient): Promise<BatteryIntegrityReadonlyReport> {
   const badRes = await client.query<{ c: string }>(
@@ -114,40 +117,6 @@ export async function buildBatteryIntegrityRepairPlan(client: PoolClient): Promi
 }> {
   const summary = await reportBatteryIntegrityReadonly(client);
 
-  const infInstRes = await client.query<{ c: string }>(
-    `
-      SELECT COUNT(*)::text AS c
-        FROM placed_racks pr
-        JOIN stored_batteries sb ON pr.user_id = sb.user_id
-         AND btrim(pr.battery_id::text) <> ''
-         AND btrim(pr.battery_id::text) = btrim(sb.id::text)
-        JOIN upgrades u ON u.id = btrim(sb.item_id::text)
-       WHERE pr.battery_id IS NOT NULL
-         AND COALESCE(u.power_capacity, 0) = -1
-         AND pr.current_charge IS DISTINCT FROM -1
-    `
-  );
-  const infCatRes = await client.query<{ c: string }>(
-    `
-      SELECT COUNT(*)::text AS c
-        FROM placed_racks pr
-        JOIN upgrades u ON btrim(pr.battery_id::text) = u.id
-       WHERE pr.battery_id IS NOT NULL
-         AND btrim(pr.battery_id::text) <> ''
-         AND NOT (pr.battery_id::text ~* $1)
-         AND COALESCE(u.power_capacity, 0) = -1
-         AND (
-               lower(COALESCE(u.type, '')) = 'battery'
-            OR lower(COALESCE(u.category, '')) = 'battery'
-             )
-         AND pr.current_charge IS DISTINCT FROM -1
-    `,
-    [PG_INSTANCE_UUID]
-  );
-
-  const infInst = parseInt(infInstRes.rows[0]?.c || '0', 10) || 0;
-  const infCat = parseInt(infCatRes.rows[0]?.c || '0', 10) || 0;
-
   const actions: BatteryIntegrityRepairPlanAction[] = [
     {
       id: 'fix_stored_battery_catalog',
@@ -172,18 +141,6 @@ export async function buildBatteryIntegrityRepairPlan(client: PoolClient): Promi
       description:
         'Em `placed_racks`, anular `battery_id` que não é UUID de instância nem id de catálogo de bateria válido.',
       estimatedRows: summary.invalidRackBatteryId
-    },
-    {
-      id: 'sync_infinite_charge_from_instance',
-      description:
-        'Definir `placed_racks.current_charge = -1` quando a bateria (instância) tem `power_capacity` infinito no catálogo.',
-      estimatedRows: infInst
-    },
-    {
-      id: 'sync_infinite_charge_from_catalog_id',
-      description:
-        'Definir `placed_racks.current_charge = -1` quando `battery_id` é id de catálogo com capacidade infinita.',
-      estimatedRows: infCat
     }
   ];
 
@@ -235,8 +192,6 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
     let clearedOrphan = 0;
     let clearedDupRack = 0;
     let clearedBadCatalogBatt = 0;
-    let fixedInfiniteChargeInst = 0;
-    let fixedInfiniteChargeCat = 0;
     try {
       await client.query('BEGIN');
 
@@ -304,7 +259,6 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
       const orphanRacks = await client.query(`
         UPDATE placed_racks pr
            SET battery_id = NULL,
-               current_charge = 0,
                is_on = 0
          WHERE pr.battery_id IS NOT NULL
            AND btrim(pr.battery_id::text) <> ''
@@ -340,7 +294,6 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
         )
         UPDATE placed_racks pr
            SET battery_id = NULL,
-               current_charge = 0,
                is_on = 0
           FROM ranked r
          WHERE pr.id = r.id
@@ -352,7 +305,6 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
       const badCat = await client.query(`
         UPDATE placed_racks pr
            SET battery_id = NULL,
-               current_charge = 0,
                is_on = 0
          WHERE pr.battery_id IS NOT NULL
            AND btrim(pr.battery_id::text) <> ''
@@ -369,47 +321,9 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
     `);
       clearedBadCatalogBatt = badCat.rowCount ?? 0;
 
-      const infInst = await client.query(`
-        UPDATE placed_racks pr
-           SET current_charge = -1
-          FROM stored_batteries sb
-          JOIN upgrades u ON u.id = btrim(sb.item_id::text)
-         WHERE pr.user_id = sb.user_id
-           AND pr.battery_id IS NOT NULL
-           AND btrim(pr.battery_id::text) <> ''
-           AND btrim(pr.battery_id::text) = btrim(sb.id::text)
-           AND COALESCE(u.power_capacity, 0) = -1
-           AND pr.current_charge IS DISTINCT FROM -1
-         RETURNING pr.id
-    `);
-      fixedInfiniteChargeInst = infInst.rowCount ?? 0;
-
-      const infCat = await client.query(`
-        UPDATE placed_racks pr
-           SET current_charge = -1
-          FROM upgrades u
-         WHERE pr.battery_id IS NOT NULL
-           AND btrim(pr.battery_id::text) <> ''
-           AND btrim(pr.battery_id::text) = u.id
-           AND NOT (pr.battery_id::text ~* '${PG_INSTANCE_UUID}')
-           AND COALESCE(u.power_capacity, 0) = -1
-           AND (
-                 lower(COALESCE(u.type, '')) = 'battery'
-             OR lower(COALESCE(u.category, '')) = 'battery'
-               )
-           AND pr.current_charge IS DISTINCT FROM -1
-         RETURNING pr.id
-    `);
-      fixedInfiniteChargeCat = infCat.rowCount ?? 0;
-
       await client.query('COMMIT');
       const touched =
-        fixedItem +
-        clearedOrphan +
-        clearedDupRack +
-        clearedBadCatalogBatt +
-        fixedInfiniteChargeInst +
-        fixedInfiniteChargeCat;
+        fixedItem + clearedOrphan + clearedDupRack + clearedBadCatalogBatt;
       if (touched > 0) {
         console.log(
           JSON.stringify({
@@ -417,9 +331,7 @@ export async function ensureStoredBatteriesIntegrity(pool: Pool): Promise<void> 
             item_id: fixedItem,
             rack_uuid_orfao: clearedOrphan,
             rack_uuid_dup: clearedDupRack,
-            rack_batt_id_invalido: clearedBadCatalogBatt,
-            rack_inf_carga_inst: fixedInfiniteChargeInst,
-            rack_inf_carga_cat: fixedInfiniteChargeCat
+            rack_batt_id_invalido: clearedBadCatalogBatt
           })
         );
       }

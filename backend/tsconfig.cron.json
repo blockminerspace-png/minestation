@@ -13,9 +13,9 @@
   "include": [
     "cron/**/*.ts",
     "modules/batteries/batteries.catalog.ts",
+    "modules/checkin/checkin.service.ts",
     "lib/miningLivePrices.d.ts",
     "lib/safeText.ts",
-    "lib/workshopBatteryCharge.ts",
     "lib/stack/**/*.ts",
     "lib/genesisStack/init.ts",
     "lib/mongoLogs.ts",

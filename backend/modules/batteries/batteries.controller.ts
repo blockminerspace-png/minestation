@@ -163,13 +163,9 @@ export function registerBatteriesServerRoomRoutes(app: Application, deps: Batter
 
       const prev = { stock, storedBatteries, placedRacks };
       // Bulk de sala só pode mexer em baterias do armazém/rig.
-      // Baterias que estão em carregadores/oficina ficam fora do payload para não serem "desancoradas" no persist.
-      const bulkStoredBatteries = prev.storedBatteries.filter(
-        (b) => b.workshopSlotIndex == null && b.workshopComponentSlotId == null
-      );
       const prevForBulk = {
         stock: { ...prev.stock },
-        storedBatteries: [...bulkStoredBatteries],
+        storedBatteries: [...prev.storedBatteries],
         placedRacks: prev.placedRacks.map((r) => ({
           ...r,
           slots: [...(r.slots || [])],

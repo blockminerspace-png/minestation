@@ -1,5 +1,5 @@
 import { prisma } from '../config/prisma.js';
-import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
+import { brtDayFromMs } from '../modules/checkin/checkin.service.js';
 
 function num(v: unknown, def = 0): number {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
@@ -69,7 +69,7 @@ export type PlayerGameHeaderPayload = {
 export async function computePlayerGameHeaderSnapshot(userId: number): Promise<PlayerGameHeaderPayload> {
   const gs = await prisma.game_states.findUnique({
     where: { user_id: userId },
-    select: { usdc: true, server_updated_at: true }
+    select: { usdc: true, server_updated_at: true, last_checkin_day: true }
   });
   if (!gs) {
     return {
@@ -95,19 +95,22 @@ export async function computePlayerGameHeaderSnapshot(userId: number): Promise<P
 
   const upgrades = await loadUpgradesCatalogMap();
 
-  const racksRows = await prisma.placed_racks.findMany({
-    where: { user_id: userId },
-    select: {
-      id: true,
-      is_on: true,
-      wiring_id: true,
-      battery_id: true,
-      battery_catalog_item_id: true,
-      battery_power_capacity_wh: true,
-      current_charge: true,
-      selected_coin_id: true
-    }
-  });
+  const todayBrt = brtDayFromMs(Date.now());
+  const checkinDay = gs.last_checkin_day != null ? String(gs.last_checkin_day).trim() : '';
+  const checkinFrozen = checkinDay !== todayBrt;
+
+  const racksRows = checkinFrozen
+    ? []
+    : await prisma.placed_racks.findMany({
+        where: { user_id: userId },
+        select: {
+          id: true,
+          is_on: true,
+          wiring_id: true,
+          battery_id: true,
+          selected_coin_id: true
+        }
+      });
   const rackIds = racksRows.map((r) => String(r.id));
   const slotsMap = new Map<string, string[]>();
   const multiMap = new Map<string, string[]>();
@@ -147,21 +150,10 @@ export async function computePlayerGameHeaderSnapshot(userId: number): Promise<P
     const isOn = Number(r.is_on) === 1;
     const wiringId = r.wiring_id ? String(r.wiring_id).trim() : '';
     const batteryId = r.battery_id ? String(r.battery_id).trim() : '';
-    const batteryCatalogId =
-      r.battery_catalog_item_id != null && String(r.battery_catalog_item_id).trim() !== ''
-        ? normalizeKnown1000WhBatteryCatalogId(r.battery_catalog_item_id)
-        : normalizeKnown1000WhBatteryCatalogId(batteryId);
-    const charge = num(r.current_charge);
-    const snapPowerCap = num(r.battery_power_capacity_wh, Number.NaN);
     const selectedCoinId = r.selected_coin_id ? String(r.selected_coin_id).trim() : '';
 
-    const batt = batteryCatalogId ? upgrades.get(batteryCatalogId) : undefined;
-    const isInfinite =
-      charge === -1 ||
-      snapPowerCap === -1 ||
-      isKnownInfiniteBatteryCatalogId(batteryCatalogId) ||
-      (batt != null && batt.cap === -1);
-    if (!isOn || !wiringId || !batteryId || (!isInfinite && charge <= 0)) continue;
+    // Baterias são instâncias UUID infinitas: rig opera se montada e ligada.
+    if (!isOn || !wiringId || !batteryId) continue;
     if (!selectedCoinId) continue;
 
     const rid = String(r.id);

@@ -48,11 +48,6 @@ export const ACTIVITY_LOG_FILTER_GROUPS: {
     test: (a) => /mining_rack|rack_dismantle|room_battery|room_coin_bulk/i.test(a),
   },
   {
-    id: 'workshop',
-    label: 'Oficina',
-    test: (a) => /workshop_(place|dismantle)/i.test(a),
-  },
-  {
     id: 'client',
     label: 'Cliente / telemetria',
     test: (a) => /^client_/i.test(a),

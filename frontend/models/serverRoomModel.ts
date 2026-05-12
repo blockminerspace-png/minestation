@@ -1,7 +1,6 @@
-import type { PlacedRack, StoredBattery, Upgrade, WorkshopStructure } from '../types';
-import { readWorkshopBatterySlotField } from '../lib/workshopBatterySlotStorageKey';
+import type { PlacedRack, StoredBattery, Upgrade } from '../types';
 import { NFT_AUTO_ALLOWED_CHASSIS_ID, isNftAutoArmario1OnlyRoomContext } from '../types';
-import { batteryTierScore, poolEntryEnergyWh } from './roomBatteryModel';
+import { batteryTierScore } from './roomBatteryModel';
 
 /** UUID v4 de instância em `stored_batteries.id` / `placed_racks.battery_id` (alinhado ao servidor). */
 const RACK_BATTERY_INSTANCE_UUID_RE =
@@ -14,74 +13,6 @@ export function isRackBatteryInstanceUuid(batteryId: string | null | undefined):
 function isBatteryUpgrade(upgrade: Upgrade | undefined | null): upgrade is Upgrade {
   if (!upgrade) return false;
   return upgrade.type === 'battery' || String(upgrade.category || '').toLowerCase() === 'battery';
-}
-
-/**
- * Sistema de baterias é infinito por design: qualquer bateria existente é tratada
- * como ilimitada. Mantemos o guard para id vazio para preservar a semântica
- * "sem bateria equipada" nos chamadores.
- */
-export function isKnownInfiniteBatteryItem(itemId: unknown): boolean {
-  const id = itemId == null ? '' : String(itemId).trim().toLowerCase();
-  if (!id) return false;
-  return true;
-}
-
-function normalizedStoredChargeWh(sb: StoredBattery): number {
-  const q = sb.currentCharge;
-  if (typeof q === 'number' && Number.isFinite(q)) return q;
-  const n = Number(q);
-  return Number.isFinite(n) ? n : 0;
-}
-
-/**
- * Baterias montadas nos carregadores da oficina: a carga vive em `slotCharges`, não em `stored_batteries`
- * (a linha do armazém é apagada ao equipar no carregador).
- */
-export function listWorkshopMountedBatteryInstances(
-  workshopSlots: (WorkshopStructure | null)[] | null | undefined,
-  upgrades: Upgrade[]
-): StoredBattery[] {
-  const out: StoredBattery[] = [];
-  const seen = new Set<string>();
-  const arr = workshopSlots && workshopSlots.length ? workshopSlots : [];
-  for (const ws of arr) {
-    if (!ws || !ws.itemId) continue;
-    const chargerDef = upgrades.find((u) => u.id === ws.itemId);
-    if (!chargerDef || chargerDef.type !== 'charger') continue;
-    const layout = chargerDef.layout;
-    if (!layout?.slots?.length) continue;
-    const internal = (ws.internalSlots || {}) as Record<string, unknown>;
-    const slotCharges = (ws.slotCharges || {}) as Record<string, unknown>;
-    const slotItemIds = (ws.slotItemIds || {}) as Record<string, unknown>;
-    const slotsArr = layout.slots;
-    for (let li = 0; li < slotsArr.length; li++) {
-      const s = slotsArr[li];
-      if (s.type !== 'battery') continue;
-      const rawId = readWorkshopBatterySlotField(internal, slotsArr, li);
-      if (rawId == null) continue;
-      const instanceId = String(rawId).trim();
-      if (!instanceId || !RACK_BATTERY_INSTANCE_UUID_RE.test(instanceId)) continue;
-      if (seen.has(instanceId)) continue;
-      const itemIdRaw = readWorkshopBatterySlotField(slotItemIds, slotsArr, li);
-      const itemId = String(itemIdRaw ?? '').trim();
-      if (!itemId) continue;
-      const batDef = upgrades.find((u) => u.id === itemId);
-      const chRaw = readWorkshopBatterySlotField(slotCharges, slotsArr, li);
-      const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
-      const currentCharge = Number.isFinite(ch) ? ch : 0;
-      seen.add(instanceId);
-      const capSnap = batDef?.powerCapacity;
-      out.push({
-        id: instanceId,
-        itemId,
-        currentCharge,
-        powerCapacityWh: capSnap != null && Number.isFinite(capSnap) ? capSnap : null,
-        fromWorkshopSlot: true
-      });
-    }
-  }
-  return out;
 }
 
 /** `rack.batteryId` deve ser UUID de instância; catálogo só em legado até migração.
@@ -157,110 +88,15 @@ export function calculateRackConsumptionWatts(rack: PlacedRack, upgrades: Upgrad
   return total;
 }
 
-/** Segundos até 0 Wh ao ritmo atual (Wh × 3600 / W), alinhado ao servidor. */
-export function estimateRackBatteryRuntimeSeconds(
-  rack: PlacedRack,
-  upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null,
-  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
-): number | null {
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
-  if (!catalogId) return null;
-  const battery = upgrades.find((u) => u.id === catalogId);
-  if (!battery || battery.powerCapacity === -1 || rack.batteryPowerCapacityWh === -1 || rack.currentCharge === -1 || isKnownInfiniteBatteryItem(catalogId)) return null;
-  const watts = calculateRackConsumptionWatts(rack, upgrades);
-  if (watts <= 0) return null;
-  const wh = Math.max(0, Number(rack.currentCharge) || 0);
-  const sec = (wh * 3600) / watts;
-  return Number.isFinite(sec) ? sec : null;
-}
-
-/** Energia em Wh com sufixo legível (evita "498098Wh" confundido com kWh). */
-export function formatRackEnergyWh(wh: number | null | undefined): string {
-  const n = typeof wh === 'number' && Number.isFinite(wh) ? wh : 0;
-  const a = Math.abs(n);
-  if (a >= 1_000_000) {
-    return `${(n / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 2, minimumFractionDigits: 0 })} MWh`;
-  }
-  if (a >= 1000) {
-    const digits = a >= 100_000 ? 0 : 1;
-    return `${(n / 1000).toLocaleString('pt-BR', { maximumFractionDigits: digits, minimumFractionDigits: 0 })} kWh`;
-  }
-  return `${Math.round(n).toLocaleString('pt-BR')} Wh`;
-}
-
-export function formatBatteryRuntimeShortPt(totalSec: number): string {
-  if (!Number.isFinite(totalSec) || totalSec <= 0) return '0s';
-  if (totalSec < 60) return `${Math.max(1, Math.floor(totalSec))}s`;
-  if (totalSec < 3600) return `${Math.floor(totalSec / 60)}m`;
-  if (totalSec < 86400) {
-    const h = Math.floor(totalSec / 3600);
-    const m = Math.floor((totalSec % 3600) / 60);
-    return m > 0 ? `${h}h${m}m` : `${h}h`;
-  }
-  const d = Math.floor(totalSec / 86400);
-  const h = Math.floor((totalSec % 86400) / 3600);
-  return h > 0 ? `${d}d ${h}h` : `${d}d`;
-}
-
-/** Texto curto para o CMD (sem caixa colorida). */
-export function getRackBatteryRuntimeShortLabel(
-  rack: PlacedRack,
-  upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null,
-  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
-): string {
-  if (!rack.batteryId) return '—';
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
-  const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
-  if (!battery) return '—';
-  if (battery.powerCapacity === -1 || rack.batteryPowerCapacityWh === -1 || rack.currentCharge === -1 || isKnownInfiniteBatteryItem(catalogId)) return '∞';
-  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries, batteryInstanceCatalogHints);
-  if (sec == null) return '—';
-  return `~${formatBatteryRuntimeShortPt(sec)}`;
-}
-
-/** Tooltip / acessibilidade (explicação completa). */
-export function getRackBatteryRuntimeHint(
-  rack: PlacedRack,
-  upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null,
-  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
-): string {
-  if (!rack.batteryId) return 'Sem bateria instalada.';
-  const catalogId = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
-  const battery = catalogId ? upgrades.find((u) => u.id === catalogId) : null;
-  if (!battery) {
-    return 'Referência de bateria inválida (sincronize com F5 ou re-equipe a bateria).';
-  }
-  if (battery.powerCapacity === -1 || rack.batteryPowerCapacityWh === -1 || rack.currentCharge === -1 || isKnownInfiniteBatteryItem(catalogId)) return 'Bateria ilimitada.';
-  const watts = calculateRackConsumptionWatts(rack, upgrades);
-  if (watts <= 0) return 'Sem consumo (0 W): a carga não desce com o equipamento atual.';
-  const sec = estimateRackBatteryRuntimeSeconds(rack, upgrades, storedBatteries, batteryInstanceCatalogHints);
-  if (sec == null) return '';
-  const w = watts;
-  return `Autonomia estimada: ~${formatBatteryRuntimeShortPt(sec)} até 0 Wh ao consumo atual (${w} W). Com a rig desligada a bateria não gasta.`;
-}
-
 export function calculatePlacedRacksProductionHashrate(
   racks: PlacedRack[],
   upgrades: Upgrade[],
-  storedBatteries?: StoredBattery[] | null,
-  batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
+  _storedBatteries?: StoredBattery[] | null,
+  _batteryInstanceCatalogHints?: Readonly<Record<string, string>> | null
 ): number {
   let total = 0;
   racks.forEach((rack) => {
-    const cat = resolvePlacedRackBatteryCatalogId(rack, storedBatteries, upgrades, batteryInstanceCatalogHints);
-    const battery = cat ? upgrades.find((u) => u.id === cat) : null;
-    const isInfinite =
-      rack.currentCharge === -1 ||
-      rack.batteryPowerCapacityWh === -1 ||
-      isKnownInfiniteBatteryItem(cat) ||
-      (battery && battery.powerCapacity === -1);
-    const isOperational =
-      rack.isOn && rack.wiringId && rack.batteryId && (isInfinite || rack.currentCharge > 0);
-
-    if (isOperational) {
+    if (rack.isOn && rack.wiringId && rack.batteryId) {
       const baseProd = rack.slots.reduce((acc, sid) => {
         const m = upgrades.find((u) => u.id === sid);
         return acc + (m?.baseProduction || 0);
@@ -368,8 +204,7 @@ export function listStoredBatteriesForSelection(
   selection: ServerRoomSelectionContext,
   placedRacks: PlacedRack[],
   storedBatteries: StoredBattery[],
-  upgrades: Upgrade[],
-  workshopSlots?: (WorkshopStructure | null)[] | null
+  upgrades: Upgrade[]
 ): StoredBattery[] {
   if (selection.type !== 'battery' || !selection.rackId) return [];
   const currentRack = placedRacks.find((r) => r.id === selection.rackId);
@@ -377,19 +212,8 @@ export function listStoredBatteriesForSelection(
     (placedRacks || []).map((r) => (r.batteryId != null ? String(r.batteryId).trim() : '')).filter(Boolean)
   );
 
-  const fromWorkshop = listWorkshopMountedBatteryInstances(workshopSlots, upgrades).filter((sb) => {
-    if (mountedIds.has(String(sb.id).trim())) return false;
-    const def = upgrades.find((u) => u.id === sb.itemId);
-    if (currentRack && def?.compatibleRacks?.length)
-      return def.compatibleRacks.includes(currentRack.itemId);
-    return true;
-  });
-  const workshopIds = new Set(fromWorkshop.map((b) => String(b.id).trim()));
-
   const filtered = storedBatteries.filter((sb) => {
-    if (sb.workshopSlotIndex != null || sb.workshopComponentSlotId != null) return false;
     const sid = String(sb.id).trim();
-    if (workshopIds.has(sid)) return false;
     if (mountedIds.has(sid)) return false;
     const def = upgrades.find((u) => u.id === sb.itemId);
     if (currentRack && def?.compatibleRacks?.length)
@@ -397,13 +221,9 @@ export function listStoredBatteriesForSelection(
     return true;
   });
 
-  const merged = [...fromWorkshop, ...filtered];
-  return merged.sort((a, b) => {
+  return filtered.sort((a, b) => {
     const da = upgrades.find((u) => u.id === a.itemId);
     const db = upgrades.find((u) => u.id === b.itemId);
-    const ea = poolEntryEnergyWh(normalizedStoredChargeWh(a), da);
-    const eb = poolEntryEnergyWh(normalizedStoredChargeWh(b), db);
-    if (eb !== ea) return eb - ea;
     const ta = batteryTierScore(da);
     const tb = batteryTierScore(db);
     if (tb !== ta) return tb - ta;

@@ -1,47 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { inventoryItemUseIntentFingerprint } from '../modules/inventory/inventory.itemUse.intent.js';
 import { walletExchangeLiquidateRequestFingerprint } from '../modules/wallet/walletExchangeLiquidation.js';
 import { shopCheckoutCartFingerprint } from '../modules/shop/shop.checkout.service.js';
 import { luckyBoxOpenRequestFingerprint, luckyBoxPurchaseRequestFingerprint } from '../modules/lucky-boxes/lucky-boxes.idempotency.js';
 import { upgradePurchaseRequestFingerprint } from '../modules/upgrades/upgradesPurchase.service.js';
 import { withdrawRequestFingerprint } from '../modules/wallet/walletWithdrawRequest.js';
-
-describe('inventoryItemUseIntentFingerprint', () => {
-  it('é estável para o mesmo pedido', () => {
-    const a = inventoryItemUseIntentFingerprint({
-      catalogItemId: 'energy_voucher',
-      quantity: 2,
-      workshopSlotIndex: 3
-    });
-    const b = inventoryItemUseIntentFingerprint({
-      catalogItemId: 'energy_voucher',
-      quantity: 2,
-      workshopSlotIndex: 3
-    });
-    expect(a).toBe(b);
-    expect(a).toMatch(/^[a-f0-9]{32}$/);
-  });
-
-  it('muda com quantidade ou slot', () => {
-    const a = inventoryItemUseIntentFingerprint({
-      catalogItemId: 'x',
-      quantity: 1,
-      workshopSlotIndex: 0
-    });
-    const b = inventoryItemUseIntentFingerprint({
-      catalogItemId: 'x',
-      quantity: 2,
-      workshopSlotIndex: 0
-    });
-    const c = inventoryItemUseIntentFingerprint({
-      catalogItemId: 'x',
-      quantity: 1,
-      workshopSlotIndex: 1
-    });
-    expect(a).not.toBe(b);
-    expect(a).not.toBe(c);
-  });
-});
 
 describe('walletExchangeLiquidateRequestFingerprint', () => {
   it('desk: mesmo coin + pct → mesmo hash', () => {

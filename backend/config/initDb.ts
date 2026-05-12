@@ -169,7 +169,9 @@ export const initDb = async () => {
         total_crypto_withdrawn DOUBLE PRECISION,
         black_market_balance DOUBLE PRECISION DEFAULT 0,
         server_updated_at BIGINT DEFAULT 0,
-        usdc_bonus DOUBLE PRECISION DEFAULT 0
+        usdc_bonus DOUBLE PRECISION DEFAULT 0,
+        last_checkin_day VARCHAR(10),
+        checkin_streak INTEGER NOT NULL DEFAULT 0
       );
 
       CREATE TABLE IF NOT EXISTS settings (
@@ -194,8 +196,7 @@ export const initDb = async () => {
       CREATE TABLE IF NOT EXISTS stored_batteries (
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id),
-        item_id TEXT NOT NULL,
-        current_charge DOUBLE PRECISION NOT NULL
+        item_id TEXT NOT NULL
       );
 
       CREATE TABLE IF NOT EXISTS placed_racks (
@@ -204,7 +205,6 @@ export const initDb = async () => {
         item_id TEXT NOT NULL,
         wiring_id TEXT,
         battery_id TEXT,
-        current_charge DOUBLE PRECISION NOT NULL,
         is_on INTEGER NOT NULL,
         selected_coin_id TEXT,
         room_id TEXT,
@@ -430,18 +430,6 @@ export const initDb = async () => {
         purchased_at BIGINT NOT NULL,
         unlocked_slots INTEGER DEFAULT 0,
         PRIMARY KEY (user_id, room_id)
-      );
-
-      CREATE TABLE IF NOT EXISTS workshop_slots (
-        user_id INTEGER NOT NULL REFERENCES users(id),
-        slot_index INTEGER NOT NULL,
-        item_id TEXT,
-        internal_state TEXT,
-        current_charge DOUBLE PRECISION DEFAULT 0,
-        slot_charges TEXT,
-        slot_item_ids TEXT,
-        installed_at BIGINT DEFAULT 0,
-        PRIMARY KEY (user_id, slot_index)
       );
 
       CREATE TABLE IF NOT EXISTS player_claimed_boxes (
@@ -740,6 +728,7 @@ export const initDb = async () => {
     // Create Indexes
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_game_states_user_id ON game_states(user_id);
+      CREATE INDEX IF NOT EXISTS game_states_last_checkin_day_idx ON game_states(last_checkin_day);
       CREATE TABLE IF NOT EXISTS user_history_ips (
         user_id INTEGER NOT NULL REFERENCES users(id),
         ip TEXT NOT NULL,
@@ -783,7 +772,6 @@ export const initDb = async () => {
       CREATE INDEX IF NOT EXISTS idx_mining_yield_history_effective_at ON mining_yield_history(effective_at);
       CREATE INDEX IF NOT EXISTS idx_rack_slots_rack_id ON rack_slots(rack_id);
       CREATE INDEX IF NOT EXISTS idx_rack_multiplier_slots_rack_id ON rack_multiplier_slots(rack_id);
-      CREATE INDEX IF NOT EXISTS idx_workshop_slots_user_id ON workshop_slots(user_id);
       CREATE INDEX IF NOT EXISTS idx_promo_code_redemptions_code_user ON promo_code_redemptions(code, user_id);
     `);
 
@@ -804,11 +792,8 @@ export const initDb = async () => {
     `);
 
     await client.query(`
-      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS power_capacity_wh DOUBLE PRECISION;
       ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS display_name TEXT;
       ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS image_url VARCHAR(2048);
-      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS workshop_slot_index INTEGER;
-      ALTER TABLE stored_batteries ADD COLUMN IF NOT EXISTS workshop_component_slot_id TEXT;
     `);
 
     await client.query(`

@@ -5,12 +5,6 @@
 export { STORED_BATTERY_CATALOG_PENDING_ID } from './batteries.constants.js';
 export { resolvePlacedRackBatteryCatalogId } from './batteries.catalog.js';
 export {
-  isStoredBatteryFullyCharged,
-  resolveBatteryNominalCapacityWh,
-  STORED_BATTERY_FALLBACK_CAPACITY_WH,
-  type UpgradeBatteryCapacityRow
-} from './batteries.charge.js';
-export {
   isValidBatteryRigSort,
   isValidBatterySelectionId,
   isValidRoomId,
@@ -22,7 +16,6 @@ export {
   applyBulkRoomBatterySmartFill,
   batteryTierScore,
   compatibleRackIndicesForBattery,
-  poolEntryEnergyWh,
   rackTheoreticalHash,
   runBulkRoomBattery,
   totalBatteryInstances,

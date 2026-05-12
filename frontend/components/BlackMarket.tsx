@@ -11,8 +11,7 @@ const P2P_TYPE_OPTIONS: { value: '' | Upgrade['type']; label: string }[] = [
   { value: 'infrastructure', label: 'Racks / gabinete' },
   { value: 'battery', label: 'Baterias' },
   { value: 'wiring', label: 'Fiação' },
-  { value: 'multiplier', label: 'Multiplicadores' },
-  { value: 'charger', label: 'Carregadores' }
+  { value: 'multiplier', label: 'Multiplicadores' }
 ];
 import {
   getMarketListings,

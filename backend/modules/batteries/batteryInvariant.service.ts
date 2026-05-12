@@ -1,11 +1,14 @@
 /**
- * Invariantes de instância de bateria (status/location vs rack/oficina).
+ * Invariantes de instância de bateria (status/location vs rack).
  * Usado por serviços novos, snapshots e diagnóstico — sem constraints fortes na BD (legado).
+ *
+ * Sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: estados restantes são
+ * `INVENTORY` (armazém) e `EQUIPPED` (rig).
  */
 
 export const BATTERY_STATUS_INVENTORY = 'INVENTORY';
 export const BATTERY_STATUS_EQUIPPED = 'EQUIPPED';
-export const BATTERY_STATUS_CHARGING = 'CHARGING';
 export const BATTERY_STATUS_BROKEN = 'BROKEN';
 export const BATTERY_STATUS_CONSUMED = 'CONSUMED';
 export const BATTERY_STATUS_LOCKED = 'LOCKED';
@@ -14,7 +17,6 @@ export const BATTERY_LOC_WAREHOUSE = 'WAREHOUSE';
 /** Alias aceite em legados / especificações (equivale a armazém). */
 export const BATTERY_LOC_INVENTORY = 'INVENTORY';
 export const BATTERY_LOC_RACK = 'RACK';
-export const BATTERY_LOC_WORKSHOP = 'WORKSHOP_CHARGER';
 
 /** Regex POSIX para UUID de instância (alinhado a `batteries.integrity.ts`). */
 export const PG_BATTERY_INSTANCE_UUID =
@@ -28,8 +30,6 @@ export type BatterySemanticRow = {
   rack_id: string | null;
   slot_id: number | null;
   room_id: string | null;
-  workshop_slot_index: number | null;
-  workshop_component_slot_id?: string | null;
   version: number | null;
 };
 
@@ -49,13 +49,10 @@ export function isWarehouseInventoryLocation(location: string | null | undefined
   return l === '' || l === BATTERY_LOC_WAREHOUSE || l === BATTERY_LOC_INVENTORY;
 }
 
-/** Bateria disponível no armazém (DTO inventário): não montada nem em oficina. */
+/** Bateria disponível no armazém (DTO inventário): não montada em rig. */
 export function isBatteryAvailableInWarehouseSemantic(b: BatterySemanticRow): boolean {
-  if (b.workshop_slot_index != null) return false;
-  const wsc = b.workshop_component_slot_id != null ? String(b.workshop_component_slot_id).trim() : '';
-  if (wsc) return false;
   const st = normalizeBatteryStatus(b.status);
-  if (st === BATTERY_STATUS_EQUIPPED || st === BATTERY_STATUS_CHARGING) return false;
+  if (st === BATTERY_STATUS_EQUIPPED) return false;
   if (st === BATTERY_STATUS_CONSUMED || st === BATTERY_STATUS_LOCKED) return false;
   if (st === BATTERY_STATUS_BROKEN) return false;
   return st === BATTERY_STATUS_INVENTORY || st === '';
@@ -68,8 +65,6 @@ export type InventoryWarehouseExposeInput = {
   rack_id?: string | null;
   slot_id?: number | null;
   room_id?: string | null;
-  workshop_slot_index?: number | null;
-  workshop_component_slot_id?: string | null;
 };
 
 /**
@@ -86,18 +81,11 @@ export function shouldExposeBatteryInInventoryWarehouse(
     return { ok: false, reason: 'listed_on_placed_rack', event: 'inventory_state_battery_divergence' };
   }
   const st = normalizeBatteryStatus(b.status);
-  if (st === BATTERY_STATUS_EQUIPPED || st === BATTERY_STATUS_CHARGING) {
+  if (st === BATTERY_STATUS_EQUIPPED) {
     return { ok: false, reason: `status_${st || 'EMPTY'}`, event: 'inventory_state_battery_divergence' };
   }
   if (st === BATTERY_STATUS_CONSUMED || st === BATTERY_STATUS_LOCKED || st === BATTERY_STATUS_BROKEN) {
     return { ok: false, reason: `blocked_${st}`, event: 'inventory_state_battery_blocked' };
-  }
-  if (b.workshop_slot_index != null) {
-    return { ok: false, reason: 'workshop_slot', event: 'inventory_state_battery_divergence' };
-  }
-  const wsc = b.workshop_component_slot_id != null ? String(b.workshop_component_slot_id).trim() : '';
-  if (wsc) {
-    return { ok: false, reason: 'workshop_component', event: 'inventory_state_battery_divergence' };
   }
   const rk = b.rack_id != null ? String(b.rack_id).trim() : '';
   if (rk) {
@@ -146,26 +134,12 @@ export function assertEquippedAlignedWithRack(
   return { ok: true };
 }
 
-export function semanticChargingData(slotIndex: number, componentKey: string) {
-  return {
-    status: BATTERY_STATUS_CHARGING,
-    location: BATTERY_LOC_WORKSHOP,
-    rack_id: null,
-    slot_id: null,
-    room_id: null,
-    workshop_slot_index: slotIndex,
-    workshop_component_slot_id: componentKey
-  };
-}
-
 export function semanticInventoryWarehouseData() {
   return {
     status: BATTERY_STATUS_INVENTORY,
     location: BATTERY_LOC_WAREHOUSE,
     rack_id: null,
     slot_id: null,
-    room_id: null,
-    workshop_slot_index: null,
-    workshop_component_slot_id: null
+    room_id: null
   };
 }

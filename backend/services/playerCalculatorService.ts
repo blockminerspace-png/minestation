@@ -1,5 +1,6 @@
 import { prisma } from '../config/prisma.js';
 import { miningRuntimeStats } from '../cron/miningRuntimeStats.js';
+import { brtDayFromMs } from '../modules/checkin/checkin.service.js';
 import { normalizePlacedRackRoomId } from '../modules/batteries/batteries.validation.js';
 import {
   CALCULATOR_PROJECTION_PERIODS,
@@ -105,7 +106,7 @@ export async function loadPlayerCalculatorSnapshot(
 ): Promise<PlayerCalculatorSnapshot> {
   const scope = parseScope(scopeQuery);
 
-  const [ownedRooms, rackRows] = await Promise.all([
+  const [ownedRooms, rackRows, gsCheckin] = await Promise.all([
     prisma.user_rig_rooms.findMany({
       where: { user_id: userId },
       select: { room_id: true }
@@ -118,14 +119,20 @@ export async function loadPlayerCalculatorSnapshot(
         wiring_id: true,
         battery_id: true,
         battery_catalog_item_id: true,
-        battery_power_capacity_wh: true,
-        current_charge: true,
         is_on: true,
         selected_coin_id: true,
         room_id: true
       }
+    }),
+    prisma.game_states.findUnique({
+      where: { user_id: userId },
+      select: { last_checkin_day: true }
     })
   ]);
+
+  const todayBrt = brtDayFromMs(Date.now());
+  const checkinDay = gsCheckin?.last_checkin_day != null ? String(gsCheckin.last_checkin_day).trim() : '';
+  const checkinFrozen = checkinDay !== todayBrt;
 
   const ownedSet = new Set(ownedRooms.map((r) => normalizePlacedRackRoomId(r.room_id)));
 
@@ -223,8 +230,6 @@ export async function loadPlayerCalculatorSnapshot(
     wiringId: r.wiring_id != null ? String(r.wiring_id) : null,
     batteryId: r.battery_id != null ? String(r.battery_id) : null,
     batteryCatalogItemId: r.battery_catalog_item_id != null ? String(r.battery_catalog_item_id) : null,
-    batteryPowerCapacityWh: r.battery_power_capacity_wh != null ? Number(r.battery_power_capacity_wh) : null,
-    currentCharge: Number(r.current_charge) || 0,
     isOn: Number(r.is_on) !== 0,
     selectedCoinId: r.selected_coin_id != null ? String(r.selected_coin_id) : null,
     slots: buildSlotsArray(r.id, slotRows),
@@ -240,7 +245,7 @@ export async function loadPlayerCalculatorSnapshot(
   ];
 
   const runtime = miningRuntimeStats.globalNetworkHashrates;
-  const powerByCoin = computeUserHashByCoinId(racks, upgradesById, scope);
+  const powerByCoin = checkinFrozen ? {} : computeUserHashByCoinId(racks, upgradesById, scope);
 
   const coins: PlayerCalculatorCoinPayload[] = miningCoins.map((c) => {
     const id = String(c.id);

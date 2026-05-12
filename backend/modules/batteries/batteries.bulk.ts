@@ -1,11 +1,15 @@
 /**
  * Server-side copy of frontend bulk room battery rules (roomBatteryModel + roomBatteryController).
  * Keep in sync when changing game rules.
+ *
+ * Sistema de carregamento descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: cada instância em
+ * `stored_batteries` é uma bateria UUID infinita; já não há cargas parciais nem
+ * `power_capacity_wh` / `current_charge` em rigs.
  */
 import crypto from 'node:crypto';
 import { STORED_BATTERY_CATALOG_PENDING_ID } from './batteries.constants.js';
 import { isRackBatteryInstanceUuid } from './batteries.repository.js';
-import { isKnownInfiniteBatteryCatalogId } from './batteries.catalog.js';
 import {
   isValidBatteryRigSort,
   isValidBatterySelectionId,
@@ -34,12 +38,8 @@ export type GameUpgrade = {
 export type StoredBatteryRow = {
   id: string;
   itemId: string;
-  currentCharge?: number;
-  powerCapacityWh?: number | null;
   displayName?: string | null;
   imageUrl?: string | null;
-  workshopSlotIndex?: number | null;
-  workshopComponentSlotId?: string | null;
 };
 
 export type PlacedRackState = {
@@ -48,10 +48,8 @@ export type PlacedRackState = {
   roomId?: string;
   slotIndex?: number;
   batteryId?: string | null;
-  currentCharge?: number;
   isOn?: boolean;
   batteryCatalogItemId?: string | null;
-  batteryPowerCapacityWh?: number | null;
   batteryDisplayName?: string | null;
   batteryImageUrl?: string | null;
   slots?: (string | null | undefined)[];
@@ -79,14 +77,7 @@ function isUsableBatteryCatalog(def: GameUpgrade | undefined): def is GameUpgrad
 
 function isBatteryAvailableForRackUse(row: StoredBatteryRow | undefined | null): row is StoredBatteryRow {
   if (!row || !row.id || !row.itemId) return false;
-  if (row.workshopSlotIndex != null || row.workshopComponentSlotId != null) return false;
   return true;
-}
-
-function finiteChargeOrFallback(raw: unknown, fallback: number): number {
-  const n = typeof raw === 'number' ? raw : Number(raw);
-  if (Number.isFinite(n)) return n;
-  return fallback;
 }
 
 export function totalBatteryInstances(
@@ -173,19 +164,6 @@ function unloadRackBatteryToInventory(
       nb.splice(instIdx, 1);
       return;
     }
-    const capacity = upg?.powerCapacity ?? 100;
-    const isInf = capacity === -1 || isKnownInfiniteBatteryCatalogId(row.itemId) || rack.currentCharge === -1;
-    const isFull = isInf || (rack.currentCharge != null && rack.currentCharge >= capacity * 0.999);
-    nb.splice(instIdx, 1);
-    if (isFull) {
-      const cat = String(row.itemId || '').trim();
-      if (cat) ns[cat] = (ns[cat] || 0) + 1;
-    } else {
-      nb.push({
-        ...row,
-        currentCharge: finiteChargeOrFallback(rack.currentCharge, finiteChargeOrFallback(row.currentCharge, 0))
-      });
-    }
     return;
   }
 
@@ -195,34 +173,12 @@ function unloadRackBatteryToInventory(
 
   const upgCat = upgrades.find((u) => u.id === id && u.type === 'battery');
   if (!isUsableBatteryCatalog(upgCat)) return;
-  const capacity = upgCat.powerCapacity ?? 100;
-  const isInf = capacity === -1 || isKnownInfiniteBatteryCatalogId(id) || rack.currentCharge === -1;
-  const isFull = isInf || (rack.currentCharge != null && rack.currentCharge >= capacity * 0.999);
-  if (isFull) ns[id] = (ns[id] || 0) + 1;
-  else nb.push({ id: newStoredId(), itemId: id, currentCharge: finiteChargeOrFallback(rack.currentCharge, 0) });
+  nb.push({ id: newStoredId(), itemId: id });
 }
 
 export function batteryTierScore(def: GameUpgrade): number {
   if (!def || def.type !== 'battery') return 0;
-  const c = def.powerCapacity;
-  if (c === -1 || isKnownInfiniteBatteryCatalogId(def.id)) return Number.MAX_SAFE_INTEGER - 1;
-  return Math.max(0, Number(c) || 0);
-}
-
-export function poolEntryEnergyWh(charge: unknown, def: GameUpgrade): number {
-  if (!def || def.type !== 'battery') return 0;
-  const cap = def.powerCapacity ?? 0;
-  if (cap === -1 || isKnownInfiniteBatteryCatalogId(def.id)) return Number.MAX_SAFE_INTEGER - 1;
-  const q = typeof charge === 'number' && Number.isFinite(charge) ? charge : 0;
-  return Math.max(0, q);
-}
-
-function sortStoredInstancesForType(list: StoredBatteryRow[], batDef: GameUpgrade): StoredBatteryRow[] {
-  const cap = batDef.powerCapacity ?? 0;
-  return [...list].sort((a, b) => {
-    if (cap === -1 || isKnownInfiniteBatteryCatalogId(batDef.id)) return 0;
-    return (b.currentCharge || 0) - (a.currentCharge || 0);
-  });
+  return Number.MAX_SAFE_INTEGER - 1;
 }
 
 function takeOneBatteryUnit(
@@ -230,32 +186,20 @@ function takeOneBatteryUnit(
   batDef: GameUpgrade,
   ns: Record<string, number>,
   nb: StoredBatteryRow[]
-): { charge: number; instanceId?: string } | null {
-  const matching = nb
-    .map((b, idx) => ({ b, idx }))
-    .filter(({ b }) => isBatteryAvailableForRackUse(b) && b.itemId === batteryItemId);
-  const sorted = sortStoredInstancesForType(
-    matching.map((m) => m.b),
-    batDef
-  );
-  if (sorted.length > 0) {
-    const best = sorted[0];
+): { instanceId: string } | null {
+  const matching = nb.filter((b) => isBatteryAvailableForRackUse(b) && b.itemId === batteryItemId);
+  if (matching.length > 0) {
+    const best = matching[0];
     const idx = nb.findIndex((x) => x.id === best.id);
     if (idx < 0) return null;
     const [taken] = nb.splice(idx, 1);
-    const cap = batDef.powerCapacity ?? 0;
-    if (cap === -1 || isKnownInfiniteBatteryCatalogId(batteryItemId)) return { charge: -1, instanceId: taken.id };
-    return {
-      charge: finiteChargeOrFallback(taken.currentCharge, cap),
-      instanceId: taken.id
-    };
+    return { instanceId: taken.id };
   }
   if ((ns[batteryItemId] || 0) > 0) {
     ns[batteryItemId]--;
     if (ns[batteryItemId] <= 0) delete ns[batteryItemId];
-    const capRaw = batDef.powerCapacity;
-    const initCharge = capRaw === -1 || isKnownInfiniteBatteryCatalogId(batteryItemId) ? -1 : capRaw ?? 0;
-    return { charge: initCharge, instanceId: newStoredId() };
+    void batDef;
+    return { instanceId: newStoredId() };
   }
   return null;
 }
@@ -295,15 +239,13 @@ export function applyBulkRoomBatterySmartFill(
       ...rack,
       batteryId: null,
       batteryCatalogItemId: null,
-      batteryPowerCapacityWh: null,
       batteryDisplayName: null,
       batteryImageUrl: null,
-      currentCharge: 0,
       isOn: false
     };
   }
 
-  type PoolEntry = { itemId: string; charge: number; storageId?: string };
+  type PoolEntry = { itemId: string; storageId?: string };
   const pool: PoolEntry[] = [];
 
   for (const u of upgrades) {
@@ -318,32 +260,14 @@ export function applyBulkRoomBatterySmartFill(
     });
     if (!usableOnAnyRack) continue;
 
-    const cap = u.powerCapacity ?? 0;
     for (let q = 0; q < qtyStock; q++) {
-      pool.push({
-        itemId: u.id,
-        charge: cap === -1 || isKnownInfiniteBatteryCatalogId(u.id) ? -1 : cap,
-        storageId: undefined
-      });
+      pool.push({ itemId: u.id, storageId: undefined });
     }
   }
 
   if (pool.length === 0) {
     return { ok: false, message: 'Não há baterias no stock nem no armazém compatíveis com as rigs desta sala.' };
   }
-
-  pool.sort((a, b) => {
-    const da = upgrades.find((x) => x.id === a.itemId);
-    const db = upgrades.find((x) => x.id === b.itemId);
-    if (!da || !db || da.type !== 'battery' || db.type !== 'battery') return 0;
-    const ea = poolEntryEnergyWh(a.charge, da);
-    const eb = poolEntryEnergyWh(b.charge, db);
-    if (eb !== ea) return eb - ea;
-    const ta = batteryTierScore(da);
-    const tb = batteryTierScore(db);
-    if (tb !== ta) return tb - ta;
-    return (b.charge || 0) - (a.charge || 0);
-  });
 
   const sortedRacks = sortRackIndicesForAllocation(racksInRoomIdx, out, upgrades, rigSort);
   let applied = 0;
@@ -380,10 +304,8 @@ export function applyBulkRoomBatterySmartFill(
       ...rack,
       batteryId: rackBattId,
       batteryCatalogItemId: picked.itemId,
-      batteryPowerCapacityWh: def.powerCapacity === -1 || isKnownInfiniteBatteryCatalogId(picked.itemId) ? -1 : def.powerCapacity ?? null,
       batteryDisplayName: def.name ?? null,
       batteryImageUrl: def.image ?? null,
-      currentCharge: picked.charge,
       isOn: true
     };
     applied++;
@@ -430,10 +352,8 @@ export function applyBulkRoomBatteryChange(
         ...rack,
         batteryId: null,
         batteryCatalogItemId: null,
-        batteryPowerCapacityWh: null,
         batteryDisplayName: null,
         batteryImageUrl: null,
-        currentCharge: 0,
         isOn: false
       };
     }
@@ -482,10 +402,8 @@ export function applyBulkRoomBatteryChange(
       ...rack,
       batteryId: rackBattId,
       batteryCatalogItemId: batteryUpgradeId,
-      batteryPowerCapacityWh: batDef.powerCapacity === -1 || isKnownInfiniteBatteryCatalogId(batteryUpgradeId) ? -1 : batDef.powerCapacity ?? null,
       batteryDisplayName: batDef.name ?? null,
       batteryImageUrl: batDef.image ?? null,
-      currentCharge: taken.charge,
       isOn: true
     };
   }

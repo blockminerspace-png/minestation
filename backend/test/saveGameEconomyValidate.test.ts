@@ -8,8 +8,7 @@ import {
   validateStockForSave,
   validateStoredBatteryWarehouseRemovalAllowed,
   validateStoredBatteriesForSave,
-  sanitizeStoredBatteriesForSavePayload,
-  validateWorkshopSlotsPayloadForSave
+  sanitizeStoredBatteriesForSavePayload
 } from '../lib/saveGameEconomyValidate.js';
 
 describe('saveGameEconomyValidate', () => {
@@ -18,9 +17,10 @@ describe('saveGameEconomyValidate', () => {
     expect(SAVE_GAME_ITEM_ID_RE.test('bad id')).toBe(false);
   });
 
-  it('isClientDailyActionKey', () => {
-    expect(isClientDailyActionKey('reward_ad_slot_0')).toBe(true);
-    expect(isClientDailyActionKey('reward_ad_slot_16')).toBe(false);
+  it('isClientDailyActionKey rejeita tudo (oficina/recarga descontinuadas)', () => {
+    expect(isClientDailyActionKey('reward_ad_slot_0')).toBe(false);
+    expect(isClientDailyActionKey('daily_boost_slot_15')).toBe(false);
+    expect(isClientDailyActionKey('instant_recharge_slot_0')).toBe(false);
     expect(isClientDailyActionKey('tx_foo')).toBe(false);
   });
 
@@ -31,13 +31,7 @@ describe('saveGameEconomyValidate', () => {
     expect(isAdminDailyActionKey('a'.repeat(200))).toBe(false);
   });
 
-  it('isClientDailyActionKey slots daily_boost e instant', () => {
-    expect(isClientDailyActionKey('daily_boost_slot_15')).toBe(true);
-    expect(isClientDailyActionKey('instant_recharge_slot_0')).toBe(true);
-    expect(isClientDailyActionKey('instant_recharge_slot_20')).toBe(false);
-  });
-
-  it('validateDailyActionsForSave ignora tx_ e aceita chaves cliente', () => {
+  it('validateDailyActionsForSave ignora chaves de cliente (sistema descontinuado)', () => {
     const now = 1_700_000_000_000;
     const r = validateDailyActionsForSave(
       { tx_dep: now, reward_ad_slot_0: now - 1000 },
@@ -46,24 +40,31 @@ describe('saveGameEconomyValidate', () => {
     );
     expect(r).toMatchObject({ ok: true });
     if (r.ok) {
-      expect(r.keys).toEqual(['reward_ad_slot_0']);
-      expect(r.vals).toEqual([Math.floor(now - 1000)]);
+      expect(r.keys).toEqual([]);
+      expect(r.vals).toEqual([]);
     }
   });
 
-  it('validateDailyActionsForSave admin aceita chave custom e rejeita chave inválida', () => {
+  it('validateDailyActionsForSave admin aceita chave custom e ignora chave inválida (silenciosamente)', () => {
     const now = 1_700_000_000_000;
     const ok = validateDailyActionsForSave({ admin_note: now }, true, now);
     expect(ok).toMatchObject({ ok: true });
+    if (ok.ok) {
+      expect(ok.keys).toEqual(['admin_note']);
+    }
 
-    const bad = validateDailyActionsForSave({ 'no spaces': now }, true, now);
-    expect(bad).toMatchObject({ ok: false });
+    // Chaves inválidas no admin são ignoradas silenciosamente (sistema de oficina descontinuado).
+    const skipped = validateDailyActionsForSave({ 'no spaces': now }, true, now);
+    expect(skipped).toMatchObject({ ok: true });
+    if (skipped.ok) {
+      expect(skipped.keys).toEqual([]);
+    }
   });
 
-  it('validateDailyActionsForSave cliente rejeita futuro > now+1d', () => {
+  it('validateDailyActionsForSave cliente nunca falha por futuro (não aceita chaves de cliente)', () => {
     const now = 1_700_000_000_000;
     const r = validateDailyActionsForSave({ reward_ad_slot_0: now + 2 * 86400000 }, false, now);
-    expect(r).toMatchObject({ ok: false });
+    expect(r).toMatchObject({ ok: true });
   });
 
   it('validateStockForSave rejeita chave inválida e devolve samples (sem query à BD)', async () => {
@@ -98,25 +99,7 @@ describe('saveGameEconomyValidate', () => {
       1,
       [],
       {
-        placedRacks: [{ id: 'r1', batteryId: 'bat-a' }, { id: 'r2', batteryId: 'bat-b' }],
-        workshopSlots: []
-      },
-      false
-    );
-    expect(r).toEqual({ ok: true });
-  });
-
-  it('validateStoredBatteryWarehouseRemovalAllowed aceita id na oficina (internalSlots)', async () => {
-    const client = {
-      query: vi.fn().mockResolvedValue({ rows: [{ id: 'inst-1' }] })
-    };
-    const r = await validateStoredBatteryWarehouseRemovalAllowed(
-      client as never,
-      1,
-      [],
-      {
-        placedRacks: [],
-        workshopSlots: [{ itemId: 'charger_x', internalSlots: { s0: 'inst-1' }, currentCharge: 0 }]
+        placedRacks: [{ id: 'r1', batteryId: 'bat-a' }, { id: 'r2', batteryId: 'bat-b' }]
       },
       false
     );
@@ -131,7 +114,7 @@ describe('saveGameEconomyValidate', () => {
       client as never,
       1,
       [],
-      { placedRacks: [], workshopSlots: [] },
+      { placedRacks: [] },
       false
     );
     expect(r.ok).toBe(false);
@@ -146,7 +129,7 @@ describe('saveGameEconomyValidate', () => {
       client as never,
       1,
       [],
-      { placedRacks: [], workshopSlots: [] },
+      { placedRacks: [] },
       true
     );
     expect(r).toEqual({ ok: true });
@@ -155,31 +138,19 @@ describe('saveGameEconomyValidate', () => {
   it('sanitizeStoredBatteriesForSavePayload deduplica por id (última entrada vence)', () => {
     const out = sanitizeStoredBatteriesForSavePayload(
       [
-        { id: 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee', itemId: 'small_battery', currentCharge: 10 },
-        { id: 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee', itemId: 'small_battery', currentCharge: 99 }
+        { id: 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee', itemId: 'small_battery' },
+        { id: 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee', itemId: 'small_battery_alt' }
       ],
-      [],
       []
     );
     expect(out).toHaveLength(1);
-    expect((out[0] as { currentCharge: number }).currentCharge).toBe(99);
-  });
-
-  it('sanitizeStoredBatteriesForSavePayload remove instância montada na oficina', () => {
-    const bid = 'bbbbbbbb-bbbb-4ccc-dddd-eeeeeeeeeeee';
-    const out = sanitizeStoredBatteriesForSavePayload(
-      [{ id: bid, itemId: 'small_battery', currentCharge: 50 }],
-      [{ itemId: 'genesis_charger', internalSlots: { bat: bid }, currentCharge: 0 }],
-      []
-    );
-    expect(out).toHaveLength(0);
+    expect((out[0] as { itemId: string }).itemId).toBe('small_battery_alt');
   });
 
   it('sanitizeStoredBatteriesForSavePayload remove instância montada na rig', () => {
     const bid = 'cccccccc-bbbb-4ccc-dddd-eeeeeeeeeeee';
     const out = sanitizeStoredBatteriesForSavePayload(
-      [{ id: bid, itemId: 'small_battery', currentCharge: 50 }],
-      [],
+      [{ id: bid, itemId: 'small_battery' }],
       [{ id: 'rack1', batteryId: bid }]
     );
     expect(out).toHaveLength(0);
@@ -188,8 +159,7 @@ describe('saveGameEconomyValidate', () => {
   it('sanitizeStoredBatteriesForSavePayload aceita itemId vazio e usa marcador para validação posterior', () => {
     const bid = 'dddddddd-bbbb-4ccc-dddd-eeeeeeeeeeee';
     const out = sanitizeStoredBatteriesForSavePayload(
-      [{ id: bid, itemId: '', currentCharge: 12 }],
-      [],
+      [{ id: bid, itemId: '' }],
       []
     );
     expect(out).toHaveLength(1);
@@ -197,12 +167,9 @@ describe('saveGameEconomyValidate', () => {
   });
 
   it('validateStoredBatteriesForSave normaliza itemId pendente com fallback do catálogo', async () => {
-    // Catálogo canónico passou a ser `battery_estelar` (infinita); aliases legados
-    // (`small_battery`, `battery_protostar`, `battery_stellar`) normalizam para Estelar.
     const bat = {
       id: 'eeeeeeee-bbbb-4ccc-dddd-eeeeeeeeeeee',
-      itemId: STORED_BATTERY_CATALOG_PENDING_ID,
-      currentCharge: 5
+      itemId: STORED_BATTERY_CATALOG_PENDING_ID
     };
     const client = {
       query: vi.fn().mockImplementation((sql: string) => {
@@ -233,8 +200,7 @@ describe('saveGameEconomyValidate', () => {
   it('validateStoredBatteriesForSave rejeita item_id de miner/GPU no armazém (não reescreve para bateria barata)', async () => {
     const bat = {
       id: 'ffffffff-bbbb-4ccc-dddd-eeeeeeeeeeee',
-      itemId: 'some_gpu_catalog',
-      currentCharge: 0
+      itemId: 'some_gpu_catalog'
     };
     const client = {
       query: vi.fn().mockImplementation((sql: string) => {
@@ -265,18 +231,6 @@ describe('saveGameEconomyValidate', () => {
     expect(bat.itemId).toBe('some_gpu_catalog');
   });
 
-  it('validateWorkshopSlotsPayloadForSave retorna erro amigável quando a query upgrades falha', async () => {
-    const client = {
-      query: vi.fn().mockRejectedValue(new Error('connection refused'))
-    };
-    const slots = [{ itemId: 'charger_slot_test', currentCharge: 0, internalSlots: {}, slotCharges: {} }];
-    const r = await validateWorkshopSlotsPayloadForSave(client as never, slots, {});
-    expect(r.ok).toBe(false);
-    if (!r.ok) {
-      expect(r.error).toMatch(/F5/);
-    }
-  });
-
   it('validateStoredBatteryWarehouseRemovalAllowed usa battery_id em placed_racks na BD', async () => {
     const mountedOnDb = 'aaaaaaaa-bbbb-4ccc-dddd-eeeeeeeeeeee';
     let n = 0;
@@ -284,8 +238,7 @@ describe('saveGameEconomyValidate', () => {
       query: vi.fn().mockImplementation(() => {
         n += 1;
         if (n === 1) return Promise.resolve({ rows: [{ id: mountedOnDb }] });
-        if (n === 2) return Promise.resolve({ rows: [] });
-        if (n === 3) return Promise.resolve({ rows: [{ battery_id: mountedOnDb }] });
+        if (n === 2) return Promise.resolve({ rows: [{ battery_id: mountedOnDb }] });
         return Promise.resolve({ rows: [] });
       })
     };
@@ -293,7 +246,7 @@ describe('saveGameEconomyValidate', () => {
       client as never,
       1,
       [],
-      { placedRacks: [], workshopSlots: [] },
+      { placedRacks: [] },
       false
     );
     expect(r).toEqual({ ok: true });

@@ -1,5 +1,4 @@
 import { normalizePlacedRackRoomId } from '../modules/batteries/batteries.validation.js';
-import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 /** Subconjunto de `upgrades` necessário para a calculadora de mineração. */
 export type CalculatorUpgradeLite = {
@@ -15,8 +14,6 @@ export type CalculatorRackForProjection = {
   wiringId: string | null;
   batteryId: string | null;
   batteryCatalogItemId?: string | null;
-  batteryPowerCapacityWh?: number | null;
-  currentCharge: number;
   isOn: boolean;
   selectedCoinId: string | null;
   slots: (string | null)[];
@@ -51,20 +48,8 @@ export function computeUserHashByCoinId(
     const cid = rack.selectedCoinId != null ? String(rack.selectedCoinId).trim() : '';
     if (!cid) continue;
 
-    const catalogBatteryId =
-      rack.batteryCatalogItemId != null && String(rack.batteryCatalogItemId).trim() !== ''
-        ? normalizeKnown1000WhBatteryCatalogId(rack.batteryCatalogItemId)
-        : rack.batteryId != null
-          ? normalizeKnown1000WhBatteryCatalogId(rack.batteryId)
-          : '';
-    const battery = catalogBatteryId ? upgradesById.get(catalogBatteryId) : undefined;
-    const isInfinite =
-      rack.currentCharge === -1 ||
-      rack.batteryPowerCapacityWh === -1 ||
-      isKnownInfiniteBatteryCatalogId(catalogBatteryId) ||
-      (battery?.type === 'battery' && battery.powerCapacity === -1);
-    const isOperational =
-      rack.isOn && Boolean(rack.wiringId) && Boolean(rack.batteryId) && (isInfinite || rack.currentCharge > 0);
+    // Baterias são instâncias UUID infinitas: rig opera se montada e ligada.
+    const isOperational = rack.isOn && Boolean(rack.wiringId) && Boolean(rack.batteryId);
     if (!isOperational) continue;
 
     let rackBase = 0;

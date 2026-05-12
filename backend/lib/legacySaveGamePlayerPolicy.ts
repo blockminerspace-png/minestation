@@ -4,7 +4,6 @@
  */
 import type { PoolClient } from 'pg';
 import type { SaveGameQueryClient } from './sqlTransaction.js';
-import { loadWorkshopSlotsArrayForMerge } from './gameSaveSliceMerge.js';
 import { loadUserPlacedRacksWithSlots } from './serverRoomPersistence.js';
 
 /**
@@ -57,7 +56,6 @@ const CRITICAL_TOP_KEYS = new Set([
   'stock',
   'storedBatteries',
   'placedRacks',
-  'workshopSlots',
   'unopenedBoxes',
   'coinBalances',
   'racks',
@@ -71,8 +69,7 @@ const CRITICAL_TOP_KEYS = new Set([
   /** Campos frequentes em payloads legados de rig/bateria que não podem ser escritos pelo cliente. */
   'batteryId',
   'rackId',
-  'slotId',
-  'currentCharge'
+  'slotId'
 ]);
 
 /** Dentro de `changes.gameState` (quando objeto) — mesma política. */
@@ -87,11 +84,9 @@ const CRITICAL_GAMESTATE_KEYS = new Set([
   'stock',
   'storedBatteries',
   'placedRacks',
-  'workshopSlots',
   'batteryId',
   'rackId',
-  'slotId',
-  'currentCharge'
+  'slotId'
 ]);
 
 export type LegacySaveLogPayload = {
@@ -102,7 +97,7 @@ export type LegacySaveLogPayload = {
   route: string;
   origin: string;
   adminOverride: boolean;
-  saveDomain: '' | 'inventory' | 'servers' | 'workshop';
+  saveDomain: '' | 'inventory' | 'servers';
   timestamp: string;
 };
 
@@ -110,12 +105,12 @@ export function logLegacySaveStructured(payload: LegacySaveLogPayload): void {
   console.log(JSON.stringify(payload));
 }
 
-function readSaveDomainHeader(req: { headers?: unknown; originalUrl?: string }): '' | 'inventory' | 'servers' | 'workshop' {
+function readSaveDomainHeader(req: { headers?: unknown; originalUrl?: string }): '' | 'inventory' | 'servers' {
   const h = req.headers as Record<string, unknown> | undefined;
   const raw = String(h?.['x-game-save-domain'] ?? '')
     .trim()
     .toLowerCase();
-  if (raw === 'inventory' || raw === 'servers' || raw === 'workshop') return raw;
+  if (raw === 'inventory' || raw === 'servers') return raw;
   return '';
 }
 
@@ -228,7 +223,7 @@ export function applyLegacySaveGameFullBarrier(
 export async function neutralizeLegacySaveGameSlicePayload(
   client: SaveGameQueryClient,
   uid: number,
-  saveDomain: 'inventory' | 'servers' | 'workshop',
+  saveDomain: 'inventory' | 'servers',
   changes: Record<string, unknown>,
   req: { headers?: unknown; originalUrl?: string; get?: (n: string) => string | undefined },
   userId: number
@@ -249,17 +244,6 @@ export async function neutralizeLegacySaveGameSlicePayload(
     const dbRacks = await loadUserPlacedRacksWithSlots(pg, uid);
     changes.placedRacks = overlayPlacedRacksDbWithClientRuntime(dbRacks, clientPlacedRacks);
     removed.push('placedRacks(db_topology+client_runtime)');
-    if ('stock' in changes) {
-      delete changes.stock;
-      removed.push('stock');
-    }
-    if ('storedBatteries' in changes) {
-      delete changes.storedBatteries;
-      removed.push('storedBatteries');
-    }
-  } else if (saveDomain === 'workshop') {
-    changes.workshopSlots = await loadWorkshopSlotsArrayForMerge(client, uid);
-    removed.push('workshopSlots(replaced_from_db)');
     if ('stock' in changes) {
       delete changes.stock;
       removed.push('stock');

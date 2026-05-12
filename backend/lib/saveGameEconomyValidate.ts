@@ -1,4 +1,4 @@
-import type { Pool, PoolClient } from 'pg';
+import type { PoolClient } from 'pg';
 import { STORED_BATTERY_CATALOG_PENDING_ID } from '../modules/batteries/batteries.constants.js';
 import { normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
@@ -15,36 +15,19 @@ const MAX_DAILY_KEYS = 250;
 const MAX_STORED_BATTERIES = 800;
 const DAILY_TS_MIN = 0;
 const DAILY_TS_MAX = 4102444800000; // ~2100
+
 function parseIntQty(q: unknown): number | null {
   const n = typeof q === 'number' ? Math.trunc(q) : parseInt(String(q ?? ''), 10);
   if (!Number.isFinite(n)) return null;
   return n;
 }
 
-function parseNumericCharge(q: unknown): number | null {
-  const n = typeof q === 'number' ? q : parseFloat(String(q ?? ''));
-  if (!Number.isFinite(n)) return null;
-  return n;
-}
-
-/** Chaves que o cliente pode gravar no save (oficina). `tx_*` nunca pelo save. */
-export function isClientDailyActionKey(key: string): boolean {
-  if (key.length > 96) return false;
-  const ad = /^reward_ad_slot_(\d+)$/.exec(key);
-  if (ad) {
-    const n = Number(ad[1]);
-    return n >= 0 && n <= 15;
-  }
-  const db = /^daily_boost_slot_(\d+)$/.exec(key);
-  if (db) {
-    const n = Number(db[1]);
-    return n >= 0 && n <= 15;
-  }
-  const ir = /^instant_recharge_slot_(\d+)$/.exec(key);
-  if (ir) {
-    const n = Number(ir[1]);
-    return n >= 0 && n <= 15;
-  }
+/**
+ * Sistema de carregamento descontinuado em 20260516180000_battery_uuids_and_purge_charging:
+ * o cliente já não pode escrever chaves de daily-boost / reward-ad / instant-recharge.
+ * Mantém-se a função para compatibilidade, mas nunca aceita chaves.
+ */
+export function isClientDailyActionKey(_key: string): boolean {
   return false;
 }
 
@@ -58,10 +41,7 @@ export function isAdminDailyActionKey(key: string): boolean {
 const STOCK_VALIDATE_LOG_SAMPLES = 24;
 
 /**
- * Diagnóstico de falhas ao gravar `stock` (save-game). Causas típicas:
- * - `invalid_key`: chave fora do padrão (espaços, `__proto__`, merge de objetos errado, estado corrompido no cliente).
- * - `bad_qty`: quantidade NaN/negativa/fora do limite após dessincronização ou bug de UI.
- * - `unknown_item`: (já não usado) stock com ids fora de `upgrades` é aceite como legado e regista-se em log.
+ * Diagnóstico de falhas ao gravar `stock` (save-game).
  */
 export type ValidateStockForSaveResult =
   | { ok: true; itemIds: string[]; qtys: number[] }
@@ -69,7 +49,6 @@ export type ValidateStockForSaveResult =
       ok: false;
       error: string;
       reason: 'too_many_keys' | 'invalid_key' | 'bad_qty' | 'unknown_item';
-      /** Chaves ou IDs de exemplo (nunca o inventário completo). */
       samples: string[];
       meta?: { keyCount?: number };
     };
@@ -207,26 +186,21 @@ export function validateDailyActionsForSave(
     const k = String(k0);
     if (k.startsWith('tx_')) continue;
     if (!allow(k)) {
-      return {
-        ok: false,
-        error:
-          'Os registos de utilização diária (oficina / recompensas) contêm dados que o servidor não aceita neste guardar. Recarregue a página (F5).'
-      };
+      // Cliente não pode mais gravar daily actions (oficina descontinuada). Ignora silenciosamente.
+      continue;
     }
     const ts = typeof v0 === 'number' ? v0 : parseFloat(String(v0));
     if (!Number.isFinite(ts)) {
       return {
         ok: false,
-        error:
-          'Há uma data ou hora inválida nos lembretes diários da oficina. Recarregue a página (F5).'
+        error: 'Há uma data ou hora inválida nos lembretes diários. Recarregue a página (F5).'
       };
     }
     const ti = Math.floor(ts);
     if (ti < DAILY_TS_MIN || ti > DAILY_TS_MAX) {
       return {
         ok: false,
-        error:
-          'Uma data nos lembretes diários está fora do intervalo permitido. Recarregue a página (F5).'
+        error: 'Uma data nos lembretes diários está fora do intervalo permitido. Recarregue a página (F5).'
       };
     }
     if (!adminOverride && ti > nowMs + 86400000) {
@@ -271,23 +245,11 @@ export async function validateStoredBatteriesForSave(
       `SELECT id::text FROM upgrades
        WHERE (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
          AND COALESCE(is_active, 1) <> 0
-         AND COALESCE(power_capacity, 0) <> -1
        ORDER BY COALESCE(base_cost, 0) ASC NULLS LAST,
                 id ASC
        LIMIT 1`
     );
     fallbackCatalogId = String(fbRes.rows[0]?.id || '').trim();
-    if (!fallbackCatalogId) {
-      const fbAny = await client.query<{ id: string }>(
-        `SELECT id::text FROM upgrades
-         WHERE (LOWER(COALESCE(type::text, '')) = 'battery' OR LOWER(COALESCE(category::text, '')) = 'battery')
-           AND COALESCE(is_active, 1) <> 0
-         ORDER BY COALESCE(base_cost, 0) ASC NULLS LAST,
-                  id ASC
-         LIMIT 1`
-      );
-      fallbackCatalogId = String(fbAny.rows[0]?.id || '').trim();
-    }
   } catch (e) {
     console.warn(
       '[validateStoredBatteriesForSave] fallback bateria:',
@@ -295,7 +257,7 @@ export async function validateStoredBatteriesForSave(
     );
   }
 
-  type BatRow = { id: string; itemId: string; charge: number; obj: Record<string, unknown> };
+  type BatRow = { id: string; itemId: string; obj: Record<string, unknown> };
   const rows: BatRow[] = [];
   for (const b of batteries) {
     if (!b || typeof b !== 'object' || Array.isArray(b)) {
@@ -317,15 +279,7 @@ export async function validateStoredBatteriesForSave(
     if (!itemId || !SAVE_GAME_ITEM_ID_RE.test(itemId)) {
       itemId = STORED_BATTERY_CATALOG_PENDING_ID;
     }
-    const ch = parseNumericCharge(o.currentCharge);
-    if (ch === null || ch < -1 || ch > 1e15) {
-      return {
-        ok: false,
-        error:
-          'O valor de carga de uma bateria no armazém é inválido. Recarregue a página (F5).'
-      };
-    }
-    rows.push({ id, itemId, charge: ch, obj: o });
+    rows.push({ id, itemId, obj: o });
   }
   if (rows.length === 0) return { ok: true };
 
@@ -396,7 +350,6 @@ export async function validateStoredBatteriesForSave(
     );
   }
 
-  /** Catálogo explícito de equipamento que não é bateria (miners/GPUs/etc.) — não converter para `fallbackCatalogId`. */
   let nonBatteryCatalogIds = new Set<string>();
   if (uniqResolved.length > 0) {
     try {
@@ -418,7 +371,7 @@ export async function validateStoredBatteriesForSave(
   }
 
   for (let i = 0; i < rows.length; i++) {
-    let it = resolvedIds[i]!;
+    const it = resolvedIds[i]!;
     if (validBattery.has(it)) {
       rows[i]!.obj.itemId = it;
       continue;
@@ -432,7 +385,7 @@ export async function validateStoredBatteriesForSave(
       return {
         ok: false,
         error:
-          'O armazém de baterias contém `item_id` de equipamento que não é bateria (ex.: GPU/miner). Isto evita converter tudo para a mesma bateria do catálogo. Recarrega (F5); se persistir, contacta o suporte para corrigir instâncias na base de dados.'
+          'O armazém de baterias contém `item_id` de equipamento que não é bateria (ex.: GPU/miner). Recarrega (F5); se persistir, contacta o suporte para corrigir instâncias na base de dados.'
       };
     }
     console.warn(
@@ -456,22 +409,6 @@ export class StoredBatterySaveGuardError extends Error {
   }
 }
 
-function collectBatteryInstanceRefsFromWorkshopPayload(workshopSlots: unknown): Set<string> {
-  const out = new Set<string>();
-  if (!Array.isArray(workshopSlots)) return out;
-  for (const w of workshopSlots) {
-    if (!w || typeof w !== 'object' || Array.isArray(w)) continue;
-    const internal = (w as Record<string, unknown>).internalSlots;
-    if (!internal || typeof internal !== 'object' || Array.isArray(internal)) continue;
-    for (const v of Object.values(internal)) {
-      if (v == null) continue;
-      const s = String(v).trim();
-      if (s) out.add(s);
-    }
-  }
-  return out;
-}
-
 /** UUIDs / ids de `placed_racks.battery_id` já persistidos na BD (fonte de verdade antes do merge do payload). */
 export async function collectBatteryIdsFromPlacedRacksDb(
   client: PoolClient,
@@ -493,36 +430,6 @@ export async function collectBatteryIdsFromPlacedRacksDb(
   return out;
 }
 
-/** Instâncias referenciadas na oficina já persistida na BD (save "servers" sem `workshopSlots`). */
-async function collectBatteryInstanceRefsFromWorkshopDb(client: PoolClient, uid: number | string): Promise<Set<string>> {
-  const out = new Set<string>();
-  try {
-    const res = await client.query<{ internal_state: string | null }>(
-      'SELECT internal_state FROM workshop_slots WHERE user_id = $1',
-      [uid]
-    );
-    for (const row of res.rows || []) {
-      const raw = row.internal_state;
-      if (!raw) continue;
-      let o: unknown;
-      try {
-        o = typeof raw === 'string' ? JSON.parse(raw) : raw;
-      } catch {
-        continue;
-      }
-      if (!o || typeof o !== 'object' || Array.isArray(o)) continue;
-      for (const v of Object.values(o as Record<string, unknown>)) {
-        if (v == null) continue;
-        const s = String(v).trim();
-        if (s) out.add(s);
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  return out;
-}
-
 function collectBatteryIdsFromPlacedRacksPayload(placedRacks: unknown): Set<string> {
   const out = new Set<string>();
   if (!Array.isArray(placedRacks)) return out;
@@ -536,15 +443,14 @@ function collectBatteryIdsFromPlacedRacksPayload(placedRacks: unknown): Set<stri
 
 /**
  * Impede que o save apague linhas de `stored_batteries` quando o payload não mostra para onde
- * foram as instâncias (ex.: cliente incompleto após rede/VM). Cada id que deixaria de estar
- * listado no armazém tem de aparecer como `batteryId` numa rig ou como valor em `internalSlots`
- * da oficina no mesmo pedido.
+ * foram as instâncias. Cada id que deixaria de estar listado no armazém tem de aparecer como
+ * `batteryId` numa rig no mesmo pedido (ou já estar montado em rig na BD).
  */
 export async function validateStoredBatteryWarehouseRemovalAllowed(
   client: PoolClient,
   uid: number | string,
   incomingIds: string[],
-  changes: { placedRacks?: unknown; workshopSlots?: unknown },
+  changes: { placedRacks?: unknown },
   adminOverride: boolean
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   if (adminOverride) return { ok: true };
@@ -562,12 +468,8 @@ export async function validateStoredBatteryWarehouseRemovalAllowed(
   if (toDrop.length === 0) return { ok: true };
 
   const referenced = new Set<string>([
-    ...collectBatteryIdsFromPlacedRacksPayload(changes.placedRacks),
-    ...collectBatteryInstanceRefsFromWorkshopPayload(changes.workshopSlots)
+    ...collectBatteryIdsFromPlacedRacksPayload(changes.placedRacks)
   ]);
-  for (const id of await collectBatteryInstanceRefsFromWorkshopDb(client, uid)) {
-    referenced.add(id);
-  }
   for (const id of await collectBatteryIdsFromPlacedRacksDb(client, uid)) {
     referenced.add(id);
   }
@@ -577,7 +479,7 @@ export async function validateStoredBatteryWarehouseRemovalAllowed(
     return {
       ok: false,
       error:
-        'O armazém de baterias enviado deixa de listar unidades que o servidor ainda tem no armazém, sem aparecerem montadas nas rigs ou na oficina neste guardar. Recarrega a página (F5) para sincronizar.'
+        'O armazém de baterias enviado deixa de listar unidades que o servidor ainda tem no armazém, sem aparecerem montadas nas rigs neste guardar. Recarrega a página (F5) para sincronizar.'
     };
   }
   return { ok: true };
@@ -585,21 +487,19 @@ export async function validateStoredBatteryWarehouseRemovalAllowed(
 
 /**
  * Normaliza o array `storedBatteries` antes de validar/persistir:
- * - deduplica por `id` (mantém a última entrada — alinhado ao estado mais recente do cliente);
- * - remove entradas cujo `id` já está montado na oficina (`internalSlots`) ou numa rig (`batteryId`),
- *   evitando duplicar a mesma instância no armazém (bug do carregador Genesis / cliente).
+ * - deduplica por `id` (mantém a última entrada);
+ * - remove entradas cujo `id` já está montado numa rig (`batteryId`),
+ *   evitando duplicar a mesma instância no armazém.
  */
 export function sanitizeStoredBatteriesForSavePayload(
   batteries: unknown[],
-  workshopSlots: unknown,
   placedRacks: unknown
 ): unknown[] {
   if (!Array.isArray(batteries)) return [];
   const mounted = new Set<string>([
-    ...collectBatteryInstanceRefsFromWorkshopPayload(workshopSlots),
     ...collectBatteryIdsFromPlacedRacksPayload(placedRacks)
   ]);
-  const byId = new Map<string, { id: string; itemId: string; currentCharge: number }>();
+  const byId = new Map<string, { id: string; itemId: string }>();
   for (const b of batteries) {
     if (!b || typeof b !== 'object' || Array.isArray(b)) continue;
     const o = b as Record<string, unknown>;
@@ -609,438 +509,8 @@ export function sanitizeStoredBatteriesForSavePayload(
     if (!itemId || !SAVE_GAME_ITEM_ID_RE.test(itemId)) {
       itemId = STORED_BATTERY_CATALOG_PENDING_ID;
     }
-    const ch = parseNumericCharge(o.currentCharge);
-    if (ch === null || ch < -1 || ch > 1e15) continue;
     if (mounted.has(id)) continue;
-    byId.set(id, { id, itemId, currentCharge: ch });
+    byId.set(id, { id, itemId });
   }
   return [...byId.values()];
-}
-
-const WORKSHOP_SLOT_COUNT = 6;
-const MAX_WORKSHOP_JSON_KEYS = 400;
-
-export type WorkshopSlotClientPayload = {
-  itemId: string;
-  currentCharge: number;
-  internalSlots: Record<string, unknown>;
-  slotCharges: Record<string, number>;
-  slotItemIds: Record<string, string> | null;
-};
-
-function isPlainRecord(x: unknown): x is Record<string, unknown> {
-  return !!x && typeof x === 'object' && !Array.isArray(x);
-}
-
-/** Valida e normaliza `workshopSlots` antes do merge com o estado na BD (save-game). */
-export async function validateWorkshopSlotsPayloadForSave(
-  client: PoolClient,
-  slots: unknown,
-  opts: { adminOverride?: boolean }
-): Promise<{ ok: true; normalized: (WorkshopSlotClientPayload | null)[] } | { ok: false; error: string }> {
-  if (!Array.isArray(slots)) {
-    return {
-      ok: false,
-      error:
-        'O estado da oficina foi enviado num formato inválido. Recarregue a página (F5).'
-    };
-  }
-  if (slots.length > WORKSHOP_SLOT_COUNT) {
-    return {
-      ok: false,
-      error:
-        'A oficina enviou demasiadas bancadas de uma vez. Recarregue a página (F5); se o erro voltar, contacte o suporte.'
-    };
-  }
-  const padded: unknown[] = [...slots];
-  while (padded.length < WORKSHOP_SLOT_COUNT) padded.push(null);
-
-  const wantIds = new Set<string>();
-  const staged: (WorkshopSlotClientPayload | null)[] = [];
-
-  for (let i = 0; i < WORKSHOP_SLOT_COUNT; i++) {
-    const w = padded[i];
-    if (w == null) {
-      staged.push(null);
-      continue;
-    }
-    if (!isPlainRecord(w)) {
-      return {
-        ok: false,
-        error:
-          'Uma das bancadas da oficina tem dados inválidos. Recarregue a página (F5).'
-      };
-    }
-    const itemIdRaw = w.itemId != null ? String(w.itemId).trim() : '';
-    if (!itemIdRaw) {
-      staged.push(null);
-      continue;
-    }
-    if (!SAVE_GAME_ITEM_ID_RE.test(itemIdRaw)) {
-      return {
-        ok: false,
-        error:
-          'Há uma peça na oficina com identificador inválido. Recarregue a página (F5).'
-      };
-    }
-    wantIds.add(itemIdRaw);
-
-    const cc = parseNumericCharge(w.currentCharge);
-    const currentCharge = cc === null || cc < 0 ? 0 : cc;
-
-    let internalSlots: Record<string, unknown> = {};
-    if (w.internalSlots != null) {
-      if (!isPlainRecord(w.internalSlots)) {
-        return {
-          ok: false,
-          error:
-            'O conteúdo instalado num carregador (oficina) está num formato inválido. Recarregue a página (F5).'
-        };
-      }
-      const keys = Object.keys(w.internalSlots);
-      if (keys.length > MAX_WORKSHOP_JSON_KEYS) {
-        return {
-          ok: false,
-          error:
-            'Demasiados componentes listados na oficina. Recarregue a página (F5).'
-        };
-      }
-      internalSlots = { ...w.internalSlots };
-    }
-
-    const slotCharges: Record<string, number> = {};
-    if (w.slotCharges != null) {
-      if (!isPlainRecord(w.slotCharges)) {
-        return {
-          ok: false,
-          error:
-            'Os níveis de carga das baterias na oficina estão num formato inválido. Recarregue a página (F5).'
-        };
-      }
-      for (const [k, v] of Object.entries(w.slotCharges)) {
-        if (k.length > 200) {
-          return {
-            ok: false,
-            error:
-              'Detectámos dados de carga inconsistentes na oficina. Recarregue a página (F5).'
-          };
-        }
-        const n = parseNumericCharge(v);
-        if (n === null || n < 0) {
-          return {
-            ok: false,
-            error:
-              'Um valor de carga na oficina é inválido. Recarregue a página (F5).'
-          };
-        }
-        slotCharges[k] = n;
-      }
-      if (Object.keys(slotCharges).length > MAX_WORKSHOP_JSON_KEYS) {
-        return {
-          ok: false,
-          error:
-            'Demasiadas entradas de carga na oficina. Recarregue a página (F5).'
-        };
-      }
-    }
-
-    let slotItemIds: Record<string, string> | null = null;
-    if (w.slotItemIds != null) {
-      if (!isPlainRecord(w.slotItemIds)) {
-        return {
-          ok: false,
-          error:
-            'A referência de peças na oficina está num formato inválido. Recarregue a página (F5).'
-        };
-      }
-      slotItemIds = {};
-      for (const [k, v] of Object.entries(w.slotItemIds)) {
-        if (k.length > 200) {
-          return {
-            ok: false,
-            error:
-              'Detectámos referências de peças inválidas na oficina. Recarregue a página (F5).'
-          };
-        }
-        if (v == null) continue;
-        const sid = String(v).trim();
-        if (!SAVE_GAME_ITEM_ID_RE.test(sid)) {
-          return {
-            ok: false,
-            error:
-              'Uma peça referenciada na oficina tem identificador inválido. Recarregue a página (F5).'
-          };
-        }
-        slotItemIds[k] = sid;
-        wantIds.add(sid);
-      }
-    }
-
-    staged.push({
-      itemId: itemIdRaw,
-      currentCharge,
-      internalSlots,
-      slotCharges,
-      slotItemIds
-    });
-  }
-
-  if (wantIds.size === 0) {
-    return { ok: true, normalized: staged };
-  }
-
-  const ids = [...wantIds];
-  let upRes: { rows: Array<{ id: string; type?: unknown; category?: unknown }>; rowCount?: number | null };
-  try {
-    upRes = await client.query(`SELECT id, type, category FROM upgrades WHERE id = ANY($1::text[])`, [ids]);
-  } catch (e) {
-    console.warn(
-      '[validateWorkshopSlotsPayloadForSave] Erro ao ler upgrades:',
-      e instanceof Error ? e.message : String(e)
-    );
-    return {
-      ok: false,
-      error:
-        'Não foi possível validar a oficina na base de dados. Recarregue a página (F5) e tente de novo.'
-    };
-  }
-  const defMap = new Map<string, { type: string; category: string }>();
-  for (const row of upRes.rows as Array<{ id: string; type?: unknown; category?: unknown }>) {
-    defMap.set(String(row.id), {
-      type: String(row.type ?? ''),
-      category: String(row.category ?? '')
-    });
-  }
-  const haveUp = new Set(defMap.keys());
-  const missingWorkshop = ids.filter((id) => !haveUp.has(id));
-  if (missingWorkshop.length > 0) {
-    console.warn(
-      '[validateWorkshopSlotsPayloadForSave] IDs órfãos (legado; validação relaxada):',
-      missingWorkshop.slice(0, 16).join(', ')
-    );
-    for (const mid of missingWorkshop) {
-      defMap.set(mid, { type: 'charger', category: 'oficina' });
-    }
-  }
-
-  const admin = !!opts.adminOverride;
-  for (const s of staged) {
-    if (!s) continue;
-    let def = defMap.get(s.itemId);
-    if (!def) {
-      defMap.set(s.itemId, { type: 'charger', category: 'oficina' });
-      def = defMap.get(s.itemId)!;
-    }
-    if (!admin) {
-      const t = def.type.toLowerCase();
-      const c = def.category.toLowerCase();
-      if (t !== 'charger' && c !== 'oficina') {
-        return {
-          ok: false,
-          error:
-            'Só é permitido instalar na oficina estruturas da categoria Oficina ou carregadores. Recarregue a página (F5).'
-        };
-      }
-    }
-    if (s.slotItemIds) {
-      for (const sid of Object.values(s.slotItemIds)) {
-        if (!defMap.has(sid)) {
-          defMap.set(sid, { type: 'battery', category: 'battery' });
-        }
-      }
-    }
-  }
-
-  return { ok: true, normalized: staged };
-}
-
-function isPlainObjectRecord(x: unknown): x is Record<string, unknown> {
-  return !!x && typeof x === 'object' && !Array.isArray(x);
-}
-
-/**
- * Preenche `slotItemIds` em slots da oficina quando há instância em `internalSlots` mas falta o
- * `battery_item_id` (estado legado após saves que corromperam `slot_item_ids`). Usa o último
- * registo em `charging_history` por `battery_instance_id`.
- */
-export async function enrichWorkshopSlotsSlotItemIdsFromChargingHistory(
-  client: Pool | PoolClient,
-  userEmail: string,
-  workshopSlots: unknown[]
-): Promise<void> {
-  const email = String(userEmail || '').trim();
-
-  const orphans: string[] = [];
-  const instanceIds: string[] = [];
-  for (const ws of workshopSlots) {
-    if (!ws || !isPlainObjectRecord(ws)) continue;
-    const intRaw = ws.internalSlots;
-    const sidRaw = ws.slotItemIds;
-    if (!isPlainObjectRecord(intRaw)) continue;
-    const sidMap = isPlainObjectRecord(sidRaw) ? sidRaw : {};
-    for (const [slotId, instId] of Object.entries(intRaw)) {
-      if (instId === undefined || instId === null) continue;
-      const clean = String(instId).trim();
-      if (clean.length < 20) continue;
-      if (!SAVE_GAME_ITEM_ID_RE.test(clean)) continue;
-      instanceIds.push(clean);
-      const existingSid = sidMap[slotId];
-      if (existingSid !== undefined && existingSid !== null && String(existingSid).trim() !== '') {
-        continue;
-      }
-      orphans.push(clean);
-    }
-  }
-
-  const uniqAll = [...new Set(instanceIds)];
-  try {
-    const storedResolve = new Map<string, { itemId: string; charge: number }>();
-    if (uniqAll.length > 0) {
-      const sbRes = await client.query(
-        `SELECT id, item_id, current_charge
-           FROM stored_batteries
-          WHERE id = ANY($1::text[])`,
-        [uniqAll]
-      );
-      for (const row of sbRes.rows as Array<{ id: string; item_id: string | null; current_charge: unknown }>) {
-        const bid = String(row.id || '').trim();
-        const iid = String(row.item_id || '').trim();
-        const charge = Number(row.current_charge);
-        if (bid) storedResolve.set(bid, { itemId: iid, charge: Number.isFinite(charge) ? charge : 0 });
-      }
-    }
-
-    const resolve = new Map<string, string>();
-    for (const [bid, row] of storedResolve.entries()) {
-      if (row.itemId) resolve.set(bid, row.itemId);
-    }
-
-    const orphanIds = [...new Set(orphans.filter((id) => !resolve.has(id)))];
-    if (email && orphanIds.length > 0) {
-      const histRes = await client.query(
-        `SELECT DISTINCT ON (battery_instance_id) battery_instance_id, battery_item_id
-         FROM charging_history
-         WHERE user_email = $1
-           AND battery_instance_id = ANY($2::text[])
-           AND battery_item_id IS NOT NULL
-           AND BTRIM(battery_item_id::text) <> ''
-         ORDER BY battery_instance_id, timestamp DESC`,
-        [email, orphanIds]
-      );
-      for (const row of histRes.rows as Array<{ battery_instance_id: string; battery_item_id: string }>) {
-        const bid = String(row.battery_instance_id || '').trim();
-        const iid = String(row.battery_item_id || '').trim();
-        if (bid && iid) resolve.set(bid, iid);
-      }
-    }
-    if (resolve.size === 0 && storedResolve.size === 0) return;
-
-    for (const ws of workshopSlots) {
-      if (!ws || !isPlainObjectRecord(ws)) continue;
-      const intRaw = ws.internalSlots;
-      if (!isPlainObjectRecord(intRaw)) continue;
-      const sidRaw = ws.slotItemIds;
-      const chargeRaw = ws.slotCharges;
-      const nextMap: Record<string, string> = isPlainObjectRecord(sidRaw)
-        ? Object.fromEntries(
-            Object.entries(sidRaw)
-              .filter(([, v]) => v != null && String(v).trim() !== '')
-              .map(([k, v]) => [k, String(v).trim()])
-          )
-        : {};
-      const nextCharges: Record<string, number> = isPlainObjectRecord(chargeRaw)
-        ? Object.fromEntries(
-            Object.entries(chargeRaw)
-              .map(([k, v]) => [k, Number(v)])
-              .filter(([, v]) => Number.isFinite(v))
-          )
-        : {};
-      let changed = false;
-      for (const [slotId, instId] of Object.entries(intRaw)) {
-        if (instId === undefined || instId === null) continue;
-        const clean = String(instId).trim();
-        const itemIdGuess = resolve.get(clean);
-        if (itemIdGuess && (!nextMap[slotId] || nextMap[slotId].trim() === '')) {
-          nextMap[slotId] = itemIdGuess;
-          changed = true;
-        }
-        const stored = storedResolve.get(clean);
-        if (stored) {
-          nextCharges[slotId] = stored.charge;
-          changed = true;
-        }
-      }
-      if (changed) ws.slotItemIds = nextMap;
-      if (changed) ws.slotCharges = nextCharges;
-    }
-  } catch (e) {
-    console.warn(
-      '[enrichWorkshopSlotsSlotItemIdsFromChargingHistory]',
-      e instanceof Error ? e.message : String(e)
-    );
-  }
-}
-
-const WORKSHOP_LINK_INSTANCE_UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-/**
- * Após gravar `workshop_slots`, alinha `stored_batteries`: apontadores provisórios + `current_charge`
- * a partir do payload normalizado (mesma fonte que o JSON da oficina).
- */
-export async function refreshStoredBatteriesWorkshopLinkage(
-  client: PoolClient,
-  userId: number,
-  workshopNorm: (WorkshopSlotClientPayload | null)[]
-): Promise<void> {
-  const uid = Math.floor(Number(userId));
-  if (!Number.isFinite(uid) || uid <= 0) return;
-
-  await client.query(
-    `UPDATE stored_batteries
-        SET workshop_slot_index = NULL,
-            workshop_component_slot_id = NULL
-      WHERE user_id = $1
-        AND workshop_slot_index IS NOT NULL`,
-    [uid]
-  );
-
-  for (let i = 0; i < workshopNorm.length; i++) {
-    const w = workshopNorm[i];
-    if (!w?.itemId || !w.internalSlots || typeof w.internalSlots !== 'object') continue;
-    const charges = w.slotCharges && typeof w.slotCharges === 'object' ? w.slotCharges : {};
-    for (const [compId, rawVal] of Object.entries(w.internalSlots)) {
-      if (rawVal == null) continue;
-      const bid = String(rawVal).trim();
-      if (!bid || !WORKSHOP_LINK_INSTANCE_UUID_RE.test(bid)) continue;
-      const chRaw = (charges as Record<string, unknown>)[compId];
-      const hasExplicitSlotCharge =
-        chRaw !== undefined &&
-        chRaw !== null &&
-        String(chRaw).trim() !== '' &&
-        !(typeof chRaw === 'number' && !Number.isFinite(chRaw));
-
-      if (!hasExplicitSlotCharge) {
-        await client.query(
-          `UPDATE stored_batteries
-              SET workshop_slot_index = $1,
-                  workshop_component_slot_id = $2
-            WHERE user_id = $3 AND id = $4`,
-          [i, String(compId).slice(0, 200), uid, bid]
-        );
-        continue;
-      }
-
-      const ch = typeof chRaw === 'number' && Number.isFinite(chRaw) ? chRaw : Number(chRaw);
-      const currentCharge = Number.isFinite(ch) ? Math.max(0, ch) : 0;
-      await client.query(
-        `UPDATE stored_batteries
-            SET workshop_slot_index = $1,
-                workshop_component_slot_id = $2,
-                current_charge = $3
-          WHERE user_id = $4 AND id = $5`,
-        [i, String(compId).slice(0, 200), currentCharge, uid, bid]
-      );
-    }
-  }
 }

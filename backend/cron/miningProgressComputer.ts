@@ -4,22 +4,13 @@ import { sanitizeApiMessage, sanitizeForLog } from '../lib/safeText.js';
 import { getMiningCoinsActiveMap } from '../lib/stack/miningCoinsPrismaCache.js';
 import { miningCreditCapNowMs } from './miningWallClockGrid.js';
 import {
-  CANONICAL_1000WH_BATTERY_ID,
-  isKnownInfiniteBatteryCatalogId,
-  normalizeKnown1000WhBatteryCatalogId,
-  resolvePlacedRackBatteryCatalogId
-} from '../modules/batteries/batteries.catalog.js';
-import {
-  readWorkshopBatterySlotField,
-  workshopBatteryStorageKeyAtLayoutIndex
-} from '../lib/workshopBatterySlotStorageKey.js';
-import {
   REDIS_LOCK_KEYS,
   releaseDistributedLock,
   tryAcquireDistributedLock,
   type LockHandle
 } from '../lib/redisDistributedLock.js';
 import { miningRuntimeStats } from './miningRuntimeStats.js';
+import { brtDayFromMs } from '../modules/checkin/checkin.service.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -49,49 +40,6 @@ export function getActiveMiningProgressCalculations(): number {
 }
 
 type YieldHistRow = { coin_id: string; yield_per_hash: unknown; effective_at: unknown };
-
-function safeParseJsonRecord(value: unknown, maxChars: number, ctx: string): Record<string, unknown> | null {
-  if (value == null) return null;
-  if (typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
-  if (typeof value !== 'string') return null;
-  const t = value.trim();
-  if (!t) return null;
-  if (t.length > maxChars) {
-    console.warn(`${LOG_PREFIX} %s: JSON demasiado grande (%s chars)`, sanitizeForLog(ctx, 64), t.length);
-    return null;
-  }
-  try {
-    const v = JSON.parse(t) as unknown;
-    if (v === null || typeof v !== 'object' || Array.isArray(v)) return null;
-    return v as Record<string, unknown>;
-  } catch {
-    console.warn(`${LOG_PREFIX} %s: JSON inválido`, sanitizeForLog(ctx, 64));
-    return null;
-  }
-}
-
-type LayoutSlot = { type?: string; id?: string };
-
-function parseChargerLayout(raw: unknown, itemId: string): LayoutSlot[] | null {
-  const obj =
-    typeof raw === 'string'
-      ? safeParseJsonRecord(raw, 400_000, `charger_layout:${itemId}`)
-      : raw && typeof raw === 'object'
-        ? (raw as Record<string, unknown>)
-        : null;
-  if (!obj) return null;
-  const slots = obj.slots;
-  if (!Array.isArray(slots)) return null;
-  const out: LayoutSlot[] = [];
-  for (const s of slots) {
-    if (!s || typeof s !== 'object' || Array.isArray(s)) continue;
-    const o = s as Record<string, unknown>;
-    const type = typeof o.type === 'string' ? o.type : undefined;
-    const id = typeof o.id === 'string' ? o.id : undefined;
-    out.push({ type, id });
-  }
-  return out;
-}
 
 export function calculateIntegratedYield(
   _coinId: string,
@@ -236,14 +184,25 @@ export async function computeProgressForUser(
     const upgradesMap = new Map<string, Record<string, unknown>>();
     upgradesRes.rows.forEach((u) => upgradesMap.set(String(u.id), u as Record<string, unknown>));
 
-    const gsResInitial = await client.query('SELECT last_updated_at, start_time FROM game_states WHERE user_id = $1', [
-      userId
-    ]);
-    const gsInitial = gsResInitial.rows[0] as { last_updated_at?: unknown; start_time?: unknown } | undefined;
+    const gsResInitial = await client.query(
+      'SELECT last_updated_at, start_time, last_checkin_day FROM game_states WHERE user_id = $1',
+      [userId]
+    );
+    const gsInitial = gsResInitial.rows[0] as
+      | { last_updated_at?: unknown; start_time?: unknown; last_checkin_day?: unknown }
+      | undefined;
     if (!gsInitial) return { ok: true };
 
     const last = parseFiniteNumberLenient(gsInitial.last_updated_at ?? gsInitial.start_time, 'game_states.last');
     if (!Number.isFinite(last) || last <= 0) return { ok: true };
+
+    // Check-in diário: se `last_checkin_day` ≠ dia BRT actual, a mineração
+    // congela. `last_updated_at` continua a avançar para que o tempo passado
+    // congelado não seja pago retroactivamente quando o jogador voltar a fazer
+    // check-in.
+    const checkinDay = typeof gsInitial.last_checkin_day === 'string' ? gsInitial.last_checkin_day : null;
+    const todayBrt = brtDayFromMs(serverNow);
+    const checkinFrozen = checkinDay !== todayBrt;
 
     if (serverNow < last) {
       console.warn(`${LOG_PREFIX} user=%s relógio atrás de last_updated (possível manipulação)`, userId);
@@ -288,45 +247,12 @@ export async function computeProgressForUser(
     }
 
     const totalGained = new Map<string, number>();
-    const rackUpdates: Array<{ id: string; charge: number; isOn?: number }> = [];
-    const workshopUpdates: Array<{ uid: number; slot_index: number; charge: number; slot_charges: string }> = [];
-    const batteryUpdates: Array<{ id: string; charge: number }> = [];
+    const rackUpdates: Array<{ id: string; isOn?: number }> = [];
 
-    const racksRes = await client.query('SELECT * FROM placed_racks WHERE user_id = $1', [userId]);
+    const racksRes = checkinFrozen
+      ? { rows: [] as Array<Record<string, unknown>> }
+      : await client.query('SELECT * FROM placed_racks WHERE user_id = $1', [userId]);
     const rows = racksRes.rows as Array<Record<string, unknown>>;
-
-    let firstBatteryCatalogId = '';
-    for (const [id, u] of upgradesMap.entries()) {
-      const t = String(u.type ?? '').toLowerCase();
-      const c = String(u.category ?? '').toLowerCase();
-      if (t === 'battery' || c === 'battery') {
-        if (id === CANONICAL_1000WH_BATTERY_ID) {
-          firstBatteryCatalogId = id;
-          break;
-        }
-        if (!firstBatteryCatalogId) firstBatteryCatalogId = id;
-      }
-    }
-
-    const storedBattRes = await client.query('SELECT id, item_id FROM stored_batteries WHERE user_id = $1', [userId]);
-    const storedBattCatalogByInstanceId = new Map<string, string>();
-    for (const sb of storedBattRes.rows as Array<{ id?: unknown; item_id?: unknown }>) {
-      const iid = String(sb.id ?? '').trim();
-      if (!iid) continue;
-      const rawItem = normalizeKnown1000WhBatteryCatalogId(sb.item_id);
-      const def = rawItem ? upgradesMap.get(rawItem) : undefined;
-      const isBatt =
-        def &&
-        (String(def.type ?? '').toLowerCase() === 'battery' ||
-          String(def.category ?? '').toLowerCase() === 'battery');
-      if (rawItem && isBatt) {
-        storedBattCatalogByInstanceId.set(iid, rawItem);
-      } else if (firstBatteryCatalogId) {
-        storedBattCatalogByInstanceId.set(iid, firstBatteryCatalogId);
-      } else {
-        storedBattCatalogByInstanceId.set(iid, rawItem || iid);
-      }
-    }
 
     if (rows.length > 0) {
       const rackIds = rows.map((r) => String(r.id));
@@ -356,55 +282,21 @@ export async function computeProgressForUser(
         const rid = String(r.id);
         const slots = slotsMap.get(rid) || [];
         const multiplierSlots = multiMap.get(rid) || [];
-        const battKey = resolvePlacedRackBatteryCatalogId(
-          r.battery_id,
-          storedBattCatalogByInstanceId,
-          r.battery_catalog_item_id
-        );
-        const battDef = battKey ? upgradesMap.get(String(battKey)) : null;
-        const powerCap = battDef ? parseFiniteNumberLenient(battDef.power_capacity, 'rack.batt_cap') : NaN;
-        const snapPowerCap = parseFiniteNumberLenient(r.battery_power_capacity_wh, 'rack.batt_snap_cap');
-        const charge = parseFiniteNumberLenient(r.current_charge, 'rack.charge');
-        const isInfinite =
-          powerCap === -1 ||
-          snapPowerCap === -1 ||
-          charge === -1 ||
-          isKnownInfiniteBatteryCatalogId(battKey);
 
+        // Baterias são instâncias UUID infinitas: rig opera se ligada, com cablagem e bateria.
         const isOn = Number(r.is_on) === 1;
-        if (!isInfinite && (!isOn || !r.wiring_id || !r.battery_id || charge <= 0)) continue;
-        if (isInfinite && (!isOn || !r.wiring_id || !r.battery_id)) continue;
+        if (!isOn || !r.wiring_id || !r.battery_id) continue;
 
         const selectedCoinId = r.selected_coin_id ? String(r.selected_coin_id) : '';
         if (selectedCoinId) {
           const coin = coinMap.get(selectedCoinId);
           if (coin && !coin.isActive) {
-            rackUpdates.push({ id: rid, charge, isOn: 0 });
+            rackUpdates.push({ id: rid, isOn: 0 });
             continue;
           }
         }
 
-        let watts = 0;
-        slots.forEach((sid) => {
-          if (sid) {
-            const up = upgradesMap.get(String(sid));
-            if (up) watts += parseFiniteNumberLenient(up.power_consumption, 'rack.slot_w');
-          }
-        });
-        multiplierSlots.forEach((sid) => {
-          if (sid) {
-            const up = upgradesMap.get(String(sid));
-            if (up) watts += parseFiniteNumberLenient(up.power_consumption, 'rack.mult_w');
-          }
-        });
-
-        let timeAvailMs = dtMs;
-        if (watts > 0 && !isInfinite) {
-          const tDrainSec = (charge * 3600) / watts;
-          const tDrainMs = tDrainSec * 1000;
-          timeAvailMs = Math.min(dtMs, tDrainMs);
-        }
-
+        const timeAvailMs = dtMs;
         if (timeAvailMs > 0) {
           if (selectedCoinId) {
             const coin = coinMap.get(selectedCoinId);
@@ -440,82 +332,7 @@ export async function computeProgressForUser(
               }
             }
           }
-          const timeAvailSec = timeAvailMs / 1000;
-          const chargeUsed = watts > 0 && !isInfinite ? (watts * timeAvailSec) / 3600 : 0;
-          rackUpdates.push({ id: rid, charge: Math.max(0, charge - chargeUsed) });
         }
-      }
-    }
-
-    const workshopRes = await client.query('SELECT * FROM workshop_slots WHERE user_id = $1', [userId]);
-    for (const ws of workshopRes.rows as Array<Record<string, unknown>>) {
-      if (!ws.item_id) continue;
-      const def = upgradesMap.get(String(ws.item_id));
-      if (!def || String(def.type) !== 'charger') continue;
-
-      const layoutSlots = parseChargerLayout(def.layout, String(ws.item_id));
-      if (!layoutSlots) continue;
-
-      const batteryCount = layoutSlots.filter((s) => s.type === 'battery').length;
-      const chargerBarSlot = layoutSlots.find((s) => s.type === 'charger_bar');
-      const wiringSlot = layoutSlots.find((s) => s.type === 'wiring');
-
-      if (batteryCount === 0 || !chargerBarSlot) continue;
-
-      const internalSlots =
-        safeParseJsonRecord(ws.internal_state, 200_000, 'workshop.internal_state') ??
-        (ws.internal_state && typeof ws.internal_state === 'object'
-          ? (ws.internal_state as Record<string, unknown>)
-          : null) ??
-        {};
-      const slotCharges =
-        safeParseJsonRecord(ws.slot_charges, 200_000, 'workshop.slot_charges') ??
-        (ws.slot_charges && typeof ws.slot_charges === 'object'
-          ? (ws.slot_charges as Record<string, unknown>)
-          : null) ??
-        {};
-
-      const getSlotVal = (obj: Record<string, unknown>, sid: string | undefined): unknown => {
-        if (!obj || !sid) return null;
-        if (Object.prototype.hasOwnProperty.call(obj, sid) && obj[sid] != null) return obj[sid];
-        const entry = Object.entries(obj).find(([k]) => k.toLowerCase().trim() === sid.toLowerCase().trim());
-        return entry ? entry[1] : null;
-      };
-
-      if (wiringSlot?.id && !getSlotVal(internalSlots, wiringSlot.id)) continue;
-
-      let anyUpdate = false;
-
-      for (let layoutIdx = 0; layoutIdx < layoutSlots.length; layoutIdx++) {
-        const bSlot = layoutSlots[layoutIdx];
-        if (!bSlot || bSlot.type !== 'battery') continue;
-        const storageKey = workshopBatteryStorageKeyAtLayoutIndex(layoutSlots, layoutIdx);
-        if (!storageKey) continue;
-        const legacyId = typeof bSlot.id === 'string' ? bSlot.id.trim() : '';
-
-        const batteryInstanceId = readWorkshopBatterySlotField(internalSlots, layoutSlots, layoutIdx);
-        if (!batteryInstanceId) continue;
-
-        // Sistema de baterias agora é infinito por design: normaliza qualquer
-        // bateria antiga em slot de oficina para charge = -1 (sentinel "ilimitado")
-        // e não transfere Wh do tanque interno do carregador.
-        if (slotCharges[storageKey] !== -1) {
-          slotCharges[storageKey] = -1;
-          if (legacyId && legacyId !== storageKey && Object.prototype.hasOwnProperty.call(slotCharges, legacyId)) {
-            delete slotCharges[legacyId];
-          }
-          batteryUpdates.push({ id: String(batteryInstanceId), charge: -1 });
-          anyUpdate = true;
-        }
-      }
-
-      if (anyUpdate) {
-        workshopUpdates.push({
-          uid: userId,
-          slot_index: parseFiniteNumberLenient(ws.slot_index, 'ws.slot_index'),
-          charge: parseFiniteNumberLenient(ws.current_charge, 'workshop.internal_wh'),
-          slot_charges: JSON.stringify(slotCharges)
-        });
       }
     }
 
@@ -591,41 +408,13 @@ export async function computeProgressForUser(
 
     if (rackUpdates.length > 0) {
       const rIds = rackUpdates.map((u) => u.id);
-      const rCharges = rackUpdates.map((u) => u.charge);
       const rIsOns = rackUpdates.map((u) => (u.isOn !== undefined ? u.isOn : null));
       await client.query(
         `UPDATE placed_racks SET
-          current_charge = data.charge,
           is_on = COALESCE(data.is_on, placed_racks.is_on)
-        FROM (SELECT unnest($1::text[]) as id, unnest($2::numeric[]) as charge, unnest($3::int[]) as is_on) as data
-        WHERE placed_racks.id = data.id AND placed_racks.user_id = $4`,
-        [rIds, rCharges, rIsOns, userId]
-      );
-    }
-
-    for (const wu of workshopUpdates) {
-      await client.query(
-        'UPDATE workshop_slots SET current_charge = $1, slot_charges = $2 WHERE user_id = $3 AND slot_index = $4',
-        [wu.charge, wu.slot_charges, wu.uid, wu.slot_index]
-      );
-    }
-    if (batteryUpdates.length > 0) {
-      const bIds = batteryUpdates.map((u) => u.id);
-      const bCharges = batteryUpdates.map((u) => u.charge);
-      await client.query(
-        `UPDATE stored_batteries SET current_charge = data.charge
-        FROM (SELECT unnest($1::text[]) as id, unnest($2::numeric[]) as charge) as data
-        WHERE stored_batteries.id = data.id
-          AND stored_batteries.user_id = $3
-          AND NOT EXISTS (
-            SELECT 1 FROM placed_racks pr
-             WHERE pr.user_id = $3
-               AND pr.battery_id IS NOT NULL
-               AND btrim(pr.battery_id::text) <> ''
-               AND btrim(pr.battery_id::text) = btrim(stored_batteries.id::text)
-               AND pr.battery_id::text ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'
-          )`,
-        [bIds, bCharges, userId]
+        FROM (SELECT unnest($1::text[]) as id, unnest($2::int[]) as is_on) as data
+        WHERE placed_racks.id = data.id AND placed_racks.user_id = $3`,
+        [rIds, rIsOns, userId]
       );
     }
 
@@ -640,13 +429,11 @@ export async function computeProgressForUser(
         lastWrite,
         sanitizeForLog(idempotencyKey, 120)
       );
-    } else if (rackUpdates.length > 0 || workshopUpdates.length > 0 || batteryUpdates.length > 0) {
+    } else if (rackUpdates.length > 0) {
       console.log(
-        `${LOG_PREFIX} user=%s commit racks=%s workshop=%s batteries=%s idempotencyKey=%s lockAcquired=true`,
+        `${LOG_PREFIX} user=%s commit racks=%s idempotencyKey=%s lockAcquired=true`,
         userId,
         rackUpdates.length,
-        workshopUpdates.length,
-        batteryUpdates.length,
         sanitizeForLog(idempotencyKey, 120)
       );
     }

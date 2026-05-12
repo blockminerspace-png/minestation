@@ -9,7 +9,6 @@
 export type GamePathView =
   | 'servers'
   | 'inventory'
-  | 'oficina'
   | 'hardware_store'
   | 'black_market'
   | 'arcade'
@@ -29,7 +28,6 @@ export type GamePathView =
 export const GAME_PATH_VIEWS: readonly GamePathView[] = [
   'servers',
   'inventory',
-  'oficina',
   'hardware_store',
   'black_market',
   'arcade',
@@ -55,7 +53,6 @@ export function isGamePathView(s: string): s is GamePathView {
 export const ENGLISH_PATH_TO_VIEW: Record<string, GamePathView> = {
   servers: 'servers',
   inventory: 'inventory',
-  workshop: 'oficina',
   'miner-shop': 'hardware_store',
   'black-market': 'black_market',
   arcade: 'arcade',
@@ -76,7 +73,6 @@ export const ENGLISH_PATH_TO_VIEW: Record<string, GamePathView> = {
 const VIEW_TO_ENGLISH_PATH: Record<GamePathView, string> = {
   servers: '/servers',
   inventory: '/inventory',
-  oficina: '/workshop',
   hardware_store: '/miner-shop',
   black_market: '/black-market',
   arcade: '/arcade',

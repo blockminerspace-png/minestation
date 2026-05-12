@@ -264,7 +264,14 @@ model game_states {
   black_market_balance     Float?  @default(0)
   server_updated_at        BigInt? @default(0)
   usdc_bonus               Float?  @default(0)
+  /** Check-in diário (sistema substituto do carregamento de baterias).
+   *  Dia local America/Sao_Paulo no formato 'YYYY-MM-DD'. NULL = nunca fez check-in. */
+  last_checkin_day         String? @db.VarChar(10)
+  /** Sequência consecutiva de dias com check-in. A cada múltiplo de 7
+   *  o jogador ganha uma `battery_estelar`. */
+  checkin_streak           Int     @default(0)
 
+  @@index([last_checkin_day], map: "game_states_last_checkin_day_idx")
   @@map("game_states")
 }
 
@@ -387,21 +394,16 @@ model lucky_box_idempotency {
 }
 
 /// Integridade: `id` e `item_id` não podem ser vazios (CHECK na BD — migration `20260506120000_stored_batteries_nonempty_ids`).
+/// Sistema de carregamento descontinuado (migração `20260516180000_battery_uuids_and_purge_charging`):
+/// cada bateria tem UUID próprio em `id`, é infinita por design e nunca recarrega.
 model stored_batteries {
   id                  String  @id
   user_id             Int
   item_id             String
-  current_charge      Float
-  /// Capacidade máxima em Wh (igual a `upgrades.power_capacity`); -1 = ilimitada.
-  power_capacity_wh   Float?
-  /// Nome mostrado (cópia do catálogo na criação / reparo).
+  /// Nome mostrado (cópia do catálogo na criação).
   display_name        String?
   /// URL ou caminho de imagem (cópia opcional do catálogo).
   image_url           String? @db.VarChar(2048)
-  /// Provisório: bancada oficina (`workshop_slots.slot_index`) onde a instância está montada.
-  workshop_slot_index         Int?
-  /// Provisório: chave do slot em `internal_state` (ex. battery_0).
-  workshop_component_slot_id  String?
   /// Estado semântico da instância (migração Fase 3).
   status      String?
   location    String?
@@ -422,15 +424,12 @@ model placed_racks {
   item_id          String
   wiring_id        String?
   battery_id       String?
-  current_charge   Float
   is_on            Int
   selected_coin_id String?
   room_id          String?
   slot_index       Int?    @default(0)
   /// Id de catálogo (`upgrades.id`) da bateria montada (UUID em `battery_id`).
   battery_catalog_item_id   String?
-  /// Cópia de `power_capacity` em Wh no momento da montagem (sobrevive se o armazém não tiver linha).
-  battery_power_capacity_wh Float?
   battery_display_name      String?
   battery_image_url         String? @db.VarChar(2048)
 
@@ -742,19 +741,8 @@ model user_rig_rooms {
   @@map("user_rig_rooms")
 }
 
-model workshop_slots {
-  user_id        Int
-  slot_index     Int
-  item_id        String?
-  internal_state String?
-  current_charge Float?  @default(0)
-  slot_charges   String?
-  slot_item_ids  String?
-  installed_at   BigInt? @default(0)
-
-  @@id([user_id, slot_index])
-  @@map("workshop_slots")
-}
+// `workshop_slots` removido em 20260516180000_battery_uuids_and_purge_charging
+// (sistema de oficina/carregamento foi descontinuado — baterias são infinitas).
 
 model player_claimed_boxes {
   user_id     Int
@@ -1028,23 +1016,8 @@ model wheel_paid_pending {
   @@map("wheel_paid_pending")
 }
 
-// --- Histórico de carregamento oficina (auditoria técnica / enriquecimento) ---
-
-model charging_history {
-  id                   Int       @id @default(autoincrement())
-  user_email           String
-  action               String
-  workshop_slot_index  Int?
-  component_slot_id    String?
-  battery_instance_id  String?
-  battery_item_id      String?
-  charge_amount        Float?
-  timestamp            DateTime? @default(now()) @db.Timestamp(6)
-  stock_confirmed      Boolean?  @default(false)
-  details              Json?
-
-  @@map("charging_history")
-}
+// `charging_history` removido em 20260516180000_battery_uuids_and_purge_charging
+// (oficina/carregamento descontinuados).
 
 model app_cache {
   key        String   @id

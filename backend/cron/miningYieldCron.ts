@@ -1,5 +1,4 @@
 import type { Pool, PoolClient } from 'pg';
-import { isKnownInfiniteBatteryCatalogId, resolvePlacedRackBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 import { parseFiniteNumberLenient } from './miningNumeric.js';
 import { sanitizeForLog } from '../lib/safeText.js';
 import { miningRuntimeStats } from './miningRuntimeStats.js';
@@ -58,9 +57,6 @@ type RackRow = {
   id: string;
   user_id: number;
   battery_id: string;
-  battery_catalog_item_id?: string | null;
-  battery_power_capacity_wh?: unknown;
-  current_charge: unknown;
   username: unknown;
 };
 
@@ -111,7 +107,7 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
     await hydrateYieldHistoryBoundaryFromDb(client);
 
     const activeRes = await client.query(`
-      SELECT pr.selected_coin_id, pr.id, pr.user_id, pr.battery_id, pr.battery_catalog_item_id, pr.battery_power_capacity_wh, pr.current_charge, u.username
+      SELECT pr.selected_coin_id, pr.id, pr.user_id, pr.battery_id, u.username
       FROM placed_racks pr
       JOIN users u ON pr.user_id = u.id
       JOIN mining_coins mc ON pr.selected_coin_id = mc.id
@@ -123,17 +119,9 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
       AND u.ranking_excluded = 0
     `);
 
-    const upsRes = await client.query('SELECT id, base_production, multiplier, power_capacity FROM upgrades');
-    const upsMap = new Map<string, { base_production?: unknown; multiplier?: unknown; power_capacity?: unknown }>();
+    const upsRes = await client.query('SELECT id, base_production, multiplier FROM upgrades');
+    const upsMap = new Map<string, { base_production?: unknown; multiplier?: unknown }>();
     upsRes.rows.forEach((u) => upsMap.set(String(u.id), u));
-
-    const storedBattAll = await client.query('SELECT id, item_id FROM stored_batteries');
-    const storedBattCatalogByInstanceId = new Map<string, string>();
-    for (const sb of storedBattAll.rows as Array<{ id?: unknown; item_id?: unknown }>) {
-      const iid = String(sb.id ?? '').trim();
-      const itemId = String(sb.item_id ?? '').trim();
-      if (iid && itemId) storedBattCatalogByInstanceId.set(iid, itemId);
-    }
 
     const slotRes = await client.query('SELECT rack_id, machine_item_id FROM rack_slots');
     const slotsMap: Record<string, string[]> = {};
@@ -166,22 +154,7 @@ export async function updateMiningYields(pool: Pool): Promise<void> {
         const cid = String(rack.selected_coin_id);
         if (!cid) continue;
 
-        const battKey = resolvePlacedRackBatteryCatalogId(
-          rack.battery_id,
-          storedBattCatalogByInstanceId,
-          rack.battery_catalog_item_id
-        );
-        const batt = battKey ? upsMap.get(String(battKey)) : undefined;
-        const powerCap = batt ? parseFiniteNumberLenient(batt.power_capacity, 'rack.battery_power_cap') : 0;
-        const snapPowerCap = parseFiniteNumberLenient(rack.battery_power_capacity_wh, 'rack.battery_snap_power_cap');
-        const charge = parseFiniteNumberLenient(rack.current_charge, 'rack.charge');
-        const isInfinite =
-          powerCap === -1 ||
-          snapPowerCap === -1 ||
-          charge === -1 ||
-          isKnownInfiniteBatteryCatalogId(battKey);
-        if (!isInfinite && charge <= 0) continue;
-
+        // Baterias são instâncias UUID infinitas: rig opera se já passou os filtros do SELECT.
         let base = 0;
         (slotsMap[rack.id] || []).forEach((mid) => {
           const u = upsMap.get(String(mid));

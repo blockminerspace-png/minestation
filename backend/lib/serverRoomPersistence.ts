@@ -1,6 +1,11 @@
 /**
  * Load/persist stock, stored batteries, and placed racks (with slots) for server-room actions.
  * Mirrors relevant blocks in server.js save-game / game-state.
+ *
+ * Sistema de carregamento de baterias descontinuado em
+ * `20260516180000_battery_uuids_and_purge_charging`: já não há `current_charge`/
+ * `power_capacity_wh` em `stored_batteries` nem `current_charge`/`battery_power_capacity_wh`
+ * em `placed_racks`; cada bateria tem UUID próprio e é infinita.
  */
 import crypto from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -22,7 +27,7 @@ import {
   type PrevPlacedRackBattRow,
   type StoredBatteryRowSnap
 } from '../modules/batteries/batteries.repository.js';
-import { isKnownInfiniteBatteryCatalogId, normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
+import { normalizeKnown1000WhBatteryCatalogId } from '../modules/batteries/batteries.catalog.js';
 
 export { loadUserStoredBatteries, normalizePlacedRackRoomId };
 
@@ -43,14 +48,12 @@ export type PlacedRackLoaded = {
   multiplierSlots: string[];
   wiringId: string | null;
   batteryId: string | null;
-  currentCharge: number;
   isOn: boolean;
   selectedCoinId: string | null;
   roomId: string;
   slotIndex: number;
-  /** Snapshot BD: catálogo da bateria montada (Wh / UI). */
+  /** Snapshot BD: catálogo da bateria montada (UI). */
   batteryCatalogItemId?: string | null;
-  batteryPowerCapacityWh?: number | null;
   batteryDisplayName?: string | null;
   batteryImageUrl?: string | null;
 };
@@ -97,14 +100,11 @@ export async function loadUserPlacedRacksWithSlots(client: PoolClient, uid: numb
       multiplierSlots: multipliersMap.get(id) || [],
       wiringId: (r.wiring_id as string | null) ?? null,
       batteryId: (r.battery_id as string | null) ?? null,
-      currentCharge: Number(r.current_charge) || 0,
       isOn: !!r.is_on,
       selectedCoinId: (r.selected_coin_id as string | null) ?? null,
       roomId: normalizePlacedRackRoomId(r.room_id),
       slotIndex: Number(r.slot_index) || 0,
       batteryCatalogItemId: (r.battery_catalog_item_id as string | null) ?? null,
-      batteryPowerCapacityWh:
-        r.battery_power_capacity_wh != null ? Number(r.battery_power_capacity_wh) : null,
       batteryDisplayName: (r.battery_display_name as string | null) ?? null,
       batteryImageUrl: (r.battery_image_url as string | null) ?? null
     });
@@ -165,21 +165,16 @@ export type GameStateChanges = {
   storedBatteries?: Array<{
     id: string;
     itemId: string;
-    currentCharge?: number;
-    powerCapacityWh?: number | null;
     displayName?: string | null;
     imageUrl?: string | null;
   }>;
   placedRacks?: PlacedRackLoaded[];
-  /** Opcional: usado pela validação de remoções seguras em `stored_batteries`. */
-  workshopSlots?: unknown;
   /**
    * Como interpretar `stock` na persistência:
    * - `'snapshot'`: o objeto representa o estoque livre completo do utilizador; linhas em
    *   `stock` ausentes do snapshot são apagadas (corrige duplicação infinita quando um item
    *   chega a qty 0 ao equipar no rack).
    * - `'partial'` (default): comportamento legado — apenas UPSERT das chaves presentes.
-   *   Usado pelos saves legados / sanitizers que constroem stock parcial.
    */
   stockMode?: 'snapshot' | 'partial';
 };
@@ -209,7 +204,7 @@ async function applyDismantledRacksStockRecoveryWhenStockOmitted(
   if (changes.stock !== undefined) return;
 
   const prevRes = await client.query(
-    `SELECT id, item_id, wiring_id, battery_id, current_charge
+    `SELECT id, item_id, wiring_id, battery_id
      FROM placed_racks WHERE user_id = $1`,
     [uid]
   );
@@ -218,7 +213,6 @@ async function applyDismantledRacksStockRecoveryWhenStockOmitted(
     item_id: string;
     wiring_id: string | null;
     battery_id: string | null;
-    current_charge: number;
   };
   const nextIds = new Set(placedRacks.map((r) => r.id));
   const removed = (prevRes.rows as PrevRow[]).filter((r) => !nextIds.has(r.id));
@@ -251,14 +245,7 @@ async function applyDismantledRacksStockRecoveryWhenStockOmitted(
       bump(m.multiplier_item_id, 1);
     }
 
-    await returnRackBatteryFromDismantleToChanges(
-      client,
-      uid,
-      row.battery_id,
-      Number(row.current_charge) || 0,
-      additions,
-      changes
-    );
+    await returnRackBatteryFromDismantleToChanges(client, uid, row.battery_id, additions, changes);
   }
 
   const keys = Object.keys(additions);
@@ -278,11 +265,14 @@ async function applyDismantledRacksStockRecoveryWhenStockOmitted(
   }
 }
 
+/**
+ * Sistema infinito: bateria desmontada volta como instância UUID para `stored_batteries`
+ * (sem charge/capacidade), mantendo o id se já existia em armazém.
+ */
 async function returnRackBatteryFromDismantleToChanges(
   client: PoolClient,
   uid: number | string,
   batteryId: string | null | undefined,
-  rackCurrentCharge: number,
   additions: Record<string, number>,
   changes: GameStateChanges
 ): Promise<void> {
@@ -292,7 +282,7 @@ async function returnRackBatteryFromDismantleToChanges(
     /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(bid);
   if (isUuid) {
     const br = await client.query(
-      'SELECT id, item_id, current_charge, power_capacity_wh, display_name, image_url FROM stored_batteries WHERE id = $1 AND user_id = $2',
+      'SELECT id, item_id, display_name, image_url FROM stored_batteries WHERE id = $1 AND user_id = $2',
       [bid, uid]
     );
     if (br.rows[0]) {
@@ -300,8 +290,6 @@ async function returnRackBatteryFromDismantleToChanges(
       const r = br.rows[0] as {
         id: string;
         item_id: string;
-        current_charge: number;
-        power_capacity_wh: number | null;
         display_name: string | null;
         image_url: string | null;
       };
@@ -309,8 +297,6 @@ async function returnRackBatteryFromDismantleToChanges(
         changes.storedBatteries!.push({
           id: r.id,
           itemId: normalizeKnown1000WhBatteryCatalogId(r.item_id),
-          currentCharge: Number(r.current_charge) || 0,
-          powerCapacityWh: r.power_capacity_wh != null ? Number(r.power_capacity_wh) : undefined,
           displayName: r.display_name != null ? String(r.display_name) : undefined,
           imageUrl: r.image_url != null ? String(r.image_url) : undefined
         });
@@ -318,24 +304,15 @@ async function returnRackBatteryFromDismantleToChanges(
       return;
     }
   }
-  const u = await client.query('SELECT type, power_capacity FROM upgrades WHERE id = $1', [bid]);
-  const row = u.rows[0] as { type?: string; power_capacity?: unknown } | undefined;
+  // Catalog id: cria instância UUID no armazém (sistema infinito; sem fullness check).
+  const u = await client.query('SELECT type FROM upgrades WHERE id = $1', [bid]);
+  const row = u.rows[0] as { type?: string } | undefined;
   if (row && String(row.type) === 'battery') {
-    const capRaw = row.power_capacity;
-    const cap = capRaw === null || capRaw === undefined ? null : Number(capRaw);
-    const charge = Number(rackCurrentCharge) || 0;
-    const isInf = cap === -1 || isKnownInfiniteBatteryCatalogId(bid);
-    const isFull = isInf || (typeof cap === 'number' && cap > 0 && charge >= cap * 0.999);
-    if (isFull) {
-      additions[bid] = (additions[bid] || 0) + 1;
-    } else {
-      await ensureStoredBatteriesInChanges(client, uid, changes);
-      changes.storedBatteries!.push({
-        id: crypto.randomUUID(),
-        itemId: bid,
-        currentCharge: charge
-      });
-    }
+    await ensureStoredBatteriesInChanges(client, uid, changes);
+    changes.storedBatteries!.push({
+      id: crypto.randomUUID(),
+      itemId: normalizeKnown1000WhBatteryCatalogId(bid)
+    });
     return;
   }
   additions[bid] = (additions[bid] || 0) + 1;
@@ -353,7 +330,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
 
   const { stock, storedBatteries, placedRacks } = changes;
 
-  /** Linhas em `stored_batteries` antes do DELETE — instâncias montadas na rig saem do payload do armazém. */
   let preMountBatterySnap = new Map<string, StoredBatteryRowSnap>();
   if (Array.isArray(placedRacks) && placedRacks.length > 0) {
     const mountedIds = collectMountedBatteryInstanceIdsFromPlacedRacks(placedRacks as { batteryId?: unknown }[]);
@@ -366,7 +342,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
   if (storedBatteries) {
     storedBatteriesNorm = sanitizeStoredBatteriesForSavePayload(
       storedBatteries,
-      changes.workshopSlots,
       changes.placedRacks
     ) as typeof storedBatteries;
     const incomingBatIds = storedBatteriesNorm.map((b) => b.id);
@@ -374,7 +349,7 @@ export async function persistStockStoredBatteriesPlacedRacks(
       client,
       uid,
       incomingBatIds,
-      { placedRacks: changes.placedRacks, workshopSlots: changes.workshopSlots },
+      { placedRacks: changes.placedRacks },
       false
     );
     if (!rm.ok) {
@@ -395,22 +370,7 @@ export async function persistStockStoredBatteriesPlacedRacks(
     const itemIds = [...stockNorm.keys()];
     const qtys = itemIds.map((id) => stockNorm.get(id) || 0);
 
-    if (process.env.GPU_DUP_DEBUG === '1') {
-      console.log(
-        JSON.stringify({
-          event: '[GPU_DUP_DEBUG][persist_stock_snapshot]',
-          userId: uid,
-          stockMode,
-          incomingKeys: Object.keys(stock).length,
-          normItems: itemIds.length,
-          normSample: itemIds.slice(0, 10).map((id) => ({ id, qty: stockNorm.get(id) || 0 }))
-        })
-      );
-    }
-
     if (stockMode === 'snapshot') {
-      // O snapshot é a verdade absoluta do estoque livre: linhas em `stock` ausentes
-      // (item chegou a qty 0 ao equipar) têm de ser apagadas, senão regressam ao montar/desmontar.
       if (itemIds.length > 0) {
         await client.query(
           'DELETE FROM stock WHERE user_id = $1 AND NOT (item_id = ANY($2::text[]))',
@@ -426,7 +386,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
       } else {
         await client.query('DELETE FROM stock WHERE user_id = $1', [uid]);
       }
-      // Defensivo: nunca deixar linhas com qty <= 0 (caso outro caminho tenha gravado).
       await client.query('DELETE FROM stock WHERE user_id = $1 AND qty <= 0', [uid]);
     } else if (itemIds.length > 0) {
       await client.query(
@@ -437,28 +396,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
         [uid, itemIds, qtys]
       );
     }
-
-    if (process.env.GPU_DUP_DEBUG === '1') {
-      try {
-        const after = await client.query(
-          'SELECT item_id, qty FROM stock WHERE user_id = $1 ORDER BY item_id LIMIT 50',
-          [uid]
-        );
-        console.log(
-          JSON.stringify({
-            event: '[GPU_DUP_DEBUG][persist_stock_db_after]',
-            userId: uid,
-            stockMode,
-            rows: (after.rows as { item_id: string; qty: number }[]).map((r) => ({
-              item_id: r.item_id,
-              qty: Number(r.qty)
-            }))
-          })
-        );
-      } catch {
-        /* logs nunca abortam o save */
-      }
-    }
   }
 
   if (storedBatteriesNorm) {
@@ -467,12 +404,7 @@ export async function persistStockStoredBatteriesPlacedRacks(
     if (storedBatteriesNorm.length > 0) {
       const bIds = storedBatteriesNorm.map((b) => b.id);
       const bItemIds = storedBatteriesNorm.map((b) => normalizeKnown1000WhBatteryCatalogId(b.itemId));
-      const bCharges = storedBatteriesNorm.map((b) => b.currentCharge || 0);
       const upStored = await fetchBatteryUpgradeRowsByIds(client, bItemIds);
-      const bPowers = bItemIds.map((cid) => {
-        const u = upStored.get(String(cid));
-        return u?.power_capacity != null && Number.isFinite(Number(u.power_capacity)) ? Number(u.power_capacity) : null;
-      });
       const bNames = bItemIds.map((cid) => {
         const n = upStored.get(String(cid))?.name;
         return n != null && String(n).trim() !== '' ? String(n).trim().slice(0, 500) : null;
@@ -483,17 +415,13 @@ export async function persistStockStoredBatteriesPlacedRacks(
       });
       await client.query(
         `
-          INSERT INTO stored_batteries (id, user_id, item_id, current_charge, power_capacity_wh, display_name, image_url, workshop_slot_index, workshop_component_slot_id)
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::numeric[]), unnest($5::float8[]), unnest($6::text[]), unnest($7::text[]), NULL::int, NULL::text
+          INSERT INTO stored_batteries (id, user_id, item_id, display_name, image_url)
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[])
           ON CONFLICT (id) DO UPDATE SET
-            current_charge = EXCLUDED.current_charge,
             item_id = EXCLUDED.item_id,
-            power_capacity_wh = COALESCE(EXCLUDED.power_capacity_wh, stored_batteries.power_capacity_wh),
             display_name = COALESCE(NULLIF(BTRIM(EXCLUDED.display_name), ''), stored_batteries.display_name),
-            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url),
-            workshop_slot_index = stored_batteries.workshop_slot_index,
-            workshop_component_slot_id = stored_batteries.workshop_component_slot_id`,
-        [uid, bIds, bItemIds, bCharges, bPowers, bNames, bImgs]
+            image_url = COALESCE(NULLIF(BTRIM(EXCLUDED.image_url), ''), stored_batteries.image_url)`,
+        [uid, bIds, bItemIds, bNames, bImgs]
       );
     }
   }
@@ -501,9 +429,9 @@ export async function persistStockStoredBatteriesPlacedRacks(
   if (placedRacks) {
     const ts = new Date().toISOString();
     const prevRacksRes = await client.query(
-      `SELECT id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id,
+      `SELECT id, item_id, wiring_id, battery_id, is_on, selected_coin_id,
               COALESCE(NULLIF(BTRIM(room_id::text), ''), 'room_initial') AS room_id, slot_index,
-              battery_catalog_item_id, battery_power_capacity_wh, battery_display_name, battery_image_url
+              battery_catalog_item_id, battery_display_name, battery_image_url
        FROM placed_racks WHERE user_id = $1`,
       [uid]
     );
@@ -512,13 +440,11 @@ export async function persistStockStoredBatteriesPlacedRacks(
       item_id: string;
       wiring_id: string | null;
       battery_id: string | null;
-      current_charge: number;
       is_on: number;
       selected_coin_id: string | null;
       room_id: string;
       slot_index: number;
       battery_catalog_item_id: string | null;
-      battery_power_capacity_wh: number | null;
       battery_display_name: string | null;
       battery_image_url: string | null;
     };
@@ -594,7 +520,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
       if (String(prow.wiring_id || '') !== String(r.wiringId || '')) changed.push('wiring');
       if (String(prow.battery_id || '') !== String(r.batteryId || '')) changed.push('battery');
       if (Number(prow.is_on) !== (r.isOn ? 1 : 0)) changed.push('power');
-      if (Number(prow.current_charge || 0) !== Number(r.currentCharge || 0)) changed.push('charge');
       if (String(prow.selected_coin_id || '') !== String(r.selectedCoinId || '')) changed.push('coin');
       if (String(prow.room_id || '') !== String(normalizePlacedRackRoomId(r.roomId))) changed.push('room');
       if (Number(prow.slot_index || 0) !== Number(r.slotIndex || 0)) changed.push('slot');
@@ -654,14 +579,12 @@ export async function persistStockStoredBatteriesPlacedRacks(
         if (!bid || isRackBatteryInstanceUuid(bid)) return r.batteryId || null;
         return normalizeKnown1000WhBatteryCatalogId(bid);
       });
-      const rCharges = placedRacks.map((r) => r.currentCharge || 0);
       const rOns = placedRacks.map((r) => (r.isOn ? 1 : 0));
       const rCoins = placedRacks.map((r) => r.selectedCoinId || null);
       const rRooms = placedRacks.map((r) => normalizePlacedRackRoomId(r.roomId));
       const rSlotIdxs = placedRacks.map((r) => r.slotIndex || 0);
 
       const rBatCats: (string | null)[] = [];
-      const rBatPows: (number | null)[] = [];
       const rBatNames: (string | null)[] = [];
       const rBatImgs: (string | null)[] = [];
       for (const r of placedRacks) {
@@ -670,7 +593,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
           ? {
               battery_id: prow.battery_id,
               battery_catalog_item_id: prow.battery_catalog_item_id,
-              battery_power_capacity_wh: prow.battery_power_capacity_wh,
               battery_display_name: prow.battery_display_name,
               battery_image_url: prow.battery_image_url
             }
@@ -683,12 +605,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
               ? normalizeKnown1000WhBatteryCatalogId(r.batteryCatalogItemId)
               : null;
         const uFromCat = catOut ? upgradeByCatalog.get(catOut) : undefined;
-        const powOut =
-          snap.powerWh != null && Number.isFinite(Number(snap.powerWh))
-            ? Number(snap.powerWh)
-            : uFromCat?.power_capacity != null && Number.isFinite(Number(uFromCat.power_capacity))
-              ? Number(uFromCat.power_capacity)
-              : null;
         const nameOut =
           snap.displayName != null && String(snap.displayName).trim() !== ''
             ? String(snap.displayName).trim().slice(0, 500)
@@ -702,7 +618,6 @@ export async function persistStockStoredBatteriesPlacedRacks(
               ? String(uFromCat.image).trim().slice(0, 2048)
               : null;
         rBatCats.push(catOut);
-        rBatPows.push(powOut);
         rBatNames.push(nameOut);
         rBatImgs.push(imgOut);
       }
@@ -710,35 +625,19 @@ export async function persistStockStoredBatteriesPlacedRacks(
       await client.query(
         `
           INSERT INTO placed_racks (
-            id, user_id, item_id, wiring_id, battery_id, current_charge, is_on, selected_coin_id, room_id, slot_index,
-            battery_catalog_item_id, battery_power_capacity_wh, battery_display_name, battery_image_url
+            id, user_id, item_id, wiring_id, battery_id, is_on, selected_coin_id, room_id, slot_index,
+            battery_catalog_item_id, battery_display_name, battery_image_url
           )
-          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), unnest($6::numeric[]), unnest($7::int[]), unnest($8::text[]), unnest($9::text[]), unnest($10::int[]),
-                 unnest($11::text[]), unnest($12::float8[]), unnest($13::text[]), unnest($14::text[])
+          SELECT unnest($2::text[]), $1, unnest($3::text[]), unnest($4::text[]), unnest($5::text[]), unnest($6::int[]), unnest($7::text[]), unnest($8::text[]), unnest($9::int[]),
+                 unnest($10::text[]), unnest($11::text[]), unnest($12::text[])
           ON CONFLICT (id) DO UPDATE SET
             item_id = EXCLUDED.item_id, wiring_id = EXCLUDED.wiring_id, battery_id = EXCLUDED.battery_id,
-            current_charge = EXCLUDED.current_charge, is_on = EXCLUDED.is_on, selected_coin_id = EXCLUDED.selected_coin_id,
+            is_on = EXCLUDED.is_on, selected_coin_id = EXCLUDED.selected_coin_id,
             room_id = EXCLUDED.room_id, slot_index = EXCLUDED.slot_index,
             battery_catalog_item_id = EXCLUDED.battery_catalog_item_id,
-            battery_power_capacity_wh = EXCLUDED.battery_power_capacity_wh,
             battery_display_name = EXCLUDED.battery_display_name,
             battery_image_url = EXCLUDED.battery_image_url`,
-        [
-          uid,
-          rIds,
-          rItems,
-          rWirings,
-          rBatteries,
-          rCharges,
-          rOns,
-          rCoins,
-          rRooms,
-          rSlotIdxs,
-          rBatCats,
-          rBatPows,
-          rBatNames,
-          rBatImgs
-        ]
+        [uid, rIds, rItems, rWirings, rBatteries, rOns, rCoins, rRooms, rSlotIdxs, rBatCats, rBatNames, rBatImgs]
       );
 
       await client.query('DELETE FROM rack_slots WHERE rack_id = ANY($1)', [rIds]);
