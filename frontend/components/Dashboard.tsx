@@ -310,20 +310,20 @@ function EcosystemModulesStrip({
                     <button
                       type="button"
                       onClick={() => onNavigate('partners')}
-                      className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
+                      className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-3.5 py-1.5 sm:px-4 sm:py-1.5 text-[10px] sm:text-[11px] font-black uppercase tracking-wide text-stone-950 shadow-[0_4px_14px_-2px_rgba(245,158,11,0.42)] ring-1 ring-amber-200/70 border border-amber-950/20 hover:brightness-105 hover:scale-[1.03] active:scale-[0.99] transition-transform"
                     >
                       Entrar
-                      <ChevronRight size={16} strokeWidth={2.75} className="opacity-90" />
+                      <ChevronRight size={13} strokeWidth={2.75} className="opacity-90" />
                     </button>
                   ) : (
                     <a
                       href={m.href}
                       target={m.external ? '_blank' : undefined}
                       rel={m.external ? 'noopener noreferrer' : undefined}
-                      className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1.5 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-6 py-2.5 text-xs sm:text-sm font-black uppercase tracking-wide text-stone-950 shadow-[0_8px_30px_-4px_rgba(245,158,11,0.55)] ring-2 ring-amber-200/80 border border-amber-950/20 hover:brightness-105 hover:scale-[1.04] active:scale-[0.99] transition-transform"
+                      className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-3.5 py-1.5 sm:px-4 sm:py-1.5 text-[10px] sm:text-[11px] font-black uppercase tracking-wide text-stone-950 shadow-[0_4px_14px_-2px_rgba(245,158,11,0.42)] ring-1 ring-amber-200/70 border border-amber-950/20 hover:brightness-105 hover:scale-[1.03] active:scale-[0.99] transition-transform"
                     >
                       Entrar
-                      <ChevronRight size={16} strokeWidth={2.75} className="opacity-90" />
+                      <ChevronRight size={13} strokeWidth={2.75} className="opacity-90" />
                     </a>
                   )
                 ) : null}
