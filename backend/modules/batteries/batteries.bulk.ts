@@ -168,6 +168,20 @@ function unloadRackBatteryToInventory(
   }
 
   if (isRackBatteryInstanceUuid(id)) {
+    /**
+     * UUID montado na rig sem instância correspondente em `stored_batteries`
+     * (resíduo de equipas anteriores ao fix de `keepIds` que apagavam a
+     * instância recém-equipada). Recupera-se como bateria Estelar normal no
+     * armazém usando o snapshot de catálogo da própria rig (ou fallback para
+     * `battery_estelar`) — evita que "Remover Todas" / "Smart Fill" descartem
+     * silenciosamente baterias do utilizador.
+     */
+    const catFromRack = String(rack.batteryCatalogItemId || '').trim();
+    const cat = catFromRack || 'battery_estelar';
+    const upgCat = upgrades.find((u) => u.id === cat && u.type === 'battery');
+    if (isUsableBatteryCatalog(upgCat)) {
+      nb.push({ id, itemId: cat });
+    }
     return;
   }
 

@@ -139,4 +139,68 @@ describe('roomBatteryBulk instance UUID on rack', () => {
     expect(equippedIds.sort()).toEqual([inst1, inst2].sort());
     expect((out.next?.storedBatteries ?? []).length).toBe(0);
   });
+
+  it('regressão: "Remover Todas" recupera UUID órfão equipado em rig (sem instância em armazém)', () => {
+    // Cenário pós-bug `keepIds`: a rig ficou com `batteryId = UUID` mas a
+    // instância correspondente não existe em `stored_batteries` (foi apagada
+    // pelo DELETE de snapshot durante o equip). Antes do fix do
+    // `unloadRackBatteryToInventory`, "Remover Todas" descartava silenciosamente
+    // este UUID e a bateria era perdida em massa quando o user clicava o
+    // botão. O comportamento correto é restaurar a instância no armazém usando
+    // o snapshot de catálogo da rig (ou fallback `battery_estelar`).
+    const orphanInst = '99999999-aaaa-4bbb-8ccc-dddddddddddd';
+    const prev: BulkBatteryPrev = {
+      stock: {},
+      storedBatteries: [],
+      placedRacks: [
+        {
+          id: 'rack1',
+          itemId: 'some_chassis',
+          roomId: 'room_initial',
+          slotIndex: 0,
+          batteryId: orphanInst,
+          batteryCatalogItemId: 'small_battery',
+          isOn: true,
+          slots: [],
+          multiplierSlots: []
+        }
+      ]
+    };
+    const out = applyBulkRoomBatteryChange(prev, 'room_initial', '', upgrades, { rigSort: 'slot_asc' });
+    expect(out.ok).toBe(true);
+    expect(out.next?.placedRacks?.[0]?.batteryId).toBeNull();
+    const recovered = (out.next?.storedBatteries ?? []).find((b) => b.id === orphanInst);
+    expect(recovered).toBeTruthy();
+    expect(recovered?.itemId).toBe('small_battery');
+  });
+
+  it('regressão: smart fill recupera UUID órfão equipado em rig antes de redistribuir', () => {
+    // Mesmo cenário do teste anterior, mas via Smart Fill: o `unload` interno
+    // tem de recuperar a instância UUID órfã para o pool. Caso contrário a rig
+    // fica vazia e o user perde a bateria em massa quando clica o botão.
+    const orphanInst = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
+    const prev: BulkBatteryPrev = {
+      stock: {},
+      storedBatteries: [],
+      placedRacks: [
+        {
+          id: 'rack1',
+          itemId: 'some_chassis',
+          roomId: 'room_initial',
+          slotIndex: 0,
+          batteryId: orphanInst,
+          batteryCatalogItemId: 'small_battery',
+          isOn: true,
+          slots: [],
+          multiplierSlots: []
+        }
+      ]
+    };
+    const out = applyBulkRoomBatterySmartFill(prev, 'room_initial', upgrades, 'slot_asc');
+    expect(out.ok).toBe(true);
+    // Após smart fill, a bateria recuperada deve ter sido devolvida à mesma rig
+    // (única opção compatível). Garante que o UUID original foi preservado e
+    // não simplesmente descartado.
+    expect(out.next?.placedRacks?.[0]?.batteryId).toBe(orphanInst);
+  });
 });
