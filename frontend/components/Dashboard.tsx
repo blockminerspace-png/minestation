@@ -255,7 +255,7 @@ function EcosystemModulesStrip({
   if (!modules.length) return null;
 
   const stripScrollClass =
-    'flex min-w-0 flex-1 gap-2.5 sm:gap-3 overflow-x-auto overflow-y-visible snap-x snap-mandatory pt-0 pb-3 scroll-pl-0.5 sm:scroll-pl-1 ' +
+    'scrollbar-none flex min-w-0 flex-1 gap-2.5 sm:gap-3 overflow-x-auto overflow-y-visible snap-x snap-mandatory pt-0 pb-3 scroll-pl-0.5 sm:scroll-pl-1 ' +
     '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
 
   return (

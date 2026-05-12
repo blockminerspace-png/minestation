@@ -84,3 +84,18 @@ body {
   scrollbar-width: thin;
   scrollbar-color: rgba(245, 158, 11, 0.3) rgba(0, 0, 0, 0.2);
 }
+
+/**
+ * Esconde barra nativa mas mantém scroll (rato/trackpad/touch).
+ * Usar em filas horizontais (nav do jogo, carrossel dashboard).
+ */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+  background: transparent;
+}

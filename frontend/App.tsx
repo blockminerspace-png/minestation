@@ -2942,7 +2942,7 @@ export default function App() {
                 </div>
               )}
               <div
-                className={`max-w-7xl mx-auto hidden md:flex w-full min-w-0 flex-nowrap justify-start items-center gap-1 sm:gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x scroll-pl-1 [scrollbar-width:thin] ${
+                className={`max-w-7xl mx-auto hidden md:flex w-full min-w-0 flex-nowrap justify-start items-center gap-1 sm:gap-1.5 overflow-x-auto overflow-y-hidden overscroll-x-contain touch-pan-x scroll-pl-1 scrollbar-none ${
                   compactGameChrome ? 'px-3 py-1.5' : 'px-3 sm:px-4 py-2'
                 }`}
               >
