@@ -1,6 +1,6 @@
 import { prisma } from '../config/prisma.js';
 import { miningRuntimeStats } from '../cron/miningRuntimeStats.js';
-import { brtDayFromMs } from '../modules/checkin/checkin.service.js';
+import { isCheckinFrozenAtMs } from '../modules/checkin/checkin.service.js';
 import { normalizePlacedRackRoomId } from '../modules/batteries/batteries.validation.js';
 import {
   CALCULATOR_PROJECTION_PERIODS,
@@ -126,13 +126,12 @@ export async function loadPlayerCalculatorSnapshot(
     }),
     prisma.game_states.findUnique({
       where: { user_id: userId },
-      select: { last_checkin_day: true }
+      select: { last_checkin_at_ms: true }
     })
   ]);
 
-  const todayBrt = brtDayFromMs(Date.now());
-  const checkinDay = gsCheckin?.last_checkin_day != null ? String(gsCheckin.last_checkin_day).trim() : '';
-  const checkinFrozen = checkinDay !== todayBrt;
+  const lastCheckinAtMs = gsCheckin?.last_checkin_at_ms != null ? Number(gsCheckin.last_checkin_at_ms) : null;
+  const checkinFrozen = isCheckinFrozenAtMs(lastCheckinAtMs, Date.now());
 
   const ownedSet = new Set(ownedRooms.map((r) => normalizePlacedRackRoomId(r.room_id)));
 

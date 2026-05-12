@@ -1,5 +1,5 @@
 import { prisma } from '../config/prisma.js';
-import { brtDayFromMs } from '../modules/checkin/checkin.service.js';
+import { isCheckinFrozenAtMs } from '../modules/checkin/checkin.service.js';
 
 function num(v: unknown, def = 0): number {
   const n = typeof v === 'number' ? v : parseFloat(String(v ?? ''));
@@ -69,7 +69,7 @@ export type PlayerGameHeaderPayload = {
 export async function computePlayerGameHeaderSnapshot(userId: number): Promise<PlayerGameHeaderPayload> {
   const gs = await prisma.game_states.findUnique({
     where: { user_id: userId },
-    select: { usdc: true, server_updated_at: true, last_checkin_day: true }
+    select: { usdc: true, server_updated_at: true, last_checkin_at_ms: true }
   });
   if (!gs) {
     return {
@@ -95,9 +95,8 @@ export async function computePlayerGameHeaderSnapshot(userId: number): Promise<P
 
   const upgrades = await loadUpgradesCatalogMap();
 
-  const todayBrt = brtDayFromMs(Date.now());
-  const checkinDay = gs.last_checkin_day != null ? String(gs.last_checkin_day).trim() : '';
-  const checkinFrozen = checkinDay !== todayBrt;
+  const lastCheckinAtMs = gs.last_checkin_at_ms != null ? Number(gs.last_checkin_at_ms) : null;
+  const checkinFrozen = isCheckinFrozenAtMs(lastCheckinAtMs, Date.now());
 
   const racksRows = checkinFrozen
     ? []

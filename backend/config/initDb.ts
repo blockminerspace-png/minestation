@@ -171,6 +171,7 @@ export const initDb = async () => {
         server_updated_at BIGINT DEFAULT 0,
         usdc_bonus DOUBLE PRECISION DEFAULT 0,
         last_checkin_day VARCHAR(10),
+        last_checkin_at_ms BIGINT,
         checkin_streak INTEGER NOT NULL DEFAULT 0
       );
 
@@ -729,6 +730,7 @@ export const initDb = async () => {
     await client.query(`
       CREATE INDEX IF NOT EXISTS idx_game_states_user_id ON game_states(user_id);
       CREATE INDEX IF NOT EXISTS game_states_last_checkin_day_idx ON game_states(last_checkin_day);
+      CREATE INDEX IF NOT EXISTS game_states_last_checkin_at_ms_idx ON game_states(last_checkin_at_ms);
       CREATE TABLE IF NOT EXISTS user_history_ips (
         user_id INTEGER NOT NULL REFERENCES users(id),
         ip TEXT NOT NULL,

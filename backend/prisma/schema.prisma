@@ -265,13 +265,18 @@ model game_states {
   server_updated_at        BigInt? @default(0)
   usdc_bonus               Float?  @default(0)
   /** Check-in diário (sistema substituto do carregamento de baterias).
-   *  Dia local America/Sao_Paulo no formato 'YYYY-MM-DD'. NULL = nunca fez check-in. */
+   *  Dia local America/Sao_Paulo no formato 'YYYY-MM-DD'. NULL = nunca fez check-in.
+   *  Mantido para diagnóstico — a regra de freeze usa `last_checkin_at_ms`. */
   last_checkin_day         String? @db.VarChar(10)
+  /** Timestamp (ms epoch) do último check-in. Janela de validade = 24h
+   *  contadas a partir deste instante. NULL = nunca fez check-in. */
+  last_checkin_at_ms       BigInt?
   /** Sequência consecutiva de dias com check-in. A cada múltiplo de 7
    *  o jogador ganha uma `battery_estelar`. */
   checkin_streak           Int     @default(0)
 
   @@index([last_checkin_day], map: "game_states_last_checkin_day_idx")
+  @@index([last_checkin_at_ms], map: "game_states_last_checkin_at_ms_idx")
   @@map("game_states")
 }
 

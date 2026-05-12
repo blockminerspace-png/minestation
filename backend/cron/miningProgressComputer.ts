@@ -10,7 +10,7 @@ import {
   type LockHandle
 } from '../lib/redisDistributedLock.js';
 import { miningRuntimeStats } from './miningRuntimeStats.js';
-import { brtDayFromMs } from '../modules/checkin/checkin.service.js';
+import { isCheckinFrozenAtMs } from '../modules/checkin/checkin.service.js';
 
 const LOG_PREFIX = '[MiningProgress]';
 
@@ -185,24 +185,26 @@ export async function computeProgressForUser(
     upgradesRes.rows.forEach((u) => upgradesMap.set(String(u.id), u as Record<string, unknown>));
 
     const gsResInitial = await client.query(
-      'SELECT last_updated_at, start_time, last_checkin_day FROM game_states WHERE user_id = $1',
+      'SELECT last_updated_at, start_time, last_checkin_at_ms FROM game_states WHERE user_id = $1',
       [userId]
     );
     const gsInitial = gsResInitial.rows[0] as
-      | { last_updated_at?: unknown; start_time?: unknown; last_checkin_day?: unknown }
+      | { last_updated_at?: unknown; start_time?: unknown; last_checkin_at_ms?: unknown }
       | undefined;
     if (!gsInitial) return { ok: true };
 
     const last = parseFiniteNumberLenient(gsInitial.last_updated_at ?? gsInitial.start_time, 'game_states.last');
     if (!Number.isFinite(last) || last <= 0) return { ok: true };
 
-    // Check-in diário: se `last_checkin_day` ≠ dia BRT actual, a mineração
-    // congela. `last_updated_at` continua a avançar para que o tempo passado
-    // congelado não seja pago retroactivamente quando o jogador voltar a fazer
-    // check-in.
-    const checkinDay = typeof gsInitial.last_checkin_day === 'string' ? gsInitial.last_checkin_day : null;
-    const todayBrt = brtDayFromMs(serverNow);
-    const checkinFrozen = checkinDay !== todayBrt;
+    // Check-in diário (janela rolante de 24h): se a janela actual expirou, a
+    // mineração congela. `last_updated_at` continua a avançar para que o tempo
+    // passado congelado não seja pago retroactivamente quando o jogador voltar
+    // a fazer check-in.
+    const lastCheckinAtMsRaw =
+      gsInitial.last_checkin_at_ms != null
+        ? Number(typeof gsInitial.last_checkin_at_ms === 'bigint' ? Number(gsInitial.last_checkin_at_ms) : gsInitial.last_checkin_at_ms)
+        : null;
+    const checkinFrozen = isCheckinFrozenAtMs(lastCheckinAtMsRaw, serverNow);
 
     if (serverNow < last) {
       console.warn(`${LOG_PREFIX} user=%s relógio atrás de last_updated (possível manipulação)`, userId);

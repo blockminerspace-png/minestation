@@ -13,7 +13,10 @@ function formatResetCountdown(nextResetMs: number): string {
   const left = Math.max(0, nextResetMs - Date.now());
   const h = Math.floor(left / 3600000);
   const m = Math.floor((left % 3600000) / 60000);
-  if (h <= 0) return `${m}m`;
+  if (h <= 0) {
+    if (m <= 0) return 'menos de 1m';
+    return `${m}m`;
+  }
   return `${h}h ${m}m`;
 }
 
@@ -23,6 +26,14 @@ export function DailyCheckinBanner({ saveLoaded, onRewardGranted }: Props) {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  // Tick por minuto: garante que o countdown ("~Xh Ym") rola sem depender de
+  // um novo fetch ao servidor. `Date.now()` em `formatResetCountdown` lê o
+  // tempo actual a cada render disparado por este state.
+  const [, setNowTick] = useState(0);
+  useEffect(() => {
+    const id = window.setInterval(() => setNowTick((v) => (v + 1) % 1_000_000), 60_000);
+    return () => window.clearInterval(id);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -90,17 +101,20 @@ export function DailyCheckinBanner({ saveLoaded, onRewardGranted }: Props) {
               <>
                 <p className="font-bold text-slate-100">
                   {status.frozen
-                    ? 'Mineração congelada — faça o check-in de hoje para voltar a farmar.'
-                    : 'Check-in de hoje concluído — mineração activa.'}
+                    ? 'Mineração congelada — faça o check-in para voltar a farmar nas próximas 24h.'
+                    : `Check-in activo — mineração corre por mais ~${formatResetCountdown(status.nextResetMs)}.`}
                 </p>
                 <p className="text-slate-400">
-                  Sequência: <span className="text-amber-300 font-mono">{status.streak}</span> dia(s) · Próximo reset
-                  do dia (horário Brasil): ~{formatResetCountdown(status.nextResetMs)} · Ciclo prémio:{' '}
+                  Sequência: <span className="text-amber-300 font-mono">{status.streak}</span> dia(s) ·{' '}
+                  {status.frozen
+                    ? 'Janela actual expirada.'
+                    : `Próxima janela em ~${formatResetCountdown(status.nextResetMs)}.`}{' '}
+                  · Ciclo prémio:{' '}
                   <span className="text-amber-200/90">
                     {status.rewardCycleProgress}/{status.rewardCycleSize}
                   </span>{' '}
-                  <Trophy className="inline align-text-bottom text-amber-500/90" size={14} aria-hidden /> a cada 7 dias
-                  seguidos ganha 1 Estelar.
+                  <Trophy className="inline align-text-bottom text-amber-500/90" size={14} aria-hidden /> a cada 7
+                  check-ins seguidos (1 por 24h) ganha 1 Estelar.
                 </p>
               </>
             ) : null}
@@ -121,9 +135,9 @@ export function DailyCheckinBanner({ saveLoaded, onRewardGranted }: Props) {
                 <Loader2 className="animate-spin" size={14} /> A registar…
               </span>
             ) : status?.todayCheckedIn ? (
-              'Check-in já feito hoje'
+              `Check-in activo · ${formatResetCountdown(status.nextResetMs)}`
             ) : (
-              'Fazer check-in agora'
+              'Fazer check-in (vale 24h)'
             )}
           </button>
         </div>

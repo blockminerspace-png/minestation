@@ -4455,10 +4455,13 @@ export type CheckinStatusPayload = {
   today: string;
   timezone: string;
   lastCheckinDay: string | null;
+  lastCheckinAtMs: number | null;
   streak: number;
   todayCheckedIn: boolean;
   frozen: boolean;
   nextResetMs: number;
+  windowRemainingMs: number;
+  windowDurationMs: number;
   rewardCycleProgress: number;
   rewardCycleSize: number;
 };
@@ -4476,6 +4479,18 @@ function parseCheckinStatusPayload(raw: Record<string, unknown>): CheckinStatusP
   const streak = typeof raw.streak === 'number' && Number.isFinite(raw.streak) ? Math.max(0, Math.floor(raw.streak)) : 0;
   const nextResetMs =
     typeof raw.nextResetMs === 'number' && Number.isFinite(raw.nextResetMs) ? raw.nextResetMs : Date.now();
+  const lastCheckinAtMs =
+    typeof raw.lastCheckinAtMs === 'number' && Number.isFinite(raw.lastCheckinAtMs) && raw.lastCheckinAtMs > 0
+      ? Math.floor(raw.lastCheckinAtMs)
+      : null;
+  const windowDurationMs =
+    typeof raw.windowDurationMs === 'number' && Number.isFinite(raw.windowDurationMs) && raw.windowDurationMs > 0
+      ? Math.floor(raw.windowDurationMs)
+      : 24 * 60 * 60 * 1000;
+  const windowRemainingMs =
+    typeof raw.windowRemainingMs === 'number' && Number.isFinite(raw.windowRemainingMs) && raw.windowRemainingMs >= 0
+      ? Math.floor(raw.windowRemainingMs)
+      : Math.max(0, nextResetMs - Date.now());
   return {
     today,
     timezone: typeof raw.timezone === 'string' ? raw.timezone : 'America/Sao_Paulo',
@@ -4485,10 +4500,13 @@ function parseCheckinStatusPayload(raw: Record<string, unknown>): CheckinStatusP
       const s = String(v).trim();
       return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
     })(),
+    lastCheckinAtMs,
     streak,
     todayCheckedIn: raw.todayCheckedIn === true,
     frozen: raw.frozen === true,
     nextResetMs,
+    windowRemainingMs,
+    windowDurationMs,
     rewardCycleProgress:
       typeof raw.rewardCycleProgress === 'number' && Number.isFinite(raw.rewardCycleProgress)
         ? Math.max(0, Math.floor(raw.rewardCycleProgress))

@@ -2,15 +2,20 @@
  * Check-in diário (substitui carregamento de baterias).
  *
  * Regras (servidor é a fonte de verdade):
- *  - Janela diária = dia local em America/Sao_Paulo (00:00–23:59).
- *  - Check-in idempotente por dia: clicar várias vezes no mesmo dia não
- *    altera streak nem concede recompensa adicional.
- *  - Se o último check-in foi no dia BRT imediatamente anterior, `streak`
- *    incrementa em 1; caso contrário, reinicia em 1.
+ *  - Cada check-in inicia uma janela rolante de 24 horas (`CHECKIN_WINDOW_MS`).
+ *    Enquanto `now - last_checkin_at_ms < 24h`, a mineração permanece activa
+ *    e novos cliques no botão são idempotentes (não consomem streak nem
+ *    concedem recompensa adicional).
+ *  - Quando a janela expira (>= 24h), as rigs ficam "frozen" e o cron de
+ *    mineração não credita produção até o próximo check-in.
+ *  - Streak:
+ *      - check-in entre 24h e 48h após o anterior  → `streak += 1`;
+ *      - check-in 48h+ após o anterior (ou primeiro de sempre) → `streak = 1`.
  *  - Sempre que `streak` atinge um múltiplo de 7 (7, 14, 21, …), o jogador
  *    ganha 1 instância UUID de `battery_estelar` em `stored_batteries`.
- *  - Enquanto `last_checkin_day != hoje BRT`, o cron de mineração não credita
- *    produção (rigs ficam congeladas).
+ *  - `last_checkin_day` é mantido por compatibilidade/diagnóstico (dia
+ *    America/Sao_Paulo do último check-in), mas as decisões de freeze/streak
+ *    usam apenas `last_checkin_at_ms`.
  */
 
 import crypto from 'node:crypto';
@@ -20,16 +25,26 @@ import db from '../../config/db.js';
 export const CHECKIN_TIMEZONE = 'America/Sao_Paulo';
 export const CHECKIN_REWARD_ITEM_ID = 'battery_estelar';
 export const CHECKIN_REWARD_EVERY_DAYS = 7;
+/** Duração da janela de validade de cada check-in (24h em ms). */
+export const CHECKIN_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Limite para considerar a sequência preservada (até 48h após o anterior). */
+export const CHECKIN_STREAK_GRACE_MS = 2 * CHECKIN_WINDOW_MS;
 
 export type CheckinStatus = {
   today: string;
   timezone: string;
   lastCheckinDay: string | null;
+  lastCheckinAtMs: number | null;
   streak: number;
   todayCheckedIn: boolean;
   frozen: boolean;
-  /** Próximo reset (ms, epoch) — meia-noite BRT do dia seguinte ao actual. */
+  /** Próximo instante (ms epoch) em que a janela actual expira; igual a
+   *  `lastCheckinAtMs + 24h`. Quando nunca houve check-in, devolve `nowMs`. */
   nextResetMs: number;
+  /** Quantos ms restam na janela actual (0 quando frozen). */
+  windowRemainingMs: number;
+  /** Tamanho total da janela (24h em ms) — útil ao frontend renderizar barras. */
+  windowDurationMs: number;
   /** Posição relativa dentro do ciclo de 7 dias (0..7). */
   rewardCycleProgress: number;
   rewardCycleSize: number;
@@ -79,15 +94,13 @@ export function previousBrtDay(day: string): string {
 
 /**
  * Próximo "midnight America/Sao_Paulo" estritamente após `nowMs` (em ms epoch).
- *
- * Estratégia: itera adiante (+5 min) e detecta o instante onde o dia local muda;
- * depois faz busca binária para precisão à milissegundo. Evita depender de
- * cálculos directos de offset (BRT actualmente -3h, mas robustez para qualquer TZ).
+ * Mantido para uso em logs/telemetria; o `nextResetMs` exposto pelo serviço
+ * passa a corresponder a `lastCheckinAtMs + 24h` (janela rolante).
  */
 export function nextBrtMidnightMs(nowMs: number): number {
   const startDay = brtDayFromMs(nowMs);
   let lo = nowMs;
-  let hi = nowMs + 25 * 3600 * 1000; // BRT não tem DST, mas folga garante > 24h
+  let hi = nowMs + 25 * 3600 * 1000;
   while (brtDayFromMs(hi) === startDay) hi += 60 * 60 * 1000;
   while (hi - lo > 250) {
     const mid = Math.floor((lo + hi) / 2);
@@ -99,19 +112,16 @@ export function nextBrtMidnightMs(nowMs: number): number {
 
 type GameStateRow = {
   last_checkin_day: string | null;
+  last_checkin_at_ms: number | string | bigint | null;
   checkin_streak: number | string | null;
 };
 
-/**
- * Lê a row de `game_states` (cria se não existir, com defaults).
- * Não usa Prisma directamente para reaproveitar o pool já configurado nas rotas.
- */
 async function readGameStateForCheckin(
   client: PoolClient,
   userId: number,
   forUpdate: boolean
 ): Promise<GameStateRow | null> {
-  const sql = `SELECT last_checkin_day, checkin_streak
+  const sql = `SELECT last_checkin_day, last_checkin_at_ms, checkin_streak
                  FROM game_states
                 WHERE user_id = $1
                 ${forUpdate ? 'FOR UPDATE' : ''}`;
@@ -125,24 +135,43 @@ function streakNumber(raw: unknown): number {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
 }
 
+/** Coage o `BIGINT` (que vem do `pg` como string ou number) para `number | null`. */
+function lastCheckinAtMsNumber(raw: unknown): number | null {
+  if (raw == null) return null;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? raw : null;
+  if (typeof raw === 'bigint') {
+    const v = Number(raw);
+    return Number.isFinite(v) && v > 0 ? v : null;
+  }
+  const v = parseInt(String(raw), 10);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
 function buildStatus(
   today: string,
   lastCheckinDay: string | null,
+  lastCheckinAtMs: number | null,
   streak: number,
   nowMs: number
 ): CheckinStatus {
-  const todayCheckedIn = lastCheckinDay === today;
-  const frozen = !todayCheckedIn;
+  const elapsed = lastCheckinAtMs == null ? Number.POSITIVE_INFINITY : nowMs - lastCheckinAtMs;
+  const withinWindow = elapsed >= 0 && elapsed < CHECKIN_WINDOW_MS;
+  const frozen = !withinWindow;
+  const nextResetMs = lastCheckinAtMs != null ? lastCheckinAtMs + CHECKIN_WINDOW_MS : nowMs;
+  const windowRemainingMs = withinWindow ? Math.max(0, CHECKIN_WINDOW_MS - elapsed) : 0;
   const cycleSize = CHECKIN_REWARD_EVERY_DAYS;
   const cycleProgress = streak === 0 ? 0 : streak % cycleSize === 0 ? cycleSize : streak % cycleSize;
   return {
     today,
     timezone: CHECKIN_TIMEZONE,
     lastCheckinDay,
+    lastCheckinAtMs,
     streak,
-    todayCheckedIn,
+    todayCheckedIn: withinWindow,
     frozen,
-    nextResetMs: nextBrtMidnightMs(nowMs),
+    nextResetMs,
+    windowRemainingMs,
+    windowDurationMs: CHECKIN_WINDOW_MS,
     rewardCycleProgress: cycleProgress,
     rewardCycleSize: cycleSize
   };
@@ -155,21 +184,27 @@ export async function getCheckinStatus(userId: number, nowMs: number = Date.now(
   try {
     const row = await readGameStateForCheckin(client, userId, false);
     if (!row) {
-      return buildStatus(today, null, 0, nowMs);
+      return buildStatus(today, null, null, 0, nowMs);
     }
-    return buildStatus(today, row.last_checkin_day, streakNumber(row.checkin_streak), nowMs);
+    return buildStatus(
+      today,
+      row.last_checkin_day,
+      lastCheckinAtMsNumber(row.last_checkin_at_ms),
+      streakNumber(row.checkin_streak),
+      nowMs
+    );
   } finally {
     client.release();
   }
 }
 
 /**
- * Aplica um check-in para o utilizador. Idempotente por dia.
- * Devolve o estado pós-aplicação (mesmo quando idempotente).
+ * Aplica um check-in para o utilizador. Idempotente enquanto a janela
+ * rolante de 24h ainda estiver aberta. Devolve o estado pós-aplicação
+ * (mesmo quando idempotente).
  */
 export async function performCheckin(userId: number, nowMs: number = Date.now()): Promise<CheckinResult> {
   const today = brtDayFromMs(nowMs);
-  const yesterday = previousBrtDay(today);
 
   const client = await db.connect();
   try {
@@ -183,21 +218,24 @@ export async function performCheckin(userId: number, nowMs: number = Date.now())
     }
 
     const prevStreak = streakNumber(row.checkin_streak);
+    const prevAtMs = lastCheckinAtMsNumber(row.last_checkin_at_ms);
     const prevDay = row.last_checkin_day;
 
-    if (prevDay === today) {
+    if (prevAtMs != null && nowMs - prevAtMs < CHECKIN_WINDOW_MS) {
+      // Janela ainda aberta — clique idempotente.
       await client.query('ROLLBACK');
-      const status = buildStatus(today, prevDay, prevStreak, nowMs);
+      const status = buildStatus(today, prevDay, prevAtMs, prevStreak, nowMs);
       return { ...status, performed: false, rewardGranted: 0, streakReset: false };
     }
 
     let nextStreak: number;
     let streakReset = false;
-    if (prevDay && prevDay === yesterday) {
+    if (prevAtMs != null && nowMs - prevAtMs < CHECKIN_STREAK_GRACE_MS) {
+      // Entre 24h e 48h após o último → continua a sequência.
       nextStreak = prevStreak + 1;
     } else {
       nextStreak = 1;
-      streakReset = prevStreak !== 0 || prevDay !== null;
+      streakReset = prevStreak !== 0 || prevAtMs !== null;
     }
 
     const grantsReward = nextStreak > 0 && nextStreak % CHECKIN_REWARD_EVERY_DAYS === 0;
@@ -205,9 +243,10 @@ export async function performCheckin(userId: number, nowMs: number = Date.now())
     await client.query(
       `UPDATE game_states
           SET last_checkin_day = $2,
-              checkin_streak = $3
+              last_checkin_at_ms = $3,
+              checkin_streak = $4
         WHERE user_id = $1`,
-      [userId, today, nextStreak]
+      [userId, today, nowMs, nextStreak]
     );
 
     let rewardGranted = 0;
@@ -228,7 +267,7 @@ export async function performCheckin(userId: number, nowMs: number = Date.now())
 
     await client.query('COMMIT');
 
-    const status = buildStatus(today, today, nextStreak, nowMs);
+    const status = buildStatus(today, today, nowMs, nextStreak, nowMs);
     return { ...status, performed: true, rewardGranted, streakReset };
   } catch (e) {
     try {
@@ -247,16 +286,24 @@ export async function performCheckin(userId: number, nowMs: number = Date.now())
  * utilizador está congelado neste tick. Não usa lock — leitura best-effort.
  */
 export async function isUserFrozenForToday(userId: number, nowMs: number = Date.now()): Promise<boolean> {
-  const today = brtDayFromMs(nowMs);
   const client = await db.connect();
   try {
-    const r = await client.query<{ last_checkin_day: string | null }>(
-      'SELECT last_checkin_day FROM game_states WHERE user_id = $1',
+    const r = await client.query<{ last_checkin_at_ms: number | string | bigint | null }>(
+      'SELECT last_checkin_at_ms FROM game_states WHERE user_id = $1',
       [userId]
     );
-    if (!r.rowCount) return true; // sem game_state = trata como frozen (defensivo)
-    return r.rows[0].last_checkin_day !== today;
+    if (!r.rowCount) return true;
+    const at = lastCheckinAtMsNumber(r.rows[0].last_checkin_at_ms);
+    if (at == null) return true;
+    return nowMs - at >= CHECKIN_WINDOW_MS;
   } finally {
     client.release();
   }
+}
+
+/** Versão pura para reutilização em readers que já têm o valor lido (cron, snapshots). */
+export function isCheckinFrozenAtMs(lastCheckinAtMs: number | null | undefined, nowMs: number): boolean {
+  const at = lastCheckinAtMsNumber(lastCheckinAtMs);
+  if (at == null) return true;
+  return nowMs - at >= CHECKIN_WINDOW_MS;
 }
