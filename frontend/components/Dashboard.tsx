@@ -164,12 +164,12 @@ function SectionCard({
 }) {
   return (
     <section
-      className={`rounded-2xl border border-slate-800/80 bg-gradient-to-b from-slate-900/80 to-slate-950/90 backdrop-blur-sm shadow-lg shadow-black/20 overflow-hidden ${className}`}
+      className={`rounded-2xl border border-slate-700/35 bg-slate-900/45 backdrop-blur-md shadow-sm shadow-black/25 overflow-hidden ring-1 ring-white/[0.04] ${className}`}
     >
-      <header className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-800/60">
-        <div className="flex items-center gap-2 min-w-0">
-          {icon ? <span className="shrink-0 text-amber-400">{icon}</span> : null}
-          <h3 className="text-xs font-bold uppercase tracking-widest text-slate-200 truncate">{title}</h3>
+      <header className="flex items-center justify-between gap-3 px-4 py-3 border-b border-slate-700/30 bg-slate-900/30">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {icon ? <span className="shrink-0 text-amber-400/90">{icon}</span> : null}
+          <h3 className="text-[11px] font-semibold tracking-wide text-slate-200/95 truncate">{title}</h3>
         </div>
         {action ? <div className="shrink-0">{action}</div> : null}
       </header>
@@ -182,20 +182,21 @@ function SectionCard({
 // Header + Módulos do ecossistema
 // =====================================================================
 
-function ecosystemModuleIcon(id: string) {
+function ecosystemModuleIcon(id: string, size = 18) {
+  const sw = size >= 22 ? 2 : 2.25;
   switch (id) {
     case 'workerrealm':
-      return <Flame size={18} strokeWidth={2.25} />;
+      return <Flame size={size} strokeWidth={sw} />;
     case 'blockminer':
-      return <LayoutGrid size={18} strokeWidth={2.25} />;
+      return <LayoutGrid size={size} strokeWidth={sw} />;
     case 'minecore':
-      return <Leaf size={18} strokeWidth={2.25} />;
+      return <Leaf size={size} strokeWidth={sw} />;
     case 'masterleague':
-      return <Trophy size={18} strokeWidth={2.25} />;
+      return <Trophy size={size} strokeWidth={sw} />;
     case 'reworth':
-      return <Skull size={18} strokeWidth={2.25} />;
+      return <Skull size={size} strokeWidth={sw} />;
     default:
-      return <Sparkles size={18} />;
+      return <Sparkles size={size} strokeWidth={sw} />;
   }
 }
 
@@ -210,48 +211,48 @@ function ecosystemThemeClasses(id: string): {
   switch (id) {
     case 'workerrealm':
       return {
-        frame: 'border-orange-500/55 shadow-[0_0_28px_-6px_rgba(249,115,22,0.55)]',
-        glow: 'shadow-orange-500/25',
-        iconWrap: 'border-orange-400/40 bg-orange-500/15 text-orange-300',
+        frame: 'border-orange-500/25 ring-1 ring-orange-500/15 shadow-sm shadow-black/30',
+        glow: 'ring-1 ring-orange-500/10',
+        iconWrap: 'border-orange-400/35 bg-orange-500/10 text-orange-200',
         subText: 'text-orange-200/85',
-        btn: 'border-orange-400/70 text-orange-200 hover:bg-orange-500/15',
-        placeholder: 'from-orange-950/90 via-slate-950 to-red-950/80'
+        btn: 'border-orange-400/50 text-orange-100 hover:bg-orange-500/20',
+        placeholder: 'from-orange-950/80 via-slate-950 to-slate-950'
       };
     case 'blockminer':
       return {
-        frame: 'border-violet-500/60 shadow-[0_0_32px_-8px_rgba(167,139,250,0.55)]',
-        glow: 'shadow-violet-500/30',
-        iconWrap: 'border-violet-400/45 bg-violet-500/15 text-violet-200',
+        frame: 'border-violet-500/30 ring-1 ring-violet-500/15 shadow-sm shadow-black/30',
+        glow: 'ring-1 ring-violet-500/10',
+        iconWrap: 'border-violet-400/35 bg-violet-500/10 text-violet-200',
         subText: 'text-violet-200/85',
-        btn: 'border-violet-400/70 text-violet-200 hover:bg-violet-500/15',
-        placeholder: 'from-violet-950/90 via-slate-950 to-indigo-950/80'
+        btn: 'border-violet-400/50 text-violet-100 hover:bg-violet-500/20',
+        placeholder: 'from-violet-950/80 via-slate-950 to-slate-950'
       };
     case 'minecore':
       return {
-        frame: 'border-emerald-500/55 shadow-[0_0_28px_-6px_rgba(52,211,153,0.45)]',
-        glow: 'shadow-emerald-500/25',
-        iconWrap: 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200',
+        frame: 'border-emerald-500/25 ring-1 ring-emerald-500/15 shadow-sm shadow-black/30',
+        glow: 'ring-1 ring-emerald-500/10',
+        iconWrap: 'border-emerald-400/35 bg-emerald-500/10 text-emerald-200',
         subText: 'text-emerald-200/85',
-        btn: 'border-emerald-400/70 text-emerald-200 hover:bg-emerald-500/15',
-        placeholder: 'from-emerald-950/90 via-slate-950 to-lime-950/70'
+        btn: 'border-emerald-400/50 text-emerald-100 hover:bg-emerald-500/20',
+        placeholder: 'from-emerald-950/80 via-slate-950 to-slate-950'
       };
     case 'masterleague':
       return {
-        frame: 'border-sky-500/55 shadow-[0_0_28px_-6px_rgba(56,189,248,0.45)]',
-        glow: 'shadow-sky-500/25',
-        iconWrap: 'border-sky-400/40 bg-sky-500/15 text-sky-200',
+        frame: 'border-sky-500/25 ring-1 ring-sky-500/15 shadow-sm shadow-black/30',
+        glow: 'ring-1 ring-sky-500/10',
+        iconWrap: 'border-sky-400/35 bg-sky-500/10 text-sky-200',
         subText: 'text-sky-200/85',
-        btn: 'border-sky-400/70 text-sky-200 hover:bg-sky-500/15',
-        placeholder: 'from-sky-950/90 via-slate-950 to-blue-950/80'
+        btn: 'border-sky-400/50 text-sky-100 hover:bg-sky-500/20',
+        placeholder: 'from-sky-950/80 via-slate-950 to-slate-950'
       };
     default:
       return {
-        frame: 'border-amber-500/50 shadow-[0_0_28px_-6px_rgba(245,158,11,0.4)]',
-        glow: 'shadow-amber-500/25',
-        iconWrap: 'border-amber-400/40 bg-amber-500/15 text-amber-200',
+        frame: 'border-amber-500/25 ring-1 ring-amber-500/15 shadow-sm shadow-black/30',
+        glow: 'ring-1 ring-amber-500/10',
+        iconWrap: 'border-amber-400/35 bg-amber-500/10 text-amber-200',
         subText: 'text-amber-200/85',
-        btn: 'border-amber-400/70 text-amber-200 hover:bg-amber-500/15',
-        placeholder: 'from-amber-950/90 via-slate-950 to-yellow-950/70'
+        btn: 'border-amber-400/50 text-amber-100 hover:bg-amber-500/20',
+        placeholder: 'from-amber-950/80 via-slate-950 to-slate-950'
       };
   }
 }
@@ -268,34 +269,31 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
 
   if (!modules.length) return null;
 
+  const stripScrollClass =
+    'flex min-w-0 flex-1 gap-3 sm:gap-4 overflow-x-auto overflow-y-visible snap-x snap-mandatory py-1 scroll-pl-1 sm:scroll-pl-2 ' +
+    '[scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden';
+
   return (
-    <section className="relative w-full border-y border-slate-800/90 sm:border sm:rounded-xl bg-[radial-gradient(ellipse_at_top,_rgba(251,146,60,0.06),transparent_55%),linear-gradient(to_bottom,#0b1220,#070b12)] py-5 sm:py-6 shadow-xl shadow-black/40">
-      <div className="pointer-events-none absolute inset-0 opacity-[0.07] bg-[linear-gradient(rgba(148,163,184,0.25)_1px,transparent_1px),linear-gradient(90deg,rgba(148,163,184,0.2)_1px,transparent_1px)] bg-[size:24px_24px]" />
-
-      <h2 className="relative text-center text-[11px] sm:text-xs font-black uppercase tracking-[0.28em] text-white mb-4 sm:mb-5 px-3">
-        Módulos & Parceiros do Ecossistema
-      </h2>
-
-      <div className="relative flex items-center gap-1 sm:gap-2 px-2 sm:px-3">
+    <section
+      aria-label="Módulos e parceiros do ecossistema"
+      className="relative w-full rounded-2xl border border-slate-700/40 bg-slate-900/40 py-3.5 sm:py-4 px-2 sm:px-3 backdrop-blur-md shadow-sm shadow-black/20 ring-1 ring-white/[0.04]"
+    >
+      <div className="relative flex items-center gap-2 sm:gap-3">
         <button
           type="button"
           onClick={() => scrollStrip(-1)}
-          className="hidden sm:inline-flex shrink-0 w-9 h-9 sm:w-10 sm:h-10 items-center justify-center rounded-lg border border-orange-500/50 bg-slate-950/80 text-orange-400 hover:bg-orange-500/10 hover:border-orange-400 transition-colors"
+          className="hidden sm:inline-flex shrink-0 h-10 w-10 items-center justify-center rounded-xl border border-slate-600/50 bg-slate-900/80 text-slate-300 hover:bg-slate-800/90 hover:text-white transition-colors"
           aria-label="Anterior"
         >
-          <ChevronLeft size={22} strokeWidth={2.5} />
+          <ChevronLeft size={20} strokeWidth={2} />
         </button>
 
-        <div
-          ref={stripRef}
-          className="flex min-w-0 flex-1 gap-3 sm:gap-4 overflow-x-auto overflow-y-visible snap-x snap-mandatory pb-4 pt-1 custom-scrollbar scroll-pl-1 sm:scroll-pl-2"
-        >
+        <div ref={stripRef} className={stripScrollClass}>
           {modules.map((m) => {
             const th = ecosystemThemeClasses(m.id);
             const canGo = m.status === 'available';
-            /** Frame fixo: evita `flex-1` + pouca altura (faixa “pancake”) que faz o arte parecer esticado. */
             const mediaFrame =
-              'relative z-[1] h-[96px] w-[200px] sm:h-[104px] sm:w-[228px] shrink-0 my-1 mr-2 sm:mr-2.5 rounded-lg overflow-hidden border border-white/10 bg-slate-950/95';
+              'relative z-[1] h-[118px] w-[248px] sm:h-[128px] sm:w-[276px] shrink-0 my-0.5 rounded-xl overflow-hidden border border-white/10 bg-slate-950/90';
             const imgClass =
               m.id === 'blockminer'
                 ? 'block h-full w-full object-cover object-[50%_14%] [image-rendering:auto]'
@@ -303,19 +301,16 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
             return (
               <div
                 key={m.id}
-                className={`group relative flex snap-start shrink-0 flex-row items-center gap-2 rounded-lg overflow-visible bg-slate-950/90 backdrop-blur-sm py-1.5 pl-2 pr-1 sm:pl-2.5 transition-transform duration-300 hover:-translate-y-px ${th.frame} ${
-                  canGo ? '' : 'opacity-[0.92]'
+                className={`group relative flex snap-start shrink-0 flex-row items-center gap-2.5 sm:gap-3 rounded-xl overflow-visible bg-slate-950/50 backdrop-blur-sm py-2 pl-2 pr-1.5 sm:pl-2.5 transition-all duration-200 hover:bg-slate-900/55 ${th.frame} ${
+                  canGo ? '' : 'opacity-[0.9]'
                 }`}
               >
-                <div className="relative z-[1] flex shrink-0 flex-col justify-center gap-1 border-r border-white/5 bg-slate-950/95 px-2 py-2 min-w-[96px] max-w-[112px] sm:min-w-[104px] sm:max-w-[120px]">
+                <div className="relative z-[1] flex shrink-0 flex-col items-center justify-center border-r border-white/[0.06] bg-transparent px-1.5 py-1 w-[52px] sm:w-14">
                   <span
-                    className={`flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full border ${th.iconWrap}`}
+                    className={`flex h-11 w-11 sm:h-[52px] sm:w-[52px] shrink-0 items-center justify-center rounded-2xl border ${th.iconWrap}`}
                   >
-                    {ecosystemModuleIcon(m.id)}
+                    {ecosystemModuleIcon(m.id, 24)}
                   </span>
-                  <div className="text-[10px] sm:text-[11px] font-black uppercase tracking-wide text-white leading-tight line-clamp-3">
-                    {m.title}
-                  </div>
                 </div>
 
                 <div className={`${mediaFrame} ${th.glow} flex items-center justify-center`}>
@@ -323,11 +318,11 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                     <img src={m.imageUrl} alt="" className={imgClass} loading="lazy" />
                   ) : (
                     <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder} flex items-center justify-center`}>
-                      <span className="text-3xl font-black text-white/15 select-none">{m.title.charAt(0)}</span>
+                      <Sparkles className="h-7 w-7 text-white/18" strokeWidth={1.35} aria-hidden />
                     </div>
                   )}
                   {m.status === 'coming_soon' ? (
-                    <span className="absolute top-1.5 right-1.5 text-[8px] font-black uppercase tracking-widest bg-black/70 border border-white/15 text-slate-200 px-1.5 py-0.5 rounded-sm z-10">
+                    <span className="absolute top-2 right-2 text-[7px] font-semibold uppercase tracking-wider bg-black/65 border border-white/10 text-slate-300 px-1.5 py-0.5 rounded-md z-10">
                       Em breve
                     </span>
                   ) : null}
@@ -337,10 +332,10 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                       href={m.href}
                       target={m.external ? '_blank' : undefined}
                       rel={m.external ? 'noopener noreferrer' : undefined}
-                      className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-1 rounded-full border bg-slate-950/95 px-3 py-0.5 text-[8px] sm:text-[9px] font-black uppercase tracking-[0.16em] shadow-lg shadow-black/50 backdrop-blur-sm transition-colors hover:brightness-110 ${th.btn}`}
+                      className={`absolute left-1/2 bottom-0 z-20 -translate-x-1/2 translate-y-1/2 flex items-center gap-0.5 rounded-full border bg-slate-950/90 px-3 py-1 text-[8px] sm:text-[9px] font-semibold uppercase tracking-wider shadow-md shadow-black/40 backdrop-blur-sm transition-colors hover:bg-slate-900 ${th.btn}`}
                     >
                       Entrar
-                      <ChevronRight size={11} strokeWidth={2.5} className="opacity-90" />
+                      <ChevronRight size={11} strokeWidth={2.25} className="opacity-90" />
                     </a>
                   ) : null}
                 </div>
@@ -352,10 +347,10 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
         <button
           type="button"
           onClick={() => scrollStrip(1)}
-          className="hidden sm:inline-flex shrink-0 w-9 h-9 sm:w-10 sm:h-10 items-center justify-center rounded-lg border border-orange-500/50 bg-slate-950/80 text-orange-400 hover:bg-orange-500/10 hover:border-orange-400 transition-colors"
+          className="hidden sm:inline-flex shrink-0 h-10 w-10 items-center justify-center rounded-xl border border-slate-600/50 bg-slate-900/80 text-slate-300 hover:bg-slate-800/90 hover:text-white transition-colors"
           aria-label="Seguinte"
         >
-          <ChevronRight size={22} strokeWidth={2.5} />
+          <ChevronRight size={20} strokeWidth={2} />
         </button>
       </div>
     </section>
@@ -865,7 +860,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   }, [loading, error, state, onNavigate]);
 
   return (
-    <div className="min-h-full w-full max-w-none bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-1.5 sm:px-3 md:px-5 py-4 sm:py-6 text-slate-100">
+    <div className="min-h-full w-full max-w-none bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 px-1.5 sm:px-3 md:px-5 py-4 sm:py-6 text-slate-100 antialiased">
       <div className="w-full max-w-none mx-auto">
         {content}
         <div className="mt-6 text-center text-[10px] text-slate-600 flex items-center justify-center gap-2">
