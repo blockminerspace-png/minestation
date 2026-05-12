@@ -5065,6 +5065,119 @@ app.post('/api/season-pass/grant', isAdmin, async (req, res) => {
 
 
 // --- USERS ---
+/**
+ * Contas com `game_states.start_time` há pelo menos `daysMin` dias (proxy da criação),
+ * excl. bloqueados/admins. «Minerar» = existe rig com is_on=1. «Sem carteira» = polygon_wallet vazio.
+ */
+app.get('/api/admin/accounts-dormant-mining', isAdmin, async (req, res) => {
+  try {
+    const rawDays = parseInt(String(req.query.daysMin ?? '30'), 10);
+    const daysMin = Number.isFinite(rawDays) ? Math.min(365, Math.max(30, rawDays)) : 30;
+    const cutoffMs = BigInt(Date.now()) - BigInt(daysMin * 86400000);
+    const cutoffStr = cutoffMs.toString();
+    const limitVal = Math.min(500, Math.max(50, parseInt(String(req.query.limit ?? '500'), 10) || 500));
+    const noMiningPage = Math.max(1, parseInt(String(req.query.noMiningPage ?? '1'), 10) || 1);
+    const miningNoWalletPage = Math.max(1, parseInt(String(req.query.miningNoWalletPage ?? '1'), 10) || 1);
+    const offsetNo = (noMiningPage - 1) * limitVal;
+    const offsetMw = (miningNoWalletPage - 1) * limitVal;
+
+    const coreJoin = `
+      FROM users u
+      INNER JOIN game_states gs ON gs.user_id = u.id
+      WHERE COALESCE(u.is_blocked, 0) = 0
+        AND COALESCE(u.is_super_admin, 0) = 0
+        AND COALESCE(u.is_admin, 0) = 0
+        AND gs.start_time <= $1::bigint`;
+
+    const whereNoMining = `
+        AND NOT EXISTS (
+              SELECT 1 FROM placed_racks pr2
+              WHERE pr2.user_id = u.id AND COALESCE(pr2.is_on, 0) = 1
+            )`;
+
+    const whereMiningNoWallet = `
+        AND EXISTS (
+              SELECT 1 FROM placed_racks pr3
+              WHERE pr3.user_id = u.id AND COALESCE(pr3.is_on, 0) = 1
+            )
+        AND (
+              u.polygon_wallet IS NULL
+           OR btrim(u.polygon_wallet::text) = ''
+           OR lower(btrim(u.polygon_wallet::text)) IN ('0x', 'null')
+            )`;
+
+    const sqlCountNo = `SELECT COUNT(*)::text AS c ${coreJoin} ${whereNoMining}`;
+    const sqlCountMw = `SELECT COUNT(*)::text AS c ${coreJoin} ${whereMiningNoWallet}`;
+    const sqlListNo = `
+      SELECT u.id,
+             u.username,
+             u.email::text AS email,
+             u.polygon_wallet::text AS polygon_wallet,
+             gs.start_time::text AS start_time,
+             u.last_active_at::text AS last_active_at,
+             u.ranking_excluded::text AS ranking_excluded
+      ${coreJoin}
+      ${whereNoMining}
+      ORDER BY u.id ASC
+      LIMIT $2::int OFFSET $3::int`;
+    const sqlListMw = `
+      SELECT u.id,
+             u.username,
+             u.email::text AS email,
+             u.polygon_wallet::text AS polygon_wallet,
+             gs.start_time::text AS start_time,
+             u.last_active_at::text AS last_active_at,
+             u.ranking_excluded::text AS ranking_excluded
+      ${coreJoin}
+      ${whereMiningNoWallet}
+      ORDER BY u.id ASC
+      LIMIT $2::int OFFSET $3::int`;
+
+    const [cntNoRes, cntMwRes, noMining, miningNoWallet] = await Promise.all([
+      db.query(sqlCountNo, [cutoffStr]),
+      db.query(sqlCountMw, [cutoffStr]),
+      db.query(sqlListNo, [cutoffStr, limitVal, offsetNo]),
+      db.query(sqlListMw, [cutoffStr, limitVal, offsetMw])
+    ]);
+
+    const parseTotal = (r) => {
+      const t = r?.rows?.[0]?.c;
+      const n = parseInt(String(t ?? '0'), 10);
+      return Number.isFinite(n) && n >= 0 ? n : 0;
+    };
+    const noMiningTotal = parseTotal(cntNoRes);
+    const miningNoWalletTotal = parseTotal(cntMwRes);
+
+    const mapRow = (row) => ({
+      id: Number(row.id),
+      username: row.username != null ? String(row.username) : '',
+      email: row.email != null ? String(row.email) : '',
+      polygonWallet: row.polygon_wallet != null ? String(row.polygon_wallet) : null,
+      startTimeMs: row.start_time != null ? String(row.start_time) : null,
+      lastActiveAt: row.last_active_at != null ? String(row.last_active_at) : null,
+      rankingExcluded: Number(row.ranking_excluded) === 1
+    });
+
+    res.json({
+      daysMin,
+      cutoffMs: cutoffStr,
+      limit: limitVal,
+      limitEach: limitVal,
+      noMiningPage,
+      miningNoWalletPage,
+      noMiningTotal,
+      miningNoWalletTotal,
+      note:
+        'Data de referência: game_states.start_time (criação do save no registo). «Minerar»: pelo menos uma rig com is_on=1. Carteira: users.polygon_wallet. Paginação: noMiningPage / miningNoWalletPage + limit (50–500).',
+      noMining: (noMining.rows || []).map(mapRow),
+      miningNoWallet: (miningNoWallet.rows || []).map(mapRow)
+    });
+  } catch (e) {
+    console.error('[GET /api/admin/accounts-dormant-mining]', e);
+    res.status(500).json({ error: 'Falha ao carregar contas.' });
+  }
+});
+
 app.get('/api/users', isAdmin, async (req, res) => {
   try {
     const page = parseInt(String(req.query.page ?? '1'), 10) || 1;

@@ -3,12 +3,67 @@ import { AdminUpgrade, LootBox } from '../types';
 import { getAdminUpgrades, createAdminUpgrade, deleteAdminUpgrade, getLootBoxes, setLootBoxes, getReferralModels, saveReferralModel, deleteReferralModel, getAccessLevelReferralAssignments, saveAccessLevelReferralAssignments, getSeasonPasses } from '../services/api';
 import { AdminRanking } from './AdminRanking';
 import { User, AccessLevel, GameState, Upgrade, ReferralModel, SeasonPass } from '../types';
-import { Users, Search, Edit, X, PlusCircle, Save, Package, Server, Trash2, Trophy, Gift, Cog, LogIn, ArrowUp, ArrowDown, CheckSquare, Square, Loader2, Shield, History } from 'lucide-react';
-import { getGameState, toggleUserBlocked, updateUser, saveGameState, saveGameStateAdminOverride, getMiningCoins, deleteUser, getSession, impersonateUser, bulkDeleteUsers, bulkGiftUsers, updateAdminPermissions, getUsers, getAdminUserActivity } from '../services/api';
+import {
+    Users,
+    Search,
+    Edit,
+    X,
+    PlusCircle,
+    Save,
+    Package,
+    Server,
+    Trash2,
+    Trophy,
+    Gift,
+    Cog,
+    LogIn,
+    ArrowUp,
+    ArrowDown,
+    CheckSquare,
+    Square,
+    Loader2,
+    Shield,
+    History,
+    Pickaxe,
+    Unplug,
+    RefreshCw,
+    ChevronLeft,
+    ChevronRight,
+    Lock
+} from 'lucide-react';
+import {
+    getGameState,
+    toggleUserBlocked,
+    updateUser,
+    saveGameState,
+    saveGameStateAdminOverride,
+    getMiningCoins,
+    deleteUser,
+    getSession,
+    impersonateUser,
+    bulkDeleteUsers,
+    bulkGiftUsers,
+    updateAdminPermissions,
+    getUsers,
+    getAdminUserActivity,
+    getAdminDormantMiningAccounts,
+    type AdminDormantMiningRow
+} from '../services/api';
 import { formatUserActivityMeta, ACTIVITY_LOG_FILTER_GROUPS, filterUserActivityLogs } from '../utils/adminUserActivityLog';
 import { validateAuthUsernameFormat } from '../utils/usernameValidation';
 import { AUTH_USERNAME_MAX } from '../constants/authLimits';
 import type { GameUserActivityEntry } from '../types';
+
+function formatAdminDormantMs(ms: string | null | undefined): string {
+    if (ms == null || ms === '') return '—';
+    const n = Number(ms);
+    if (!Number.isFinite(n)) return String(ms);
+    try {
+        return new Date(n).toLocaleString('pt-PT');
+    } catch {
+        return String(ms);
+    }
+}
 
 function selectedUserDbId(u: User | null): number | undefined {
   if (!u) return undefined;
@@ -52,7 +107,17 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const [totalUsersCount, setTotalUsersCount] = useState(0);
     const [searchQuery, setSearchQuery] = useState('');
     const [limit] = useState(50);
-    const [subTab, setSubTab] = useState<'users' | 'admin_staff' | 'access_levels' | 'admin_upgrades' | 'referrals' | 'ranking' | 'advanced_referrals'>('users');
+    const [subTab, setSubTab] = useState<
+        | 'users'
+        | 'admin_staff'
+        | 'access_levels'
+        | 'admin_upgrades'
+        | 'referrals'
+        | 'ranking'
+        | 'advanced_referrals'
+        | 'dormant_no_mining'
+        | 'dormant_mining_no_wallet'
+    >('users');
     const [sortBy, setSortBy] = useState<string>('creation');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
     const [filterStatus, setFilterStatus] = useState<string>('all');
@@ -127,8 +192,22 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
     const [isSavingModel, setIsSavingModel] = useState(false);
     const [isSavingAssignments, setIsSavingAssignments] = useState(false);
 
-
-
+    const [dormantDaysMin, setDormantDaysMin] = useState(30);
+    const [dormantNoMining, setDormantNoMining] = useState<AdminDormantMiningRow[]>([]);
+    const [dormantMiningNoWallet, setDormantMiningNoWallet] = useState<AdminDormantMiningRow[]>([]);
+    const [dormantNote, setDormantNote] = useState<string | null>(null);
+    const [dormantMeta, setDormantMeta] = useState<{
+        limitEach: number;
+        cutoffMs: string;
+        noMiningTotal: number;
+        miningNoWalletTotal: number;
+    } | null>(null);
+    const [dormantLoading, setDormantLoading] = useState(false);
+    const [dormantError, setDormantError] = useState<string | null>(null);
+    const [dormantNoMiningPage, setDormantNoMiningPage] = useState(1);
+    const [dormantMiningNoWalletPage, setDormantMiningNoWalletPage] = useState(1);
+    const [dormantSelectedEmails, setDormantSelectedEmails] = useState<Set<string>>(new Set());
+    const [dormantBulkBusy, setDormantBulkBusy] = useState(false);
 
     const handleSort = (key: string) => {
         let direction: 'asc' | 'desc' = 'asc';
@@ -161,8 +240,46 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         setIsLoadingUsers(false);
     };
 
+    const loadDormantMiningAccounts = useCallback(async () => {
+        setDormantLoading(true);
+        setDormantError(null);
+        try {
+            const data = await getAdminDormantMiningAccounts({
+                daysMin: dormantDaysMin,
+                limit: 500,
+                noMiningPage: dormantNoMiningPage,
+                miningNoWalletPage: dormantMiningNoWalletPage
+            });
+            if (data.error) {
+                setDormantError(data.error);
+                setDormantNoMining([]);
+                setDormantMiningNoWallet([]);
+                setDormantNote(null);
+                setDormantMeta(null);
+            } else {
+                setDormantNoMining(data.noMining);
+                setDormantMiningNoWallet(data.miningNoWallet);
+                setDormantNote(data.note);
+                setDormantMeta({
+                    limitEach: data.limitEach,
+                    cutoffMs: data.cutoffMs,
+                    noMiningTotal: data.noMiningTotal,
+                    miningNoWalletTotal: data.miningNoWalletTotal
+                });
+            }
+        } catch {
+            setDormantError('Erro de rede.');
+            setDormantNoMining([]);
+            setDormantMiningNoWallet([]);
+            setDormantNote(null);
+            setDormantMeta(null);
+        }
+        setDormantLoading(false);
+    }, [dormantDaysMin, dormantNoMiningPage, dormantMiningNoWalletPage]);
+
     // Initial load and on page/search change
     React.useEffect(() => {
+        if (subTab === 'dormant_no_mining' || subTab === 'dormant_mining_no_wallet') return;
         const delayDebounceFn = setTimeout(() => {
             loadUsers(currentPage, searchQuery);
         }, 500); // 500ms debounce for search
@@ -176,6 +293,24 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
         };
         loadCoins();
     }, []);
+
+    useEffect(() => {
+        setDormantNoMiningPage(1);
+        setDormantMiningNoWalletPage(1);
+    }, [dormantDaysMin]);
+
+    useEffect(() => {
+        if (subTab !== 'dormant_no_mining' && subTab !== 'dormant_mining_no_wallet') return;
+        void loadDormantMiningAccounts();
+    }, [subTab, dormantDaysMin, dormantNoMiningPage, dormantMiningNoWalletPage, loadDormantMiningAccounts]);
+
+    useEffect(() => {
+        setDormantSelectedEmails(new Set());
+    }, [subTab]);
+
+    useEffect(() => {
+        setDormantSelectedEmails(new Set());
+    }, [dormantDaysMin]);
 
     React.useEffect(() => {
         const loadAdminData = async () => {
@@ -420,7 +555,11 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
 
     const handleToggleBlock = async () => {
         if (!selectedUser) return;
-        await toggleUserBlocked(selectedUser.email, !selectedUser.isBlocked);
+        const res = await toggleUserBlocked(selectedUser.email, !selectedUser.isBlocked);
+        if (!res.ok) {
+            alert(res.error || 'Falha ao alterar bloqueio.');
+            return;
+        }
         await loadUsers(currentPage, searchQuery);
         setSelectedUser({ ...selectedUser, isBlocked: !selectedUser.isBlocked });
     };
@@ -479,6 +618,104 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
             alert(`${res.count} usuários excluídos com sucesso.`);
         } else {
             alert(res.error || "Falha na exclusão em massa.");
+        }
+    };
+
+    const handleDormantToggleSelect = (email: string) => {
+        const next = new Set(dormantSelectedEmails);
+        if (next.has(email)) next.delete(email);
+        else next.add(email);
+        setDormantSelectedEmails(next);
+    };
+
+    const handleDormantSelectAll = (pageEmails: string[]) => {
+        if (pageEmails.length === 0) return;
+        if (dormantSelectedEmails.size === pageEmails.length && pageEmails.length > 0) {
+            setDormantSelectedEmails(new Set());
+        } else {
+            setDormantSelectedEmails(new Set(pageEmails));
+        }
+    };
+
+    const handleDormantRowBlock = async (email: string) => {
+        if (!window.confirm(`Bloquear a conta ${email}?`)) return;
+        setDormantBulkBusy(true);
+        const res = await toggleUserBlocked(email, true);
+        setDormantBulkBusy(false);
+        if (!res.ok) {
+            alert(res.error || 'Falha ao bloquear.');
+            return;
+        }
+        setDormantSelectedEmails((prev) => {
+            const next = new Set(prev);
+            next.delete(email);
+            return next;
+        });
+        await loadDormantMiningAccounts();
+    };
+
+    const handleDormantRowDelete = async (email: string) => {
+        if (!window.confirm(`Excluir permanentemente ${email}? Esta ação remove dados vinculados.`)) return;
+        setDormantBulkBusy(true);
+        const res = await deleteUser(email);
+        setDormantBulkBusy(false);
+        if (!res?.ok) {
+            alert(res?.error || 'Falha ao excluir.');
+            return;
+        }
+        setDormantSelectedEmails((prev) => {
+            const next = new Set(prev);
+            next.delete(email);
+            return next;
+        });
+        await loadDormantMiningAccounts();
+        alert('Conta excluída.');
+    };
+
+    const handleDormantBulkBlock = async () => {
+        if (dormantSelectedEmails.size === 0) return;
+        const emails = Array.from(dormantSelectedEmails);
+        if (!window.confirm(`Bloquear ${emails.length} conta(s) seleccionada(s)?`)) return;
+        setDormantBulkBusy(true);
+        let ok = 0;
+        const failed: string[] = [];
+        for (const email of emails) {
+            const r = await toggleUserBlocked(email, true);
+            if (r.ok) ok += 1;
+            else failed.push(email);
+        }
+        setDormantBulkBusy(false);
+        await loadDormantMiningAccounts();
+        setDormantSelectedEmails(new Set());
+        if (failed.length > 0) {
+            const sample = failed.slice(0, 5).join(', ');
+            alert(
+                `Bloqueados: ${ok}. Falharam: ${failed.length}${failed.length > 5 ? ` (ex.: ${sample}…)` : ` (${sample})`}.`
+            );
+        } else {
+            alert(`${ok} conta(s) bloqueada(s).`);
+        }
+    };
+
+    const handleDormantBulkDelete = async () => {
+        if (dormantSelectedEmails.size === 0) return;
+        if (
+            !window.confirm(
+                `Excluir EM MASSA ${dormantSelectedEmails.size} conta(s) seleccionada(s)? Esta ação é IRREVERSÍVEL.`
+            )
+        ) {
+            return;
+        }
+        setDormantBulkBusy(true);
+        const emails = Array.from(dormantSelectedEmails);
+        const res = await bulkDeleteUsers(emails);
+        setDormantBulkBusy(false);
+        if (res.ok) {
+            await loadDormantMiningAccounts();
+            setDormantSelectedEmails(new Set());
+            alert(`${res.count ?? emails.length} conta(s) excluída(s).`);
+        } else {
+            alert(res.error || 'Falha na exclusão em massa.');
         }
     };
 
@@ -1473,6 +1710,24 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                     <button onClick={() => setSubTab('ranking')} className={`px-3 py-2 text-sm font-bold uppercase rounded ${subTab === 'ranking' ? 'bg-amber-600 text-white' : 'text-orange-400 hover:text-orange-300 hover:bg-orange-900/20'} flex items-center gap-1`}>
                         <Trophy size={14} /> Ranking
                     </button>
+                    <button
+                        type="button"
+                        onClick={() => setSubTab('dormant_no_mining')}
+                        className={`px-3 py-2 text-sm font-bold uppercase rounded inline-flex items-center gap-1.5 ${subTab === 'dormant_no_mining' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                        title="Contas antigas sem nenhuma rig com mineração ligada (is_on=1)"
+                    >
+                        <Pickaxe size={14} className={subTab === 'dormant_no_mining' ? 'text-white' : 'text-amber-400'} />
+                        Sem mineração
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => setSubTab('dormant_mining_no_wallet')}
+                        className={`px-3 py-2 text-sm font-bold uppercase rounded inline-flex items-center gap-1.5 ${subTab === 'dormant_mining_no_wallet' ? 'bg-amber-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                        title="Contas antigas com rig ligada e sem carteira Polygon no perfil"
+                    >
+                        <Unplug size={14} className={subTab === 'dormant_mining_no_wallet' ? 'text-white' : 'text-amber-400'} />
+                        Mineram sem carteira
+                    </button>
                 </div>
 
                 {(subTab === 'users' || subTab === 'admin_staff') && isAllowed('users') && (
@@ -2341,6 +2596,393 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                     </div>
                                 </div>
                             </div>
+                        )}
+                    </div>
+                )}
+                {(subTab === 'dormant_no_mining' || subTab === 'dormant_mining_no_wallet') && isAllowed('users') && (
+                    <div className="bg-slate-800 border border-slate-700 rounded-xl p-6 space-y-6">
+                        <div className="flex flex-wrap items-start justify-between gap-4">
+                            <div className="min-w-0 flex-1">
+                                <h3 className="text-white font-bold flex items-center gap-2 text-lg">
+                                    {subTab === 'dormant_no_mining' ? (
+                                        <>
+                                            <Pickaxe className="text-amber-500 shrink-0" size={22} />
+                                            Sem mineração activa
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Unplug className="text-amber-500 shrink-0" size={22} />
+                                            Mineram sem carteira Polygon
+                                        </>
+                                    )}
+                                </h3>
+                                <p className="text-slate-400 text-sm mt-2 max-w-3xl leading-relaxed">
+                                    {dormantNote ||
+                                        (subTab === 'dormant_no_mining'
+                                            ? 'Idade pela data do save no registo (game_states.start_time). Lista contas sem nenhuma rig com mineração ligada (is_on=1). Exclui bloqueados e admins.'
+                                            : 'Mesma idade mínima. Lista contas com pelo menos uma rig ligada (is_on=1) e sem endereço Polygon em users.polygon_wallet.')}
+                                </p>
+                                {dormantMeta && (
+                                    <p className="text-slate-500 text-xs mt-2 font-mono break-all">
+                                        Corte (epoch ms): {dormantMeta.cutoffMs} — {dormantMeta.limitEach} contas por página em
+                                        cada lista (paginação independente).
+                                    </p>
+                                )}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2 shrink-0">
+                                <label className="text-xs text-slate-400 font-bold uppercase flex items-center gap-2">
+                                    Idade mín.
+                                    <select
+                                        value={dormantDaysMin}
+                                        onChange={(e) => setDormantDaysMin(Number(e.target.value))}
+                                        className="bg-slate-900 border border-slate-600 rounded px-2 py-1.5 text-white text-sm font-medium normal-case"
+                                    >
+                                        <option value={30}>30+ dias</option>
+                                        <option value={60}>60+ dias</option>
+                                        <option value={90}>90+ dias</option>
+                                        <option value={180}>180+ dias</option>
+                                    </select>
+                                </label>
+                                <button
+                                    type="button"
+                                    onClick={() => void loadDormantMiningAccounts()}
+                                    disabled={dormantLoading}
+                                    className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-bold disabled:opacity-50"
+                                >
+                                    {dormantLoading ? <Loader2 className="animate-spin" size={16} /> : <RefreshCw size={16} />}
+                                    Atualizar
+                                </button>
+                            </div>
+                        </div>
+                        {dormantError && (
+                            <div className="rounded-lg border border-red-800 bg-red-950/40 text-red-200 text-sm px-4 py-3">{dormantError}</div>
+                        )}
+                        {dormantSelectedEmails.size > 0 && (
+                            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-amber-800/60 bg-amber-950/30 px-4 py-3">
+                                <span className="text-xs font-bold text-amber-400">
+                                    {dormantSelectedEmails.size} conta(s) seleccionada(s)
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => void handleDormantBulkBlock()}
+                                    disabled={dormantBulkBusy}
+                                    className="inline-flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-white text-[10px] font-bold py-1.5 px-3 rounded disabled:opacity-50"
+                                >
+                                    {dormantBulkBusy ? <Loader2 size={12} className="animate-spin" /> : <Lock size={12} />}
+                                    BLOQUEAR
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => void handleDormantBulkDelete()}
+                                    disabled={dormantBulkBusy}
+                                    className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-500 text-white text-[10px] font-bold py-1.5 px-3 rounded disabled:opacity-50"
+                                >
+                                    {dormantBulkBusy ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                    EXCLUIR
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => setDormantSelectedEmails(new Set())}
+                                    className="text-slate-500 hover:text-white p-1"
+                                    title="Limpar selecção"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        )}
+
+                        {subTab === 'dormant_no_mining' && (
+                            <section className="space-y-3">
+                                <h4 className="text-white font-bold text-sm uppercase tracking-wide flex items-center gap-2 flex-wrap">
+                                    <span className="w-2 h-2 rounded-full bg-slate-500 shrink-0" />
+                                    Contas sem rig ligada
+                                    <span className="text-slate-500 font-mono font-normal normal-case">
+                                        (página: {dormantNoMining.length}
+                                        {dormantMeta ? ` · total: ${dormantMeta.noMiningTotal.toLocaleString('pt-PT')}` : ''})
+                                    </span>
+                                </h4>
+                                <div className="overflow-x-auto rounded-lg border border-slate-700">
+                                    <table className="w-full text-sm text-left min-w-[720px]">
+                                        <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
+                                            <tr>
+                                                <th className="px-2 py-2 font-bold w-10">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            handleDormantSelectAll(dormantNoMining.map((r) => r.email))
+                                                        }
+                                                        className="text-slate-500 hover:text-amber-500 transition-colors"
+                                                        title="Seleccionar página"
+                                                    >
+                                                        {dormantSelectedEmails.size === dormantNoMining.length &&
+                                                        dormantNoMining.length > 0 ? (
+                                                            <CheckSquare size={18} />
+                                                        ) : (
+                                                            <Square size={18} />
+                                                        )}
+                                                    </button>
+                                                </th>
+                                                <th className="px-3 py-2 font-bold">ID</th>
+                                                <th className="px-3 py-2 font-bold">Utilizador</th>
+                                                <th className="px-3 py-2 font-bold">Email</th>
+                                                <th className="px-3 py-2 font-bold">Início save</th>
+                                                <th className="px-3 py-2 font-bold">Última actividade</th>
+                                                <th className="px-3 py-2 font-bold">Ranking</th>
+                                                <th className="px-3 py-2 font-bold text-right">Acções</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-700 text-slate-200">
+                                            {dormantNoMining.map((r) => (
+                                                <tr
+                                                    key={r.id}
+                                                    className={`hover:bg-slate-900/40 ${dormantSelectedEmails.has(r.email) ? 'bg-amber-900/10' : ''}`}
+                                                >
+                                                    <td className="px-2 py-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDormantToggleSelect(r.email)}
+                                                            className={`${dormantSelectedEmails.has(r.email) ? 'text-amber-500' : 'text-slate-600'} hover:text-amber-400 transition-colors`}
+                                                        >
+                                                            {dormantSelectedEmails.has(r.email) ? (
+                                                                <CheckSquare size={18} />
+                                                            ) : (
+                                                                <Square size={18} />
+                                                            )}
+                                                        </button>
+                                                    </td>
+                                                    <td className="px-3 py-2 font-mono text-xs">{r.id}</td>
+                                                    <td className="px-3 py-2 font-medium text-white">{r.username}</td>
+                                                    <td className="px-3 py-2 text-slate-300 break-all max-w-[220px]">{r.email}</td>
+                                                    <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{formatAdminDormantMs(r.startTimeMs)}</td>
+                                                    <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{formatAdminDormantMs(r.lastActiveAt)}</td>
+                                                    <td className="px-3 py-2">
+                                                        {r.rankingExcluded ? (
+                                                            <span className="text-xs bg-orange-900/50 text-orange-200 px-2 py-0.5 rounded">excluído</span>
+                                                        ) : (
+                                                            <span className="text-slate-600">—</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                                                        <div className="inline-flex items-center gap-1 justify-end">
+                                                            <button
+                                                                type="button"
+                                                                title="Bloquear"
+                                                                disabled={dormantBulkBusy}
+                                                                onClick={() => void handleDormantRowBlock(r.email)}
+                                                                className="p-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40"
+                                                            >
+                                                                <Lock size={14} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                title="Excluir"
+                                                                disabled={dormantBulkBusy}
+                                                                onClick={() => void handleDormantRowDelete(r.email)}
+                                                                className="p-1.5 rounded-md bg-red-900/70 hover:bg-red-800 text-white disabled:opacity-40"
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {dormantNoMining.length === 0 && !dormantLoading && (
+                                                <tr>
+                                                    <td colSpan={8} className="px-3 py-8 text-center text-slate-500 text-sm">
+                                                        Nenhuma conta nestes critérios.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            {dormantLoading && dormantNoMining.length === 0 && (
+                                                <tr>
+                                                    <td colSpan={8} className="px-3 py-8 text-center text-slate-400 text-sm">
+                                                        <Loader2 className="inline animate-spin mr-2" size={16} /> A carregar…
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {dormantMeta && (
+                                    <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-700/50 text-sm text-slate-400">
+                                        <span>
+                                            Página {dormantNoMiningPage} de{' '}
+                                            {Math.max(
+                                                1,
+                                                Math.ceil(dormantMeta.noMiningTotal / Math.max(1, dormantMeta.limitEach))
+                                            )}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                disabled={dormantLoading || dormantNoMiningPage <= 1}
+                                                onClick={() => setDormantNoMiningPage((p) => Math.max(1, p - 1))}
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                <ChevronLeft size={16} /> Anterior
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={
+                                                    dormantLoading ||
+                                                    dormantNoMiningPage * dormantMeta.limitEach >= dormantMeta.noMiningTotal
+                                                }
+                                                onClick={() => setDormantNoMiningPage((p) => p + 1)}
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                Seguinte <ChevronRight size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
+                        )}
+                        {subTab === 'dormant_mining_no_wallet' && (
+                            <section className="space-y-3">
+                                <h4 className="text-white font-bold text-sm uppercase tracking-wide flex items-center gap-2 flex-wrap">
+                                    <Unplug size={16} className="text-amber-500 shrink-0" />
+                                    Contas com rig ligada e sem carteira
+                                    <span className="text-slate-500 font-mono font-normal normal-case">
+                                        (página: {dormantMiningNoWallet.length}
+                                        {dormantMeta ? ` · total: ${dormantMeta.miningNoWalletTotal.toLocaleString('pt-PT')}` : ''})
+                                    </span>
+                                </h4>
+                                <div className="overflow-x-auto rounded-lg border border-slate-700">
+                                    <table className="w-full text-sm text-left min-w-[720px]">
+                                        <thead className="bg-slate-900 text-slate-400 uppercase text-xs">
+                                            <tr>
+                                                <th className="px-2 py-2 font-bold w-10">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            handleDormantSelectAll(dormantMiningNoWallet.map((r) => r.email))
+                                                        }
+                                                        className="text-slate-500 hover:text-amber-500 transition-colors"
+                                                        title="Seleccionar página"
+                                                    >
+                                                        {dormantSelectedEmails.size === dormantMiningNoWallet.length &&
+                                                        dormantMiningNoWallet.length > 0 ? (
+                                                            <CheckSquare size={18} />
+                                                        ) : (
+                                                            <Square size={18} />
+                                                        )}
+                                                    </button>
+                                                </th>
+                                                <th className="px-3 py-2 font-bold">ID</th>
+                                                <th className="px-3 py-2 font-bold">Utilizador</th>
+                                                <th className="px-3 py-2 font-bold">Email</th>
+                                                <th className="px-3 py-2 font-bold">Início save</th>
+                                                <th className="px-3 py-2 font-bold">Última actividade</th>
+                                                <th className="px-3 py-2 font-bold">Ranking</th>
+                                                <th className="px-3 py-2 font-bold text-right">Acções</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-700 text-slate-200">
+                                            {dormantMiningNoWallet.map((r) => (
+                                                <tr
+                                                    key={r.id}
+                                                    className={`hover:bg-slate-900/40 ${dormantSelectedEmails.has(r.email) ? 'bg-amber-900/10' : ''}`}
+                                                >
+                                                    <td className="px-2 py-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => handleDormantToggleSelect(r.email)}
+                                                            className={`${dormantSelectedEmails.has(r.email) ? 'text-amber-500' : 'text-slate-600'} hover:text-amber-400 transition-colors`}
+                                                        >
+                                                            {dormantSelectedEmails.has(r.email) ? (
+                                                                <CheckSquare size={18} />
+                                                            ) : (
+                                                                <Square size={18} />
+                                                            )}
+                                                        </button>
+                                                    </td>
+                                                    <td className="px-3 py-2 font-mono text-xs">{r.id}</td>
+                                                    <td className="px-3 py-2 font-medium text-white">{r.username}</td>
+                                                    <td className="px-3 py-2 text-slate-300 break-all max-w-[220px]">{r.email}</td>
+                                                    <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{formatAdminDormantMs(r.startTimeMs)}</td>
+                                                    <td className="px-3 py-2 text-slate-400 whitespace-nowrap">{formatAdminDormantMs(r.lastActiveAt)}</td>
+                                                    <td className="px-3 py-2">
+                                                        {r.rankingExcluded ? (
+                                                            <span className="text-xs bg-orange-900/50 text-orange-200 px-2 py-0.5 rounded">excluído</span>
+                                                        ) : (
+                                                            <span className="text-slate-600">—</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-3 py-2 text-right whitespace-nowrap">
+                                                        <div className="inline-flex items-center gap-1 justify-end">
+                                                            <button
+                                                                type="button"
+                                                                title="Bloquear"
+                                                                disabled={dormantBulkBusy}
+                                                                onClick={() => void handleDormantRowBlock(r.email)}
+                                                                className="p-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-white disabled:opacity-40"
+                                                            >
+                                                                <Lock size={14} />
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                title="Excluir"
+                                                                disabled={dormantBulkBusy}
+                                                                onClick={() => void handleDormantRowDelete(r.email)}
+                                                                className="p-1.5 rounded-md bg-red-900/70 hover:bg-red-800 text-white disabled:opacity-40"
+                                                            >
+                                                                <Trash2 size={14} />
+                                                            </button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                            {dormantMiningNoWallet.length === 0 && !dormantLoading && (
+                                                <tr>
+                                                    <td colSpan={8} className="px-3 py-8 text-center text-slate-500 text-sm">
+                                                        Nenhuma conta nestes critérios.
+                                                    </td>
+                                                </tr>
+                                            )}
+                                            {dormantLoading && dormantMiningNoWallet.length === 0 && (
+                                                <tr>
+                                                    <td colSpan={8} className="px-3 py-8 text-center text-slate-400 text-sm">
+                                                        <Loader2 className="inline animate-spin mr-2" size={16} /> A carregar…
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                {dormantMeta && (
+                                    <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-700/50 text-sm text-slate-400">
+                                        <span>
+                                            Página {dormantMiningNoWalletPage} de{' '}
+                                            {Math.max(
+                                                1,
+                                                Math.ceil(dormantMeta.miningNoWalletTotal / Math.max(1, dormantMeta.limitEach))
+                                            )}
+                                        </span>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                disabled={dormantLoading || dormantMiningNoWalletPage <= 1}
+                                                onClick={() => setDormantMiningNoWalletPage((p) => Math.max(1, p - 1))}
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                <ChevronLeft size={16} /> Anterior
+                                            </button>
+                                            <button
+                                                type="button"
+                                                disabled={
+                                                    dormantLoading ||
+                                                    dormantMiningNoWalletPage * dormantMeta.limitEach >=
+                                                        dormantMeta.miningNoWalletTotal
+                                                }
+                                                onClick={() => setDormantMiningNoWalletPage((p) => p + 1)}
+                                                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+                                            >
+                                                Seguinte <ChevronRight size={16} />
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                            </section>
                         )}
                     </div>
                 )}

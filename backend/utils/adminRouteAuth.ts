@@ -139,6 +139,7 @@ export function resolveAdminRouteRequirement(method: string, rawPath: string): A
   if (p === '/api/admin/ranking-exclusion') return { kind: 'tab', tab: 'users' };
 
   if (p === '/api/admin/ranking') return { kind: 'tab', tab: 'users' };
+  if (p === '/api/admin/accounts-dormant-mining') return { kind: 'tab', tab: 'users' };
   if (p.startsWith('/api/admin/economy-stats')) return { kind: 'tab', tab: 'reports' };
   if (p.startsWith('/api/admin/mining-runtime-summary')) return { kind: 'tab', tab: 'reports' };
   if (p.startsWith('/api/admin/etherscan/')) return { kind: 'tab', tab: 'reports' };

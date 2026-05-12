@@ -20,6 +20,11 @@ backend/frontend/
 # Deploy VM (credenciais — nunca commitar)
 scripts/deploy.vm.env
 
+# Let's Encrypt na VM (chaves / material ACME — nunca versionar)
+app_production/certbot/conf/archive/
+app_production/certbot/conf/live/
+app_production/certbot/conf/renewal/
+
 # Snapshot legado de deploy — chaves TLS / conta ACME (nunca versionar)
 deployment_legacy_20260506/**/privkey*.pem
 deployment_legacy_20260506/**/private_key.json

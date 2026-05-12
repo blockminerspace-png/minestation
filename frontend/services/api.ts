@@ -1584,8 +1584,30 @@ export async function getAdminUserMap(): Promise<Array<{ id: number; username: s
   }
 }
 
-export async function toggleUserBlocked(email: string, blocked: boolean): Promise<void> {
-  await apiFetch(`${base}/users/block`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, blocked }) });
+export async function toggleUserBlocked(
+  email: string,
+  blocked: boolean
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await apiFetch(`${base}/users/block`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, blocked })
+    });
+    if (!res.ok) {
+      let err = `Erro ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) err = j.error;
+      } catch {
+        /* ignore */
+      }
+      return { ok: false, error: err };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: 'Erro de rede.' };
+  }
 }
 
 export async function updateUser(user: User & { newReferralFor?: string }): Promise<{ ok: boolean; error?: string; code?: string; accounts?: any[] }> {
@@ -3986,6 +4008,94 @@ export async function getAdminUserActivity(
     return { logs: Array.isArray(data.logs) ? data.logs : [], ...(note ? { activityLogNote: note } : {}) };
   } catch {
     return { logs: [], error: 'Erro de rede.' };
+  }
+}
+
+export type AdminDormantMiningRow = {
+  id: number;
+  username: string;
+  email: string;
+  polygonWallet: string | null;
+  startTimeMs: string | null;
+  lastActiveAt: string | null;
+  rankingExcluded: boolean;
+};
+
+export type AdminDormantMiningReport = {
+  daysMin: number;
+  cutoffMs: string;
+  limit: number;
+  limitEach: number;
+  noMiningPage: number;
+  miningNoWalletPage: number;
+  noMiningTotal: number;
+  miningNoWalletTotal: number;
+  note: string;
+  noMining: AdminDormantMiningRow[];
+  miningNoWallet: AdminDormantMiningRow[];
+  error?: string;
+};
+
+/** GET /api/admin/accounts-dormant-mining — contas antigas sem mineração activa ou a minerar sem carteira. */
+export async function getAdminDormantMiningAccounts(opts?: {
+  daysMin?: number;
+  limit?: number;
+  noMiningPage?: number;
+  miningNoWalletPage?: number;
+}): Promise<AdminDormantMiningReport> {
+  const empty: AdminDormantMiningReport = {
+    daysMin: 30,
+    cutoffMs: '',
+    limit: 500,
+    limitEach: 500,
+    noMiningPage: 1,
+    miningNoWalletPage: 1,
+    noMiningTotal: 0,
+    miningNoWalletTotal: 0,
+    note: '',
+    noMining: [],
+    miningNoWallet: []
+  };
+  const q = new URLSearchParams();
+  if (opts?.daysMin != null && opts.daysMin >= 30) q.set('daysMin', String(Math.min(365, Math.floor(opts.daysMin))));
+  if (opts?.limit != null && opts.limit > 0) q.set('limit', String(Math.min(500, Math.max(50, Math.floor(opts.limit)))));
+  if (opts?.noMiningPage != null && opts.noMiningPage >= 1) q.set('noMiningPage', String(Math.floor(opts.noMiningPage)));
+  if (opts?.miningNoWalletPage != null && opts.miningNoWalletPage >= 1) {
+    q.set('miningNoWalletPage', String(Math.floor(opts.miningNoWalletPage)));
+  }
+  const qs = q.toString();
+  try {
+    const res = await apiFetch(`${base}/admin/accounts-dormant-mining${qs ? `?${qs}` : ''}`);
+    if (!res.ok) {
+      let msg = `Erro ${res.status}`;
+      try {
+        const j = (await res.json()) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        /* ignore */
+      }
+      return { ...empty, error: msg };
+    }
+    const data = (await res.json()) as Partial<AdminDormantMiningReport>;
+    const lim = typeof data.limit === 'number' && Number.isFinite(data.limit) ? data.limit : data.limitEach ?? 500;
+    const limN = Math.min(500, Math.max(50, typeof lim === 'number' ? lim : 500));
+    return {
+      daysMin: typeof data.daysMin === 'number' && Number.isFinite(data.daysMin) ? data.daysMin : 30,
+      cutoffMs: typeof data.cutoffMs === 'string' ? data.cutoffMs : '',
+      limit: limN,
+      limitEach: typeof data.limitEach === 'number' && Number.isFinite(data.limitEach) ? data.limitEach : limN,
+      noMiningPage: typeof data.noMiningPage === 'number' && Number.isFinite(data.noMiningPage) ? data.noMiningPage : 1,
+      miningNoWalletPage:
+        typeof data.miningNoWalletPage === 'number' && Number.isFinite(data.miningNoWalletPage) ? data.miningNoWalletPage : 1,
+      noMiningTotal: typeof data.noMiningTotal === 'number' && Number.isFinite(data.noMiningTotal) ? data.noMiningTotal : 0,
+      miningNoWalletTotal:
+        typeof data.miningNoWalletTotal === 'number' && Number.isFinite(data.miningNoWalletTotal) ? data.miningNoWalletTotal : 0,
+      note: typeof data.note === 'string' ? data.note : '',
+      noMining: parseJsonArray<AdminDormantMiningRow>(data.noMining),
+      miningNoWallet: parseJsonArray<AdminDormantMiningRow>(data.miningNoWallet)
+    };
+  } catch {
+    return { ...empty, error: 'Erro de rede.' };
   }
 }
 
