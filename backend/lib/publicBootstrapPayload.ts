@@ -23,7 +23,8 @@ const GAME_NAV_SHORT_KEYS = [
   'upgrade',
   'transparency',
   'support',
-  'partners'
+  'partners',
+  'partner_games'
 ] as const;
 
 const NAV_PREFIX = 'nav.';

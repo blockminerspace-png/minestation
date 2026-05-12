@@ -83,7 +83,7 @@ import { gpuDupLog } from './utils/gpuDupDebug';
 import { HomePage } from './components/HomePage';
 import { Footer } from './components/Footer';
 import { lazyWithReload } from './lib/lazyWithReload';
-import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale, Sparkles, Battery, LifeBuoy, Clapperboard, Construction } from 'lucide-react';
+import { Wallet, TrendingUp, RefreshCw, DollarSign, Coins, Server, ShoppingCart, LayoutDashboard, Package, LogOut, Home, BookOpen, User as UserIcon, Sun, Moon, Skull, Shield, Crown, Gift, ChevronDown, ChevronUp, Menu, X, Play, Wrench, Gamepad2, Trophy, Scale, Sparkles, Battery, LifeBuoy, Clapperboard, Construction, Grid3X3 } from 'lucide-react';
 
 const DocsPage = lazyWithReload(() => import('./components/DocsPage').then((m) => ({ default: m.DocsPage })));
 const AuthPage = lazyWithReload(() => import('./components/AuthPage').then((m) => ({ default: m.AuthPage })));
@@ -99,6 +99,7 @@ const LuckyBoxStore = lazyWithReload(() => import('./components/LuckyBoxStore').
 const RoletaPage = lazyWithReload(() => import('./components/RoletaPage').then((m) => ({ default: m.RoletaPage })));
 const SupportPage = lazyWithReload(() => import('./components/SupportPage').then((m) => ({ default: m.SupportPage })));
 const PartnersPage = lazyWithReload(() => import('./components/PartnersPage').then((m) => ({ default: m.PartnersPage })));
+const PartnerGamesPage = lazyWithReload(() => import('./components/PartnerGamesPage').then((m) => ({ default: m.PartnerGamesPage })));
 const DashboardPage = lazyWithReload(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
 const BlackMarket = lazyWithReload(() => import('./components/BlackMarket').then((m) => ({ default: m.BlackMarket })));
 const Exchange = lazyWithReload(() => import('./components/Exchange').then((m) => ({ default: m.Exchange })));
@@ -325,7 +326,7 @@ function applyNftAutoSanitizedClientSync(
   setGameState(next);
 }
 
-type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support' | 'partners' | 'dashboard';
+type View = 'servers' | 'inventory' | 'hardware_store' | 'black_market' | 'wallet' | 'profile' | 'upgrade' | 'lucky_store' | 'roleta' | 'oficina' | 'arcade' | 'calculator' | 'ranking' | 'transparency' | 'support' | 'partners' | 'partner_games' | 'dashboard';
 type GlobalView = 'home' | 'docs' | 'auth' | 'game' | 'admin';
 
 const VALID_GAME_VIEWS: readonly View[] = [
@@ -345,6 +346,7 @@ const VALID_GAME_VIEWS: readonly View[] = [
   'transparency',
   'support',
   'partners',
+  'partner_games',
   'dashboard',
 ] as const;
 
@@ -816,9 +818,13 @@ export default function App() {
     if (user && !pages.includes('support')) {
       pages = [...pages, 'support'];
     }
-    // Parceiros (/partners — BlockMiner embebido + vitrine YouTube): sempre no menu com sessão ativa.
+    // Parceiros (/partners — vitrine YouTube): sempre no menu com sessão ativa.
     if (user && !pages.includes('partners')) {
       pages = [...pages, 'partners'];
+    }
+    // Jogos do parceiro em iframe (/partner-games): mesmo acesso que Parceiros (não exige linha extra em `allowed_pages`).
+    if (user && pages.includes('partners') && !pages.includes('partner_games')) {
+      pages = [...pages, 'partner_games'];
     }
     return pages;
   };
@@ -831,6 +837,7 @@ export default function App() {
       { view: 'roleta', requiredPage: 'lucky_store' },
       { view: 'transparency', requiredPage: 'transparency' },
       { view: 'partners', requiredPage: 'partners' },
+      { view: 'partner_games', requiredPage: 'partners' },
     ];
     for (const { view, requiredPage } of gated) {
       if (currentView === view && !pages.includes(requiredPage)) {
@@ -2637,9 +2644,9 @@ export default function App() {
   const formatMoney = (val: number) => val < 0.01 && val > 0 ? val.toFixed(3) : val.toLocaleString('en-US', { maximumFractionDigits: 2 });
   const formatHash = (val: number) => val === 0 ? "0 H/s" : (val < 0.0001 ? val.toFixed(8) + " H/s" : Intl.NumberFormat('en-US', { notation: "compact", maximumFractionDigits: 2 }).format(val) + " H/s");
 
-  /** Dashboard / Parceiros: menos altura no header + menu para dar espaço ao conteúdo (iframe). */
+  /** Dashboard / Parceiros / Jogos parceiro: menos altura no header + menu para dar espaço ao conteúdo (iframe). */
   const compactGameChrome = Boolean(
-    user && globalView === 'game' && (currentView === 'dashboard' || currentView === 'partners')
+    user && globalView === 'game' && (currentView === 'dashboard' || currentView === 'partners' || currentView === 'partner_games')
   );
 
   return (
@@ -2939,6 +2946,7 @@ export default function App() {
                   {getAllowedPages().includes('transparency') && (<button onClick={() => { goToGameView('transparency'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'transparency' ? 'border-emerald-500 text-emerald-600 dark:text-emerald-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Scale size={16} /> {gameNav('transparency')}</button>)}
                   {getAllowedPages().includes('support') && (<button onClick={() => { goToGameView('support'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'support' ? 'border-sky-500 text-sky-600 dark:text-sky-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><LifeBuoy size={16} /> {gameNav('support')}</button>)}
                   {getAllowedPages().includes('partners') && (<button onClick={() => { goToGameView('partners'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'partners' ? 'border-violet-500 text-violet-600 dark:text-violet-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Clapperboard size={16} /> {gameNav('partners')}</button>)}
+                  {getAllowedPages().includes('partner_games') && (<button onClick={() => { goToGameView('partner_games'); setGameMenuOpen(false); }} className={`flex items-center gap-2 px-3 py-2 text-sm font-bold rounded border ${currentView === 'partner_games' ? 'border-violet-500 text-violet-600 dark:text-violet-400' : 'border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300'}`}><Grid3X3 size={16} /> {gameNav('partner_games')}</button>)}
                 </div>
               )}
               <div
@@ -2960,18 +2968,19 @@ export default function App() {
                 {getAllowedPages().includes('transparency') && (<button type="button" onClick={() => { goToGameView('transparency'); }} className={gameNavTabClass(currentView === 'transparency', 'emerald')}><Scale size={15} className="shrink-0 opacity-90" /> {gameNav('transparency')}</button>)}
                 {getAllowedPages().includes('support') && (<button type="button" onClick={() => { goToGameView('support'); }} className={gameNavTabClass(currentView === 'support', 'sky')}><LifeBuoy size={15} className="shrink-0 opacity-90" /> {gameNav('support')}</button>)}
                 {getAllowedPages().includes('partners') && (<button type="button" onClick={() => { goToGameView('partners'); }} className={gameNavTabClass(currentView === 'partners', 'violet')}><Clapperboard size={15} className="shrink-0 opacity-90" /> {gameNav('partners')}</button>)}
+                {getAllowedPages().includes('partner_games') && (<button type="button" onClick={() => { goToGameView('partner_games'); }} className={gameNavTabClass(currentView === 'partner_games', 'violet')}><Grid3X3 size={15} className="shrink-0 opacity-90" /> {gameNav('partner_games')}</button>)}
               </div>
             </nav>
 
             {/* GAME CONTENT WRAPPER WITH SIDEBARS */}
             <div
               className={`flex-1 min-w-0 flex overflow-hidden relative w-full h-full ${
-                currentView === 'dashboard' || currentView === 'partners' ? 'justify-start' : 'justify-center'
+                currentView === 'dashboard' || currentView === 'partners' || currentView === 'partner_games' ? 'justify-start' : 'justify-center'
               }`}
             >
 
-              {/* Laterais — escondidas na Dashboard (layout limpo) e em Parceiros (vitrine full-width). */}
-              {currentView !== 'dashboard' && currentView !== 'partners' && (
+              {/* Laterais — escondidas na Dashboard (layout limpo), Parceiros e Parceiro · Jogos (vitrine / iframe full-width). */}
+              {currentView !== 'dashboard' && currentView !== 'partners' && currentView !== 'partner_games' && (
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-amber-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-amber-500/40 shadow-2xl shadow-amber-500/5">
                 {verticalAds[0] ? (
                   <a href={verticalAds[0].link || '#'} target={verticalAds[0].link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">
@@ -3001,7 +3010,7 @@ export default function App() {
 
               <div
                 className={`flex-1 min-w-0 overflow-hidden relative w-full flex flex-col min-h-0 ${
-                  currentView === 'dashboard' || currentView === 'partners'
+                  currentView === 'dashboard' || currentView === 'partners' || currentView === 'partner_games'
                     ? 'max-w-none'
                     : 'max-w-7xl'
                 }`}
@@ -3250,7 +3259,17 @@ export default function App() {
                     <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
                       <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
                         <Suspense fallback={<LazyRouteFallback />}>
-                          <PartnersPage />
+                          <PartnersPage onOpenPartnerGames={() => goToGameView('partner_games')} />
+                        </Suspense>
+                      </div>
+                      <Footer />
+                    </div>
+                  )}
+                  {saveLoaded && currentView === 'partner_games' && getAllowedPages().includes('partner_games') && (
+                    <div className="flex-1 flex flex-col animate-in fade-in slide-in-from-right-4 duration-300">
+                      <div className="flex-1 min-w-0 overflow-y-auto overflow-x-hidden custom-scrollbar flex flex-col">
+                        <Suspense fallback={<LazyRouteFallback />}>
+                          <PartnerGamesPage onGoToYoutubePartners={() => goToGameView('partners')} />
                         </Suspense>
                       </div>
                       <Footer />
@@ -3279,7 +3298,7 @@ export default function App() {
                 </div>
               </div>
 
-              {currentView !== 'dashboard' && currentView !== 'partners' && (
+              {currentView !== 'dashboard' && currentView !== 'partners' && currentView !== 'partner_games' && (
               <aside className="hidden 2xl:flex shrink-0 w-[145.6px] h-[546px] sticky top-24 mx-4 overflow-hidden rounded-xl border border-orange-500/20 bg-slate-900/40 backdrop-blur-sm self-start mt-4 transition-all duration-500 hover:border-orange-500/40 shadow-2xl shadow-orange-500/5">
                 {verticalAds[1] || verticalAds[0] ? (
                   <a href={(verticalAds[1] || verticalAds[0]).link || '#'} target={(verticalAds[1] || verticalAds[0]).link ? "_blank" : "_self"} rel="noopener noreferrer" className="w-full h-full block">

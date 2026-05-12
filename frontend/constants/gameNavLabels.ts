@@ -14,6 +14,7 @@ export const GAME_NAV_LABEL_KEYS = [
   'transparency',
   'support',
   'partners',
+  'partner_games',
 ] as const;
 
 export type GameNavLabelKey = (typeof GAME_NAV_LABEL_KEYS)[number];
@@ -34,4 +35,5 @@ export const DEFAULT_GAME_NAV_LABELS: Record<GameNavLabelKey, string> = {
   transparency: 'Transparência',
   support: 'Suporte',
   partners: 'Parceiros',
+  partner_games: 'Parceiro · Jogos',
 };

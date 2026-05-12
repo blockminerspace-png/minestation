@@ -10,7 +10,7 @@ import {
   ThumbsUp,
   Youtube,
   Play,
-  ExternalLink
+  Gamepad2
 } from 'lucide-react';
 import {
   getPartnersState,
@@ -24,9 +24,6 @@ import {
   PARTNER_VIDEO_TITLE_MAX,
   PARTNER_VIDEO_YOUTUBE_URL_MAX
 } from '../constants/formLimits';
-
-/** URL canónica do site do parceiro (iframe + link externo). Alinhar com `dashboard.service` / cartão do dashboard. */
-const BLOCKMINER_EMBED_URL = 'https://blockminer.space/';
 
 function thumbUrl(videoId: string): string {
   const v = String(videoId || '').trim();
@@ -83,7 +80,12 @@ function PartnerShowcaseAvatar({ name, imageUrl }: { name: string; imageUrl: str
   );
 }
 
-export const PartnersPage: React.FC = () => {
+export type PartnersPageProps = {
+  /** Abre o ecrã dedicado ao iframe / jogos BlockMiner (`/partner-games`). */
+  onOpenPartnerGames: () => void;
+};
+
+export const PartnersPage: React.FC<PartnersPageProps> = ({ onOpenPartnerGames }) => {
   const [videos, setVideos] = useState<PartnersShowcaseVideoDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -196,56 +198,22 @@ export const PartnersPage: React.FC = () => {
 
   return (
     <div className="w-full flex flex-col gap-8 text-slate-100 pb-8">
-      <section aria-label="BlockMiner" className="w-full px-2 sm:px-4 pt-1 space-y-3">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-2xl border border-violet-500/35 bg-gradient-to-r from-slate-900/95 via-violet-950/25 to-slate-900/90 px-4 py-3.5 ring-1 ring-violet-500/10">
-          <div className="min-w-0 space-y-0.5">
-            <div className="text-[10px] uppercase tracking-widest text-violet-300/90 font-bold">Parceiro oficial</div>
-            <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white">BlockMiner</h2>
-            <p className="text-xs sm:text-sm text-slate-400 max-w-xl">
-              Usa o site do parceiro aqui dentro. Se não carregar (bloqueio do browser ou do parceiro), abre numa nova janela.
-            </p>
-          </div>
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <a
-              href={BLOCKMINER_EMBED_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-violet-400/40 bg-violet-600/20 px-3 py-2 text-xs font-bold text-violet-100 hover:bg-violet-600/35 transition-colors"
-            >
-              <ExternalLink size={14} className="shrink-0" />
-              Abrir em nova janela
-            </a>
-            <a
-              href="#parceiros-youtube"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-800/80 px-3 py-2 text-xs font-bold text-slate-200 hover:bg-slate-800 transition-colors"
-            >
-              Vitrine YouTube
-            </a>
-          </div>
+      <div className="w-full px-2 sm:px-4 pt-1">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 rounded-xl border border-violet-500/30 bg-slate-900/70 px-4 py-3 ring-1 ring-violet-500/10">
+          <p className="text-sm text-slate-400 max-w-2xl">
+            Esta página é só a <strong className="text-slate-200">vitrine YouTube</strong> e envios. Os jogos BlockMiner (iframe e link para o site) estão no separador{' '}
+            <strong className="text-violet-200">Parceiro · Jogos</strong>.
+          </p>
+          <button
+            type="button"
+            onClick={onOpenPartnerGames}
+            className="inline-flex shrink-0 items-center gap-2 rounded-lg border border-violet-400/45 bg-violet-600/25 px-3 py-2 text-xs font-bold text-violet-100 hover:bg-violet-600/40 transition-colors"
+          >
+            <Gamepad2 size={16} className="shrink-0" />
+            Abrir jogos BlockMiner
+          </button>
         </div>
-        <div className="mx-auto w-full max-w-xl">
-          <div className="relative w-full h-[220px] sm:h-[260px] rounded-2xl border border-slate-700/90 bg-black overflow-hidden shadow-xl shadow-black/40">
-            <iframe
-              title="BlockMiner"
-              src={BLOCKMINER_EMBED_URL}
-              className="absolute inset-0 h-full w-full border-0 bg-slate-950"
-              allow="fullscreen; clipboard-read; clipboard-write; payment"
-              referrerPolicy="strict-origin-when-cross-origin"
-            />
-          </div>
-          <div className="mt-3 flex justify-center">
-            <a
-              href={BLOCKMINER_EMBED_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-xl border border-violet-500/40 bg-violet-600/25 px-4 py-2.5 text-sm font-bold text-violet-100 hover:bg-violet-600/40 transition-colors shadow-lg shadow-violet-950/20"
-            >
-              <ExternalLink size={16} className="shrink-0" />
-              Ir para blockminer.space
-            </a>
-          </div>
-        </div>
-      </section>
+      </div>
 
       <div id="parceiros-youtube" className="scroll-mt-6 max-w-7xl mx-auto w-full px-3 sm:px-4 space-y-8">
       <div className="rounded-2xl border border-slate-700/80 bg-gradient-to-br from-slate-900/90 via-slate-900/70 to-amber-950/20 px-4 sm:px-6 py-5 sm:py-6 space-y-2">

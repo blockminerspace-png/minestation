@@ -309,7 +309,7 @@ function EcosystemModulesStrip({
                   m.id === 'blockminer' ? (
                     <button
                       type="button"
-                      onClick={() => onNavigate('partners')}
+                      onClick={() => onNavigate('partner_games')}
                       className="pointer-events-auto absolute left-1/2 bottom-0 z-[200] -translate-x-1/2 translate-y-1/2 flex items-center gap-1 rounded-full bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500 px-3.5 py-1.5 sm:px-4 sm:py-1.5 text-[10px] sm:text-[11px] font-black uppercase tracking-wide text-stone-950 shadow-[0_4px_14px_-2px_rgba(245,158,11,0.42)] ring-1 ring-amber-200/70 border border-amber-950/20 hover:brightness-105 hover:scale-[1.03] active:scale-[0.99] transition-transform"
                     >
                       Entrar
