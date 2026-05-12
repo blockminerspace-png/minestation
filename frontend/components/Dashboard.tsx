@@ -293,7 +293,7 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
           {modules.map((m) => {
             const th = ecosystemThemeClasses(m.id);
             const canGo = m.status === 'available';
-            const imgH = 'h-[76px] sm:h-[84px]';
+            const imgBox = 'h-[76px] sm:h-[84px]';
             return (
               <div
                 key={m.id}
@@ -312,16 +312,18 @@ function EcosystemModulesStrip({ modules }: { modules: DashboardEcosystemModule[
                   </div>
                 </div>
 
-                <div className={`relative z-[1] min-w-0 flex-1 ${imgH} self-center my-1 mr-1 sm:mr-1.5 rounded-md overflow-hidden border border-white/10 ${th.glow}`}>
+                <div
+                  className={`relative z-[1] min-w-0 flex-1 ${imgBox} self-center my-1 mr-1 sm:mr-1.5 rounded-md overflow-hidden border border-white/10 bg-slate-950/90 ${th.glow} flex items-center justify-center`}
+                >
                   {m.imageUrl ? (
                     <img
                       src={m.imageUrl}
                       alt=""
-                      className={`h-full w-full object-cover ${m.id === 'blockminer' ? 'object-[50%_12%]' : 'object-center'}`}
+                      className="max-h-full max-w-full object-contain object-center"
                       loading="lazy"
                     />
                   ) : (
-                    <div className={`h-full w-full bg-gradient-to-br ${th.placeholder} flex items-center justify-center`}>
+                    <div className={`absolute inset-0 bg-gradient-to-br ${th.placeholder} flex items-center justify-center`}>
                       <span className="text-2xl font-black text-white/10">{m.title.charAt(0)}</span>
                     </div>
                   )}
