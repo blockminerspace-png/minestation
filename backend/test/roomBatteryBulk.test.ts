@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { applyBulkRoomBatteryChange, type BulkBatteryPrev, type GameUpgrade } from '../modules/batteries/batteries.bulk.js';
+import {
+  applyBulkRoomBatteryChange,
+  applyBulkRoomBatterySmartFill,
+  type BulkBatteryPrev,
+  type GameUpgrade
+} from '../modules/batteries/batteries.bulk.js';
 
 const upgrades: GameUpgrade[] = [
   {
@@ -89,5 +94,49 @@ describe('roomBatteryBulk instance UUID on rack', () => {
     expect(out.ok).toBe(true);
     expect(out.next?.placedRacks?.[0]?.batteryId).toBe(instId);
     expect(out.next?.storedBatteries?.some((b) => b.id === instId)).toBe(false);
+  });
+
+  it('smart fill consumes battery instances from warehouse when stock is empty', () => {
+    // Regressão: pós-explode UUID, todas as baterias estão em `storedBatteries` e
+    // `stock` da bateria é 0. O smart fill precisa puxar do armazém UUID.
+    const inst1 = '11111111-2222-4333-8444-555555555555';
+    const inst2 = '22222222-3333-4444-8555-666666666666';
+    const prev: BulkBatteryPrev = {
+      stock: {},
+      storedBatteries: [
+        { id: inst1, itemId: 'small_battery' },
+        { id: inst2, itemId: 'small_battery' }
+      ],
+      placedRacks: [
+        {
+          id: 'rack1',
+          itemId: 'some_chassis',
+          roomId: 'room_initial',
+          slotIndex: 0,
+          batteryId: null,
+          isOn: false,
+          slots: [],
+          multiplierSlots: []
+        },
+        {
+          id: 'rack2',
+          itemId: 'some_chassis',
+          roomId: 'room_initial',
+          slotIndex: 1,
+          batteryId: null,
+          isOn: false,
+          slots: [],
+          multiplierSlots: []
+        }
+      ]
+    };
+    const out = applyBulkRoomBatterySmartFill(prev, 'room_initial', upgrades, 'slot_asc');
+    expect(out.ok).toBe(true);
+    expect(out.appliedRigs).toBe(2);
+    const equippedIds = (out.next?.placedRacks ?? [])
+      .map((r) => r.batteryId)
+      .filter((x): x is string => !!x);
+    expect(equippedIds.sort()).toEqual([inst1, inst2].sort());
+    expect((out.next?.storedBatteries ?? []).length).toBe(0);
   });
 });

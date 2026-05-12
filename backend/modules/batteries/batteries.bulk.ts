@@ -251,7 +251,8 @@ export function applyBulkRoomBatterySmartFill(
   for (const u of upgrades) {
     if (!isUsableBatteryCatalog(u)) continue;
     const qtyStock = Math.max(0, Math.floor(Number(ns[u.id]) || 0));
-    if (qtyStock === 0) continue;
+    const storedList = nb.filter((b) => isBatteryAvailableForRackUse(b) && b.itemId === u.id);
+    if (qtyStock === 0 && storedList.length === 0) continue;
 
     const usableOnAnyRack = racksInRoomIdx.some((ri) => {
       const ch = out[ri]?.itemId;
@@ -260,6 +261,9 @@ export function applyBulkRoomBatterySmartFill(
     });
     if (!usableOnAnyRack) continue;
 
+    for (const s of storedList) {
+      pool.push({ itemId: u.id, storageId: s.id });
+    }
     for (let q = 0; q < qtyStock; q++) {
       pool.push({ itemId: u.id, storageId: undefined });
     }
