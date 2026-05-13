@@ -124,8 +124,8 @@ export async function materializeUpgradePackageAsLootBoxInTx(
    * mas prefixamos um título amigável que o frontend mostra acima do conteúdo do card.
    */
   const description = `Pacote de upgrade · abra para receber o conteúdo. (upgrade_package:${upgrade.id})`;
-  /** Ícone reutilizável; nada exige asset dedicado para pacotes. */
-  const icon = '/img/lootboxes/upgrade_package.png';
+  /** Ícone default — emoji (frontend faz fallback para 📦 se vier vazio). */
+  const icon = '📦';
 
   await tx.loot_boxes.upsert({
     where: { id: boxId },
@@ -146,6 +146,7 @@ export async function materializeUpgradePackageAsLootBoxInTx(
       name: boxName,
       description,
       trigger: UPGRADE_PACKAGE_BOX_TRIGGER,
+      icon,
       is_active: 0
     }
   });

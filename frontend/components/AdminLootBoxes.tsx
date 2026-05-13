@@ -82,7 +82,6 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                     const cBundleId = (c.adminUpgradeId || c.admin_upgrade_id || '').toString().toLowerCase().trim();
                     return cBundleId === targetBundleId;
                 });
-                console.log(`Filtro Bundle ID: ${targetBundleId}, Encontrados: ${filtered.length}/${list.length}`);
                 setBoxCodes(filtered);
             } else if (boxId) {
                 const targetBoxId = boxId.toLowerCase().trim();
@@ -93,7 +92,6 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
 
                     return cBoxId === targetBoxId || (cUpgradeId !== '' && cUpgradeId !== 'null') || (cAdminUpgradeId !== '' && cAdminUpgradeId !== 'null');
                 });
-                console.log(`Filtro Box ID: ${targetBoxId}, Encontrados: ${filtered.length}/${list.length}`);
                 setBoxCodes(filtered);
             } else {
                 setBoxCodes(list);
@@ -550,7 +548,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                 </div>
                                 <div>
                                     <label className="text-xs font-bold text-slate-500 block mb-1">Preço (Se Loja - USDC)</label>
-                                    <input type="number" value={boxForm.price} onChange={e => setBoxForm({ ...boxForm, price: parseFloat(e.target.value) })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" />
+                                    <input type="number" min="0" step="any" value={Number.isFinite(boxForm.price as number) ? boxForm.price : 0} onChange={e => { const v = parseFloat(e.target.value); setBoxForm({ ...boxForm, price: Number.isFinite(v) ? v : 0 }); }} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" />
                                 </div>
                             </div>
 
@@ -614,15 +612,15 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                         <div className="col-span-2">
                                             <label className="text-[10px] text-slate-500 font-bold block mb-1">Qtd (Min/Max)</label>
                                             <div className="flex gap-1">
-                                                <input type="number" value={newItemForm.minQty} onChange={e => setNewItemForm({ ...newItemForm, minQty: parseInt(e.target.value) })} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
-                                                <input type="number" value={newItemForm.maxQty} onChange={e => setNewItemForm({ ...newItemForm, maxQty: parseInt(e.target.value) })} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
+                                                <input type="number" min="1" step="1" value={Number.isFinite(newItemForm.minQty as number) ? newItemForm.minQty : 1} onChange={e => { const v = parseInt(e.target.value, 10); setNewItemForm({ ...newItemForm, minQty: Number.isFinite(v) ? v : 1 }); }} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
+                                                <input type="number" min="1" step="1" value={Number.isFinite(newItemForm.maxQty as number) ? newItemForm.maxQty : 1} onChange={e => { const v = parseInt(e.target.value, 10); setNewItemForm({ ...newItemForm, maxQty: Number.isFinite(v) ? v : 1 }); }} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
                                             </div>
                                         </div>
                                         <div className="col-span-2">
                                             <label className="text-[10px] text-slate-500 font-bold block mb-1">
                                                 {boxForm.trigger === 'registration' ? 'Ativo (> 0)' : 'Peso %'}
                                             </label>
-                                            <input type="number" min="1" max="100" value={newItemForm.probability} onChange={e => setNewItemForm({ ...newItemForm, probability: parseFloat(e.target.value) })} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
+                                            <input type="number" min="1" max="100" step="any" value={Number.isFinite(newItemForm.probability as number) ? newItemForm.probability : 0} onChange={e => { const v = parseFloat(e.target.value); setNewItemForm({ ...newItemForm, probability: Number.isFinite(v) ? v : 0 }); }} className="w-full bg-slate-800 border border-slate-600 rounded p-1 text-white text-xs" />
                                         </div>
                                         <div className="col-span-2">
                                             <button onClick={handleAddBoxItem} className="w-full bg-amber-600 hover:bg-amber-500 text-white text-xs font-bold py-1.5 rounded">ADD</button>
