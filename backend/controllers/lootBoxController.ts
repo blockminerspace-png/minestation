@@ -360,15 +360,35 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
           const triggersWithoutItemList = new Set(['roleta_code']);
           const outWarnings: string[] = [];
 
+          /**
+           * Snapshot dos `loot_box_items` actuais por caixa (apenas para as caixas
+           * neste payload) — usado para decidir se a caixa pode ficar `is_active`
+           * mesmo quando o payload tem `items: []` (cache/lazy state). Se já tiver
+           * prémios em DB, **não coage** a inactiva.
+           */
+          const currentItemCountByBoxId = new Map<string, number>();
+          if (validIncomingIds.length > 0) {
+            const grouped = await tx.loot_box_items.groupBy({
+              by: ['box_id'],
+              where: { box_id: { in: validIncomingIds } },
+              _count: { _all: true }
+            });
+            for (const row of grouped) {
+              currentItemCountByBoxId.set(String(row.box_id), Number(row._count?._all ?? 0));
+            }
+          }
+
           type NormalizedBox = { b: IncomingLootBox; effectiveActive: boolean };
           const normalized: NormalizedBox[] = [];
 
           for (const b of validBoxes) {
             let effectiveActive = b.isActive !== false;
             const trig = String(b.trigger || 'shop');
-            const nItems = Array.isArray(b.items)
+            const nItemsPayload = Array.isArray(b.items)
               ? b.items.filter((it) => it && String((it as { id?: unknown }).id ?? '').trim()).length
               : 0;
+            const nItemsDb = currentItemCountByBoxId.get(String(b.id)) ?? 0;
+            const nItemsEffective = nItemsPayload > 0 ? nItemsPayload : nItemsDb;
 
             /**
              * Antes: 400 se `isActive` sem linhas em `loot_box_items` — com
@@ -376,13 +396,16 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
              * caixa inconsistente (cache, payload parcial, rascunho antigo)
              * bloqueava o save de todas.
              *
-             * Agora: coerção segura — gravamos como **inactiva** (rascunho) e
-             * devolvemos `warnings` para o admin perceber. Gatilho `roleta_code`
-             * continua exempto (sem lista de prémios na definição).
+             * Agora: coerção segura **só se**:
+             *   - payload diz activa,
+             *   - não é gatilho exempto (`roleta_code`),
+             *   - **e** efectivamente não há prémios (nem no payload nem em DB).
+             * Combinado com o preserve-on-empty abaixo, isto evita falsos positivos
+             * por estado React desactualizado.
              */
-            if (effectiveActive && !triggersWithoutItemList.has(trig) && nItems === 0) {
+            if (effectiveActive && !triggersWithoutItemList.has(trig) && nItemsEffective === 0) {
               effectiveActive = false;
-              const msg = `Caixa "${String(b.name).trim()}" (${String(b.id)}): estava activa sem prémios na lista enviada — gravada como inactiva (rascunho). Adicione prémios e volte a activar.`;
+              const msg = `Caixa "${String(b.name).trim()}" (${String(b.id)}): activa mas sem prémios — gravada como inactiva (rascunho). Adicione prémios e reactive.`;
               outWarnings.push(msg);
               console.warn(`[POST /api/loot-boxes] ${msg}`);
             }
@@ -398,6 +421,18 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
             normalized.push({ b, effectiveActive });
           }
 
+          /**
+           * Estratégia post-fix (b3fb57e + restore 20260517100000):
+           *   - **NUNCA** apagamos `loot_box_items` "às cegas"; o painel envia o
+           *     catálogo todo (`replaceCatalog: true`) e qualquer caixa cujo
+           *     estado React tinha `items: []` (cache, lazy-load, edição parcial)
+           *     fazia o backend deletar prémios reais.
+           *   - `clearItems: true` (opt-in) → wipe explícito, depois insere o que vier.
+           *   - Items com >= 1 entrada válida → DELETE + INSERT (substitui).
+           *   - Items vazio/missing → preserva o que já está em DB.
+           * Para realmente esvaziar uma caixa o admin tem de pedir explicitamente
+           * (ver `clearItems`) ou apagar a caixa.
+           */
           for (const { b, effectiveActive } of normalized) {
             const id = String(b.id);
             await tx.loot_boxes.upsert({
@@ -421,22 +456,26 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
               }
             });
 
-            await tx.loot_box_items.deleteMany({ where: { box_id: id } });
+            const incomingRows = Array.isArray(b.items)
+              ? b.items
+                  .filter((it): it is IncomingLootBoxItem & { id: string } => !!(it && String((it as { id?: unknown }).id ?? '').trim()))
+                  .map((it) => ({
+                    box_id: id,
+                    item_type: String(it.type || 'item'),
+                    item_id: String(it.id),
+                    min_qty: Math.floor(Number(it.minQty) || 1),
+                    max_qty: Math.floor(Number(it.maxQty) || 1),
+                    probability: Number(it.probability) || 0
+                  }))
+              : [];
 
-            if (Array.isArray(b.items)) {
-              const rows = b.items
-                .filter((it): it is IncomingLootBoxItem & { id: string } => !!(it && String((it as { id?: unknown }).id ?? '').trim()))
-                .map((it) => ({
-                  box_id: id,
-                  item_type: String(it.type || 'item'),
-                  item_id: String(it.id),
-                  min_qty: Math.floor(Number(it.minQty) || 1),
-                  max_qty: Math.floor(Number(it.maxQty) || 1),
-                  probability: Number(it.probability) || 0
-                }));
-              if (rows.length > 0) {
-                await tx.loot_box_items.createMany({ data: rows });
-              }
+            const explicitClear = (b as IncomingLootBox & { clearItems?: unknown }).clearItems === true;
+
+            if (incomingRows.length > 0) {
+              await tx.loot_box_items.deleteMany({ where: { box_id: id } });
+              await tx.loot_box_items.createMany({ data: incomingRows });
+            } else if (explicitClear) {
+              await tx.loot_box_items.deleteMany({ where: { box_id: id } });
             }
           }
 
