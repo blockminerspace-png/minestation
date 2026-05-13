@@ -2220,8 +2220,12 @@ export const AdminUsers: React.FC<AdminUsersProps> = ({
                                     const next = [...lootBoxes];
                                     const si = next.findIndex(b => b.trigger === 'referral_sender'); if (si >= 0) next[si] = senderBox; else next.push(senderBox);
                                     setLootBoxesState(next);
-                                    await setLootBoxes(next, { replaceCatalog: false });
-                                    alert('Prêmios de Indicação salvos com sucesso!');
+                                    const r = await setLootBoxes(next, { replaceCatalog: false });
+                                    if (r.warnings?.length) {
+                                        alert('Gravado. Aviso:\n\n' + r.warnings.join('\n\n'));
+                                    } else {
+                                        alert('Prêmios de Indicação salvos com sucesso!');
+                                    }
                                 }}
                                 className="w-full bg-green-600 hover:bg-green-500 text-white py-3 rounded-lg font-bold text-sm mt-6 flex items-center justify-center gap-2 shadow-lg shadow-green-900/20 active:scale-[0.98] transition-all"
                             >

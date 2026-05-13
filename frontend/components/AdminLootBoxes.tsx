@@ -15,7 +15,7 @@ function validateLootBoxForm(box: Partial<LootBox>): string | null {
     const trig = String(box.trigger || 'shop');
     const raw = Array.isArray(box.items) ? box.items : [];
     const okItems = raw.filter(
-        (it: LootBoxItem) => it && String(it.id || '').trim() && it.type
+        (it: LootBoxItem) => it && String((it as LootBoxItem).id || '').trim()
     );
     if (active && !LOOT_TRIGGERS_WITHOUT_ITEM_LIST.has(trig) && okItems.length === 0) {
         return 'Caixa ativa sem prémios: adicione pelo menos um item (tipo + ID) ou desmarque "Caixa ativa". Gatilho "Roleta (código)" é a única exceção sem lista aqui.';
@@ -496,9 +496,9 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                     type="checkbox"
                                                     id="isActiveBox"
                                                     checked={boxForm.isActive !== false}
-                                                    disabled={!canActivate && boxForm.isActive !== true}
+                                                    disabled={!canActivate && boxForm.isActive === false}
                                                     onChange={e => setBoxForm({ ...boxForm, isActive: e.target.checked })}
-                                                    className={`w-4 h-4 ${!canActivate && boxForm.isActive !== true ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                    className={`w-4 h-4 ${!canActivate && boxForm.isActive === false ? 'opacity-40 cursor-not-allowed' : ''}`}
                                                     title={!canActivate ? 'Adicione pelo menos um prémio antes de activar a caixa.' : 'Marque para disponibilizar a caixa no jogo.'}
                                                 />
                                                 <label htmlFor="isActiveBox" className="text-sm font-bold text-white cursor-pointer">
@@ -509,7 +509,7 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                                         Rascunho
                                                     </span>
                                                 )}
-                                                {!canActivate && boxForm.isActive !== true && (
+                                                {!canActivate && boxForm.isActive === false && (
                                                     <span className="text-[10px] text-amber-400 ml-1">
                                                         (adicione prémios para activar)
                                                     </span>

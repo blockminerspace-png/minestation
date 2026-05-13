@@ -1066,21 +1066,40 @@ export async function getLootBoxes(): Promise<LootBox[]> {
   }
 }
 
+/** Resposta de `POST /api/loot-boxes` (admin). */
+export type SetLootBoxesResult = { ok: true; warnings?: string[] };
+
 /** `replaceCatalog: true` = lista completa do painel de caixas; desativa no DB as que sumiram da lista. */
 export async function setLootBoxes(
   boxes: LootBox[],
   options?: { replaceCatalog?: boolean }
-): Promise<void> {
+): Promise<SetLootBoxesResult> {
   const replaceCatalog = options?.replaceCatalog === true;
   const res = await apiFetch(`${base}/loot-boxes`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ boxes, replaceCatalog })
   });
+  const text = await res.text();
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(text || `Erro ao salvar caixas: ${res.status}`);
+    let parsed: { error?: unknown } = {};
+    try {
+      parsed = JSON.parse(text) as { error?: unknown };
+    } catch {
+      /* corpo não-JSON */
+    }
+    if (typeof parsed.error === 'string' && parsed.error.trim()) {
+      throw new Error(parsed.error);
+    }
+    throw new Error((text || '').slice(0, 800) || `Erro ao salvar caixas: ${res.status}`);
   }
+  let data: SetLootBoxesResult = { ok: true };
+  try {
+    if (text) data = JSON.parse(text) as SetLootBoxesResult;
+  } catch {
+    /* resposta vazia ou não-JSON — ok */
+  }
+  return { ok: true, warnings: Array.isArray(data.warnings) ? data.warnings : undefined };
 }
 
 /** Resumo do DELETE em cascata na base de dados (admin). */

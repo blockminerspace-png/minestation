@@ -887,9 +887,12 @@ export default function App() {
   const updateLootBoxes = async (newBoxes: LootBox[]) => {
     try {
       setLootBoxDefs(newBoxes);
-      await apiSetLootBoxes(newBoxes, { replaceCatalog: true });
+      const { warnings } = await apiSetLootBoxes(newBoxes, { replaceCatalog: true });
       const fresh = await getLootBoxes();
       setLootBoxDefs(fresh);
+      if (warnings && warnings.length > 0) {
+        alert('Caixas gravadas. Aviso do servidor:\n\n' + warnings.join('\n\n'));
+      }
     } catch (e: any) {
       console.error('Failed to save loot boxes:', e);
       alert('Erro ao salvar as caixas: ' + (e.message || 'Erro desconhecido'));

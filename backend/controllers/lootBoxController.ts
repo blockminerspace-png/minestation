@@ -350,7 +350,7 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
     }
 
     try {
-      await prisma.$transaction(
+      const warnings = await prisma.$transaction(
         async (tx) => {
           const validBoxes = (boxes as IncomingLootBox[]).filter(
             (b) => b && b.id && typeof b.name === 'string' && String(b.name).trim()
@@ -358,16 +358,36 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
           const validIncomingIds = validBoxes.map((b) => String(b.id));
 
           const triggersWithoutItemList = new Set(['roleta_code']);
+          const outWarnings: string[] = [];
+
+          type NormalizedBox = { b: IncomingLootBox; effectiveActive: boolean };
+          const normalized: NormalizedBox[] = [];
+
           for (const b of validBoxes) {
-            const active = b.isActive !== false;
+            let effectiveActive = b.isActive !== false;
             const trig = String(b.trigger || 'shop');
-            const nItems = Array.isArray(b.items) ? b.items.filter((it) => it && it.id).length : 0;
-            if (active && !triggersWithoutItemList.has(trig) && nItems === 0) {
-              throw new LootBoxAdminUserError(400, {
-                error: `Caixa "${String(b.name).trim()}" (${b.id}): não pode ficar ativa sem prémios. Adicione itens ou desative a caixa. (Exceção: gatilho roleta por código.)`
-              });
+            const nItems = Array.isArray(b.items)
+              ? b.items.filter((it) => it && String((it as { id?: unknown }).id ?? '').trim()).length
+              : 0;
+
+            /**
+             * Antes: 400 se `isActive` sem linhas em `loot_box_items` — com
+             * `replaceCatalog: true` o painel envia **todo** o catálogo; uma única
+             * caixa inconsistente (cache, payload parcial, rascunho antigo)
+             * bloqueava o save de todas.
+             *
+             * Agora: coerção segura — gravamos como **inactiva** (rascunho) e
+             * devolvemos `warnings` para o admin perceber. Gatilho `roleta_code`
+             * continua exempto (sem lista de prémios na definição).
+             */
+            if (effectiveActive && !triggersWithoutItemList.has(trig) && nItems === 0) {
+              effectiveActive = false;
+              const msg = `Caixa "${String(b.name).trim()}" (${String(b.id)}): estava activa sem prémios na lista enviada — gravada como inactiva (rascunho). Adicione prémios e volte a activar.`;
+              outWarnings.push(msg);
+              console.warn(`[POST /api/loot-boxes] ${msg}`);
             }
-            if (active && (trig === 'shop' || trig === 'shop_once' || trig === 'special')) {
+
+            if (effectiveActive && (trig === 'shop' || trig === 'shop_once' || trig === 'special')) {
               const p = Number(b.price);
               if (!Number.isFinite(p) || p <= 0) {
                 throw new LootBoxAdminUserError(400, {
@@ -375,9 +395,10 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
                 });
               }
             }
+            normalized.push({ b, effectiveActive });
           }
 
-          for (const b of validBoxes) {
+          for (const { b, effectiveActive } of normalized) {
             const id = String(b.id);
             await tx.loot_boxes.upsert({
               where: { id },
@@ -388,7 +409,7 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
                 price: Number(b.price) || 0,
                 trigger: String(b.trigger || 'shop'),
                 icon: String(b.icon || '🎁'),
-                is_active: b.isActive === false ? 0 : 1
+                is_active: effectiveActive ? 1 : 0
               },
               update: {
                 name: b.name.trim(),
@@ -396,7 +417,7 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
                 price: Number(b.price) || 0,
                 trigger: String(b.trigger || 'shop'),
                 icon: String(b.icon || '🎁'),
-                is_active: b.isActive === false ? 0 : 1
+                is_active: effectiveActive ? 1 : 0
               }
             });
 
@@ -404,7 +425,7 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
 
             if (Array.isArray(b.items)) {
               const rows = b.items
-                .filter((it): it is IncomingLootBoxItem & { id: string } => !!(it && it.id))
+                .filter((it): it is IncomingLootBoxItem & { id: string } => !!(it && String((it as { id?: unknown }).id ?? '').trim()))
                 .map((it) => ({
                   box_id: id,
                   item_type: String(it.type || 'item'),
@@ -429,11 +450,13 @@ export function registerLootBoxAdminRoutes(app: Express, deps: LootBoxAdminDeps)
               });
             }
           }
+
+          return outWarnings;
         },
         { timeout: 60_000, maxWait: 10_000 }
       );
 
-      res.json({ ok: true });
+      res.json(warnings.length > 0 ? { ok: true, warnings } : { ok: true });
     } catch (e: unknown) {
       if (e instanceof LootBoxAdminUserError) {
         res.status(e.status).json(e.body);
