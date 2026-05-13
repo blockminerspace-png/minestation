@@ -16787,7 +16787,7 @@ SELECT r.user_id, r.item_id, r.qty
   FROM _restore_stock_2026_05_11 r
   JOIN users    u ON u.id = r.user_id
   JOIN upgrades g ON g.id = r.item_id
- WHERE r.item_id NOT LIKE 'battery\_%' ESCAPE '\\'
+ WHERE r.item_id NOT LIKE 'battery#_%' ESCAPE '#'
    AND r.item_id <> 'small_battery'
 ON CONFLICT (user_id, item_id) DO UPDATE
       SET qty = GREATEST(stock.qty, EXCLUDED.qty);
@@ -16817,7 +16817,7 @@ BEGIN
 
   SELECT COUNT(*) INTO rows_battery_leak
     FROM _restore_stock_2026_05_11 r
-   WHERE r.item_id LIKE 'battery\_%' ESCAPE '\\' OR r.item_id = 'small_battery';
+   WHERE r.item_id LIKE 'battery#_%' ESCAPE '#' OR r.item_id = 'small_battery';
 
   IF rows_battery_leak > 0 THEN
     RAISE EXCEPTION 'restore aborted: % bateria(s) escaparam ao filtro origem', rows_battery_leak;
@@ -16830,9 +16830,9 @@ BEGIN
 
   SELECT COUNT(*) INTO final_stock_total       FROM stock;
   SELECT COUNT(*) INTO final_stock_battery     FROM stock
-    WHERE item_id LIKE 'battery\_%' ESCAPE '\\' OR item_id = 'small_battery';
+    WHERE item_id LIKE 'battery#_%' ESCAPE '#' OR item_id = 'small_battery';
   SELECT COUNT(*) INTO final_stock_nonbattery  FROM stock
-    WHERE NOT (item_id LIKE 'battery\_%' ESCAPE '\\' OR item_id = 'small_battery');
+    WHERE NOT (item_id LIKE 'battery#_%' ESCAPE '#' OR item_id = 'small_battery');
 
   RAISE NOTICE '[restore_stock_2026_05_11] input=% eligible=% skip_no_user=% skip_no_catalog=% | final_stock total=% battery=% non_battery=%',
     total_input, rows_eligible, rows_user_missing, rows_catalog_missing,
