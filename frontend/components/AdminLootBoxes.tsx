@@ -146,8 +146,11 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
 
     const handleNewBox = () => {
         setEditBoxMode(true);
+        // Caixas novas nascem como rascunho (inactivas): caixa activa sem prémios
+        // é rejeitada por validação (front e back). Admin guarda rascunho, adiciona
+        // itens, e activa via checkbox "Caixa ativa".
         setBoxForm({
-            id: crypto.randomUUID(), name: 'Nova Caixa', description: '', price: 1, trigger: 'shop', items: [], icon: '🎁', isActive: true
+            id: crypto.randomUUID(), name: 'Nova Caixa', description: '', price: 1, trigger: 'shop', items: [], icon: '🎁', isActive: false
         });
     };
 
@@ -481,8 +484,39 @@ export const AdminLootBoxes: React.FC<AdminLootBoxesProps> = ({ lootBoxes, onUpd
                                     <input type="text" value={boxForm.description} onChange={e => setBoxForm({ ...boxForm, description: e.target.value })} className="w-full bg-slate-900 border border-slate-600 rounded p-2 text-white text-sm" />
                                 </div>
                                 <div className="col-span-2 flex items-center gap-2 mt-1 mb-2">
-                                    <input type="checkbox" id="isActiveBox" checked={boxForm.isActive !== false} onChange={e => setBoxForm({ ...boxForm, isActive: e.target.checked })} className="w-4 h-4" />
-                                    <label htmlFor="isActiveBox" className="text-sm font-bold text-white cursor-pointer">Caixa ativa (disponível no jogo)</label>
+                                    {(() => {
+                                        const trig = String(boxForm.trigger || 'shop');
+                                        const itemCount = Array.isArray(boxForm.items)
+                                            ? boxForm.items.filter((it: LootBoxItem) => it && String(it.id || '').trim()).length
+                                            : 0;
+                                        const canActivate = LOOT_TRIGGERS_WITHOUT_ITEM_LIST.has(trig) || itemCount > 0;
+                                        return (
+                                            <>
+                                                <input
+                                                    type="checkbox"
+                                                    id="isActiveBox"
+                                                    checked={boxForm.isActive !== false}
+                                                    disabled={!canActivate && boxForm.isActive !== true}
+                                                    onChange={e => setBoxForm({ ...boxForm, isActive: e.target.checked })}
+                                                    className={`w-4 h-4 ${!canActivate && boxForm.isActive !== true ? 'opacity-40 cursor-not-allowed' : ''}`}
+                                                    title={!canActivate ? 'Adicione pelo menos um prémio antes de activar a caixa.' : 'Marque para disponibilizar a caixa no jogo.'}
+                                                />
+                                                <label htmlFor="isActiveBox" className="text-sm font-bold text-white cursor-pointer">
+                                                    Caixa ativa (disponível no jogo)
+                                                </label>
+                                                {boxForm.isActive === false && (
+                                                    <span className="text-[10px] bg-slate-700 text-slate-300 px-1.5 py-0.5 rounded uppercase font-bold ml-1">
+                                                        Rascunho
+                                                    </span>
+                                                )}
+                                                {!canActivate && boxForm.isActive !== true && (
+                                                    <span className="text-[10px] text-amber-400 ml-1">
+                                                        (adicione prémios para activar)
+                                                    </span>
+                                                )}
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                                 <div className="col-span-2 rounded-lg border border-slate-600 bg-slate-900/80 p-3 text-xs text-slate-300 leading-relaxed space-y-1">
                                     <div>
